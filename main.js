@@ -291,25 +291,6 @@ function applyFrameSync(dimension, anchorLoc, frameIndex) {
     // 同期的にすべて回し切る (seekToFrame用)
   }
 }
-
-      const permutation = paletteCache[level];
-      if (!permutation) continue;
-
-      tempBlockLoc.x = anchorLoc.x + x;
-      tempBlockLoc.y = anchorLoc.y;
-      tempBlockLoc.z = anchorLoc.z + y;
-
-      try {
-        dimension.setBlockPermutation(tempBlockLoc, permutation);
-      } catch (e) {
-        console.warn(
-          `[${EVENT_NAMESPACE}] block resolve/apply failed at (${tempBlockLoc.x},${tempBlockLoc.y},${tempBlockLoc.z}) level=${level}: ${e}`
-        );
-      }
-    }
-  }
-}
-
 function stopPlayback() {
   running = false;
   if (timeoutId !== null) {
