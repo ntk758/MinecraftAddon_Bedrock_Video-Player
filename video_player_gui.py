@@ -68,9 +68,7 @@ class PackBuilderApp(tk.Tk):
         self.interval_var = tk.IntVar(value=1)
         self.duration_var = tk.StringVar()
         self.thumbnail_time_var = tk.StringVar(value="0")
-        self.quality_var = tk.StringVar(value="高画質 (128×128 / 10fps)")
-        self.palette_var = tk.StringVar(value="ウルトラ全110色（全マイクラ実在色・最高画質）")
-        self.dither_var = tk.StringVar(value="Floyd-Steinberg")
+        self.dither_var = tk.StringVar(value="Ordered (Bayer / GPU対応)")
         self.keyframe_interval_var = tk.IntVar(value=30)
         self._build_ui()
         self._apply_quality_preset()
@@ -100,21 +98,21 @@ class PackBuilderApp(tk.Tk):
         self.video_tree.configure(yscrollcommand=tree_scroll.set)
 
         btn_frame = ttk.Frame(video_frame)
-        btn_frame.grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 6))
-        ttk.Button(btn_frame, text="動画を追加…", command=self._add_videos).pack(side="left", padx=(0, 6))
-        ttk.Button(btn_frame, text="選択を削除", command=self._remove_selected).pack(side="left", padx=(0, 6))
-        ttk.Button(btn_frame, text="IDを編集…", command=self._edit_video_id).pack(side="left", padx=(0, 6))
-        ttk.Button(btn_frame, text="サムネ秒を編集…", command=self._edit_thumb_sec).pack(side="left")
+        btn_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 6))
+        ttk.Button(btn_frame, text="動画を追加", command=self._add_videos).pack(side="left", padx=(0, 4))
+        ttk.Button(btn_frame, text="選択解除(削除)", command=self._remove_selected).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text="ID編集", command=self._edit_video_id).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text="サムネ秒編集", command=self._edit_thumb_sec).pack(side="left", padx=4)
 
         # --- 出力先 ---
         out_frame = ttk.Frame(self)
         out_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
         out_frame.columnconfigure(1, weight=1)
-        ttk.Label(out_frame, text="出力 .mcpack").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Label(out_frame, text="出力 .mcaddon").grid(row=0, column=0, sticky="w", padx=(0, 6))
         ttk.Entry(out_frame, textvariable=self.output_var).grid(row=0, column=1, sticky="ew", padx=(0, 6))
         ttk.Button(out_frame, text="保存先…", command=self._select_output).grid(row=0, column=2)
 
-        # --- パック名・コマンド ---
+        # --- パック基本設定 ---
         pack_settings = ttk.LabelFrame(self, text="パック名・実行コマンド")
         pack_settings.grid(row=2, column=0, sticky="ew", padx=10, pady=4)
         pack_settings.columnconfigure(1, weight=1)
@@ -166,9 +164,16 @@ class PackBuilderApp(tk.Tk):
         # ディザリング選択 (全5種対応)
         ttk.Label(settings, text="ディザリング").grid(row=2, column=0, padx=(10, 4), pady=(0, 6))
         ttk.Combobox(
-            settings, textvariable=self.dither_var, state="readonly", width=25,
-            values=("なし", "Floyd-Steinberg", "Atkinson", "Burkes", "Sierra Lite", "Ordered (Bayer)"),
-        ).grid(row=2, column=1, columnspan=2, padx=(0, 10), pady=(0, 6), sticky="w")
+            settings, textvariable=self.dither_var, state="readonly", width=42,
+            values=(
+                "なし (最速 / GPU対応)",
+                "Ordered (Bayer / GPU対応)",
+                "Floyd-Steinberg (高画質 / CPU専用)",
+                "Atkinson (高画質 / CPU専用)",
+                "Burkes (高画質 / CPU専用)",
+                "Sierra Lite (高画質 / CPU専用)"
+            ),
+        ).grid(row=2, column=1, columnspan=4, padx=(0, 10), pady=(0, 6), sticky="w")
 
         # --- 説明文 ---
         ttk.Label(
