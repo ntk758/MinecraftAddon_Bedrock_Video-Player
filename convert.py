@@ -52,9 +52,19 @@ TERRACOTTA_PALETTE = [
     {"name": "black_terracotta", "block": "minecraft:black_terracotta", "rgb": (37, 22, 16)},
 ]
 
+FROGLIGHT_PALETTE = [
+    {"name": "sea_lantern",          "block": "minecraft:sea_lantern",          "rgb": (172, 217, 203)},
+    {"name": "glowstone",            "block": "minecraft:glowstone",            "rgb": (175, 133, 74)},
+    {"name": "shroomlight",          "block": "minecraft:shroomlight",          "rgb": (246, 172, 119)},
+    {"name": "pearlescent_froglight","block": "minecraft:pearlescent_froglight","rgb": (240, 215, 220)},
+    {"name": "verdant_froglight",    "block": "minecraft:verdant_froglight",    "rgb": (210, 230, 200)},
+    {"name": "ochre_froglight",      "block": "minecraft:ochre_froglight",      "rgb": (245, 225, 160)},
+]
+
 PALETTES = {
     "concrete": CONCRETE_PALETTE,
     "expanded": CONCRETE_PALETTE + TERRACOTTA_PALETTE,
+    "full": CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE,
 }
 
 def create_pillow_palette_image(palette):
@@ -68,11 +78,40 @@ def create_pillow_palette_image(palette):
     pal_img.putpalette(pal_data)
     return pal_img
 
-def process_single_frame(path, pal_img, width, height, num_colors, dither):
+def apply_ordered_dither_bias(img, palette_rgb):
+    bayer_matrix = np.array([
+        [ 0,  8,  2, 10],
+        [12,  4, 14,  6],
+        [ 3, 11,  1,  9],
+        [15,  7, 13,  5]
+    ], dtype=np.float32)
+    bayer_matrix = (bayer_matrix / 16.0) - 0.5
+    spread = 32.0
+    bayer_matrix *= spread
+
+    img_arr = np.array(img, dtype=np.float32)
+    h, w, c = img_arr.shape
+    
+    bayer_tiled = np.tile(bayer_matrix, (h // 4 + 1, w // 4 + 1))[:h, :w]
+    bayer_tiled = np.expand_dims(bayer_tiled, axis=-1)
+    
+    img_arr += bayer_tiled
+    img_arr = np.clip(img_arr, 0, 255).astype(np.uint8)
+    return Image.fromarray(img_arr)
+
+def process_single_frame(path, pal_img, width, height, num_colors, dither_method, palette_rgb=None):
     img = Image.open(path).convert("RGB")
     if img.size != (width, height):
         img = img.resize((width, height), Image.Resampling.LANCZOS)
-    dither_mode = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
+        
+    if dither_method == 'ordered':
+        img = apply_ordered_dither_bias(img, palette_rgb)
+        dither_mode = Image.Dither.NONE
+    elif dither_method == 'floyd':
+        dither_mode = Image.Dither.FLOYDSTEINBERG
+    else:
+        dither_mode = Image.Dither.NONE
+
     q = img.quantize(palette=pal_img, dither=dither_mode)
     return np.array(q, dtype=np.int32) % num_colors
 
@@ -86,6 +125,8 @@ def parse_args():
     parser.add_argument("--height", type=int, default=HEIGHT, help="出力高さ（ブロック数）")
     parser.add_argument("--palette", choices=PALETTES.keys(), default="concrete", help="使用するブロック色パレット")
     parser.add_argument("--dither", action="store_true", help="ディザリングを有効化")
+    parser.add_argument("--dither-method", choices=["none", "floyd", "ordered"], default="none", help="ディザリング手法（--ditherと併用）")
+    parser.add_argument("--video-id", default=None, help="動画ID（マルチ動画パック用）")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 4, help="使用スレッド数")
     parser.add_argument("--adaptive-fps", action="store_true", default=True, help="適応的フレームレート(静止シーンスキップ)を有効化")
     parser.add_argument("--scene-threshold", type=float, default=0.015, help="静止シーン判定しきい値(比率)")
@@ -107,6 +148,11 @@ def main():
     HEIGHT = args.height
     frames_dir = args.frames_dir
     output_file = args.output
+    
+    if args.video_id:
+        output_dir = os.path.dirname(os.path.abspath(output_file))
+        output_file = os.path.join(output_dir, f"frames_{args.video_id}.js")
+
     palette = PALETTES[args.palette]
     num_colors = len(palette)
     level_blocks = [{"block": item["block"], "states": {}} for item in palette]
@@ -120,9 +166,15 @@ def main():
 
     pal_img = create_pillow_palette_image(palette)
 
+    dither_method = args.dither_method
+    if args.dither and dither_method == 'none':
+        dither_method = 'floyd'
+
+    palette_rgb_arr = np.array([item['rgb'] for item in palette], dtype=np.float64) if dither_method == 'ordered' else None
+
     # ThreadPoolExecutor による並列フレーム処理
     def task(file_path):
-        return process_single_frame(file_path, pal_img, WIDTH, HEIGHT, num_colors, args.dither)
+        return process_single_frame(file_path, pal_img, WIDTH, HEIGHT, num_colors, dither_method, palette_rgb_arr)
 
     max_workers = min(args.threads, len(files))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:

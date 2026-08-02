@@ -1,12 +1,12 @@
 """配布パックに埋め込むリリース情報の唯一の管理場所。"""
 
-PACK_VERSION = (1, 6, 0)
+PACK_VERSION = (1, 7, 0)
 RELEASE_NOTES = [
-    "Adaptive FPS(静止シーン可変フレームレート)と場面転換検出により1時間あたり48MBの長尺保存に対応",
-    "1GBのストレージ容量に約21.2時間分(映画10本分)の動画が保存可能な究極の圧縮コーデック",
-    "Delta VarInt + Base64 圧縮により JSONデータ容量を初期比87.5%圧縮(1/8以下)",
-    "Pillow Quantize + ThreadPoolExecutor により変換速度1000fps超の超高速並列変換",
-    "GitHub Actionsによる5%性能低下防止のCI自動性能回帰テストを導入",
+    "1パックに複数動画を搭載可能なマルチ動画アーキテクチャ(list/play/stopコマンド対応)",
+    "39色拡張パレット(Concrete 16色+Terracotta 17色+自発光ブロック6種)による色再現性の最大化",
+    "Floyd-Steinberg / Ordered (Bayer) ディザリング選択によるグラデーション品質向上",
+    "GUIで複数動画の追加・削除・一括ビルドに対応(Treeview管理UI)",
+    "Adaptive FPS + Delta VarInt Base64圧縮で1時間48MB / 1GBに21時間保存可能",
 ]
 
 

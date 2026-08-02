@@ -18,6 +18,8 @@
  *   /scriptevent badapple:setup   … プレイヤーの足元を起点に原点座標を保存
  *   /scriptevent badapple:start   … 再生開始
  *   /scriptevent badapple:stop    … 停止して盤面をクリア
+ *   /scriptevent badapple:list    … 収録動画一覧を表示
+ *   /scriptevent badapple:play <id> … 指定した動画を選択して再生
  *
  * 未検証事項(実機で必ず確認すること):
  * - 64x64=4096ブロックの差分を1tick内に処理しきれるか(重い場合は間引きが必要。
@@ -25,7 +27,7 @@
  */
 
 import { world, system, BlockPermutation } from "@minecraft/server";
-import { FRAME_DATA } from "./frames_data.js";
+import { VIDEOS, VIDEO_LIST } from "./videos.js";
 
 // video_player_gui.py がパック作成時にこの2つの値を設定する。
 const EVENT_NAMESPACE = "badapple";
@@ -49,6 +51,23 @@ let timeoutId = null;
 let intervalId = null;
 let paletteCache = null;
 const tempBlockLoc = { x: 0, y: 0, z: 0 };
+
+let currentVideoId = null;
+let currentVideoData = null;
+
+function selectVideo(videoId) {
+  if (VIDEOS[videoId]) {
+    currentVideoId = videoId;
+    currentVideoData = VIDEOS[videoId];
+    return true;
+  }
+  return false;
+}
+
+// Auto-select first available video
+if (VIDEO_LIST.length > 0) {
+  selectVideo(VIDEO_LIST[0].id);
+}
 
 const B64_MAP = new Uint8Array(256);
 const B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -80,8 +99,9 @@ function decodeBase64ToBytes(b64Str) {
 }
 
 function initPaletteCache() {
-  if (!paletteCache || paletteCache.length !== FRAME_DATA.level_blocks.length) {
-    paletteCache = FRAME_DATA.level_blocks.map((spec) => {
+  if (!currentVideoData) return;
+  if (!paletteCache || paletteCache.length !== currentVideoData.level_blocks.length) {
+    paletteCache = currentVideoData.level_blocks.map((spec) => {
       const blockId = BLOCK_ID_ALIASES[spec.block] ?? spec.block;
       try {
         return BlockPermutation.resolve(blockId, spec.states);
@@ -111,6 +131,7 @@ function getPlaybackDimension(fallbackDimension) {
 }
 
 function ensureTickingArea(dimension, anchor) {
+  if (!currentVideoData) return false;
   try {
     dimension.runCommand(`tickingarea remove ${TICKING_AREA_NAME}`);
   } catch (e) {
@@ -118,8 +139,8 @@ function ensureTickingArea(dimension, anchor) {
   }
 
   // 終点は盤面内の最後のブロック。余分な1列・1行を含めない。
-  const toX = anchor.x + FRAME_DATA.width - 1;
-  const toZ = anchor.z + FRAME_DATA.height - 1;
+  const toX = anchor.x + currentVideoData.width - 1;
+  const toZ = anchor.z + currentVideoData.height - 1;
   try {
     dimension.runCommand(
       `tickingarea add ${anchor.x} ${anchor.y} ${anchor.z} ${toX} ${anchor.y} ${toZ} ${TICKING_AREA_NAME}`
@@ -133,11 +154,12 @@ function ensureTickingArea(dimension, anchor) {
 
 /** フレーム番号の差分を実際にブロックへ適用する */
 function applyFrame(dimension, anchorLoc, frameIndex) {
-  const diffData = FRAME_DATA.frames[frameIndex];
+  if (!currentVideoData) return;
+  const diffData = currentVideoData.frames[frameIndex];
   if (!diffData) return;
 
   initPaletteCache();
-  const width = FRAME_DATA.width;
+  const width = currentVideoData.width;
 
   if (typeof diffData === "string") {
     if (diffData.length === 0) return;
@@ -226,6 +248,10 @@ function stopPlayback() {
 }
 
 function startPlayback(fallbackDimension) {
+  if (!currentVideoData) {
+    world.sendMessage(`§c[${EVENT_NAMESPACE}] 動画が選択されていません。/scriptevent ${EVENT_PREFIX}list で一覧を確認してください`);
+    return;
+  }
   const anchorLoc = getAnchor();
   if (!anchorLoc) {
     world.sendMessage(`§c[${EVENT_NAMESPACE}] 原点が見つかりません。先に /scriptevent ${EVENT_PREFIX}setup を実行してください`);
@@ -245,7 +271,7 @@ function startPlayback(fallbackDimension) {
     timeoutId = null;
     if (!running) return;
     intervalId = system.runInterval(() => {
-      if (!running || currentFrame >= FRAME_DATA.frame_count) {
+      if (!running || currentFrame >= currentVideoData.frame_count) {
         stopPlayback();
         world.sendMessage(`§a[${EVENT_NAMESPACE}] 再生終了`);
         return;
@@ -258,11 +284,15 @@ function startPlayback(fallbackDimension) {
 }
 
 function setup(player) {
+  if (!currentVideoData) {
+    world.sendMessage(`§c[${EVENT_NAMESPACE}] 動画が読み込まれていません`);
+    return;
+  }
   const loc = player.location;
   const anchor = {
     x: Math.floor(loc.x),
     y: Math.floor(loc.y),
-    z: Math.floor(loc.z) - FRAME_DATA.height,
+    z: Math.floor(loc.z) - currentVideoData.height,
   };
   world.setDynamicProperty(ANCHOR_KEY, anchor);
   world.setDynamicProperty(ANCHOR_DIMENSION_KEY, player.dimension.id);
@@ -277,15 +307,16 @@ function setup(player) {
 
 function stopAndClear(fallbackDimension) {
   stopPlayback();
+  if (!currentVideoData) return;
   const anchorLoc = getAnchor();
   if (!anchorLoc) return;
   const dimension = getPlaybackDimension(fallbackDimension);
 
-  const clearSpec = FRAME_DATA.level_blocks[0];
+  const clearSpec = currentVideoData.level_blocks[0];
   const clearPermutation = BlockPermutation.resolve(clearSpec.block, clearSpec.states);
 
-  for (let y = 0; y < FRAME_DATA.height; y++) {
-    for (let x = 0; x < FRAME_DATA.width; x++) {
+  for (let y = 0; y < currentVideoData.height; y++) {
+    for (let x = 0; x < currentVideoData.width; x++) {
       dimension.setBlockPermutation(
         { x: anchorLoc.x + x, y: anchorLoc.y, z: anchorLoc.z + y },
         clearPermutation
@@ -315,6 +346,30 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
       break;
     case "stop":
       stopAndClear(dimension);
+      break;
+    case "list":
+      if (VIDEO_LIST.length === 0) {
+        world.sendMessage(`${MESSAGE_PREFIX} 動画が登録されていません`);
+      } else {
+        world.sendMessage(`${MESSAGE_PREFIX} §e収録動画一覧:`);
+        for (const v of VIDEO_LIST) {
+          const selected = v.id === currentVideoId ? " §a[選択中]" : "";
+          world.sendMessage(`  §f- §b${v.id}§f: ${v.title} (${v.frame_count} frames, ${v.width}x${v.height})${selected}`);
+        }
+        world.sendMessage(`${MESSAGE_PREFIX} §f再生: /scriptevent ${EVENT_PREFIX}play <動画ID>`);
+      }
+      break;
+    case "play":
+      const videoId = event.message?.trim();
+      if (!videoId) {
+        // No ID specified - play current selection
+        startPlayback(dimension);
+      } else if (selectVideo(videoId)) {
+        world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${videoId}' を選択しました`);
+        startPlayback(dimension);
+      } else {
+        world.sendMessage(`§c${MESSAGE_PREFIX} 動画 '${videoId}' が見つかりません。/scriptevent ${EVENT_PREFIX}list で一覧を確認してください`);
+      }
       break;
     default:
       break;
