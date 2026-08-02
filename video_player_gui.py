@@ -66,12 +66,13 @@ class PackBuilderApp(tk.Tk):
         self.width_var = tk.IntVar(value=64)
         self.height_var = tk.IntVar(value=64)
         self.interval_var = tk.IntVar(value=1)
-        self.duration_var = tk.StringVar()
+        self.duration_var = tk.StringVar(value="")
         self.thumbnail_time_var = tk.StringVar(value="0")
         self.quality_var = tk.StringVar(value="高画質 (128×128 / 10fps)")
-        self.palette_var = tk.StringVar(value="ウルトラ全110色（全マイクラ実在色・最高画質）")
-        self.dither_var = tk.StringVar(value="Ordered (Bayer / GPU対応)")
+        self.palette_var = tk.StringVar(value="拡張 33色（concrete + terracotta）")
+        self.dither_var = tk.StringVar(value="Blue Noise (超高画質 / GPU対応)")
         self.keyframe_interval_var = tk.IntVar(value=30)
+        self.perceptual_var = tk.BooleanVar(value=True)
         self._build_ui()
         self._apply_quality_preset()
         self.after(100, self._drain_messages)
@@ -163,19 +164,25 @@ class PackBuilderApp(tk.Tk):
             ),
         ).grid(row=1, column=4, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
 
-        # ディザリング選択 (全5種対応)
+        # ディザリング選択 (全6種対応)
         ttk.Label(settings, text="ディザリング").grid(row=2, column=0, padx=(10, 4), pady=(0, 6))
         ttk.Combobox(
             settings, textvariable=self.dither_var, state="readonly", width=42,
             values=(
                 "なし (最速 / GPU対応)",
+                "Blue Noise (超高画質 / GPU対応)",
                 "Ordered (Bayer / GPU対応)",
                 "Floyd-Steinberg (高画質 / CPU専用)",
                 "Atkinson (高画質 / CPU専用)",
                 "Burkes (高画質 / CPU専用)",
                 "Sierra Lite (高画質 / CPU専用)"
             ),
-        ).grid(row=2, column=1, columnspan=4, padx=(0, 10), pady=(0, 6), sticky="w")
+        ).grid(row=2, column=1, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
+
+        # 知覚最適化(エッジ減衰)オプション
+        ttk.Checkbutton(
+            settings, text="知覚最適化 (輪郭をクッキリさせる)", variable=self.perceptual_var
+        ).grid(row=3, column=0, columnspan=2, padx=(10, 4), pady=(0, 6), sticky="w")
 
         # --- 説明文 ---
         ttk.Label(
@@ -347,6 +354,8 @@ class PackBuilderApp(tk.Tk):
             dither_method = "sierra"
         elif dither_text.startswith("Ordered"):
             dither_method = "ordered"
+        elif dither_text.startswith("Blue Noise"):
+            dither_method = "blue_noise"
         else:
             dither_method = "none"
 
@@ -471,6 +480,8 @@ class PackBuilderApp(tk.Tk):
                         "--keyframe-interval", str(self.keyframe_interval_var.get()),
                         "--gpu",
                     ]
+                    if not self.perceptual_var.get():
+                        converter_command.append("--no-perceptual")
                     if duration is not None:
                         converter_command.extend(["--duration", str(duration)])
                         

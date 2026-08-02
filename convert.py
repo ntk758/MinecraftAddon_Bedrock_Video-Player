@@ -221,26 +221,43 @@ def apply_custom_dither(img, palette_rgb, dither_method):
 
     return out_indices
 
-def process_single_frame_img(img, pal_img, width, height, num_colors, dither_method, palette_rgb=None):
+def process_single_frame_img(img, pal_img, width, height, num_colors, dither_method, apply_perceptual=True, palette_rgb=None):
     if img.size != (width, height):
         img = img.resize((width, height), Image.Resampling.LANCZOS)
         
-    if dither_method == 'ordered':
-        img = apply_ordered_dither_bias(img, palette_rgb)
-        dither_mode = Image.Dither.NONE
-        q = img.quantize(palette=pal_img, dither=dither_mode)
+    if dither_method == 'blue_noise':
+        bn = generate_blue_noise_approx_numpy(width, height)
+        bn = (bn - 0.5) * 64.0
+        bn_tiled = np.stack([bn]*3, axis=-1)
+        if apply_perceptual:
+            mask = get_edge_mask_cpu(img)
+            bn_tiled *= mask
+        img_arr = np.array(img, dtype=np.float32) + bn_tiled
+        img = Image.fromarray(np.clip(img_arr, 0, 255).astype(np.uint8))
+        q = img.quantize(palette=pal_img, dither=Image.Dither.NONE)
+        return np.array(q, dtype=np.int32) % num_colors
+    elif dither_method == 'ordered':
+        if apply_perceptual:
+            bayer_matrix = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]], dtype=np.float32)
+            bayer_matrix = (bayer_matrix / 16.0 - 0.5) * 32.0
+            bayer_tiled = np.tile(bayer_matrix, (height // 4 + 1, width // 4 + 1))[:height, :width]
+            bayer_tiled = np.expand_dims(bayer_tiled, axis=-1)
+            mask = get_edge_mask_cpu(img)
+            img_arr = np.array(img, dtype=np.float32) + (bayer_tiled * mask)
+            img = Image.fromarray(np.clip(img_arr, 0, 255).astype(np.uint8))
+        else:
+            img = apply_ordered_dither_bias(img, palette_rgb)
+        q = img.quantize(palette=pal_img, dither=Image.Dither.NONE)
         return np.array(q, dtype=np.int32) % num_colors
     elif dither_method in ('atkinson', 'burkes', 'sierra'):
         if palette_rgb is None:
             palette_rgb = np.array(pal_img.getpalette()[:num_colors*3], dtype=np.float32).reshape(-1, 3)
         return apply_custom_dither(img, palette_rgb, dither_method) % num_colors
     elif dither_method == 'floyd':
-        dither_mode = Image.Dither.FLOYDSTEINBERG
-        q = img.quantize(palette=pal_img, dither=dither_mode)
+        q = img.quantize(palette=pal_img, dither=Image.Dither.FLOYDSTEINBERG)
         return np.array(q, dtype=np.int32) % num_colors
     else:
-        dither_mode = Image.Dither.NONE
-        q = img.quantize(palette=pal_img, dither=dither_mode)
+        q = img.quantize(palette=pal_img, dither=Image.Dither.NONE)
         return np.array(q, dtype=np.int32) % num_colors
 
 try:
@@ -275,14 +292,57 @@ def rgb_to_oklab_torch(rgb_tensor):
     ], dtype=rgb_tensor.dtype, device=rgb_tensor.device)
     return torch.matmul(lms_, m2.T)
 
-def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="none"):
+def generate_blue_noise_approx_numpy(width, height):
+    from PIL import ImageFilter
+    np.random.seed(42)
+    noise = np.random.randint(0, 256, (height, width), dtype=np.uint8)
+    img = Image.fromarray(noise)
+    blur = img.filter(ImageFilter.GaussianBlur(radius=1.5))
+    noise_f = noise.astype(np.float32)
+    blur_f = np.array(blur).astype(np.float32)
+    hp = noise_f - blur_f
+    hp_min, hp_max = hp.min(), hp.max()
+    if hp_max > hp_min:
+        hp = (hp - hp_min) / (hp_max - hp_min)
+    else:
+        hp = np.zeros_like(hp)
+    return hp
+
+def get_edge_mask_cpu(img_pil):
+    from PIL import ImageFilter
+    edges = img_pil.convert("L").filter(ImageFilter.FIND_EDGES)
+    edges = edges.filter(ImageFilter.GaussianBlur(radius=1.0))
+    edges_f = np.array(edges).astype(np.float32) / 255.0
+    max_val = edges_f.max()
+    if max_val > 0:
+        edges_f /= max_val
+    mask = np.clip(1.0 - edges_f, 0.0, 1.0)
+    return np.expand_dims(mask, axis=-1)
+
+def get_edge_mask_gpu(img_tensor_h_w_3):
+    import torch
+    import torch.nn.functional as F
+    img = img_tensor_h_w_3.permute(2, 0, 1).unsqueeze(0) / 255.0
+    gray = 0.299 * img[:, 0:1, :, :] + 0.587 * img[:, 1:2, :, :] + 0.114 * img[:, 2:3, :, :]
+    
+    sobel_x = torch.tensor([[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]], dtype=torch.float32, device=img.device).view(1, 1, 3, 3)
+    sobel_y = torch.tensor([[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]], dtype=torch.float32, device=img.device).view(1, 1, 3, 3)
+    
+    grad_x = F.conv2d(gray, sobel_x, padding=1)
+    grad_y = F.conv2d(gray, sobel_y, padding=1)
+    
+    mag = torch.sqrt(grad_x**2 + grad_y**2)
+    mag = torch.clamp(mag / 2.0, 0.0, 1.0)
+    mask = 1.0 - mag
+    return mask[0].permute(1, 2, 0)
+
+def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="none", apply_perceptual=True):
     import torch
     num_colors = len(palette_rgb)
     pal_tensor = torch.tensor(palette_rgb, dtype=torch.float32, device="cuda")
     processed_frames = []
 
-    # Ordered(Bayer)ディザリング用テンソルの事前計算
-    bayer_tensor = None
+    dither_tensor = None
     if dither_method == "ordered":
         bayer = np.array([
             [0, 8, 2, 10],
@@ -293,15 +353,24 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
         bayer = (bayer / 16.0) - 0.5
         bayer *= 32.0
         bayer_tiled = np.tile(bayer, (height // 4 + 1, width // 4 + 1))[:height, :width]
-        # RGBチャンネルごとにブロードキャスト可能な形状 (H, W, 3)
         bayer_tiled = np.stack([bayer_tiled]*3, axis=-1)
-        bayer_tensor = torch.tensor(bayer_tiled, dtype=torch.float32, device="cuda")
+        dither_tensor = torch.tensor(bayer_tiled, dtype=torch.float32, device="cuda")
+    elif dither_method == "blue_noise":
+        bn = generate_blue_noise_approx_numpy(width, height)
+        bn = (bn - 0.5) * 64.0 # Spread
+        bn_tiled = np.stack([bn]*3, axis=-1)
+        dither_tensor = torch.tensor(bn_tiled, dtype=torch.float32, device="cuda")
 
     for i, img_arr in enumerate(frames_iter):
         img_tensor = torch.tensor(img_arr, dtype=torch.float32, device="cuda")
         
-        if bayer_tensor is not None:
-            img_tensor += bayer_tensor
+        if dither_tensor is not None:
+            if apply_perceptual:
+                mask = get_edge_mask_gpu(img_tensor)
+                bias = dither_tensor * mask
+            else:
+                bias = dither_tensor
+            img_tensor += bias
             img_tensor = torch.clamp(img_tensor, 0, 255)
 
         dists = torch.cdist(img_tensor.view(-1, 3), pal_tensor)
@@ -327,7 +396,9 @@ def parse_args():
     parser.add_argument("--duration", type=float, default=None, help="処理時間（秒）")
     parser.add_argument("--palette", choices=PALETTES.keys(), default="concrete", help="使用するブロック色パレット")
     parser.add_argument("--dither", action="store_true", help="ディザリングを有効化")
-    parser.add_argument("--dither-method", choices=["none", "floyd", "atkinson", "burkes", "sierra", "ordered"], default="none", help="ディザリング手法")
+    parser.add_argument("--dither-method", default="none", choices=["none", "floyd", "ordered", "blue_noise", "atkinson", "burkes", "sierra"], help="ディザリング手法")
+    parser.add_argument("--perceptual", action="store_true", default=True, help="知覚最適化(エッジ減衰)を有効にする (デフォルトTrue)")
+    parser.add_argument("--no-perceptual", dest="perceptual", action="store_false", help="知覚最適化を無効にする")
     parser.add_argument("--video-id", default=None, help="動画ID（マルチ動画パック用）")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 4, help="使用スレッド数")
     parser.add_argument("--keyframe-interval", type=int, default=30, help="キーフレーム(Iフレーム)間隔（フレーム数、0で無効）")
@@ -464,27 +535,24 @@ def main():
     use_gpu = args.gpu or HAS_TORCH_CUDA
     palette_rgb_arr = np.array([item['rgb'] for item in palette], dtype=np.float64)
 
-    if use_gpu and HAS_TORCH_CUDA and dither_method in ('none', 'ordered'):
-        print(f"GPU (PyTorch / CUDA) 加速量子化を使用して超高速変換中... (Dither: {dither_method})")
-        processed_frames = process_frames_gpu(frames_iter, palette_rgb_arr, WIDTH, HEIGHT, dither_method)
+    if use_gpu and HAS_TORCH_CUDA and dither_method in ('none', 'ordered', 'blue_noise'):
+        print(f"GPU (PyTorch / CUDA) 加速量子化を使用して超高速変換中... (Dither: {dither_method}, Perceptual: {args.perceptual})")
+        processed_frames = process_frames_gpu(frames_iter, palette_rgb_arr, WIDTH, HEIGHT, dither_method, apply_perceptual=args.perceptual)
     else:
         if use_gpu:
             if not HAS_TORCH_CUDA:
                 print("注意: GPU (PyTorch/CUDA) が利用できません。CPUスレッドプール処理にフォールバックします。")
-            elif dither_method not in ('none', 'ordered'):
+            elif dither_method not in ('none', 'ordered', 'blue_noise'):
                 print(f"注意: 誤差拡散型ディザリング ({dither_method}) が選択されたため、並列計算できず CPU 処理にフォールバックします。")
-                print("      → GPUで超高速変換を行いたい場合は、ディザリング手法を 'ordered' または 'none' に変更してください。")
+                print("      → GPUで超高速変換を行いたい場合は、ディザリング手法を 'ordered', 'blue_noise' または 'none' に変更してください。")
         
         palette_rgb_for_dither = palette_rgb_arr if dither_method in ('ordered', 'atkinson', 'burkes', 'sierra') else None
         
-        # ThreadPoolExecutor による並列フレーム処理
-        # 並列処理のためにはジェネレータをリスト化する必要がある
         frames_list = list(frames_iter)
         
         def task(img_arr):
-            # process_single_frame には PIL Image を渡すか np array に対応させる
             img = Image.fromarray(img_arr)
-            return process_single_frame_img(img, pal_img, WIDTH, HEIGHT, num_colors, dither_method, palette_rgb_for_dither)
+            return process_single_frame_img(img, pal_img, WIDTH, HEIGHT, num_colors, dither_method, args.perceptual, palette_rgb_for_dither)
 
         max_workers = min(args.threads, len(frames_list) if frames_list else 1)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
