@@ -366,6 +366,8 @@ class PackBuilderApp(tk.Tk):
                 video_index_entries = []
                 first_thumbnail = None
 
+                sound_definitions = {}
+
                 total_videos = len(video_entries)
                 for vi, entry in enumerate(video_entries, 1):
                     video = Path(entry["file_path"])
@@ -392,6 +394,35 @@ class PackBuilderApp(tk.Tk):
                     # 最初の動画のサムネイルをパックアイコンに使用
                     if first_thumbnail is None:
                         first_thumbnail = thumbnail
+
+                    # 音声切り出し (10秒分割 .ogg)
+                    sounds_dir = pack_root / "sounds" / "music" / video_id
+                    sounds_dir.mkdir(parents=True, exist_ok=True)
+                    self.messages.put("  音声を10秒単位(.ogg)で切り出し中…")
+                    try:
+                        self._run([
+                            ffmpeg, "-y", "-i", str(video),
+                            "-f", "segment", "-segment_time", "10",
+                            "-vn", "-acodec", "libvorbis",
+                            str(sounds_dir / "chunk_%d.ogg")
+                        ])
+                    except Exception as e:
+                        self.messages.put(f"  警告: 音声抽出スキップ (無音動画またはエラー): {e}")
+
+                    # 抽出された ogg ファイル群をサウンド定義に登録
+                    ogg_files = sorted(sounds_dir.glob("chunk_*.ogg"), key=lambda p: int(p.stem.split("_")[1]))
+                    for ogg_file in ogg_files:
+                        chunk_idx = int(ogg_file.stem.split("_")[1])
+                        sound_key = f"{namespace}.{video_id}.chunk_{chunk_idx}"
+                        sound_definitions[sound_key] = {
+                            "category": "music",
+                            "sounds": [
+                                {
+                                    "name": f"sounds/music/{video_id}/{ogg_file.stem}",
+                                    "stream": True,
+                                }
+                            ]
+                        }
 
                     # フレーム抽出
                     ffmpeg_command = [ffmpeg, "-y", "-i", str(video)]
@@ -433,6 +464,15 @@ class PackBuilderApp(tk.Tk):
                         "width": width,
                         "height": height,
                     })
+
+                # sound_definitions.json の生成
+                if sound_definitions:
+                    sound_def_file = pack_root / "sounds" / "sound_definitions.json"
+                    sound_def_file.parent.mkdir(parents=True, exist_ok=True)
+                    sound_def_file.write_text(
+                        json.dumps({"format_version": "1.14.0", "sound_definitions": sound_definitions}, ensure_ascii=False, indent=2),
+                        encoding="utf-8"
+                    )
 
                 # videos.js を自動生成（静的インポートのみ）
                 self.messages.put("videos.js（動画インデックス）を生成中…")

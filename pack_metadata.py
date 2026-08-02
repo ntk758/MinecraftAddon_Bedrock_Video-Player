@@ -1,12 +1,12 @@
 """配布パックに埋め込むリリース情報の唯一の管理場所。"""
 
-PACK_VERSION = (1, 8, 0)
+PACK_VERSION = (1, 9, 0)
 RELEASE_NOTES = [
+    "FFmpegによる10秒単位OGG音声抽出とトラック同期再生システムを搭載",
+    "コンパス等のリモコンアイテム使用によるゲーム内GUI(ActionFormData)を導入(▶再生/⏸停止/⏭次/⏮前/音量/シーク)",
     "全50+色マイクラブロック解析と照明不変発光ブロックパレット(39色/55色)を導入",
     "全5種類(Floyd-Steinberg/Atkinson/Burkes/Sierra/Ordered)のディザリングアルゴリズム選択",
     "1パックに複数動画を搭載可能なマルチ動画インデックス化(list/play/stopコマンド対応)",
-    "Adaptive FPS + Delta VarInt Base64圧縮で1時間48MB / 1GBに21時間分(映画10本分)保存可能",
-    "GitHub Actionsによる5%性能低下防止のCI自動性能回帰テストを導入",
 ]
 
 

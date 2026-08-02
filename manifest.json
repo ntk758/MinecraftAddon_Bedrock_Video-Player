@@ -1,10 +1,10 @@
 {
   "format_version": 2,
   "header": {
-    "name": "Block Video Player v1.8.0",
-    "description": "Block Video Player v1.8.0: 全50+色パレット・5種ディザリング・マルチ動画遅延ロード対応",
+    "name": "Block Video Player v1.9.0",
+    "description": "Block Video Player v1.9.0: 10秒分割音声同期・リモコンGUI・マルチ動画対応",
     "uuid": "f20c8b97-b196-4382-b351-6f78b0799373",
-    "version": [1, 8, 0],
+    "version": [1, 9, 0],
     "min_engine_version": [1, 21, 0]
   },
   "modules": [
@@ -13,7 +13,7 @@
       "type": "script",
       "language": "javascript",
       "uuid": "910487e0-c963-4589-a1f4-833a0b94d996",
-      "version": [1, 8, 0],
+      "version": [1, 9, 0],
       "entry": "scripts/main.js"
     }
   ],
@@ -21,6 +21,10 @@
     {
       "module_name": "@minecraft/server",
       "version": "1.19.0"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "1.2.0"
     }
   ]
 }

@@ -27,6 +27,7 @@
  */
 
 import { world, system, BlockPermutation } from "@minecraft/server";
+import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
 import { VIDEOS, VIDEO_LIST } from "./videos.js";
 
 // video_player_gui.py がパック作成時にこの2つの値を設定する。
@@ -38,6 +39,10 @@ const ANCHOR_DIMENSION_KEY = `${EVENT_NAMESPACE}:dimension`;
 const MESSAGE_PREFIX = `§b[${EVENT_NAMESPACE}]`;
 const START_LOAD_DELAY_TICKS = 5;
 const TICKING_AREA_NAME = "badapple_area";
+
+// リモコン用設定
+const REMOTE_CONTROL_ITEM = "minecraft:compass";
+const TICKS_PER_AUDIO_CHUNK = 200; // 10秒 = 200 ticks
 
 // 旧v1.3.0パックの生成データとの後方互換性。
 // 統合版の無色テラコッタは minecraft:terracotta ではなく minecraft:hardened_clay。
@@ -54,6 +59,8 @@ const tempBlockLoc = { x: 0, y: 0, z: 0 };
 
 let currentVideoId = null;
 let currentVideoData = null;
+let currentAudioChunk = -1;
+let masterVolume = 1.0;
 
 function selectVideo(videoId) {
   if (VIDEOS[videoId]) {
@@ -245,6 +252,37 @@ function stopPlayback() {
     system.clearRun(intervalId);
     intervalId = null;
   }
+  currentAudioChunk = -1;
+  // 音楽停止
+  for (const player of world.getAllPlayers()) {
+    try {
+      player.stopMusic();
+    } catch (e) {}
+  }
+}
+
+function syncAudioForFrame(frameIndex) {
+  if (!currentVideoData || masterVolume <= 0) return;
+  const targetChunk = Math.floor((frameIndex * FRAME_INTERVAL_TICKS) / TICKS_PER_AUDIO_CHUNK);
+  if (targetChunk !== currentAudioChunk) {
+    currentAudioChunk = targetChunk;
+    const trackId = `${EVENT_NAMESPACE}.${currentVideoId}.chunk_${targetChunk}`;
+    for (const player of world.getAllPlayers()) {
+      try {
+        player.stopMusic();
+        player.playMusic(trackId, { volume: masterVolume, loop: false });
+      } catch (e) {}
+    }
+  }
+}
+
+function seekToFrame(targetFrame, dimension, anchorLoc) {
+  if (!currentVideoData) return;
+  targetFrame = Math.max(0, Math.min(targetFrame, currentVideoData.frame_count - 1));
+  currentFrame = targetFrame;
+  currentAudioChunk = -1;
+  applyFrame(dimension, anchorLoc, currentFrame);
+  syncAudioForFrame(currentFrame);
 }
 
 function startPlayback(fallbackDimension) {
@@ -277,10 +315,11 @@ function startPlayback(fallbackDimension) {
         return;
       }
       applyFrame(dimension, anchorLoc, currentFrame);
+      syncAudioForFrame(currentFrame);
       currentFrame++;
     }, FRAME_INTERVAL_TICKS);
   }, START_LOAD_DELAY_TICKS);
-  world.sendMessage(`§a[${EVENT_NAMESPACE}] 読み込み完了後に再生します。/scriptevent ${EVENT_PREFIX}stop で停止できます`);
+  world.sendMessage(`§a[${EVENT_NAMESPACE}] 読み込み完了後に再生します。リモコン(コンパス)右クリックで操作GUIが開きます`);
 }
 
 function setup(player) {
@@ -302,7 +341,7 @@ function setup(player) {
     world.sendMessage(`§c[${EVENT_NAMESPACE}] tickingareaの設定に失敗しました。ワールドのチート設定を確認してください`);
     return;
   }
-  world.sendMessage(`§a[${EVENT_NAMESPACE}] セットアップ完了。/scriptevent ${EVENT_PREFIX}start で再生します`);
+  world.sendMessage(`§a[${EVENT_NAMESPACE}] セットアップ完了。リモコン(コンパス)を使用するか /scriptevent ${EVENT_PREFIX}start で再生します`);
 }
 
 function stopAndClear(fallbackDimension) {
@@ -326,6 +365,138 @@ function stopAndClear(fallbackDimension) {
   world.sendMessage(`§a[${EVENT_NAMESPACE}] 停止・盤面クリア完了`);
 }
 
+// --- リモコン GUI コントローラー (ActionFormData) ---
+function showRemoteControlGUI(player) {
+  const statusStr = running ? "§a再生中" : "§c停止中";
+  const titleStr = currentVideoId ? currentVideoId : "未選択";
+  const currentSec = Math.floor((currentFrame * FRAME_INTERVAL_TICKS) / 20);
+  const totalSec = currentVideoData ? Math.floor((currentVideoData.frame_count * FRAME_INTERVAL_TICKS) / 20) : 0;
+
+  const form = new ActionFormData()
+    .title("🎬 動画プレイヤー リモコン")
+    .body(`【ステータス】: ${statusStr}\n【選択中】: §b${titleStr}\n【再生位置】: ${currentSec}s / ${totalSec}s (Frame: ${currentFrame})\n【音量】: ${Math.round(masterVolume * 100)}%`)
+    .button(running ? "⏸ 一時停止" : "▶ 再生 / 再開", "textures/items/emerald")
+    .button("⏹ 停止 ＆ クリア", "textures/blocks/redstone_block")
+    .button("⏭ 次の動画", "textures/items/paper")
+    .button("⏮ 前の動画", "textures/items/paper")
+    .button("🔊 音量設定", "textures/items/repeater")
+    .button("⏩ シーク (時間移動)", "textures/items/clock")
+    .button("📜 動画リストから選択", "textures/items/book_portfolio");
+
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const selection = response.selection;
+    const dimension = player.dimension;
+
+    switch (selection) {
+      case 0: // ▶ 再生 / 一時停止
+        if (running) {
+          stopPlayback();
+          world.sendMessage(`${MESSAGE_PREFIX} §e一時停止しました`);
+        } else {
+          startPlayback(dimension);
+        }
+        break;
+
+      case 1: // ⏹ 停止
+        stopAndClear(dimension);
+        break;
+
+      case 2: // ⏭ 次の動画
+        switchVideoIndex(1, player);
+        break;
+
+      case 3: // ⏮ 前の動画
+        switchVideoIndex(-1, player);
+        break;
+
+      case 4: // 🔊 音量設定
+        showVolumeGUI(player);
+        break;
+
+      case 5: // ⏩ シーク
+        showSeekGUI(player);
+        break;
+
+      case 6: // 📜 動画リスト
+        showVideoSelectGUI(player);
+        break;
+    }
+  });
+}
+
+function switchVideoIndex(direction, player) {
+  if (VIDEO_LIST.length === 0) return;
+  let currentIdx = VIDEO_LIST.findIndex((v) => v.id === currentVideoId);
+  if (currentIdx === -1) currentIdx = 0;
+  let newIdx = (currentIdx + direction + VIDEO_LIST.length) % VIDEO_LIST.length;
+  selectVideo(VIDEO_LIST[newIdx].id);
+  world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${currentVideoId}' に切り替えました`);
+  showRemoteControlGUI(player);
+}
+
+function showVolumeGUI(player) {
+  const form = new ModalFormData()
+    .title("🔊 音量設定")
+    .slider("マスター音量 (%)", 0, 100, 10, Math.round(masterVolume * 100));
+
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    masterVolume = response.formValues[0] / 100.0;
+    world.sendMessage(`${MESSAGE_PREFIX} §a音量を ${Math.round(masterVolume * 100)}% に設定しました`);
+    currentAudioChunk = -1;
+    if (running) syncAudioForFrame(currentFrame);
+  });
+}
+
+function showSeekGUI(player) {
+  if (!currentVideoData) return;
+  const maxSec = Math.floor((currentVideoData.frame_count * FRAME_INTERVAL_TICKS) / 20);
+  const currentSec = Math.floor((currentFrame * FRAME_INTERVAL_TICKS) / 20);
+
+  const form = new ModalFormData()
+    .title("⏩ シーク (時間ジャンプ)")
+    .slider("再生位置 (秒)", 0, Math.max(1, maxSec), 1, currentSec);
+
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const targetSec = response.formValues[0];
+    const targetFrame = Math.floor((targetSec * 20) / FRAME_INTERVAL_TICKS);
+    const anchorLoc = getAnchor();
+    if (anchorLoc) {
+      seekToFrame(targetFrame, player.dimension, anchorLoc);
+      world.sendMessage(`${MESSAGE_PREFIX} §a${targetSec}秒目 (Frame: ${targetFrame}) にシークしました`);
+    } else {
+      world.sendMessage(`§c[${EVENT_NAMESPACE}] 先に setup を実行してください`);
+    }
+  });
+}
+
+function showVideoSelectGUI(player) {
+  const form = new ActionFormData().title("📜 動画ライブラリ").body("再生する動画タイトルを選択してください:");
+  for (const v of VIDEO_LIST) {
+    const isSel = v.id === currentVideoId ? " §a[選択中]" : "";
+    form.button(`${v.title}${isSel}\n${v.frame_count} frames (${v.width}x${v.height})`);
+  }
+
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const selectedVideo = VIDEO_LIST[response.selection];
+    if (selectedVideo) {
+      selectVideo(selectedVideo.id);
+      world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${selectedVideo.id}' を選択しました`);
+      showRemoteControlGUI(player);
+    }
+  });
+}
+
+// リモコンアイテム右クリックイベント
+world.afterEvents.itemUse.subscribe((event) => {
+  if (event.itemStack.typeId === REMOTE_CONTROL_ITEM) {
+    showRemoteControlGUI(event.source);
+  }
+});
+
 system.afterEvents.scriptEventReceive.subscribe((event) => {
   if (!event.id.startsWith(EVENT_PREFIX)) return;
 
@@ -347,6 +518,10 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
     case "stop":
       stopAndClear(dimension);
       break;
+    case "gui":
+    case "remote":
+      if (player) showRemoteControlGUI(player);
+      break;
     case "list":
       if (VIDEO_LIST.length === 0) {
         world.sendMessage(`${MESSAGE_PREFIX} 動画が登録されていません`);
@@ -362,7 +537,6 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
     case "play":
       const videoId = event.message?.trim();
       if (!videoId) {
-        // No ID specified - play current selection
         startPlayback(dimension);
       } else if (selectVideo(videoId)) {
         world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${videoId}' を選択しました`);

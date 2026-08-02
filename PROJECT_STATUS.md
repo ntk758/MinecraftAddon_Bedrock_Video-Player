@@ -3,13 +3,17 @@
 ## 1. プロジェクト概要
 本プロジェクトは、動画ファイル（MP4 / MKV / AVI / WEBM 等）を Minecraft Bedrock Edition（統合版）の Behavior Pack（.mcpack）へ超高速かつ最小容量で変換し、ゲーム内のブロック盤面上でスムーズに動動画再生するアドオン＆変換ツール群です。
 
-- **最新バージョン**: `v1.8.0`
-- **対象環境**: Minecraft Bedrock Edition 1.21.0 以上 (Script API v1.x)
+- **最新バージョン**: `v1.9.0`
+- **対象環境**: Minecraft Bedrock Edition 1.21.0 以上 (Script API v1.x, `@minecraft/server-ui`)
 - **変換GUI環境**: Python 3.10+ (Pillow, NumPy, Tkinter, FFmpeg)
 
 ---
 
 ## 2. 現在の達成状況と到達点
+
+### 🎵 音声同期 ＆ リモコンGUI (v1.9.0 新機能)
+- **10秒分割 OGG 音声同期システム**: FFmpeg で音声を10秒単位 `.ogg` に自動切り出し、`player.playMusic()` で再生・シーク位置追従。
+- **リモコンアイテム (コンパス) GUI**: 右クリックで `ActionFormData` UI を呼び出し。▶再生、⏸一時停止、⏭次、⏮前、🔊音量調整、⏩シーク時間をゲーム内で直感操作。
 
 ### 🚀 圧倒的な圧縮率と長尺保存
 - **1時間動画あたり 48.24 MB (0.047 GB)** のデータ容量達成（初期バージョン v1.3.4 比 **97.2% 削減**）。
