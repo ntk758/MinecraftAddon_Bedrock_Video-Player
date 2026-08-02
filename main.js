@@ -26,7 +26,7 @@
  *   その場合は runInterval の第2引数を 2 以上にして更新頻度を落とす)
  */
 
-import { world, system, BlockPermutation, BlockVolumeUtils } from "@minecraft/server";
+import { world, system, BlockPermutation } from "@minecraft/server";
 import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
 import { VIDEOS, VIDEO_LIST } from "./videos.js";
 
@@ -223,21 +223,29 @@ function* applyFrameJob(dimension, anchorLoc, frameIndex) {
       try {
         if (length === 1) {
           dimension.setBlockPermutation(startLoc, permutation);
+          operations++;
+          if (operations > MAX_OPS_PER_TICK) {
+            yield;
+            operations = 0;
+          }
         } else {
-          const endLoc = { x: anchorLoc.x + x + length - 1, y: anchorLoc.y, z: anchorLoc.z + y };
-          const volume = BlockVolumeUtils.getBlockVolume(startLoc, endLoc);
-          dimension.fillBlocks(volume, permutation);
+          // BlockVolumeのバージョン互換性問題を完全に回避するため、個別に配置する
+          for (let i = 0; i < length; i++) {
+            tempBlockLoc.x = startLoc.x + i;
+            tempBlockLoc.y = startLoc.y;
+            tempBlockLoc.z = startLoc.z;
+            dimension.setBlockPermutation(tempBlockLoc, permutation);
+            operations++;
+            if (operations > MAX_OPS_PER_TICK) {
+              yield;
+              operations = 0;
+            }
+          }
         }
       } catch (e) {
         console.warn(
           `[${EVENT_NAMESPACE}] block apply failed at (${startLoc.x},${startLoc.y},${startLoc.z}) level=${level} length=${length}: ${e}`
         );
-      }
-      
-      operations++;
-      if (operations > MAX_OPS_PER_TICK) {
-        yield;
-        operations = 0;
       }
     }
   } else if (Array.isArray(diffData)) {
