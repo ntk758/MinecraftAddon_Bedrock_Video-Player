@@ -87,6 +87,8 @@ def parse_args():
     parser.add_argument("--palette", choices=PALETTES.keys(), default="concrete", help="使用するブロック色パレット")
     parser.add_argument("--dither", action="store_true", help="ディザリングを有効化")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 4, help="使用スレッド数")
+    parser.add_argument("--adaptive-fps", action="store_true", default=True, help="適応的フレームレート(静止シーンスキップ)を有効化")
+    parser.add_argument("--scene-threshold", type=float, default=0.015, help="静止シーン判定しきい値(比率)")
     return parser.parse_args()
 
 def encode_varint(val, byte_arr):
@@ -128,11 +130,23 @@ def main():
 
     old = np.full((HEIGHT, WIDTH), -1, dtype=int)
     frame_diffs = []
+    skipped_frames = 0
 
-    for current in processed_frames:
+    total_pixels = WIDTH * HEIGHT
+
+    for i, current in enumerate(processed_frames):
         diff_mask = (current != old)
         changed_indices = np.flatnonzero(diff_mask)
-        if len(changed_indices) > 0:
+        num_changes = len(changed_indices)
+        change_ratio = num_changes / total_pixels
+
+        # Adaptive FPS: 変化率が指定閾値未満で、最初のフレームでない場合はスキップ
+        if args.adaptive_fps and i > 0 and change_ratio < args.scene_threshold:
+            frame_diffs.append("")
+            skipped_frames += 1
+            continue
+
+        if num_changes > 0:
             changed_colors = current.flat[changed_indices]
             byte_arr = bytearray()
             prev_idx = 0
@@ -146,6 +160,8 @@ def main():
             packed_b64 = ""
         frame_diffs.append(packed_b64)
         old = current
+
+    print(f"Adaptive FPS: スキップされたフレーム数 {skipped_frames} / {len(files)}")
 
     data = {
         "width": WIDTH,

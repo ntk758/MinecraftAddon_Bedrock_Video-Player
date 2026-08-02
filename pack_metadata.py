@@ -1,11 +1,11 @@
 """配布パックに埋め込むリリース情報の唯一の管理場所。"""
 
-PACK_VERSION = (1, 5, 0)
+PACK_VERSION = (1, 6, 0)
 RELEASE_NOTES = [
-    "Delta VarInt + Base64 圧縮により JSONデータ容量をさらに79%削減(初期比87.5%圧縮)",
-    "Pillow Quantize + ThreadPoolExecutor により変換速度を約23倍(1000fps超)に爆速化",
-    "main.jsにBase64/VarIntデコーダー、Permutation一括キャッシュ、座標オブジェクト再利用を導入",
-    "再生タイマーの安全管理化(timeoutId/intervalId独立化)によるゴースト再生バグ防止",
+    "Adaptive FPS(静止シーン可変フレームレート)と場面転換検出により1時間あたり48MBの長尺保存に対応",
+    "1GBのストレージ容量に約21.2時間分(映画10本分)の動画が保存可能な究極の圧縮コーデック",
+    "Delta VarInt + Base64 圧縮により JSONデータ容量を初期比87.5%圧縮(1/8以下)",
+    "Pillow Quantize + ThreadPoolExecutor により変換速度1000fps超の超高速並列変換",
     "GitHub Actionsによる5%性能低下防止のCI自動性能回帰テストを導入",
 ]
 
