@@ -63,8 +63,16 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
         bn_tiled = np.stack([bn]*3, axis=-1)
         dither_tensor = torch.tensor(bn_tiled, dtype=torch.float32, device="cuda")
 
+    error_buffer = torch.zeros((height, width, 3), dtype=torch.float32, device="cuda")
+    prev_idx_tensor = None
+    rdo_threshold = 20.0
+    temporal_dither_weight = 0.5
+
     for i, img_arr in enumerate(frames_iter):
         img_tensor = torch.tensor(img_arr, dtype=torch.float32, device="cuda")
+        
+        # Temporal Dithering (前フレームからの誤差を加算)
+        img_tensor += error_buffer
         
         if dither_tensor is not None:
             if apply_perceptual:
@@ -77,9 +85,26 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
 
         dists = torch.cdist(img_tensor.view(-1, 3), pal_tensor)
         idx_tensor = torch.argmin(dists, dim=1).view(height, width)
+        
+        # Rate-Distortion Optimization (RDO)
+        # 前フレームと同じ色を維持した場合の歪み(Distortion)を計算し、許容範囲内なら再利用(Rate削減)する
+        if prev_idx_tensor is not None:
+            prev_colors = pal_tensor[prev_idx_tensor] # (H, W, 3)
+            dist_to_prev = torch.norm(img_tensor - prev_colors, dim=-1) # (H, W)
+            # 閾値以下の歪みなら前フレームの色を採用
+            rdo_mask = dist_to_prev < rdo_threshold
+            idx_tensor = torch.where(rdo_mask, prev_idx_tensor, idx_tensor)
+            
+        # Temporal Dithering のための誤差計算
+        selected_colors = pal_tensor[idx_tensor]
+        error_buffer = (img_tensor - selected_colors) * temporal_dither_weight
+        # 誤差が蓄積しすぎないように減衰・クランプ
+        error_buffer = torch.clamp(error_buffer, -32.0, 32.0)
+        
         processed_frames.append(idx_tensor.cpu().numpy().astype(np.int32) % num_colors)
+        prev_idx_tensor = idx_tensor.clone()
 
-        del img_tensor, dists, idx_tensor
+        del img_tensor, dists, idx_tensor, selected_colors
         if i % 64 == 63:
             torch.cuda.empty_cache()
 
