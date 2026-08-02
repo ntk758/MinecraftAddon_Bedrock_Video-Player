@@ -12,8 +12,6 @@
 > **⚠️ 重要事項 (Important Note):** 
 > このプロジェクトは、コアアルゴリズム設計からPythonスクリプト、Bedrock Script API、GUIアプリケーション、最適化ロジック、そしてこのREADMEに至るまで、**すべて AI (Claude Opus / GPT / Gemini Pro等のエージェント) によって自律的に設計・プログラミング・構築されたものです**。
 
-![Demo](demo.gif)
-
 Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを「マイクラのブロック」へ変換し、ゲーム内で映像と音声を同期再生できるアドオン構築ツールです。
 
 Python と FFmpeg、そして最新の Bedrock Script API を活用し、極限まで高画質・低負荷・超高速変換（GPUテンソル計算対応）を目指しています。GUIツールで簡単に `.mcaddon` を生成できます。
