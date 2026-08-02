@@ -12,6 +12,9 @@ bench_frames*/
 perf_output.*
 ci_frames_data.js
 *.mcpack
+build/
+dist/
+*.spec
 
 # Benchmark-generated PNG images (never commit large test assets)
 # アドオン本体の pack_icon.png は下の !pack_icon.png で保護

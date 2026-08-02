@@ -348,14 +348,65 @@ class PackBuilderApp(tk.Tk):
         if process.wait() != 0:
             raise RuntimeError(f"コマンドが終了コード {process.returncode} で失敗しました。")
 
+def get_ffmpeg_path() -> str | None:
+    # 1. PyInstaller 内部展開ディレクトリ
+    if hasattr(sys, "_MEIPASS"):
+        meipass_ffmpeg = Path(getattr(sys, "_MEIPASS")) / "ffmpeg.exe"
+        if meipass_ffmpeg.is_file():
+            return str(meipass_ffmpeg)
+    
+    # 2. アプリ実行ファイルと同階層
+    app_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else APP_DIR
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        local_ffmpeg = app_dir / name
+        if local_ffmpeg.is_file():
+            return str(local_ffmpeg)
+
+    # 3. カレントディレクトリ
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        cwd_ffmpeg = Path.cwd() / name
+        if cwd_ffmpeg.is_file():
+            return str(cwd_ffmpeg)
+
+    # 4. システム PATH
+    return shutil.which("ffmpeg")
+
+
+class PackBuilderApp(tk.Tk):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title("Block Video Player Pack Builder")
+        self.minsize(780, 660)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(5, weight=0)
+        self.rowconfigure(9, weight=1)
+        self.messages = queue.Queue()
+
+        self.output_var = tk.StringVar(value=str(APP_DIR / "VideoPlayer.mcpack"))
+        self.pack_name_var = tk.StringVar(value="Block Video Player")
+        self.namespace_var = tk.StringVar(value="badapple")
+        self.width_var = tk.IntVar(value=64)
+        self.height_var = tk.IntVar(value=64)
+        self.interval_var = tk.IntVar(value=1)
+        self.duration_var = tk.StringVar()
+        self.thumbnail_time_var = tk.StringVar(value="0")
+        self.quality_var = tk.StringVar(value="高画質 (128×128 / 10fps)")
+        self.palette_var = tk.StringVar(value="ウルトラ全110色（全マイクラ実在色・最高画質）")
+        self.dither_var = tk.StringVar(value="Floyd-Steinberg")
+        self._build_ui()
+        self._apply_quality_preset()
+        self.after(100, self._drain_messages)
+
+    # ... 中略 ...
+
     def _build_pack(
         self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
         width: int, height: int, interval: int, duration: float | None, palette: str, dither_method: str
     ) -> None:
         try:
-            ffmpeg = shutil.which("ffmpeg")
+            ffmpeg = get_ffmpeg_path()
             if not ffmpeg:
-                raise RuntimeError("ffmpeg がPATHから見つかりません。インストールとPATH設定を確認してください。")
+                raise RuntimeError("ffmpeg が見つかりません。アプリと同階層に ffmpeg.exe を置くか PATH 設定を確認してください。")
             for required in (MANIFEST, MAIN_SCRIPT, CONVERTER):
                 if not required.is_file():
                     raise RuntimeError(f"必要なファイルがありません: {required}")

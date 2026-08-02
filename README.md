@@ -1,13 +1,15 @@
-# Block Video Player — 統合版(Bedrock)ブロック動画プレイヤー (v2.1.0)
+# Block Video Player — 統合版(Bedrock)ブロック動画プレイヤー (v2.2.0)
 
 [umbreonben/mc-cushion-bad-apple](https://github.com/umbreonben/mc-cushion-bad-apple) (Java版 datapack) を Minecraft統合版 (Bedrock Edition) の Behavior Pack + Script API で再実装した超高速・超軽量・高画質ブロック動画再生アドオン＆変換システム。
 
-**最新バージョン v2.1.0**: GPU (PyTorch / CUDA テンソル演算 & FFmpeg HWAccel) アクセラレーション機能を追加！任意カラー動画の複数搭載、10秒単位OGG音声トラック同期再生、コンパス等のリモコンアイテムによるゲーム内GUI操作、ウルトラ全110色ブロックパレットに対応。
+**最新バージョン v2.2.0**: Python / Node.js 未インストール環境向けの独立スタンドアロン EXE ビルド (`build_standalone.py`) およびポータブル FFmpeg 自動検索機能を追加！既存の全ソースコード・開発環境は 100% 保持されています。
 
 ---
 
-## 🚀 主要機能・到達点 (v2.1.0)
+## 🚀 主要機能・到達点 (v2.2.0)
 
+- 📦 **完全独立スタンドアロン EXE (`BlockVideoPlayer.exe`) 対応**:
+  - `python build_standalone.py` を実行するだけで、Python や Node.js のない PC 環境でもダブルクリックで動作する単体実行ファイル `dist/BlockVideoPlayer/BlockVideoPlayer.exe` を一括ビルド。ポータブル用 `ffmpeg.exe` の自動検出にも対応。
 - ⚡ **GPU アクセラレーション (PyTorch / CUDA & FFmpeg HWAccel)**:
   - NVIDIA GPU 等の CUDA 環境で PyTorch テンソル演算による**全フレーム超並列減色**を実行。FFmpeg も `-hwaccel auto` で動画抽出を高速化（GPU未搭載時はCPUスレッドプールへ自動フォールバック）。
 - 👑 **ウルトラ全110色パレット (`ultra_110`)**:
@@ -95,6 +97,7 @@ python video_player_gui.py
 
 ## 📜 バージョン履歴
 
+- **v2.2.0**: PyInstaller による独立スタンドアロン EXE ビルド環境 (`build_standalone.py`) およびポータブル FFmpeg 自動検索を追加。既存の全スクリプトを完全保持。
 - **v2.1.0**: GPU (PyTorch / CUDA テンソル一括減色演算 & FFmpeg `-hwaccel auto` デコード) アクセラレーションおよびCPUフォールバック機能を完全統合。
 - **v2.0.0**: 全110色以上のウルトラパレット (`ultra_110` / 112ブロック, $\Delta E=20.54$)、10秒単位OGG音声同期システム、コンパスによるゲーム内リモコンGUI (`ActionFormData`) を完全統合。
 - **v1.9.0**: 音声トラック分離とリモコンGUIプロトタイプの導入。
