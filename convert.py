@@ -61,10 +61,43 @@ FROGLIGHT_PALETTE = [
     {"name": "ochre_froglight",      "block": "minecraft:ochre_froglight",      "rgb": (245, 225, 160)},
 ]
 
+WOOL_PALETTE = [
+    {"name": "white_wool",      "block": "minecraft:white_wool",      "rgb": (233, 236, 236)},
+    {"name": "orange_wool",     "block": "minecraft:orange_wool",     "rgb": (240, 118, 19)},
+    {"name": "magenta_wool",    "block": "minecraft:magenta_wool",    "rgb": (189, 68, 179)},
+    {"name": "light_blue_wool", "block": "minecraft:light_blue_wool", "rgb": (58, 175, 217)},
+    {"name": "yellow_wool",     "block": "minecraft:yellow_wool",     "rgb": (248, 197, 39)},
+    {"name": "lime_wool",       "block": "minecraft:lime_wool",       "rgb": (112, 185, 25)},
+    {"name": "pink_wool",       "block": "minecraft:pink_wool",       "rgb": (237, 141, 172)},
+    {"name": "gray_wool",       "block": "minecraft:gray_wool",       "rgb": (62, 68, 71)},
+    {"name": "light_gray_wool", "block": "minecraft:light_gray_wool", "rgb": (142, 142, 134)},
+    {"name": "cyan_wool",       "block": "minecraft:cyan_wool",       "rgb": (21, 137, 145)},
+    {"name": "purple_wool",     "block": "minecraft:purple_wool",     "rgb": (121, 42, 172)},
+    {"name": "blue_wool",       "block": "minecraft:blue_wool",       "rgb": (53, 57, 157)},
+    {"name": "brown_wool",      "block": "minecraft:brown_wool",      "rgb": (114, 71, 40)},
+    {"name": "green_wool",      "block": "minecraft:green_wool",      "rgb": (84, 109, 27)},
+    {"name": "red_wool",        "block": "minecraft:red_wool",        "rgb": (160, 39, 34)},
+    {"name": "black_wool",      "block": "minecraft:black_wool",      "rgb": (20, 21, 25)},
+]
+
+SPECIAL_BLOCKS_PALETTE = [
+    {"name": "gold_block",      "block": "minecraft:gold_block",      "rgb": (246, 208, 61)},
+    {"name": "iron_block",      "block": "minecraft:iron_block",      "rgb": (220, 220, 220)},
+    {"name": "diamond_block",   "block": "minecraft:diamond_block",   "rgb": (98, 237, 228)},
+    {"name": "emerald_block",   "block": "minecraft:emerald_block",   "rgb": (43, 201, 93)},
+    {"name": "lapis_block",     "block": "minecraft:lapis_block",     "rgb": (30, 67, 140)},
+    {"name": "quartz_block",    "block": "minecraft:quartz_block",    "rgb": (235, 229, 222)},
+    {"name": "obsidian",        "block": "minecraft:obsidian",        "rgb": (15, 11, 24)},
+    {"name": "coal_block",      "block": "minecraft:coal_block",      "rgb": (18, 18, 18)},
+]
+
+ALL_BLOCKS = CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE + WOOL_PALETTE + SPECIAL_BLOCKS_PALETTE
+
 PALETTES = {
     "concrete": CONCRETE_PALETTE,
     "expanded": CONCRETE_PALETTE + TERRACOTTA_PALETTE,
     "full": CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE,
+    "all_55": ALL_BLOCKS,
 }
 
 def create_pillow_palette_image(palette):
@@ -99,6 +132,35 @@ def apply_ordered_dither_bias(img, palette_rgb):
     img_arr = np.clip(img_arr, 0, 255).astype(np.uint8)
     return Image.fromarray(img_arr)
 
+def apply_custom_dither(img, palette_rgb, dither_method):
+    h, w = img.height, img.width
+    working = np.array(img, dtype=np.float32)
+    out_indices = np.empty((h, w), dtype=np.int32)
+
+    if dither_method == "atkinson":
+        matrix = [(1, 0, 1/8), (2, 0, 1/8), (-1, 1, 1/8), (0, 1, 1/8), (1, 1, 1/8), (0, 2, 1/8)]
+    elif dither_method == "burkes":
+        matrix = [(1, 0, 8/32), (2, 0, 4/32), (-2, 1, 2/32), (-1, 1, 4/32), (0, 1, 8/32), (1, 1, 4/32), (2, 1, 2/32)]
+    elif dither_method == "sierra":
+        matrix = [(1, 0, 2/4), (-1, 1, 1/4), (0, 1, 1/4)]
+    else:
+        matrix = []
+
+    for y in range(h):
+        for x in range(w):
+            pix = working[y, x]
+            dists = np.sum((palette_rgb - pix) ** 2, axis=1)
+            idx = int(np.argmin(dists))
+            out_indices[y, x] = idx
+            err = pix - palette_rgb[idx]
+
+            for dx, dy, weight in matrix:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h:
+                    working[ny, nx] += err * weight
+
+    return out_indices
+
 def process_single_frame(path, pal_img, width, height, num_colors, dither_method, palette_rgb=None):
     img = Image.open(path).convert("RGB")
     if img.size != (width, height):
@@ -107,13 +169,20 @@ def process_single_frame(path, pal_img, width, height, num_colors, dither_method
     if dither_method == 'ordered':
         img = apply_ordered_dither_bias(img, palette_rgb)
         dither_mode = Image.Dither.NONE
+        q = img.quantize(palette=pal_img, dither=dither_mode)
+        return np.array(q, dtype=np.int32) % num_colors
+    elif dither_method in ('atkinson', 'burkes', 'sierra'):
+        if palette_rgb is None:
+            palette_rgb = np.array(pal_img.getpalette()[:num_colors*3], dtype=np.float32).reshape(-1, 3)
+        return apply_custom_dither(img, palette_rgb, dither_method) % num_colors
     elif dither_method == 'floyd':
         dither_mode = Image.Dither.FLOYDSTEINBERG
+        q = img.quantize(palette=pal_img, dither=dither_mode)
+        return np.array(q, dtype=np.int32) % num_colors
     else:
         dither_mode = Image.Dither.NONE
-
-    q = img.quantize(palette=pal_img, dither=dither_mode)
-    return np.array(q, dtype=np.int32) % num_colors
+        q = img.quantize(palette=pal_img, dither=dither_mode)
+        return np.array(q, dtype=np.int32) % num_colors
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -125,7 +194,7 @@ def parse_args():
     parser.add_argument("--height", type=int, default=HEIGHT, help="出力高さ（ブロック数）")
     parser.add_argument("--palette", choices=PALETTES.keys(), default="concrete", help="使用するブロック色パレット")
     parser.add_argument("--dither", action="store_true", help="ディザリングを有効化")
-    parser.add_argument("--dither-method", choices=["none", "floyd", "ordered"], default="none", help="ディザリング手法（--ditherと併用）")
+    parser.add_argument("--dither-method", choices=["none", "floyd", "atkinson", "burkes", "sierra", "ordered"], default="none", help="ディザリング手法")
     parser.add_argument("--video-id", default=None, help="動画ID（マルチ動画パック用）")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 4, help="使用スレッド数")
     parser.add_argument("--adaptive-fps", action="store_true", default=True, help="適応的フレームレート(静止シーンスキップ)を有効化")
@@ -170,7 +239,7 @@ def main():
     if args.dither and dither_method == 'none':
         dither_method = 'floyd'
 
-    palette_rgb_arr = np.array([item['rgb'] for item in palette], dtype=np.float64) if dither_method == 'ordered' else None
+    palette_rgb_arr = np.array([item['rgb'] for item in palette], dtype=np.float64) if dither_method in ('ordered', 'atkinson', 'burkes', 'sierra') else None
 
     # ThreadPoolExecutor による並列フレーム処理
     def task(file_path):

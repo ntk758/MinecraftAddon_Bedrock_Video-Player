@@ -1,12 +1,12 @@
 """配布パックに埋め込むリリース情報の唯一の管理場所。"""
 
-PACK_VERSION = (1, 7, 0)
+PACK_VERSION = (1, 8, 0)
 RELEASE_NOTES = [
-    "1パックに複数動画を搭載可能なマルチ動画アーキテクチャ(list/play/stopコマンド対応)",
-    "39色拡張パレット(Concrete 16色+Terracotta 17色+自発光ブロック6種)による色再現性の最大化",
-    "Floyd-Steinberg / Ordered (Bayer) ディザリング選択によるグラデーション品質向上",
-    "GUIで複数動画の追加・削除・一括ビルドに対応(Treeview管理UI)",
-    "Adaptive FPS + Delta VarInt Base64圧縮で1時間48MB / 1GBに21時間保存可能",
+    "全50+色マイクラブロック解析と照明不変発光ブロックパレット(39色/55色)を導入",
+    "全5種類(Floyd-Steinberg/Atkinson/Burkes/Sierra/Ordered)のディザリングアルゴリズム選択",
+    "1パックに複数動画を搭載可能なマルチ動画インデックス化(list/play/stopコマンド対応)",
+    "Adaptive FPS + Delta VarInt Base64圧縮で1時間48MB / 1GBに21時間分(映画10本分)保存可能",
+    "GitHub Actionsによる5%性能低下防止のCI自動性能回帰テストを導入",
 ]
 
 

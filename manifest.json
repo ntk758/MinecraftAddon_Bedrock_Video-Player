@@ -1,10 +1,10 @@
 {
   "format_version": 2,
   "header": {
-    "name": "Block Video Player v1.7.0",
-    "description": "Block Video Player v1.7.0: 1パックに複数動画搭載・39色パレット・ディザリング選択対応",
+    "name": "Block Video Player v1.8.0",
+    "description": "Block Video Player v1.8.0: 全50+色パレット・5種ディザリング・マルチ動画遅延ロード対応",
     "uuid": "f20c8b97-b196-4382-b351-6f78b0799373",
-    "version": [1, 7, 0],
+    "version": [1, 8, 0],
     "min_engine_version": [1, 21, 0]
   },
   "modules": [
@@ -13,7 +13,7 @@
       "type": "script",
       "language": "javascript",
       "uuid": "910487e0-c963-4589-a1f4-833a0b94d996",
-      "version": [1, 7, 0],
+      "version": [1, 8, 0],
       "entry": "scripts/main.js"
     }
   ],

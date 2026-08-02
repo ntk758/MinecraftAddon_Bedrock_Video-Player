@@ -123,18 +123,23 @@ class PackBuilderApp(tk.Tk):
         preset.grid(row=1, column=1, columnspan=2, padx=(0, 10), pady=(0, 6), sticky="w")
         preset.bind("<<ComboboxSelected>>", lambda _event: self._apply_quality_preset())
 
-        # パレット選択 (39色対応)
+        # パレット選択 (55色対応)
         ttk.Label(settings, text="パレット").grid(row=1, column=3, padx=(10, 4), pady=(0, 6))
         ttk.Combobox(
             settings, textvariable=self.palette_var, state="readonly", width=36,
-            values=("全39色（concrete + terracotta + 自発光）", "拡張 33色（concrete + terracotta）", "基本 16色（concrete）"),
+            values=(
+                "全55色（concrete + terracotta + 自発光 + wool + 鉱石）",
+                "全39色（concrete + terracotta + 自発光）",
+                "拡張 33色（concrete + terracotta）",
+                "基本 16色（concrete）",
+            ),
         ).grid(row=1, column=4, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
 
-        # ディザリング選択
+        # ディザリング選択 (全5種対応)
         ttk.Label(settings, text="ディザリング").grid(row=2, column=0, padx=(10, 4), pady=(0, 6))
         ttk.Combobox(
             settings, textvariable=self.dither_var, state="readonly", width=25,
-            values=("なし", "Floyd-Steinberg", "Ordered (Bayer)"),
+            values=("なし", "Floyd-Steinberg", "Atkinson", "Burkes", "Sierra Lite", "Ordered (Bayer)"),
         ).grid(row=2, column=1, columnspan=2, padx=(0, 10), pady=(0, 6), sticky="w")
 
         # --- 説明文 ---
@@ -288,7 +293,9 @@ class PackBuilderApp(tk.Tk):
 
         # パレット選択
         pal_text = self.palette_var.get()
-        if pal_text.startswith("全39"):
+        if pal_text.startswith("全55"):
+            palette = "all_55"
+        elif pal_text.startswith("全39"):
             palette = "full"
         elif pal_text.startswith("拡張"):
             palette = "expanded"
@@ -299,6 +306,12 @@ class PackBuilderApp(tk.Tk):
         dither_text = self.dither_var.get()
         if dither_text == "Floyd-Steinberg":
             dither_method = "floyd"
+        elif dither_text == "Atkinson":
+            dither_method = "atkinson"
+        elif dither_text == "Burkes":
+            dither_method = "burkes"
+        elif dither_text == "Sierra Lite":
+            dither_method = "sierra"
         elif dither_text.startswith("Ordered"):
             dither_method = "ordered"
         else:
