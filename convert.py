@@ -65,11 +65,14 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
 
     error_buffer = torch.zeros((height, width, 3), dtype=torch.float32, device="cuda")
     prev_idx_tensor = None
+    prev_orig_img_tensor = None
     rdo_threshold = 20.0
+    me_threshold = 5.0 # 背景と見なす元画像の最大色差
     temporal_dither_weight = 0.5
 
     for i, img_arr in enumerate(frames_iter):
-        img_tensor = torch.tensor(img_arr, dtype=torch.float32, device="cuda")
+        orig_img_tensor = torch.tensor(img_arr, dtype=torch.float32, device="cuda")
+        img_tensor = orig_img_tensor.clone()
         
         # Temporal Dithering (前フレームからの誤差を加算)
         img_tensor += error_buffer
@@ -86,14 +89,26 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
         dists = torch.cdist(img_tensor.view(-1, 3), pal_tensor)
         idx_tensor = torch.argmin(dists, dim=1).view(height, width)
         
-        # Rate-Distortion Optimization (RDO)
-        # 前フレームと同じ色を維持した場合の歪み(Distortion)を計算し、許容範囲内なら再利用(Rate削減)する
-        if prev_idx_tensor is not None:
+        # Rate-Distortion Optimization (RDO) & Motion Estimation (ME)
+        if prev_idx_tensor is not None and prev_orig_img_tensor is not None:
+            # 1. ME Mask (背景静止化)
+            # オリジナル画像同士の絶対誤差(SAD)を計算し、小さなノイズレベルの変化なら「静止」とみなす
+            diff_orig = torch.abs(orig_img_tensor - prev_orig_img_tensor).mean(dim=-1) # (H, W)
+            # PyTorchのAvgPool2dを使って3x3領域で平均化し、孤立したノイズを除去（周辺も静止しているか確認）
+            diff_orig_pool = torch.nn.functional.avg_pool2d(
+                diff_orig.unsqueeze(0).unsqueeze(0), kernel_size=3, stride=1, padding=1
+            ).squeeze(0).squeeze(0)
+            
+            me_mask = diff_orig_pool < me_threshold
+            
+            # 2. RDO (ディザリング抑制)
             prev_colors = pal_tensor[prev_idx_tensor] # (H, W, 3)
             dist_to_prev = torch.norm(img_tensor - prev_colors, dim=-1) # (H, W)
-            # 閾値以下の歪みなら前フレームの色を採用
             rdo_mask = dist_to_prev < rdo_threshold
-            idx_tensor = torch.where(rdo_mask, prev_idx_tensor, idx_tensor)
+            
+            # MEで完全に静止しているか、RDOで許容範囲なら再利用
+            reuse_mask = me_mask | rdo_mask
+            idx_tensor = torch.where(reuse_mask, prev_idx_tensor, idx_tensor)
             
         # Temporal Dithering のための誤差計算
         selected_colors = pal_tensor[idx_tensor]
@@ -103,8 +118,9 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
         
         processed_frames.append(idx_tensor.cpu().numpy().astype(np.int32) % num_colors)
         prev_idx_tensor = idx_tensor.clone()
+        prev_orig_img_tensor = orig_img_tensor.clone()
 
-        del img_tensor, dists, idx_tensor, selected_colors
+        del orig_img_tensor, img_tensor, dists, idx_tensor, selected_colors
         if i % 64 == 63:
             torch.cuda.empty_cache()
 
@@ -130,6 +146,7 @@ def parse_args():
     parser.add_argument("--gpu", action="store_true")
     parser.add_argument("--adaptive-fps", action="store_true", default=True)
     parser.add_argument("--scene-threshold", type=float, default=0.015)
+    parser.add_argument("--demo-gif", default=None, help="指定されたパスにデモ用GIFを出力する")
     return parser.parse_args()
 
 def ffmpeg_frame_generator(video_path, width, height, fps, duration=None):
@@ -307,11 +324,11 @@ def main():
             proc_idx = idx * 10
             if proc_idx < len(processed_frames):
                 # 変換後のインデックスをRGBに戻す
-                p_frame = processed_frames[proc_idx]
+                p_frame_flat = np.array(processed_frames[proc_idx]).flatten()
                 p_rgb = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
                 for y in range(HEIGHT):
                     for x in range(WIDTH):
-                        color_id = p_frame[y * WIDTH + x]
+                        color_id = p_frame_flat[y * WIDTH + x]
                         if color_id < num_colors:
                             p_rgb[y, x] = palette[color_id]['rgb']
                 
@@ -320,6 +337,33 @@ def main():
                 count += 1
         if count > 0:
             avg_ssim = ssim_sum / count
+            
+    # --- Demo GIF Generation ---
+    if args.demo_gif and len(processed_frames) > 0:
+        print("Generating demo GIF...")
+        gif_frames = []
+        for p_frame in processed_frames:
+            p_frame_flat = np.array(p_frame).flatten()
+            p_rgb = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
+            for y in range(HEIGHT):
+                for x in range(WIDTH):
+                    color_id = p_frame_flat[y * WIDTH + x]
+                    if color_id < num_colors:
+                        p_rgb[y, x] = palette[color_id]['rgb']
+            
+            img = Image.fromarray(p_rgb)
+            img = img.resize((WIDTH * 4, HEIGHT * 4), Image.Resampling.NEAREST)
+            gif_frames.append(img)
+            
+        gif_frames[0].save(
+            args.demo_gif,
+            save_all=True,
+            append_images=gif_frames[1:],
+            optimize=True,
+            duration=int(1000 / args.fps),
+            loop=0
+        )
+        print(f"Demo GIF saved to {args.demo_gif}")
             
     print(f"[MVCodec Benchmark] SSIM: {avg_ssim:.4f}")
     print(f"[MVCodec Benchmark] FileSizeKB: {file_size_kb:.2f}")
