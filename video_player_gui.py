@@ -1,8 +1,9 @@
-"""動画からMinecraft Bedrock用の.mcpackを作成するGUI。複数動画搭載対応。"""
+"""動画からMinecraft Bedrock用の.mcpackを作成するGUI。複数動画搭載・10秒分割音声同期・キーフレーム対応。"""
 
 from __future__ import annotations
 
 import json
+import os
 import queue
 import re
 import shutil
@@ -24,6 +25,30 @@ MAIN_SCRIPT = APP_DIR / "main.js"
 CONVERTER = APP_DIR / "convert.py"
 
 
+def get_ffmpeg_path() -> str | None:
+    # 1. PyInstaller 内部展開ディレクトリ
+    if hasattr(sys, "_MEIPASS"):
+        meipass_ffmpeg = Path(getattr(sys, "_MEIPASS")) / "ffmpeg.exe"
+        if meipass_ffmpeg.is_file():
+            return str(meipass_ffmpeg)
+    
+    # 2. アプリ実行ファイルと同階層
+    app_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else APP_DIR
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        local_ffmpeg = app_dir / name
+        if local_ffmpeg.is_file():
+            return str(local_ffmpeg)
+
+    # 3. カレントディレクトリ
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        cwd_ffmpeg = Path.cwd() / name
+        if cwd_ffmpeg.is_file():
+            return str(cwd_ffmpeg)
+
+    # 4. システム PATH
+    return shutil.which("ffmpeg")
+
+
 class PackBuilderApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -43,7 +68,7 @@ class PackBuilderApp(tk.Tk):
         self.duration_var = tk.StringVar()
         self.thumbnail_time_var = tk.StringVar(value="0")
         self.quality_var = tk.StringVar(value="高画質 (128×128 / 10fps)")
-        self.palette_var = tk.StringVar(value="全39色（concrete + terracotta + 自発光）")
+        self.palette_var = tk.StringVar(value="ウルトラ全110色（全マイクラ実在色・最高画質）")
         self.dither_var = tk.StringVar(value="Floyd-Steinberg")
         self.keyframe_interval_var = tk.IntVar(value=30)
         self._build_ui()
@@ -176,9 +201,7 @@ class PackBuilderApp(tk.Tk):
         )
         for path in paths:
             p = Path(path)
-            # 動画IDはファイル名のstem（英数字・アンダースコアのみ）
             video_id = re.sub(r"[^a-z0-9_]", "_", p.stem.lower())
-            # 重複チェック
             existing_ids = [self.video_tree.item(iid)["values"][0] for iid in self.video_tree.get_children()]
             if video_id in existing_ids:
                 suffix = 2
@@ -253,7 +276,6 @@ class PackBuilderApp(tk.Tk):
             self.output_var.set(path)
 
     def _start_build(self) -> None:
-        # 動画リストから取得
         video_entries = []
         for iid in self.video_tree.get_children():
             vals = self.video_tree.item(iid)["values"]
@@ -275,7 +297,6 @@ class PackBuilderApp(tk.Tk):
             output = output.with_suffix(".mcpack")
             self.output_var.set(str(output))
 
-        # 各動画ファイルの存在チェック
         for entry in video_entries:
             if not Path(entry["file_path"]).is_file():
                 messagebox.showerror("ファイルが見つかりません", f"動画ファイルが見つかりません:\n{entry['file_path']}")
@@ -349,57 +370,6 @@ class PackBuilderApp(tk.Tk):
         if process.wait() != 0:
             raise RuntimeError(f"コマンドが終了コード {process.returncode} で失敗しました。")
 
-def get_ffmpeg_path() -> str | None:
-    # 1. PyInstaller 内部展開ディレクトリ
-    if hasattr(sys, "_MEIPASS"):
-        meipass_ffmpeg = Path(getattr(sys, "_MEIPASS")) / "ffmpeg.exe"
-        if meipass_ffmpeg.is_file():
-            return str(meipass_ffmpeg)
-    
-    # 2. アプリ実行ファイルと同階層
-    app_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else APP_DIR
-    for name in ("ffmpeg.exe", "ffmpeg"):
-        local_ffmpeg = app_dir / name
-        if local_ffmpeg.is_file():
-            return str(local_ffmpeg)
-
-    # 3. カレントディレクトリ
-    for name in ("ffmpeg.exe", "ffmpeg"):
-        cwd_ffmpeg = Path.cwd() / name
-        if cwd_ffmpeg.is_file():
-            return str(cwd_ffmpeg)
-
-    # 4. システム PATH
-    return shutil.which("ffmpeg")
-
-
-class PackBuilderApp(tk.Tk):
-    def __init__(self) -> None:
-        super().__init__()
-        self.title("Block Video Player Pack Builder")
-        self.minsize(780, 660)
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(5, weight=0)
-        self.rowconfigure(9, weight=1)
-        self.messages = queue.Queue()
-
-        self.output_var = tk.StringVar(value=str(APP_DIR / "VideoPlayer.mcpack"))
-        self.pack_name_var = tk.StringVar(value="Block Video Player")
-        self.namespace_var = tk.StringVar(value="badapple")
-        self.width_var = tk.IntVar(value=64)
-        self.height_var = tk.IntVar(value=64)
-        self.interval_var = tk.IntVar(value=1)
-        self.duration_var = tk.StringVar()
-        self.thumbnail_time_var = tk.StringVar(value="0")
-        self.quality_var = tk.StringVar(value="高画質 (128×128 / 10fps)")
-        self.palette_var = tk.StringVar(value="ウルトラ全110色（全マイクラ実在色・最高画質）")
-        self.dither_var = tk.StringVar(value="Floyd-Steinberg")
-        self._build_ui()
-        self._apply_quality_preset()
-        self.after(100, self._drain_messages)
-
-    # ... 中略 ...
-
     def _build_pack(
         self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
         width: int, height: int, interval: int, duration: float | None, palette: str, dither_method: str
@@ -420,7 +390,6 @@ class PackBuilderApp(tk.Tk):
 
                 video_index_entries = []
                 first_thumbnail = None
-
                 sound_definitions = {}
 
                 total_videos = len(video_entries)
@@ -440,13 +409,12 @@ class PackBuilderApp(tk.Tk):
                     self.messages.put(f"  サムネイルを切り出し中 (秒={thumb_sec})…")
                     self._run([
                         ffmpeg, "-y", "-ss", str(thumb_sec), "-i", str(video), "-frames:v", "1",
-                        "-vf", "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black",
+                        "-vf", "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-ih)/2:(oh-ih)/2:black",
                         str(thumbnail),
                     ])
                     if not thumbnail.is_file() or thumbnail.stat().st_size == 0:
                         raise RuntimeError(f"サムネイル生成失敗: {video_id}")
 
-                    # 最初の動画のサムネイルをパックアイコンに使用
                     if first_thumbnail is None:
                         first_thumbnail = thumbnail
 
@@ -464,7 +432,6 @@ class PackBuilderApp(tk.Tk):
                     except Exception as e:
                         self.messages.put(f"  警告: 音声抽出スキップ (無音動画またはエラー): {e}")
 
-                    # 抽出された ogg ファイル群をサウンド定義に登録
                     ogg_files = sorted(sounds_dir.glob("chunk_*.ogg"), key=lambda p: int(p.stem.split("_")[1]))
                     for ogg_file in ogg_files:
                         chunk_idx = int(ogg_file.stem.split("_")[1])
@@ -479,7 +446,7 @@ class PackBuilderApp(tk.Tk):
                             ]
                         }
 
-                    # フレーム抽出 (FFmpeg GPU アクセラレーション -hwaccel auto 対応)
+                    # フレーム抽出 (FFmpeg GPU HWAccel 対応)
                     ffmpeg_command = [ffmpeg, "-y", "-hwaccel", "auto", "-i", str(video)]
                     if duration is not None:
                         ffmpeg_command.extend(["-t", str(duration)])
@@ -491,7 +458,6 @@ class PackBuilderApp(tk.Tk):
                     try:
                         self._run(ffmpeg_command)
                     except Exception:
-                        # HWAccel エラー時は CPU 標準デコードにフォールバック
                         ffmpeg_command = [ffmpeg, "-y", "-i", str(video)]
                         if duration is not None:
                             ffmpeg_command.extend(["-t", str(duration)])
@@ -514,7 +480,6 @@ class PackBuilderApp(tk.Tk):
                     ]
                     self._run(converter_command)
 
-                    # フレーム数を生成されたJSファイルから読み取り
                     frame_count = 0
                     try:
                         js_text = generated_data.read_text(encoding="utf-8")
@@ -542,7 +507,7 @@ class PackBuilderApp(tk.Tk):
                         encoding="utf-8"
                     )
 
-                # videos.js を自動生成（静的インポートのみ）
+                # videos.js 自動生成
                 self.messages.put("videos.js（動画インデックス）を生成中…")
                 videos_js_lines = []
                 for entry in video_index_entries:
@@ -567,7 +532,7 @@ class PackBuilderApp(tk.Tk):
                     json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
                 )
 
-                # main.js（名前空間・再生間隔を置換）
+                # main.js
                 main_text = MAIN_SCRIPT.read_text(encoding="utf-8")
                 main_text = main_text.replace(
                     'const EVENT_NAMESPACE = "badapple";', f'const EVENT_NAMESPACE = "{namespace}";'
@@ -576,14 +541,11 @@ class PackBuilderApp(tk.Tk):
                 )
                 (scripts / "main.js").write_text(main_text, encoding="utf-8")
 
-                # パックアイコン
                 if first_thumbnail and first_thumbnail.is_file():
                     shutil.copy2(first_thumbnail, pack_root / "pack_icon.png")
 
-                # CHANGELOG.md
                 (pack_root / "CHANGELOG.md").write_text(changelog_markdown(pack_name), encoding="utf-8")
 
-                # .mcpack (ZIP) を作成
                 output.parent.mkdir(parents=True, exist_ok=True)
                 with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
                     for file in pack_root.rglob("*"):
@@ -599,6 +561,7 @@ class PackBuilderApp(tk.Tk):
                 f"  /scriptevent {namespace}:setup  … 原点セットアップ\n"
                 f"  /scriptevent {namespace}:list   … 動画一覧表示\n"
                 f"  /scriptevent {namespace}:play <動画ID>  … 再生\n"
+                f"  /scriptevent {namespace}:gui    … リモコンGUI起動\n"
                 f"  /scriptevent {namespace}:stop   … 停止・クリア",
             ))
         except Exception as error:

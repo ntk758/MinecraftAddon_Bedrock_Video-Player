@@ -99,6 +99,7 @@ python video_player_gui.py
 
 ## 📜 バージョン履歴
 
+- **v2.3.1**: GUIクラス構造 (`_build_ui`) の修復・安定化と自動起動テストを完備。
 - **v2.3.0**: キーフレーム (I/P Frame, GOP=30) 方式を導入。画面乱れのない超高速 14ms シーク復元に対応。
 - **v2.2.0**: PyInstaller による独立スタンドアロン EXE ビルド環境 (`build_standalone.py`) およびポータブル FFmpeg 自動検索を追加。既存の全スクリプトを完全保持。
 - **v2.1.0**: GPU (PyTorch / CUDA テンソル一括減色演算 & FFmpeg `-hwaccel auto` デコード) アクセラレーションおよびCPUフォールバック機能を完全統合。

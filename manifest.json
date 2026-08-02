@@ -1,10 +1,10 @@
 {
   "format_version": 2,
   "header": {
-    "name": "Block Video Player v2.3.0",
-    "description": "Block Video Player v2.3.0: キーフレーム(I/P Frame)シーク対応・GPU加速・110色パレット",
+    "name": "Block Video Player v2.3.1",
+    "description": "Block Video Player v2.3.1: キーフレームシーク対応・GUI修正・GPU加速・110色パレット",
     "uuid": "f20c8b97-b196-4382-b351-6f78b0799373",
-    "version": [2, 3, 0],
+    "version": [2, 3, 1],
     "min_engine_version": [1, 21, 0]
   },
   "modules": [
@@ -13,7 +13,7 @@
       "type": "script",
       "language": "javascript",
       "uuid": "910487e0-c963-4589-a1f4-833a0b94d996",
-      "version": [2, 3, 0],
+      "version": [2, 3, 1],
       "entry": "scripts/main.js"
     }
   ],
