@@ -156,6 +156,7 @@ class PackBuilderApp(tk.Tk):
         ttk.Combobox(
             settings, textvariable=self.palette_var, state="readonly", width=42,
             values=(
+                "自動 (動画解析・最適化)",
                 "ウルトラ全110色（全マイクラ実在色・最高画質）",
                 "全55色（concrete + terracotta + 自発光 + wool + 鉱石）",
                 "全39色（concrete + terracotta + 自発光）",
@@ -331,9 +332,9 @@ class PackBuilderApp(tk.Tk):
 
         # パレット選択
         pal_text = self.palette_var.get()
-        if pal_text.startswith("ウルトラ"):
-            palette = "ultra_110"
-        elif pal_text.startswith("全55"):
+        if pal_text.startswith("自動"):
+            palette = "auto"
+        elif pal_text.startswith("ウルトラ") or pal_text.startswith("全55"):
             palette = "all_55"
         elif pal_text.startswith("全39"):
             palette = "full"
