@@ -1,8 +1,8 @@
-# Block Video Player — 統合版(Bedrock)ブロック動画プレイヤー (v2.6.1)
+# Block Video Player — 統合版(Bedrock)ブロック動画プレイヤー (v2.6.3)
 
 [umbreonben/mc-cushion-bad-apple](https://github.com/umbreonben/mc-cushion-bad-apple) (Java版 datapack) を Minecraft統合版 (Bedrock Edition) の Behavior Pack + Script API 向けに再実装したブロック動画再生アドオン＆変換システムです。
 
-**最新バージョン v2.6.1**: README および GUI の表示を整理し、ディザリングの仕様（GPU対応/非対応）を分かりやすく記載しました。
+**最新バージョン v2.6.3**: .mcaddon 生成時に Script API の依存関係が消えてしまうバグおよび、GUI の起動エラーを修正しました。
 
 ---
 
@@ -79,6 +79,8 @@ python video_player_gui.py
 
 ## 📜 バージョン履歴
 
+- **v2.6.3**: `.mcaddon` 生成時に Script API の依存関係（`@minecraft/server` 等）が消えてしまうバグを修正。
+- **v2.6.2**: GUI (`video_player_gui.py`) 起動時に変数が読み込めず開けなくなる不具合を修正。
 - **v2.6.1**: READMEとGUIのテキストを整理。事実ベースの説明へ改修し、ディザリング時のGPU対応状況を明記。
 - **v2.6.0**: Ordered (Bayer) ディザリング時の GPU テンソル並列計算と、VRAM パンクを防ぐミニバッチ・キャッシュ解放 (OOM 対策) を実装。
 - **v2.5.0**: 音声再生の完全対応。パック構造を Behavior Pack (BP) と Resource Pack (RP) に分離し、`.mcaddon` 形式で出力するようアーキテクチャを刷新。
