@@ -284,7 +284,7 @@ def main():
     adaptive_fps = args.adaptive_fps
     scene_threshold = args.scene_threshold
 
-    encoded_data = bytearray()
+    frame_strings = []
     
     prev_frame = np.full(WIDTH * HEIGHT, -1, dtype=np.int32)
     
@@ -300,6 +300,7 @@ def main():
             diff_ratio = np.mean(flat_frame != prev_frame)
             if diff_ratio < scene_threshold:
                 skipped_frames += 1
+                frame_strings.append("") # スキップフレームは空文字
                 continue
         
         if is_keyframe:
@@ -310,6 +311,7 @@ def main():
             
         frame_indices.append(i)
         
+        encoded_data = bytearray()
         chunk_count = len(chunks)
         encode_varint((i << 1) | (1 if is_keyframe else 0), encoded_data)
         encode_varint(chunk_count, encoded_data)
@@ -320,24 +322,24 @@ def main():
             encode_varint(data_val, encoded_data)
             
         prev_frame = flat_frame.copy()
-
-    base64_str = base64.b64encode(encoded_data).decode('ascii')
-    utf16_str = bytearray_to_utf16_str(encoded_data)
+        utf16_str = bytearray_to_utf16_str(encoded_data)
+        prefix = "K:" if is_keyframe else ""
+        frame_strings.append(prefix + utf16_str)
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     
     export_var = "FRAME_DATA"
     if args.video_id:
-        # export_var = f"FRAME_DATA_{args.video_id}"  # keep generic for now
         pass
         
+    import json
     js_content = f"""export const {export_var} = {{
-  width: {WIDTH},
-  height: {HEIGHT},
-  frames: {total_frames},
-  binary: "{utf16_str}",
-  format: "varint_rle_v2"
+  "width": {WIDTH},
+  "height": {HEIGHT},
+  "frame_count": {total_frames},
+  "format": "varint_rle_v2",
+  "frames": {json.dumps(frame_strings, ensure_ascii=False)}
 }};
 """
     out_path.write_text(js_content, encoding='utf-8')
