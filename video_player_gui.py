@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import uuid
 import zipfile
 from pathlib import Path
 import tkinter as tk
@@ -59,7 +60,7 @@ class PackBuilderApp(tk.Tk):
         self.rowconfigure(9, weight=1)
         self.messages = queue.Queue()
 
-        self.output_var = tk.StringVar(value=str(APP_DIR / "VideoPlayer.mcpack"))
+        self.output_var = tk.StringVar(value=str(APP_DIR / "VideoPlayer.mcaddon"))
         self.pack_name_var = tk.StringVar(value="Block Video Player")
         self.namespace_var = tk.StringVar(value="badapple")
         self.width_var = tk.IntVar(value=64)
@@ -268,9 +269,9 @@ class PackBuilderApp(tk.Tk):
 
     def _select_output(self) -> None:
         path = filedialog.asksaveasfilename(
-            title=".mcpackの保存先",
-            defaultextension=".mcpack",
-            filetypes=[("Minecraft Pack", "*.mcpack")],
+            title=".mcaddonの保存先",
+            defaultextension=".mcaddon",
+            filetypes=[("Minecraft Addon", "*.mcaddon")],
         )
         if path:
             self.output_var.set(path)
@@ -291,10 +292,10 @@ class PackBuilderApp(tk.Tk):
 
         output = Path(self.output_var.get().strip())
         if not output.name:
-            messagebox.showerror("出力先が必要です", ".mcpackの保存先を指定してください。")
+            messagebox.showerror("出力先が必要です", ".mcaddonの保存先を指定してください。")
             return
-        if output.suffix.lower() != ".mcpack":
-            output = output.with_suffix(".mcpack")
+        if output.suffix.lower() != ".mcaddon":
+            output = output.with_suffix(".mcaddon")
             self.output_var.set(str(output))
 
         for entry in video_entries:
@@ -384,9 +385,12 @@ class PackBuilderApp(tk.Tk):
 
             with tempfile.TemporaryDirectory(prefix="block-video-player-") as temp_dir:
                 temp = Path(temp_dir)
-                pack_root = temp / "pack"
-                scripts = pack_root / "scripts"
+                bp_root = temp / "BP"
+                rp_root = temp / "RP"
+                scripts = bp_root / "scripts"
                 scripts.mkdir(parents=True)
+                rp_sounds = rp_root / "sounds"
+                rp_sounds.mkdir(parents=True)
 
                 video_index_entries = []
                 first_thumbnail = None
@@ -419,7 +423,7 @@ class PackBuilderApp(tk.Tk):
                         first_thumbnail = thumbnail
 
                     # 音声切り出し (10秒分割 .ogg, 44.1kHz ステレオ)
-                    sounds_dir = pack_root / "sounds" / "music" / video_id
+                    sounds_dir = rp_root / "sounds" / "music" / video_id
                     sounds_dir.mkdir(parents=True, exist_ok=True)
                     self.messages.put("  音声を10秒単位(.ogg, 44.1kHz)で切り出し中…")
                     try:
@@ -501,7 +505,7 @@ class PackBuilderApp(tk.Tk):
 
                 # sound_definitions.json の生成
                 if sound_definitions:
-                    sound_def_file = pack_root / "sounds" / "sound_definitions.json"
+                    sound_def_file = rp_root / "sounds" / "sound_definitions.json"
                     sound_def_file.parent.mkdir(parents=True, exist_ok=True)
                     sound_def_file.write_text(
                         json.dumps({"format_version": "1.14.0", "sound_definitions": sound_definitions}, ensure_ascii=False, indent=2),
@@ -524,13 +528,46 @@ class PackBuilderApp(tk.Tk):
                 (scripts / "videos.js").write_text("\n".join(videos_js_lines), encoding="utf-8")
 
                 # manifest.json
-                manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-                manifest["header"]["name"] = f"{pack_name} v{version_text()}"
-                manifest["header"]["description"] = manifest_description()
-                manifest["header"]["version"] = list(PACK_VERSION)
-                manifest["modules"][0]["version"] = list(PACK_VERSION)
-                (pack_root / "manifest.json").write_text(
-                    json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+                bp_uuid = str(uuid.uuid4())
+                rp_uuid = str(uuid.uuid4())
+                bp_mod_uuid = str(uuid.uuid4())
+                rp_mod_uuid = str(uuid.uuid4())
+
+                # BP manifest
+                bp_manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+                bp_manifest["header"]["name"] = f"{pack_name} v{version_text()}"
+                bp_manifest["header"]["description"] = manifest_description()
+                bp_manifest["header"]["uuid"] = bp_uuid
+                bp_manifest["header"]["version"] = list(PACK_VERSION)
+                bp_manifest["modules"][0]["uuid"] = bp_mod_uuid
+                bp_manifest["modules"][0]["version"] = list(PACK_VERSION)
+                bp_manifest["dependencies"] = [{"uuid": rp_uuid, "version": list(PACK_VERSION)}]
+                (bp_root / "manifest.json").write_text(
+                    json.dumps(bp_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+                )
+
+                # RP manifest
+                rp_manifest = {
+                    "format_version": 2,
+                    "header": {
+                        "name": f"{pack_name} Res v{version_text()}",
+                        "description": manifest_description(),
+                        "uuid": rp_uuid,
+                        "version": list(PACK_VERSION),
+                        "min_engine_version": bp_manifest["header"]["min_engine_version"]
+                    },
+                    "modules": [
+                        {
+                            "description": "Resources",
+                            "type": "resources",
+                            "uuid": rp_mod_uuid,
+                            "version": list(PACK_VERSION)
+                        }
+                    ],
+                    "dependencies": [{"uuid": bp_uuid, "version": list(PACK_VERSION)}]
+                }
+                (rp_root / "manifest.json").write_text(
+                    json.dumps(rp_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
                 )
 
                 # main.js
@@ -543,15 +580,18 @@ class PackBuilderApp(tk.Tk):
                 (scripts / "main.js").write_text(main_text, encoding="utf-8")
 
                 if first_thumbnail and first_thumbnail.is_file():
-                    shutil.copy2(first_thumbnail, pack_root / "pack_icon.png")
+                    shutil.copy2(first_thumbnail, rp_root / "pack_icon.png")
+                    shutil.copy2(first_thumbnail, bp_root / "pack_icon.png")
 
-                (pack_root / "CHANGELOG.md").write_text(changelog_markdown(pack_name), encoding="utf-8")
+                (bp_root / "CHANGELOG.md").write_text(changelog_markdown(pack_name), encoding="utf-8")
+                (rp_root / "CHANGELOG.md").write_text(changelog_markdown(pack_name), encoding="utf-8")
 
                 output.parent.mkdir(parents=True, exist_ok=True)
                 with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-                    for file in pack_root.rglob("*"):
-                        if file.is_file():
-                            archive.write(file, file.relative_to(pack_root))
+                    for pack_dir in (bp_root, rp_root):
+                        for file in pack_dir.rglob("*"):
+                            if file.is_file():
+                                archive.write(file, file.relative_to(temp))
 
             video_names = ", ".join(e["id"] for e in video_index_entries)
             self.messages.put((
