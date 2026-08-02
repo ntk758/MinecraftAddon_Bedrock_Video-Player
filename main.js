@@ -429,22 +429,30 @@ function startPlayback(fallbackDimension) {
     timeoutId = null;
     if (!running) return;
     
-    // ジェネレータによるメイン再生ループ
-    currentJobId = system.runJob((function* () {
-      while (running && currentFrame < currentVideoData.frame_count) {
-        // 1フレームを分割描画
-        yield* applyFrameJob(dimension, anchorLoc, currentFrame);
-        
+    let frameIterator = null;
+
+    intervalId = system.runInterval(() => {
+      if (!running) return;
+
+      if (!frameIterator) {
+        if (currentFrame >= currentVideoData.frame_count) {
+          stopPlayback();
+          world.sendMessage(`§a[${EVENT_NAMESPACE}] 再生終了`);
+          return;
+        }
+        frameIterator = applyFrameJob(dimension, anchorLoc, currentFrame);
+      }
+
+      // 1 tick内で描画を進める
+      const { done } = frameIterator.next();
+
+      if (done) {
+        // フレーム描画完了
         syncAudioForFrame(currentFrame);
         currentFrame++;
-        yield; // 次のフレームへ
+        frameIterator = null;
       }
-      
-      if (running) {
-        stopPlayback();
-        world.sendMessage(`§a[${EVENT_NAMESPACE}] 再生終了`);
-      }
-    })());
+    }, FRAME_INTERVAL_TICKS);
     
   }, START_LOAD_DELAY_TICKS);
   world.sendMessage(`§a[${EVENT_NAMESPACE}] 読み込み完了後に再生します。リモコン(コンパス)右クリックで操作GUIが開きます`);
