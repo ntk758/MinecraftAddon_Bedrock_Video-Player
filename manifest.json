@@ -1,10 +1,10 @@
 {
   "format_version": 2,
   "header": {
-    "name": "Block Video Player v1.3.4",
-    "description": "Block Video Player v1.3.4: コード整理(TICKING_AREA_NAME定義順序の修正など)",
+    "name": "Block Video Player v1.4.0",
+    "description": "Block Video Player v1.4.0: 1Dビットパッキングによるデータ圧縮・描画高速化",
     "uuid": "f20c8b97-b196-4382-b351-6f78b0799373",
-    "version": [1, 3, 4],
+    "version": [1, 4, 0],
     "min_engine_version": [1, 21, 0]
   },
   "modules": [
@@ -13,7 +13,7 @@
       "type": "script",
       "language": "javascript",
       "uuid": "910487e0-c963-4589-a1f4-833a0b94d996",
-      "version": [1, 3, 4],
+      "version": [1, 4, 0],
       "entry": "scripts/main.js"
     }
   ],

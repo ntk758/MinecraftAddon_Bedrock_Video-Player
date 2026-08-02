@@ -147,14 +147,17 @@ def main():
 
     for number, file in enumerate(files):
         current = convert_image(file, palette, args.dither)
-        changes = []
-        ys, xs = np.where(current != old)
-        for y, x in zip(ys, xs):
-            changes.append([int(x), int(y), int(current[y][x])])
-        frame_diffs.append(changes)
+        diff_mask = (current != old)
+        changed_indices = np.flatnonzero(diff_mask)
+        if len(changed_indices) > 0:
+            changed_colors = current.flat[changed_indices]
+            packed = ((changed_colors.astype(np.int32) << 16) | changed_indices.astype(np.int32)).tolist()
+        else:
+            packed = []
+        frame_diffs.append(packed)
         old = current
         if number % 50 == 0:
-            print(f"Frame {number}/{len(files)} - changes: {len(changes)}")
+            print(f"Frame {number}/{len(files)} - changes: {len(packed)}")
 
     data = {
         "width": WIDTH,

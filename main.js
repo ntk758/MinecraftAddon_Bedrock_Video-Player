@@ -45,7 +45,24 @@ const BLOCK_ID_ALIASES = {
 
 let currentFrame = 0;
 let running = false;
+let timeoutId = null;
 let intervalId = null;
+let paletteCache = null;
+const tempBlockLoc = { x: 0, y: 0, z: 0 };
+
+function initPaletteCache() {
+  if (!paletteCache || paletteCache.length !== FRAME_DATA.level_blocks.length) {
+    paletteCache = FRAME_DATA.level_blocks.map((spec) => {
+      const blockId = BLOCK_ID_ALIASES[spec.block] ?? spec.block;
+      try {
+        return BlockPermutation.resolve(blockId, spec.states);
+      } catch (e) {
+        console.warn(`[${EVENT_NAMESPACE}] Failed to resolve permutation for ${blockId}: ${e}`);
+        return BlockPermutation.resolve("minecraft:dirt");
+      }
+    });
+  }
+}
 
 function getAnchor() {
   // Vector3 { x, y, z } または undefined(未設定)が返る
@@ -90,19 +107,40 @@ function applyFrame(dimension, anchorLoc, frameIndex) {
   const diffs = FRAME_DATA.frames[frameIndex];
   if (!diffs) return;
 
-  for (const [x, y, level] of diffs) {
-    const spec = FRAME_DATA.level_blocks[level];
-    const blockId = BLOCK_ID_ALIASES[spec.block] ?? spec.block;
-    const worldX = anchorLoc.x + x;
-    const worldY = anchorLoc.y;
-    const worldZ = anchorLoc.z + y;
+  initPaletteCache();
+  const width = FRAME_DATA.width;
+
+  for (let i = 0; i < diffs.length; i++) {
+    const item = diffs[i];
+    let x, y, level;
+
+    if (typeof item === "number") {
+      // 1D packed format: (color << 16) | (y * width + x)
+      const idx = item & 0xffff;
+      level = item >>> 16;
+      x = idx % width;
+      y = (idx / width) | 0;
+    } else if (Array.isArray(item)) {
+      // Legacy format: [x, y, level]
+      x = item[0];
+      y = item[1];
+      level = item[2];
+    } else {
+      continue;
+    }
+
+    const permutation = paletteCache[level];
+    if (!permutation) continue;
+
+    tempBlockLoc.x = anchorLoc.x + x;
+    tempBlockLoc.y = anchorLoc.y;
+    tempBlockLoc.z = anchorLoc.z + y;
 
     try {
-      const permutation = BlockPermutation.resolve(blockId, spec.states);
-      dimension.setBlockPermutation({ x: worldX, y: worldY, z: worldZ }, permutation);
+      dimension.setBlockPermutation(tempBlockLoc, permutation);
     } catch (e) {
       console.warn(
-        `[${EVENT_NAMESPACE}] block resolve/apply failed at (${worldX},${worldY},${worldZ}) level=${level} block=${blockId}: ${e}`
+        `[${EVENT_NAMESPACE}] block resolve/apply failed at (${tempBlockLoc.x},${tempBlockLoc.y},${tempBlockLoc.z}) level=${level}: ${e}`
       );
     }
   }
@@ -110,6 +148,10 @@ function applyFrame(dimension, anchorLoc, frameIndex) {
 
 function stopPlayback() {
   running = false;
+  if (timeoutId !== null) {
+    system.clearRun(timeoutId);
+    timeoutId = null;
+  }
   if (intervalId !== null) {
     system.clearRun(intervalId);
     intervalId = null;
@@ -132,13 +174,8 @@ function startPlayback(fallbackDimension) {
   currentFrame = 0;
   running = true;
 
-  // intervalId は最初 runTimeout の識別子を保持し、その遅延後に
-  // runInterval の識別子で上書きされる。system.clearRun() は
-  // run/runTimeout/runInterval いずれの識別子でも安全にキャンセルできるため、
-  // stopPlayback() 側は intervalId がどちらの状態でも正しく動作する
-  // (Bedrock Wiki "Script Core Features" で確認済み)。
-  // tickingareaの反映を待つ。これを待たずにsetBlockすると未ロードチャンク例外になる。
-  intervalId = system.runTimeout(() => {
+  timeoutId = system.runTimeout(() => {
+    timeoutId = null;
     if (!running) return;
     intervalId = system.runInterval(() => {
       if (!running || currentFrame >= FRAME_DATA.frame_count) {
