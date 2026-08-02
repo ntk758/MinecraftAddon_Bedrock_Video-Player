@@ -2,6 +2,7 @@ import os
 import glob
 import json
 import argparse
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 import numpy as np
@@ -88,6 +89,12 @@ def parse_args():
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 4, help="使用スレッド数")
     return parser.parse_args()
 
+def encode_varint(val, byte_arr):
+    while val >= 0x80:
+        byte_arr.append((val & 0x7f) | 0x80)
+        val >>= 7
+    byte_arr.append(val & 0x7f)
+
 def main():
     global WIDTH, HEIGHT
     args = parse_args()
@@ -127,10 +134,17 @@ def main():
         changed_indices = np.flatnonzero(diff_mask)
         if len(changed_indices) > 0:
             changed_colors = current.flat[changed_indices]
-            packed = ((changed_colors.astype(np.int32) << 16) | changed_indices.astype(np.int32)).tolist()
+            byte_arr = bytearray()
+            prev_idx = 0
+            for idx, color in zip(changed_indices, changed_colors):
+                delta = int(idx) - prev_idx
+                val = (delta << 6) | (int(color) & 0x3f)
+                encode_varint(val, byte_arr)
+                prev_idx = int(idx)
+            packed_b64 = base64.b64encode(byte_arr).decode("ascii")
         else:
-            packed = []
-        frame_diffs.append(packed)
+            packed_b64 = ""
+        frame_diffs.append(packed_b64)
         old = current
 
     data = {

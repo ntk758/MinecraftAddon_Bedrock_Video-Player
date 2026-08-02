@@ -50,6 +50,35 @@ let intervalId = null;
 let paletteCache = null;
 const tempBlockLoc = { x: 0, y: 0, z: 0 };
 
+const B64_MAP = new Uint8Array(256);
+const B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+for (let i = 0; i < B64_CHARS.length; i++) {
+  B64_MAP[B64_CHARS.charCodeAt(i)] = i;
+}
+
+function decodeBase64ToBytes(b64Str) {
+  const len = b64Str.length;
+  if (len === 0) return new Uint8Array(0);
+  let validLen = len;
+  if (b64Str[len - 1] === "=") validLen--;
+  if (b64Str[len - 2] === "=") validLen--;
+
+  const byteLen = (validLen * 3) >> 2;
+  const bytes = new Uint8Array(byteLen);
+  let p = 0;
+  for (let i = 0; i < validLen; i += 4) {
+    const b0 = B64_MAP[b64Str.charCodeAt(i)];
+    const b1 = B64_MAP[b64Str.charCodeAt(i + 1)];
+    const b2 = B64_MAP[b64Str.charCodeAt(i + 2)];
+    const b3 = B64_MAP[b64Str.charCodeAt(i + 3)];
+
+    bytes[p++] = (b0 << 2) | (b1 >> 4);
+    if (p < byteLen) bytes[p++] = ((b1 & 15) << 4) | (b2 >> 2);
+    if (p < byteLen) bytes[p++] = ((b2 & 3) << 6) | b3;
+  }
+  return bytes;
+}
+
 function initPaletteCache() {
   if (!paletteCache || paletteCache.length !== FRAME_DATA.level_blocks.length) {
     paletteCache = FRAME_DATA.level_blocks.map((spec) => {
@@ -104,44 +133,82 @@ function ensureTickingArea(dimension, anchor) {
 
 /** フレーム番号の差分を実際にブロックへ適用する */
 function applyFrame(dimension, anchorLoc, frameIndex) {
-  const diffs = FRAME_DATA.frames[frameIndex];
-  if (!diffs) return;
+  const diffData = FRAME_DATA.frames[frameIndex];
+  if (!diffData) return;
 
   initPaletteCache();
   const width = FRAME_DATA.width;
 
-  for (let i = 0; i < diffs.length; i++) {
-    const item = diffs[i];
-    let x, y, level;
+  if (typeof diffData === "string") {
+    if (diffData.length === 0) return;
+    const bytes = decodeBase64ToBytes(diffData);
+    let offset = 0;
+    let currIdx = 0;
+    const len = bytes.length;
 
-    if (typeof item === "number") {
-      // 1D packed format: (color << 16) | (y * width + x)
-      const idx = item & 0xffff;
-      level = item >>> 16;
-      x = idx % width;
-      y = (idx / width) | 0;
-    } else if (Array.isArray(item)) {
-      // Legacy format: [x, y, level]
-      x = item[0];
-      y = item[1];
-      level = item[2];
-    } else {
-      continue;
+    while (offset < len) {
+      let val = 0;
+      let shift = 0;
+      while (true) {
+        const b = bytes[offset++];
+        val |= (b & 0x7f) << shift;
+        if ((b & 0x80) === 0) break;
+        shift += 7;
+      }
+      const delta = val >> 6;
+      const level = val & 0x3f;
+      currIdx += delta;
+
+      const x = currIdx % width;
+      const y = (currIdx / width) | 0;
+
+      const permutation = paletteCache[level];
+      if (!permutation) continue;
+
+      tempBlockLoc.x = anchorLoc.x + x;
+      tempBlockLoc.y = anchorLoc.y;
+      tempBlockLoc.z = anchorLoc.z + y;
+
+      try {
+        dimension.setBlockPermutation(tempBlockLoc, permutation);
+      } catch (e) {
+        console.warn(
+          `[${EVENT_NAMESPACE}] block resolve/apply failed at (${tempBlockLoc.x},${tempBlockLoc.y},${tempBlockLoc.z}) level=${level}: ${e}`
+        );
+      }
     }
+  } else if (Array.isArray(diffData)) {
+    for (let i = 0; i < diffData.length; i++) {
+      const item = diffData[i];
+      let x, y, level;
 
-    const permutation = paletteCache[level];
-    if (!permutation) continue;
+      if (typeof item === "number") {
+        const idx = item & 0xffff;
+        level = item >>> 16;
+        x = idx % width;
+        y = (idx / width) | 0;
+      } else if (Array.isArray(item)) {
+        x = item[0];
+        y = item[1];
+        level = item[2];
+      } else {
+        continue;
+      }
 
-    tempBlockLoc.x = anchorLoc.x + x;
-    tempBlockLoc.y = anchorLoc.y;
-    tempBlockLoc.z = anchorLoc.z + y;
+      const permutation = paletteCache[level];
+      if (!permutation) continue;
 
-    try {
-      dimension.setBlockPermutation(tempBlockLoc, permutation);
-    } catch (e) {
-      console.warn(
-        `[${EVENT_NAMESPACE}] block resolve/apply failed at (${tempBlockLoc.x},${tempBlockLoc.y},${tempBlockLoc.z}) level=${level}: ${e}`
-      );
+      tempBlockLoc.x = anchorLoc.x + x;
+      tempBlockLoc.y = anchorLoc.y;
+      tempBlockLoc.z = anchorLoc.z + y;
+
+      try {
+        dimension.setBlockPermutation(tempBlockLoc, permutation);
+      } catch (e) {
+        console.warn(
+          `[${EVENT_NAMESPACE}] block resolve/apply failed at (${tempBlockLoc.x},${tempBlockLoc.y},${tempBlockLoc.z}) level=${level}: ${e}`
+        );
+      }
     }
   }
 }
