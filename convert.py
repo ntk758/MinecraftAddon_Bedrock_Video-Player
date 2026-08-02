@@ -91,13 +91,73 @@ SPECIAL_BLOCKS_PALETTE = [
     {"name": "coal_block",      "block": "minecraft:coal_block",      "rgb": (18, 18, 18)},
 ]
 
+CONCRETE_POWDER_PALETTE = [
+    {"name": "white_concrete_powder",      "block": "minecraft:white_concrete_powder",      "rgb": (226, 227, 227)},
+    {"name": "orange_concrete_powder",     "block": "minecraft:orange_concrete_powder",     "rgb": (227, 131, 31)},
+    {"name": "magenta_concrete_powder",    "block": "minecraft:magenta_concrete_powder",    "rgb": (193, 84, 185)},
+    {"name": "light_blue_concrete_powder", "block": "minecraft:light_blue_concrete_powder", "rgb": (74, 181, 213)},
+    {"name": "yellow_concrete_powder",     "block": "minecraft:yellow_concrete_powder",     "rgb": (233, 199, 55)},
+    {"name": "lime_concrete_powder",       "block": "minecraft:lime_concrete_powder",       "rgb": (126, 189, 41)},
+    {"name": "pink_concrete_powder",       "block": "minecraft:pink_concrete_powder",       "rgb": (229, 153, 181)},
+    {"name": "gray_concrete_powder",       "block": "minecraft:gray_concrete_powder",       "rgb": (76, 81, 84)},
+    {"name": "light_gray_concrete_powder", "block": "minecraft:light_gray_concrete_powder", "rgb": (154, 154, 148)},
+    {"name": "cyan_concrete_powder",       "block": "minecraft:cyan_concrete_powder",       "rgb": (36, 147, 156)},
+    {"name": "purple_concrete_powder",     "block": "minecraft:purple_concrete_powder",     "rgb": (132, 56, 178)},
+    {"name": "blue_concrete_powder",       "block": "minecraft:blue_concrete_powder",       "rgb": (70, 73, 166)},
+    {"name": "brown_concrete_powder",      "block": "minecraft:brown_concrete_powder",      "rgb": (126, 85, 54)},
+    {"name": "green_concrete_powder",      "block": "minecraft:green_concrete_powder",      "rgb": (97, 119, 44)},
+    {"name": "red_concrete_powder",        "block": "minecraft:red_concrete_powder",        "rgb": (168, 54, 50)},
+    {"name": "black_concrete_powder",      "block": "minecraft:black_concrete_powder",      "rgb": (26, 27, 32)},
+]
+
+WOOD_PLANKS_PALETTE = [
+    {"name": "oak_planks",      "block": "minecraft:oak_planks",      "rgb": (162, 130, 78)},
+    {"name": "spruce_planks",   "block": "minecraft:spruce_planks",   "rgb": (114, 84, 48)},
+    {"name": "birch_planks",    "block": "minecraft:birch_planks",    "rgb": (192, 175, 121)},
+    {"name": "jungle_planks",   "block": "minecraft:jungle_planks",   "rgb": (160, 115, 80)},
+    {"name": "acacia_planks",   "block": "minecraft:acacia_planks",   "rgb": (168, 90, 50)},
+    {"name": "dark_oak_planks", "block": "minecraft:dark_oak_planks", "rgb": (66, 43, 20)},
+    {"name": "mangrove_planks", "block": "minecraft:mangrove_planks", "rgb": (118, 51, 51)},
+    {"name": "cherry_planks",   "block": "minecraft:cherry_planks",   "rgb": (226, 178, 174)},
+    {"name": "bamboo_planks",   "block": "minecraft:bamboo_planks",   "rgb": (196, 172, 70)},
+    {"name": "crimson_planks",  "block": "minecraft:crimson_planks",  "rgb": (106, 50, 70)},
+    {"name": "warped_planks",   "block": "minecraft:warped_planks",   "rgb": (43, 104, 99)},
+]
+
+STONE_MINERALS_PALETTE = [
+    {"name": "stone",            "block": "minecraft:stone",            "rgb": (125, 125, 125)},
+    {"name": "granite",          "block": "minecraft:granite",          "rgb": (149, 103, 85)},
+    {"name": "diorite",          "block": "minecraft:diorite",          "rgb": (188, 188, 188)},
+    {"name": "andesite",         "block": "minecraft:andesite",         "rgb": (134, 134, 134)},
+    {"name": "deepslate",        "block": "minecraft:deepslate",        "rgb": (81, 81, 84)},
+    {"name": "tuff",             "block": "minecraft:tuff",             "rgb": (108, 109, 102)},
+    {"name": "calcite",          "block": "minecraft:calcite",          "rgb": (224, 223, 218)},
+    {"name": "dripstone_block",  "block": "minecraft:dripstone_block",  "rgb": (134, 107, 92)},
+    {"name": "basalt",           "block": "minecraft:basalt",           "rgb": (80, 80, 85)},
+    {"name": "blackstone",       "block": "minecraft:blackstone",       "rgb": (42, 38, 45)},
+    {"name": "netherrack",       "block": "minecraft:netherrack",       "rgb": (111, 54, 54)},
+    {"name": "end_stone",        "block": "minecraft:end_stone",        "rgb": (220, 223, 158)},
+    {"name": "purpur_block",     "block": "minecraft:purpur_block",     "rgb": (169, 125, 169)},
+    {"name": "prismarine",       "block": "minecraft:prismarine",       "rgb": (99, 156, 151)},
+    {"name": "prismarine_bricks","block": "minecraft:prismarine_bricks","rgb": (99, 171, 158)},
+    {"name": "dark_prismarine",  "block": "minecraft:dark_prismarine",  "rgb": (51, 91, 75)},
+    {"name": "clay",             "block": "minecraft:clay",             "rgb": (160, 166, 179)},
+    {"name": "mud",              "block": "minecraft:mud",              "rgb": (60, 57, 62)},
+    {"name": "snow_block",       "block": "minecraft:snow_block",       "rgb": (240, 249, 249)},
+    {"name": "packed_ice",       "block": "minecraft:packed_ice",       "rgb": (160, 196, 245)},
+    {"name": "blue_ice",         "block": "minecraft:blue_ice",         "rgb": (116, 167, 253)},
+    {"name": "sponge",           "block": "minecraft:sponge",           "rgb": (195, 195, 80)},
+]
+
 ALL_BLOCKS = CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE + WOOL_PALETTE + SPECIAL_BLOCKS_PALETTE
+ULTRA_PALETTE_110 = ALL_BLOCKS + CONCRETE_POWDER_PALETTE + WOOD_PLANKS_PALETTE + STONE_MINERALS_PALETTE
 
 PALETTES = {
     "concrete": CONCRETE_PALETTE,
     "expanded": CONCRETE_PALETTE + TERRACOTTA_PALETTE,
     "full": CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE,
     "all_55": ALL_BLOCKS,
+    "ultra_110": ULTRA_PALETTE_110,
 }
 
 def create_pillow_palette_image(palette):
