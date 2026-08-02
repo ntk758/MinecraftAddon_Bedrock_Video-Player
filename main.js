@@ -259,7 +259,7 @@ function* applyBinarySlice(dimension, anchorLoc, width, bytes, startOff, endOff)
     const delta = val >>> 13;
     const length = ((val >>> 7) & 0x3f) + 1;
     const level = val & 0x7f;
-    currIdx += delta;
+    currIdx = delta;
 
     const x = currIdx % width;
     const y = (currIdx / width) | 0;
