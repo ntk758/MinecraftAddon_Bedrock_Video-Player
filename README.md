@@ -79,6 +79,7 @@ python video_player_gui.py
 
 ## 📜 バージョン履歴
 
+- **v2.6.4**: Script API での音声再生時、Bedrock 1.21以降の厳格な引数仕様により音が鳴らない（またはエラーが握り潰される）問題を修正。
 - **v2.6.3**: `.mcaddon` 生成時に Script API の依存関係（`@minecraft/server` 等）が消えてしまうバグを修正。
 - **v2.6.2**: GUI (`video_player_gui.py`) 起動時に変数が読み込めず開けなくなる不具合を修正。
 - **v2.6.1**: READMEとGUIのテキストを整理。事実ベースの説明へ改修し、ディザリング時のGPU対応状況を明記。

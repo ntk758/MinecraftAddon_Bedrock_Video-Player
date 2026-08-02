@@ -274,11 +274,14 @@ function syncAudioForFrame(frameIndex) {
     for (const player of world.getAllPlayers()) {
       try {
         player.stopMusic();
-        player.playSound(trackId, { volume: masterVolume, pitch: 1.0 });
+        player.playSound(trackId, { location: player.location, volume: masterVolume, pitch: 1.0 });
       } catch (e) {
+        console.warn(`[${EVENT_NAMESPACE}] playSound error: ${e}`);
         try {
           player.playMusic(trackId, { volume: masterVolume, loop: false });
-        } catch (e2) {}
+        } catch (e2) {
+          console.warn(`[${EVENT_NAMESPACE}] playMusic error: ${e2}`);
+        }
       }
     }
   }
