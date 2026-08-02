@@ -179,7 +179,6 @@ function applyFrame(dimension, anchorLoc, frameIndex) {
     let currIdx = 0;
     const len = bytes.length;
 
-    let appliedInTick = 0;
     while (offset < len) {
       let val = 0;
       let shift = 0;
@@ -205,11 +204,6 @@ function applyFrame(dimension, anchorLoc, frameIndex) {
 
       try {
         dimension.setBlockPermutation(tempBlockLoc, permutation);
-        appliedInTick++;
-        if (appliedInTick >= MAX_BLOCKS_PER_TICK) {
-          // 800ブロック設置ごとに1tickの処理上限に達した場合、描画スパイクを防ぐためループを一時中断
-          break;
-        }
       } catch (e) {
         console.warn(
           `[${EVENT_NAMESPACE}] block resolve/apply failed at (${tempBlockLoc.x},${tempBlockLoc.y},${tempBlockLoc.z}) level=${level}: ${e}`
@@ -251,8 +245,6 @@ function applyFrame(dimension, anchorLoc, frameIndex) {
     }
   }
 }
-
-const MAX_BLOCKS_PER_TICK = 800; // 1tickあたりのブロック設置上限数 (ラグ解消用)
 
 function stopPlayback() {
   running = false;
