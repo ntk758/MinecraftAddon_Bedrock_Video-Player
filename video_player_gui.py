@@ -498,7 +498,7 @@ class PackBuilderApp(tk.Tk):
                     try:
                         js_text = generated_data.read_text(encoding="utf-8")
                         import re as _re
-                        fc_match = _re.search(r'"frame_count":(\d+)', js_text)
+                        fc_match = _re.search(r'"frame_count":\s*(\d+)', js_text)
                         if fc_match:
                             frame_count = int(fc_match.group(1))
                     except Exception:

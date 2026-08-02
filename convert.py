@@ -284,7 +284,10 @@ def main():
     adaptive_fps = args.adaptive_fps
     scene_threshold = args.scene_threshold
 
-    frame_strings = []
+    # 全フレームを1本のバイナリに連結し、フレームごとのオフセットを記録する
+    all_encoded = bytearray()
+    # frame_offsets[i] = (byte_offset, byte_length, is_keyframe)
+    frame_offsets = []
     
     prev_frame = np.full(WIDTH * HEIGHT, -1, dtype=np.int32)
     
@@ -300,7 +303,7 @@ def main():
             diff_ratio = np.mean(flat_frame != prev_frame)
             if diff_ratio < scene_threshold:
                 skipped_frames += 1
-                frame_strings.append("") # スキップフレームは空文字
+                frame_offsets.append((0, 0, False))  # スキップフレーム
                 continue
         
         if is_keyframe:
@@ -311,20 +314,30 @@ def main():
             
         frame_indices.append(i)
         
-        encoded_data = bytearray()
+        start_offset = len(all_encoded)
         chunk_count = len(chunks)
-        encode_varint((i << 1) | (1 if is_keyframe else 0), encoded_data)
-        encode_varint(chunk_count, encoded_data)
+        encode_varint((i << 1) | (1 if is_keyframe else 0), all_encoded)
+        encode_varint(chunk_count, all_encoded)
         
         for start_x, y, length, color in chunks:
             delta = y * WIDTH + start_x
             data_val = (delta << 13) | ((length - 1) << 7) | (color & 0x7f)
-            encode_varint(data_val, encoded_data)
+            encode_varint(data_val, all_encoded)
             
         prev_frame = flat_frame.copy()
-        utf16_str = bytearray_to_utf16_str(encoded_data)
-        prefix = "K:" if is_keyframe else ""
-        frame_strings.append(prefix + utf16_str)
+        byte_length = len(all_encoded) - start_offset
+        frame_offsets.append((start_offset, byte_length, is_keyframe))
+
+    # UTF-16 エンコード (1本化)
+    utf16_str = bytearray_to_utf16_str(all_encoded)
+    
+    # フレームインデックスをコンパクトにエンコード
+    # 各フレーム: [byte_offset, byte_length, is_keyframe_flag] を varint 連結
+    index_data = bytearray()
+    for offset_val, length_val, is_kf in frame_offsets:
+        encode_varint((offset_val << 1) | (1 if is_kf else 0), index_data)
+        encode_varint(length_val, index_data)
+    index_utf16 = bytearray_to_utf16_str(index_data)
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -345,9 +358,10 @@ def main():
   "width": {WIDTH},
   "height": {HEIGHT},
   "frame_count": {total_frames},
-  "format": "varint_rle_v2",
+  "format": "varint_rle_v3",
   "level_blocks": {json.dumps(level_blocks, ensure_ascii=False)},
-  "frames": {json.dumps(frame_strings, ensure_ascii=False)}
+  "index": "{index_utf16}",
+  "binary": "{utf16_str}"
 }};
 """
     out_path.write_text(js_content, encoding='utf-8')

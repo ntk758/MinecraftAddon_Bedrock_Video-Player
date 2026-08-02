@@ -63,10 +63,19 @@ let currentVideoData = null;
 let currentAudioChunk = -1;
 let masterVolume = 1.0;
 
+// v3 フォーマット用: デコード済みバイナリとインデックスのキャッシュ
+let decodedBinary = null;
+let decodedIndex = null;  // Array of { offset, length, isKeyframe }
+let decodedVideoId = null;
+
 function selectVideo(videoId) {
   if (VIDEOS[videoId]) {
     currentVideoId = videoId;
     currentVideoData = VIDEOS[videoId];
+    // 動画が変わったらキャッシュをクリア
+    decodedBinary = null;
+    decodedIndex = null;
+    decodedVideoId = null;
     return true;
   }
   return false;
@@ -112,6 +121,58 @@ function decodeUTF16BinaryToBytes(utf16Str) {
     }
   }
   return bytes;
+}
+
+/** v3: バイナリとインデックスを遅延デコードする */
+function ensureDecodedData() {
+  if (!currentVideoData) return false;
+  if (decodedVideoId === currentVideoId && decodedBinary && decodedIndex) return true;
+
+  // v3 フォーマット (binary + index)
+  if (currentVideoData.format === "varint_rle_v3" && currentVideoData.binary && currentVideoData.index) {
+    decodedBinary = decodeUTF16BinaryToBytes(currentVideoData.binary);
+    
+    // インデックスをデコード
+    const idxBytes = decodeUTF16BinaryToBytes(currentVideoData.index);
+    decodedIndex = [];
+    let pos = 0;
+    const idxLen = idxBytes.length;
+    while (pos < idxLen) {
+      // offset_and_flag varint
+      let val1 = 0, shift1 = 0;
+      while (pos < idxLen) {
+        const b = idxBytes[pos++];
+        val1 |= (b & 0x7f) << shift1;
+        if ((b & 0x80) === 0) break;
+        shift1 += 7;
+      }
+      // length varint
+      let val2 = 0, shift2 = 0;
+      while (pos < idxLen) {
+        const b = idxBytes[pos++];
+        val2 |= (b & 0x7f) << shift2;
+        if ((b & 0x80) === 0) break;
+        shift2 += 7;
+      }
+      decodedIndex.push({
+        offset: val1 >>> 1,
+        length: val2,
+        isKeyframe: (val1 & 1) === 1
+      });
+    }
+    decodedVideoId = currentVideoId;
+    return true;
+  }
+  
+  // v2 フォーマット (frames 配列) への後方互換
+  if (currentVideoData.frames) {
+    decodedVideoId = currentVideoId;
+    decodedBinary = null;
+    decodedIndex = null;
+    return true;
+  }
+  
+  return false;
 }
 
 function initPaletteCache() {
@@ -168,134 +229,100 @@ function ensureTickingArea(dimension, anchor) {
   }
 }
 
+/** バイナリバッファの指定範囲を RLE デコードしてブロックを配置するジェネレータ */
+function* applyBinarySlice(dimension, anchorLoc, width, bytes, startOff, endOff) {
+  let offset = startOff;
+  let currIdx = 0;
+  let operations = 0;
+  const MAX_OPS_PER_TICK = 4000;
+
+  // 最初の varint はフレームヘッダ (frame_index << 1 | keyframe_flag) — スキップ
+  while (offset < endOff) {
+    const b = bytes[offset++];
+    if ((b & 0x80) === 0) break;
+  }
+  // 2番目の varint は chunk_count — スキップ
+  while (offset < endOff) {
+    const b = bytes[offset++];
+    if ((b & 0x80) === 0) break;
+  }
+
+  while (offset < endOff) {
+    let val = 0;
+    let shift = 0;
+    while (offset < endOff) {
+      const b = bytes[offset++];
+      val |= (b & 0x7f) << shift;
+      if ((b & 0x80) === 0) break;
+      shift += 7;
+    }
+    const delta = val >>> 13;
+    const length = ((val >>> 7) & 0x3f) + 1;
+    const level = val & 0x7f;
+    currIdx += delta;
+
+    const x = currIdx % width;
+    const y = (currIdx / width) | 0;
+
+    const permutation = paletteCache[level];
+    if (!permutation) continue;
+
+    const bx = anchorLoc.x + x;
+    const bz = anchorLoc.z + y;
+
+    try {
+      if (length === 1) {
+        tempBlockLoc.x = bx;
+        tempBlockLoc.y = anchorLoc.y;
+        tempBlockLoc.z = bz;
+        dimension.setBlockPermutation(tempBlockLoc, permutation);
+        operations++;
+        if (operations > MAX_OPS_PER_TICK) { yield; operations = 0; }
+      } else {
+        for (let i = 0; i < length; i++) {
+          tempBlockLoc.x = bx + i;
+          tempBlockLoc.y = anchorLoc.y;
+          tempBlockLoc.z = bz;
+          dimension.setBlockPermutation(tempBlockLoc, permutation);
+          operations++;
+          if (operations > MAX_OPS_PER_TICK) { yield; operations = 0; }
+        }
+      }
+    } catch (e) {
+      // LocationInUnloadedChunkError は無視
+    }
+  }
+}
+
 /** フレーム番号の差分をジェネレータで少しずつ適用する */
 function* applyFrameJob(dimension, anchorLoc, frameIndex) {
   if (!currentVideoData) return;
-  const diffData = currentVideoData.frames[frameIndex];
-  if (!diffData) return;
-
+  if (!ensureDecodedData()) return;
   initPaletteCache();
   const width = currentVideoData.width;
+
+  // --- v3 フォーマット (binary + index) ---
+  if (decodedBinary && decodedIndex) {
+    if (frameIndex < 0 || frameIndex >= decodedIndex.length) return;
+    const entry = decodedIndex[frameIndex];
+    if (entry.length === 0) return; // スキップフレーム
+    yield* applyBinarySlice(dimension, anchorLoc, width, decodedBinary, entry.offset, entry.offset + entry.length);
+    return;
+  }
+
+  // --- v2 後方互換: frames 配列 ---
+  const diffData = currentVideoData.frames?.[frameIndex];
+  if (!diffData) return;
 
   if (typeof diffData === "string") {
     if (diffData.length === 0) return;
     let bytes;
-    // 互換性のため古い Base64 と 新しい UTF16 両対応とする
-    // UTF-16 バイナリエンコードは最初の文字が常にパディング数 (0x1000 + padLen)
     if (diffData.length > 0 && diffData.charCodeAt(diffData.startsWith("K:") ? 2 : 0) >= 0x1000) {
       bytes = decodeUTF16BinaryToBytes(diffData);
     } else {
-      // 古い Base64 版 (もう生成されないが過去の pack 対応)
-      // Base64 デコーダは削除したためエラーを出すか無視する。今回は単純に無視（新フォーマット専用）
-      console.warn(`[${EVENT_NAMESPACE}] Old Base64 format is no longer supported.`);
       return;
     }
-    
-    let offset = 0;
-    let currIdx = 0;
-    const len = bytes.length;
-
-    let operations = 0;
-    const MAX_OPS_PER_TICK = 4000;
-
-    while (offset < len) {
-      let val = 0;
-      let shift = 0;
-      while (true) {
-        const b = bytes[offset++];
-        val |= (b & 0x7f) << shift;
-        if ((b & 0x80) === 0) break;
-        shift += 7;
-      }
-      const delta = val >>> 13;
-      const length = ((val >>> 7) & 0x3f) + 1;
-      const level = val & 0x7f;
-      currIdx += delta;
-
-      const x = currIdx % width;
-      const y = (currIdx / width) | 0;
-
-      const permutation = paletteCache[level];
-      if (!permutation) continue;
-
-      const startLoc = { x: anchorLoc.x + x, y: anchorLoc.y, z: anchorLoc.z + y };
-      
-      try {
-        if (length === 1) {
-          dimension.setBlockPermutation(startLoc, permutation);
-          operations++;
-          if (operations > MAX_OPS_PER_TICK) {
-            yield;
-            operations = 0;
-          }
-        } else {
-          // BlockVolumeのバージョン互換性問題を完全に回避するため、個別に配置する
-          for (let i = 0; i < length; i++) {
-            tempBlockLoc.x = startLoc.x + i;
-            tempBlockLoc.y = startLoc.y;
-            tempBlockLoc.z = startLoc.z;
-            dimension.setBlockPermutation(tempBlockLoc, permutation);
-            operations++;
-            if (operations > MAX_OPS_PER_TICK) {
-              yield;
-              operations = 0;
-            }
-          }
-        }
-      } catch (e) {
-        const errMsg = String(e);
-        if (!errMsg.includes("LocationInUnloadedChunkError")) {
-          console.warn(
-            `[${EVENT_NAMESPACE}] block apply failed at (${startLoc.x},${startLoc.y},${startLoc.z}) level=${level} length=${length}: ${e}`
-          );
-        }
-      }
-    }
-  } else if (Array.isArray(diffData)) {
-    // Array format is highly unlikely now but kept for fallback
-    let operations = 0;
-    const MAX_OPS_PER_TICK = 4000;
-    for (let i = 0; i < diffData.length; i++) {
-      const item = diffData[i];
-      let x, y, level;
-
-      if (typeof item === "number") {
-        const idx = item & 0xffff;
-        level = item >>> 16;
-        x = idx % width;
-        y = (idx / width) | 0;
-      } else if (Array.isArray(item)) {
-        x = item[0];
-        y = item[1];
-        level = item[2];
-      } else {
-        continue;
-      }
-
-      const permutation = paletteCache[level];
-      if (!permutation) continue;
-
-      tempBlockLoc.x = anchorLoc.x + x;
-      tempBlockLoc.y = anchorLoc.y;
-      tempBlockLoc.z = anchorLoc.z + y;
-
-      try {
-        dimension.setBlockPermutation(tempBlockLoc, permutation);
-      } catch (e) {
-        const errMsg = String(e);
-        if (!errMsg.includes("LocationInUnloadedChunkError")) {
-          console.warn(
-            `[${EVENT_NAMESPACE}] block resolve/apply failed at (${tempBlockLoc.x},${tempBlockLoc.y},${tempBlockLoc.z}) level=${level}: ${e}`
-          );
-        }
-      }
-      
-      operations++;
-      if (operations > MAX_OPS_PER_TICK) {
-        yield;
-        operations = 0;
-      }
-    }
+    yield* applyBinarySlice(dimension, anchorLoc, width, bytes, 0, bytes.length);
   }
 }
 
