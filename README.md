@@ -3,13 +3,14 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock%201.21+-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v2.7.0](https://img.shields.io/badge/Release-v2.7.0-blue.svg)](#releases)
+[![Release v2.8.0](https://img.shields.io/badge/Release-v2.8.0-blue.svg)](#releases)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
 ## 日本語 (Japanese)
 
 ### 📖 概要 (Overview)
-> **⚠️ 備考 (Note):** このプロジェクト（Python スクリプト、Minecraft アドオン用の JavaScript、GUI アプリケーション、およびこの README も含め）は、**すべて AI によって設計・プログラミング・制作されています**。
+> **⚠️ 重要事項 (Important Note):** 
+> このプロジェクトは、コアアルゴリズム設計からPythonスクリプト、Bedrock Script API、GUIアプリケーション、最適化ロジック、そしてこのREADMEに至るまで、**すべて AI (Claude Opus / GPT / Gemini Pro等のエージェント) によって自律的に設計・プログラミング・構築されたものです**。
 
 Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを「マイクラのブロック」へ変換し、ゲーム内で映像と音声を同期再生できるアドオン構築ツールです。
 
@@ -31,16 +32,34 @@ Python と FFmpeg、そして最新の Bedrock Script API を活用し、極限�
 
 ### 🚀 インストールと使い方 (Installation & Usage)
 
-1. リポジトリをクローンまたはダウンロードします。
-2. 必要な Python パッケージをインストールします。
+#### 1. Python のインストール
+Python 3.12 以上が必要です。以下のいずれかの方法でインストールしてください。
+- **Microsoft Store**: [Python 3.12 をインストール](https://apps.microsoft.com/detail/9ncvdn91xzqp) (推奨・最も簡単です)
+- **公式サイト**: [Python.org](https://www.python.org/downloads/windows/) からインストーラーをダウンロード（「Add Python to PATH」に必ずチェックを入れてください）
+
+#### 2. FFmpeg のインストール
+動画や音声の解析に FFmpeg が必要です。
+- **Winget を使う場合 (Windows 10/11)**:
+  コマンドプロンプトまたはPowerShellを開き、以下を実行します。
+  ```bash
+  winget install Gyan.FFmpeg
+  ```
+  （インストール後、PCの再起動またはコマンドプロンプトの再起動が必要です）
+- **手動インストール**:
+  [FFmpeg公式サイト](https://ffmpeg.org/download.html) から Windows 向けのビルド(gyan.dev 等)をダウンロードし、解凍して `ffmpeg.exe` をこのツールのフォルダ(`video_player_gui.py` と同じ場所) に配置するか、システムの環境変数PATHに追加してください。
+
+#### 3. ツールのセットアップ
+1. このリポジトリをダウンロード（ZIPでダウンロードして解凍、または `git clone`）します。
+2. コマンドプロンプト等でツールのフォルダを開き、必要な Python パッケージをインストールします。
    ```bash
    pip install pillow numpy torch
    ```
-3. `video_player_gui.py` を実行します。
+3. GUIアプリを起動します。
    ```bash
    python video_player_gui.py
    ```
-4. **GUIの操作**:
+
+#### 4. GUIの操作
    - 「動画を追加」ボタンで MP4 などを選択します。
    - 「画質」「パレット」「ディザリング (GPU対応を推奨)」を設定します。
    - 「ビルド開始」を押して `.mcaddon` を生成します。
@@ -134,6 +153,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## 🏷 Releases
 
+- **v2.8.0**: Phase 4 MVCodec 導入。動的自動ブロックパレット生成 (K-Means)、Blue Noise ディザリングと知覚最適化フィルター、GUIへのベンチマーク表示機能を追加。
 - **v2.7.0**: Zero-copy FFmpegパイプライン導入による超高速ストリーミング対応、UTF-16バイナリエンコードによる容量削減、FFmpeg HWAccelのYUV破損バグを修正。
 - **v2.6.4**: Script API での音声再生時、Bedrock 1.21以降の厳格な引数仕様(`location`)により音が鳴らない問題を修正。
 - **v2.6.3**: `.mcaddon` 生成時に Script API の依存関係が消えてしまうバグを修正。
