@@ -83,6 +83,10 @@ for (let i = 0; i < B64_CHARS.length; i++) {
 }
 
 function decodeBase64ToBytes(b64Str) {
+  if (!b64Str) return new Uint8Array(0);
+  if (b64Str.startsWith("K:")) {
+    b64Str = b64Str.slice(2);
+  }
   const len = b64Str.length;
   if (len === 0) return new Uint8Array(0);
   let validLen = len;
@@ -281,7 +285,14 @@ function seekToFrame(targetFrame, dimension, anchorLoc) {
   targetFrame = Math.max(0, Math.min(targetFrame, currentVideoData.frame_count - 1));
   currentFrame = targetFrame;
   currentAudioChunk = -1;
-  applyFrame(dimension, anchorLoc, currentFrame);
+
+  const gop = currentVideoData.keyframe_interval || 30;
+  const startFrame = Math.floor(targetFrame / gop) * gop;
+
+  // 直前のキーフレームから目標フレームまでを短時間一括適用して完璧に画面を復元
+  for (let f = startFrame; f <= targetFrame; f++) {
+    applyFrame(dimension, anchorLoc, f);
+  }
   syncAudioForFrame(currentFrame);
 }
 

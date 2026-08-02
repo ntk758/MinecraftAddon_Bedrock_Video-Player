@@ -45,6 +45,7 @@ class PackBuilderApp(tk.Tk):
         self.quality_var = tk.StringVar(value="高画質 (128×128 / 10fps)")
         self.palette_var = tk.StringVar(value="全39色（concrete + terracotta + 自発光）")
         self.dither_var = tk.StringVar(value="Floyd-Steinberg")
+        self.keyframe_interval_var = tk.IntVar(value=30)
         self._build_ui()
         self._apply_quality_preset()
         self.after(100, self._drain_messages)
@@ -106,14 +107,14 @@ class PackBuilderApp(tk.Tk):
         for index, (label, variable, maximum) in enumerate((
             ("幅", self.width_var, 256),
             ("高さ", self.height_var, 256),
-            ("再生間隔 (tick/フレーム)", self.interval_var, 20),
+            ("再生間隔 (tick)", self.interval_var, 20),
         )):
             ttk.Label(settings, text=label).grid(row=0, column=index * 2, padx=(10, 4), pady=6)
             ttk.Spinbox(settings, from_=1, to=maximum, textvariable=variable, width=7).grid(
                 row=0, column=index * 2 + 1, padx=(0, 10), pady=6
             )
-        ttk.Label(settings, text="最大秒数（空欄=全編）").grid(row=0, column=6, padx=(10, 4), pady=6)
-        ttk.Entry(settings, textvariable=self.duration_var, width=10).grid(row=0, column=7, padx=(0, 10), pady=6)
+        ttk.Label(settings, text="キーフレーム間隔").grid(row=0, column=6, padx=(10, 4), pady=6)
+        ttk.Spinbox(settings, from_=0, to=300, textvariable=self.keyframe_interval_var, width=7).grid(row=0, column=7, padx=(0, 10), pady=6)
 
         ttk.Label(settings, text="画質プリセット").grid(row=1, column=0, padx=(10, 4), pady=(0, 6))
         preset = ttk.Combobox(
@@ -508,6 +509,7 @@ class PackBuilderApp(tk.Tk):
                         "--palette", palette,
                         "--dither-method", dither_method,
                         "--video-id", video_id,
+                        "--keyframe-interval", str(self.keyframe_interval_var.get()),
                         "--gpu",
                     ]
                     self._run(converter_command)

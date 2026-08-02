@@ -278,6 +278,7 @@ def parse_args():
     parser.add_argument("--dither-method", choices=["none", "floyd", "atkinson", "burkes", "sierra", "ordered"], default="none", help="ディザリング手法")
     parser.add_argument("--video-id", default=None, help="動画ID（マルチ動画パック用）")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 4, help="使用スレッド数")
+    parser.add_argument("--keyframe-interval", type=int, default=30, help="キーフレーム(Iフレーム)間隔（フレーム数、0で無効）")
     parser.add_argument("--gpu", action="store_true", help="PyTorch/CUDA による GPU 加速量子化を使用")
     parser.add_argument("--adaptive-fps", action="store_true", default=True, help="適応的フレームレート(静止シーンスキップ)を有効化")
     parser.add_argument("--scene-threshold", type=float, default=0.015, help="静止シーン判定しきい値(比率)")
@@ -343,23 +344,34 @@ def main():
     old = np.full((HEIGHT, WIDTH), -1, dtype=int)
     frame_diffs = []
     skipped_frames = 0
+    keyframe_count = 0
 
     total_pixels = WIDTH * HEIGHT
+    k_interval = args.keyframe_interval
 
     for i, current in enumerate(processed_frames):
-        diff_mask = (current != old)
-        changed_indices = np.flatnonzero(diff_mask)
-        num_changes = len(changed_indices)
-        change_ratio = num_changes / total_pixels
+        is_keyframe = (k_interval > 0 and i % k_interval == 0)
 
-        # Adaptive FPS: 変化率が指定閾値未満で、最初のフレームでない場合はスキップ
-        if args.adaptive_fps and i > 0 and change_ratio < args.scene_threshold:
-            frame_diffs.append("")
-            skipped_frames += 1
-            continue
-
-        if num_changes > 0:
+        if is_keyframe:
+            keyframe_count += 1
+            changed_indices = np.arange(total_pixels)
             changed_colors = current.flat[changed_indices]
+            prefix = "K:"
+        else:
+            diff_mask = (current != old)
+            changed_indices = np.flatnonzero(diff_mask)
+            prefix = ""
+
+            # Adaptive FPS: 変化率が指定閾値未満で、最初のフレームでない場合はスキップ
+            change_ratio = len(changed_indices) / total_pixels
+            if args.adaptive_fps and i > 0 and change_ratio < args.scene_threshold:
+                frame_diffs.append("")
+                skipped_frames += 1
+                continue
+
+            changed_colors = current.flat[changed_indices]
+
+        if len(changed_indices) > 0:
             byte_arr = bytearray()
             prev_idx = 0
             for idx, color in zip(changed_indices, changed_colors):
@@ -367,17 +379,18 @@ def main():
                 val = (delta << 6) | (int(color) & 0x3f)
                 encode_varint(val, byte_arr)
                 prev_idx = int(idx)
-            packed_b64 = base64.b64encode(byte_arr).decode("ascii")
+            packed_b64 = prefix + base64.b64encode(byte_arr).decode("ascii")
         else:
             packed_b64 = ""
         frame_diffs.append(packed_b64)
-        old = current
+        old = current.copy()
 
-    print(f"Adaptive FPS: スキップされたフレーム数 {skipped_frames} / {len(files)}")
+    print(f"Keyframes (Iフレーム): {keyframe_count} 個, スキップされたフレーム数: {skipped_frames} / {len(files)}")
 
     data = {
         "width": WIDTH,
         "height": HEIGHT,
+        "keyframe_interval": k_interval,
         "level_blocks": level_blocks,
         "frame_count": len(frame_diffs),
         "frames": frame_diffs,
