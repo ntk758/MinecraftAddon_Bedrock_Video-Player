@@ -1,13 +1,15 @@
-# Block Video Player — 統合版(Bedrock)ブロック動画プレイヤー (v2.5.0)
+# Block Video Player — 統合版(Bedrock)ブロック動画プレイヤー (v2.6.0)
 
 [umbreonben/mc-cushion-bad-apple](https://github.com/umbreonben/mc-cushion-bad-apple) (Java版 datapack) を Minecraft統合版 (Bedrock Edition) の Behavior Pack + Script API で再実装した超高速・超軽量・高画質ブロック動画再生アドオン＆変換システム。
 
-**最新バージョン v2.5.0**: 音声完全対応！Behavior Pack (BP) と Resource Pack (RP) のデュアルパック（`.mcaddon` 形式）自動生成に対応し、Minecraftクライアントでの確実な音声同期を実現。
+**最新バージョン v2.6.0**: GPU 変換の抜本的最適化！Ordered (Bayer) ディザリング時の GPU テンソル並列計算と、VRAM パンクを防ぐ OOM 対策を実装し、超高画質でも最強・最速・ド安定の変換を実現。
 
 ---
 
-## 🚀 主要機能・到達点 (v2.5.0)
+## 🚀 主要機能・到達点 (v2.6.0)
 
+- ⚡ **GPU (PyTorch/CUDA) による超高速変換＆VRAMパンク対策**:
+  - `convert.py` 内で Ordered ディザリングの GPU テンソル計算を実装。さらにミニバッチ処理とキャッシュ解放による完全な OOM (メモリパンク) 対策を導入し、数時間規模の動画でも GPU を最大限活用して安定かつ最速で変換します。
 - 🎵 **44.1kHz ステレオ OGG 音声再生の完全対応**:
   - 音声データ（Resource Pack）とスクリプト（Behavior Pack）を分離した `.mcaddon` 自動構築アーキテクチャにより、マイクラ内での確実な音声同期再生を実現！
 - ⚡ **高画質モード (128×128) 軽量化 ＆ スパイクフリー描画**:
@@ -101,6 +103,7 @@ python video_player_gui.py
 
 ## 📜 バージョン履歴
 
+- **v2.6.0**: GPU 変換の抜本的最適化。Ordered (Bayer) ディザリング時の GPU テンソル並列計算と、VRAM パンクを防ぐミニバッチ・キャッシュ解放 (OOM 対策) を実装。
 - **v2.5.0**: 音声再生の完全対応。パック構造を Behavior Pack (BP) と Resource Pack (RP) に分離し、`.mcaddon` 形式で出力するようアーキテクチャを刷新。
 - **v2.4.1**: 差分デコード中断によるブロック座標崩壊バグを完全解消・修正。画面描画の一貫性を保護。
 - **v2.4.0**: 高画質 (128×128) 軽量化用の 1tick ブロック更新上限 (バッチ上限 800) と、`playSound` / 44.1kHz OGG 抽出による音声再生修復を実装。

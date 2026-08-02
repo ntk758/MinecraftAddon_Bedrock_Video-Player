@@ -250,19 +250,48 @@ try:
 except ImportError:
     HAS_TORCH_CUDA = False
 
-def process_frames_gpu(files, palette_rgb, width, height):
+def process_frames_gpu(files, palette_rgb, width, height, dither_method="none"):
     import torch
     num_colors = len(palette_rgb)
     pal_tensor = torch.tensor(palette_rgb, dtype=torch.float32, device="cuda")
     processed_frames = []
-    for file_path in files:
+
+    # Ordered(Bayer)ディザリング用テンソルの事前計算
+    bayer_tensor = None
+    if dither_method == "ordered":
+        bayer = np.array([
+            [0, 8, 2, 10],
+            [12, 4, 14, 6],
+            [3, 11, 1, 9],
+            [15, 7, 13, 5]
+        ], dtype=np.float32)
+        bayer = (bayer / 16.0) - 0.5
+        bayer *= 32.0
+        bayer_tiled = np.tile(bayer, (height // 4 + 1, width // 4 + 1))[:height, :width]
+        # RGBチャンネルごとにブロードキャスト可能な形状 (H, W, 3)
+        bayer_tiled = np.stack([bayer_tiled]*3, axis=-1)
+        bayer_tensor = torch.tensor(bayer_tiled, dtype=torch.float32, device="cuda")
+
+    for i, file_path in enumerate(files):
         img = Image.open(file_path).convert("RGB")
         if img.size != (width, height):
             img = img.resize((width, height), Image.Resampling.LANCZOS)
+        
         img_tensor = torch.tensor(np.array(img, dtype=np.float32), device="cuda")
+        
+        if bayer_tensor is not None:
+            img_tensor += bayer_tensor
+            img_tensor = torch.clamp(img_tensor, 0, 255)
+
         dists = torch.cdist(img_tensor.view(-1, 3), pal_tensor)
         idx_tensor = torch.argmin(dists, dim=1).view(height, width)
         processed_frames.append(idx_tensor.cpu().numpy().astype(np.int32) % num_colors)
+
+        # OOM回避: メモリ明示解放と64フレームごとのキャッシュクリア
+        del img_tensor, dists, idx_tensor
+        if i % 64 == 63:
+            torch.cuda.empty_cache()
+
     return processed_frames
 
 def parse_args():
@@ -325,12 +354,17 @@ def main():
     use_gpu = args.gpu or HAS_TORCH_CUDA
     palette_rgb_arr = np.array([item['rgb'] for item in palette], dtype=np.float64)
 
-    if use_gpu and HAS_TORCH_CUDA and dither_method == 'none':
-        print("GPU (PyTorch / CUDA) 加速量子化を使用して超高速変換中...")
-        processed_frames = process_frames_gpu(files, palette_rgb_arr, WIDTH, HEIGHT)
+    if use_gpu and HAS_TORCH_CUDA and dither_method in ('none', 'ordered'):
+        print(f"GPU (PyTorch / CUDA) 加速量子化を使用して超高速変換中... (Dither: {dither_method})")
+        processed_frames = process_frames_gpu(files, palette_rgb_arr, WIDTH, HEIGHT, dither_method)
     else:
-        if use_gpu and not HAS_TORCH_CUDA:
-            print("注意: GPU (PyTorch/CUDA) が利用できません。CPUスレッドプール処理にフォールバックします。")
+        if use_gpu:
+            if not HAS_TORCH_CUDA:
+                print("注意: GPU (PyTorch/CUDA) が利用できません。CPUスレッドプール処理にフォールバックします。")
+            elif dither_method not in ('none', 'ordered'):
+                print(f"注意: 誤差拡散型ディザリング ({dither_method}) が選択されたため、並列計算できず CPU 処理にフォールバックします。")
+                print("      → GPUで超高速変換を行いたい場合は、ディザリング手法を 'ordered' または 'none' に変更してください。")
+        
         palette_rgb_for_dither = palette_rgb_arr if dither_method in ('ordered', 'atkinson', 'burkes', 'sierra') else None
         
         # ThreadPoolExecutor による並列フレーム処理
