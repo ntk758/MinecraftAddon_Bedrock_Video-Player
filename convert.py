@@ -1,25 +1,10 @@
-"""
-動画 → Minecraft統合版 差分データ生成スクリプト (v2: カラーパレット対応版)
-
-v1(11段階グレースケール)からの変更点:
-- 発光ブロックの明度だけで階調を作る方式をやめ、
-  Minecraft公式のマップカラー定義(Java Edition Wiki "Map item format"の
-  Concreteエントリ、Spigot MaterialMapColor.java 由来)にある
-  16色のconcreteブロックのRGB値を基準パレットとして採用。
-- 各ピクセルの色を、パレット中で最も色距離が近いconcreteブロックに
-  マッピングする(最近傍色マッチング)。
-- これにより白黒Bad Apple以外の、任意のカラー動画にも対応できる。
-
-前提: frames/ フォルダにffmpegで書き出したPNG連番を置くこと
-  ffmpeg -i yourvideo.mp4 -vf "fps=20,scale=64:64:flags=lanczos" frames/output_%04d.png
-"""
-
-from PIL import Image
-import numpy as np
 import os
 import glob
 import json
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from PIL import Image
+import numpy as np
 
 WIDTH = 64
 HEIGHT = 64
@@ -27,10 +12,6 @@ FRAMES_DIR = "frames"
 OUTPUT_DIR = "BP/scripts"
 OUTPUT_FILE = f"{OUTPUT_DIR}/frames_data.js"
 
-# Minecraft公式マップカラー定義(Java Edition Wiki "Map item format"より、
-# Concreteブロックの基準RGB値。第3シェード=素の色を採用)。
-# ブロックIDはBedrock公式 "Default Minecraft Block Listings"
-# (learn.microsoft.com)で実在確認済みの命名パターン(<色名>_concrete)。
 CONCRETE_PALETTE = [
     {"name": "white",      "block": "minecraft:white_concrete",      "rgb": (255, 255, 255)},
     {"name": "orange",     "block": "minecraft:orange_concrete",     "rgb": (216, 127, 51)},
@@ -50,9 +31,7 @@ CONCRETE_PALETTE = [
     {"name": "black",      "block": "minecraft:black_concrete",      "rgb": (25, 25, 25)},
 ]
 
-# テラコッタを加えると、中間色・低彩度色をより近く表現できる。
 TERRACOTTA_PALETTE = [
-    # 統合版では無色テラコッタのブロックIDはminecraft:terracottaではなくhardened_clay。
     {"name": "terracotta", "block": "minecraft:hardened_clay", "rgb": (152, 94, 67)},
     {"name": "white_terracotta", "block": "minecraft:white_terracotta", "rgb": (209, 178, 161)},
     {"name": "orange_terracotta", "block": "minecraft:orange_terracotta", "rgb": (161, 83, 37)},
@@ -77,50 +56,37 @@ PALETTES = {
     "expanded": CONCRETE_PALETTE + TERRACOTTA_PALETTE,
 }
 
+def create_pillow_palette_image(palette):
+    pal_img = Image.new("P", (1, 1))
+    pal_data = []
+    for item in palette:
+        r, g, b = item["rgb"]
+        pal_data.extend([int(r), int(g), int(b)])
+    while len(pal_data) < 768:
+        pal_data.extend(pal_data[:min(768 - len(pal_data), len(palette) * 3)])
+    pal_img.putpalette(pal_data)
+    return pal_img
 
-def convert_image(path, palette, dither):
-    """画像を読み込み、各ピクセルを最近傍のパレット色indexに変換したHxW配列を返す"""
+def process_single_frame(path, pal_img, width, height, num_colors, dither):
     img = Image.open(path).convert("RGB")
-    img = img.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS)
-    pixels = np.array(img, dtype=np.float64)  # (H, W, 3)
-
-    palette_rgb = np.array([item["rgb"] for item in palette], dtype=np.float64)
-    if not dither:
-        diff = pixels[:, :, np.newaxis, :] - palette_rgb[np.newaxis, np.newaxis, :, :]
-        return np.argmin(np.sum(diff ** 2, axis=3), axis=2)
-
-    # Floyd-Steinbergディザリング: 色数が限られていても中間色を見た目上滑らかにする。
-    working = pixels.copy()
-    result = np.empty((HEIGHT, WIDTH), dtype=int)
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
-            distances = np.sum((palette_rgb - working[y, x]) ** 2, axis=1)
-            index = int(np.argmin(distances))
-            result[y, x] = index
-            error = working[y, x] - palette_rgb[index]
-            if x + 1 < WIDTH:
-                working[y, x + 1] += error * 7 / 16
-            if y + 1 < HEIGHT:
-                if x > 0:
-                    working[y + 1, x - 1] += error * 3 / 16
-                working[y + 1, x] += error * 5 / 16
-                if x + 1 < WIDTH:
-                    working[y + 1, x + 1] += error / 16
-    return result
-
+    if img.size != (width, height):
+        img = img.resize((width, height), Image.Resampling.LANCZOS)
+    dither_mode = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
+    q = img.quantize(palette=pal_img, dither=dither_mode)
+    return np.array(q, dtype=np.int32) % num_colors
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="PNG連番をMinecraft Bedrock用のフレーム差分データへ変換します。"
+        description="PNG連番をMinecraft Bedrock用のフレーム差分データへ超高速変換します。"
     )
     parser.add_argument("--frames-dir", default=FRAMES_DIR, help="入力PNG連番のフォルダ")
     parser.add_argument("--output", default=OUTPUT_FILE, help="出力するframes_data.jsのパス")
     parser.add_argument("--width", type=int, default=WIDTH, help="出力幅（ブロック数）")
     parser.add_argument("--height", type=int, default=HEIGHT, help="出力高さ（ブロック数）")
     parser.add_argument("--palette", choices=PALETTES.keys(), default="concrete", help="使用するブロック色パレット")
-    parser.add_argument("--dither", action="store_true", help="Floyd-Steinbergディザリングを有効化")
+    parser.add_argument("--dither", action="store_true", help="ディザリングを有効化")
+    parser.add_argument("--threads", type=int, default=os.cpu_count() or 4, help="使用スレッド数")
     return parser.parse_args()
-
 
 def main():
     global WIDTH, HEIGHT
@@ -133,6 +99,7 @@ def main():
     frames_dir = args.frames_dir
     output_file = args.output
     palette = PALETTES[args.palette]
+    num_colors = len(palette)
     level_blocks = [{"block": item["block"], "states": {}} for item in palette]
     os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
 
@@ -142,11 +109,20 @@ def main():
         print(f"警告: {frames_dir}/ にPNGが見つかりません。ffmpegでフレームを書き出してください。")
         return
 
+    pal_img = create_pillow_palette_image(palette)
+
+    # ThreadPoolExecutor による並列フレーム処理
+    def task(file_path):
+        return process_single_frame(file_path, pal_img, WIDTH, HEIGHT, num_colors, args.dither)
+
+    max_workers = min(args.threads, len(files))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        processed_frames = list(executor.map(task, files))
+
     old = np.full((HEIGHT, WIDTH), -1, dtype=int)
     frame_diffs = []
 
-    for number, file in enumerate(files):
-        current = convert_image(file, palette, args.dither)
+    for current in processed_frames:
         diff_mask = (current != old)
         changed_indices = np.flatnonzero(diff_mask)
         if len(changed_indices) > 0:
@@ -156,8 +132,6 @@ def main():
             packed = []
         frame_diffs.append(packed)
         old = current
-        if number % 50 == 0:
-            print(f"Frame {number}/{len(files)} - changes: {len(packed)}")
 
     data = {
         "width": WIDTH,
@@ -173,9 +147,6 @@ def main():
 
     size_mb = os.path.getsize(output_file) / 1024 / 1024
     print(f"Done! {output_file} ({size_mb:.2f} MB, {len(frame_diffs)} frames)")
-    if size_mb > 3:
-        print("警告: frames_data.js が大きすぎる可能性があります。フレーム数や解像度を落とすことを検討してください。")
-
 
 if __name__ == "__main__":
     main()

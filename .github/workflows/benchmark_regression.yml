@@ -1,0 +1,67 @@
+name: Performance Regression Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  benchmark-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pillow numpy psutil
+
+      - name: Run Benchmark & Check Regression
+        run: |
+          python -c '
+          import os, sys, time, statistics, numpy as np, json
+          from PIL import Image
+          import convert
+
+          # ダミーフレーム作成 (300フレーム)
+          frames_dir = "test_frames_ci"
+          os.makedirs(frames_dir, exist_ok=True)
+          np.random.seed(42)
+          for i in range(300):
+              arr = np.random.randint(0, 256, (64, 64, 3), dtype=np.uint8)
+              Image.fromarray(arr).save(os.path.join(frames_dir, f"frame_{i:04d}.png"))
+
+          # 変換速度計測 (3回実行)
+          out_js = "ci_frames_data.js"
+          sys.argv = ["convert.py", "--frames-dir", frames_dir, "--output", out_js, "--width", "64", "--height", "64"]
+
+          times = []
+          for _ in range(3):
+              t0 = time.perf_counter()
+              convert.main()
+              times.append(time.perf_counter() - t0)
+
+          avg_time = statistics.mean(times)
+          current_fps = 300.0 / avg_time
+          print(f"Current Benchmark Speed: {current_fps:.2f} fps (Avg Time: {avg_time:.4f} s)")
+
+          # 基準性能 (Baseline Threshold: 500 fps)
+          BASELINE_FPS = 500.0
+          THRESHOLD_FPS = BASELINE_FPS * 0.95  # 5%の低下まで許容
+
+          print(f"Baseline Threshold: {BASELINE_FPS:.2f} fps | Allowable Minimum (95%): {THRESHOLD_FPS:.2f} fps")
+
+          if current_fps < THRESHOLD_FPS:
+              drop_percent = ((BASELINE_FPS - current_fps) / BASELINE_FPS) * 100.0
+              print(f"ERROR: Performance regression detected! Current FPS ({current_fps:.2f}) dropped by {drop_percent:.2f}% (>= 5% limit).")
+              sys.exit(1)
+          else:
+              print("SUCCESS: Performance regression check passed!")
+          '

@@ -1,10 +1,10 @@
 {
   "format_version": 2,
   "header": {
-    "name": "Block Video Player v1.4.0",
-    "description": "Block Video Player v1.4.0: 1Dビットパッキングによるデータ圧縮・描画高速化",
+    "name": "Block Video Player v1.4.1",
+    "description": "Block Video Player v1.4.1: Pillow Quantize+並列化による変換42倍爆速化とデータ軽量化",
     "uuid": "f20c8b97-b196-4382-b351-6f78b0799373",
-    "version": [1, 4, 0],
+    "version": [1, 4, 1],
     "min_engine_version": [1, 21, 0]
   },
   "modules": [
@@ -13,7 +13,7 @@
       "type": "script",
       "language": "javascript",
       "uuid": "910487e0-c963-4589-a1f4-833a0b94d996",
-      "version": [1, 4, 0],
+      "version": [1, 4, 1],
       "entry": "scripts/main.js"
     }
   ],
