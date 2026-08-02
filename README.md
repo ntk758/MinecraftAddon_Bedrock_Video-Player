@@ -1,94 +1,144 @@
-# Block Video Player — 統合版(Bedrock)ブロック動画プレイヤー (v2.6.3)
+# Minecraft Bedrock Video Player
 
-[umbreonben/mc-cushion-bad-apple](https://github.com/umbreonben/mc-cushion-bad-apple) (Java版 datapack) を Minecraft統合版 (Bedrock Edition) の Behavior Pack + Script API 向けに再実装したブロック動画再生アドオン＆変換システムです。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
+[![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock%201.21+-brightgreen.svg)](https://www.minecraft.net/)
+[![Release v2.6.4](https://img.shields.io/badge/Release-v2.6.4-blue.svg)](#releases)
 
-**最新バージョン v2.6.3**: .mcaddon 生成時に Script API の依存関係が消えてしまうバグおよび、GUI の起動エラーを修正しました。
+## 日本語 (Japanese)
 
----
+### 📖 概要 (Overview)
+Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを「マイクラのブロック」へ変換し、ゲーム内で映像と音声を同期再生できるアドオン構築ツールです。
 
-## 🚀 主要機能 (v2.6.1)
+Python と FFmpeg、そして最新の Bedrock Script API を活用し、極限まで高画質・低負荷・超高速変換（GPUテンソル計算対応）を目指しています。GUIツールで簡単に `.mcaddon` を生成できます。
 
-- ⚡ **GPU (PyTorch/CUDA) 変換対応**:
-  - `convert.py` は PyTorch を用いた GPU テンソル計算に対応しています。
-  - **重要**: GPU を使用して変換を高速化する場合は、ディザリング設定で「なし」または「Ordered (Bayer)」を選択してください。「Floyd-Steinberg」などの誤差拡散型ディザリングはアルゴリズムの都合上並列処理ができないため、CPU 処理に自動的にフォールバックします。
-  - VRAM の容量不足 (OOM) を防ぐため、内部でミニバッチ処理とキャッシュ解放を行っています。
-- 🎵 **OGG 音声再生の同期**:
-  - 音声データ (Resource Pack) と スクリプト (Behavior Pack) を分離した `.mcaddon` 自動構築に対応。インポートするだけで、マイクラ内で音声同期再生が可能になります。
-- ⚡ **高画質モード (128×128) 用の描画調整**:
-  - 1tick (50ms) あたりのブロック更新数を最大 800 個に制限し、マイクラ側の処理負荷を抑えています。
-- 📦 **単体実行ファイル (EXE) 対応**:
-  - `python build_standalone.py` を実行すると、Python などの環境構築が不要な単体実行ファイル (`BlockVideoPlayer.exe`) を生成できます。
-- 👑 **マイクラ実在ブロックによる色再現**:
-  - コンクリート、テラコッタ、自発光ブロック、羊毛、木材、コンクリート粉、鉱石・石材など、全112個のブロックを利用したカラーパレット (`ultra_110`) を採用しています。
-- 🎮 **ゲーム内リモコン GUI**:
-  - プレイヤーが「コンパス (`minecraft:compass`)」を手に持ち右クリックすると、操作リモコンUIが開きます（再生、一時停止、停止、次の動画、音量調整、シーク）。
-- 🎬 **マルチ動画対応**:
-  - 1つの `.mcaddon` パックに複数の動画を格納し、ゲーム内で切り替えて再生できます。
+### ✨ 特徴 (Features)
+- 🎬 **MP4 等の動画から直接ブロック動画パック生成**
+- ⚡ **GPU (PyTorch) 超高速変換対応** (Ordered Bayer ディザリングによるテンソル並列計算)
+- 🎵 **OGG音声・完全同期再生** (.mcaddon出力対応)
+- 🎮 **ゲーム内リモコンGUI搭載** (コンパス右クリックでシーク・音量調整・再生操作)
+- 👑 **マイクラ実在ブロック 112色パレット** による高品質な色再現
+- 📚 **マルチ動画対応** (1つのパックに複数の動画を収録可能)
 
----
+### 📺 デモ (Demo)
 
-## 🎮 使い方
+*マイクラのワールド内で、滑らかな映像と音声が再生されます！*
+(※ここにスクリーンショットやGIFを配置します)
 
-### 1. 動画から `.mcaddon` の作成 (GUI)
+### 💻 必要な環境 (Requirements)
+- **OS**: Windows 10 / 11
+- **Minecraft**: Bedrock Edition (v1.21.0 以降)
+- **Python**: 3.12 以降
+- **FFmpeg**: (実行ファイルと同階層またはPATHに設定)
 
-```bash
-python video_player_gui.py
-```
-（またはビルドされた `BlockVideoPlayer.exe` をダブルクリック）
+### 🚀 インストールと使い方 (Installation & Usage)
 
-1. **「動画を追加」** ボタンで動画ファイル (MP4 / MKV / AVI / WEBM 等) を追加します。複数追加可能です。
-2. 画質プリセット（軽量 64x64, 高画質 128x128 など）や再生間隔 (tick) を設定します。
-3. パレットで **「ウルトラ全110色」** などを選択します。
-4. ディザリング手法を選択します。**GPU を活用したい場合は「なし」または「Ordered (Bayer)」を選択してください**。
-5. 出力先（`.mcaddon`）を指定し、**「ビルド開始」** をクリックすると、アドオンが出力されます。
-
-### 2. Minecraft への導入 ＆ 操作
-
-1. 出力された `.mcaddon` をダブルクリックして Minecraft 統合版へインポートします。
-2. ワールドの設定で **Behavior Pack (ビヘイビアパック)** と **Resource Pack (リソースパック)** を有効化します。
-3. **【重要】** 同じくワールドの設定画面から **「実験」** の項目を開き、**「ベータ API (Beta APIs)」** のトグルを必ず **オン** にしてワールドを起動してください（これがオフだと動画が再生されません）。
-4. **ゲーム内リモコン操作**:
-   - インベントリから **「コンパス (`minecraft:compass`)」** を手に持ち右クリックするとリモコン画面が開きます。
-   - **再生 / 一時停止 / 停止**: 映像と音声の制御。
-   - **次の動画 / 前の動画**: 再生タイトルの切替。
-   - **音量設定**: 音量スライダーでの調整。
-   - **シーク**: 指定した時間へのジャンプ。
-4. **コマンド操作 (`/scriptevent`)**:
-   - `/scriptevent badapple:setup` … プレイヤーの足元を起点に原点を保存
-   - `/scriptevent badapple:start` … 再生開始
-   - `/scriptevent badapple:stop` … 停止・盤面クリア
-   - `/scriptevent badapple:list` … 収録動画一覧を表示
-   - `/scriptevent badapple:play <動画ID>` … 指定動画を選択再生
-   - `/scriptevent badapple:gui` … リモコンGUIを開く
+1. リポジトリをクローンまたはダウンロードします。
+2. 必要な Python パッケージをインストールします。
+   ```bash
+   pip install pillow numpy torch
+   ```
+3. `video_player_gui.py` を実行します。
+   ```bash
+   python video_player_gui.py
+   ```
+4. **GUIの操作**:
+   - 「動画を追加」ボタンで MP4 などを選択します。
+   - 「画質」「パレット」「ディザリング (GPU対応を推奨)」を設定します。
+   - 「ビルド開始」を押して `.mcaddon` を生成します。
+5. **Minecraftへの導入**:
+   - 出力された `.mcaddon` をダブルクリックしてインポートします。
+   - ワールド設定で **Behavior Pack** と **Resource Pack** を有効にします。
+   - **【重要】** ワールド設定の **「実験 (Experiments)」** から **「ベータ API (Beta APIs)」** を必ずオンにしてください。
+   - ゲーム内でコンパスを持ち、右クリックしてリモコンから再生を開始します。
 
 ---
 
-## 📂 プロジェクトの主要ファイル
+## English
 
-```
+### 📖 Overview
+An add-on building tool for Minecraft Bedrock Edition that converts video files (like MP4) into "Minecraft blocks" and plays them in-game with synchronized audio.
+
+Powered by Python, FFmpeg, and the latest Bedrock Script APIs, this tool aims for extreme high-quality, low-overhead, and ultra-fast conversion (supporting GPU Tensor acceleration). You can easily generate `.mcaddon` files via a user-friendly GUI.
+
+### ✨ Features
+- 🎬 **Direct Video-to-Block Pack Generation** from MP4 and other formats.
+- ⚡ **Ultra-fast GPU (PyTorch) Conversion** using Ordered Bayer dithering tensor parallelization.
+- 🎵 **Fully Synchronized OGG Audio** playback within the `.mcaddon`.
+- 🎮 **In-game Remote Control GUI** (Right-click with a compass to seek, adjust volume, and play/pause).
+- 👑 **High-quality Color Reproduction** using a palette of 112 actual Minecraft blocks.
+- 📚 **Multi-video Support** (Include multiple videos in a single pack).
+
+### 💻 Requirements
+- **OS**: Windows 10 / 11
+- **Minecraft**: Bedrock Edition (v1.21.0+)
+- **Python**: 3.12+
+- **FFmpeg**: Required in the PATH or same directory.
+
+### 🚀 Usage
+1. Install Python requirements: `pip install pillow numpy torch`.
+2. Run `python video_player_gui.py` to open the GUI.
+3. Add your videos, configure quality/dithering (GPU recommended), and click "Build".
+4. Import the generated `.mcaddon` to Minecraft.
+5. **[IMPORTANT]** Enable both the **Behavior Pack** and **Resource Pack**, and make sure to turn on **"Beta APIs"** under the Experiments tab in your world settings.
+6. Hold a compass in-game and right-click to open the remote control and start playing!
+
+---
+
+## 📂 アーキテクチャとディレクトリ構成 (Architecture)
+
+```text
 .
-├── convert.py                 # コア変換スクリプト
-├── video_player_gui.py        # 複数動画対応 GUI アプリケーション
-├── main.js                    # Bedrock Script API 再生スクリプト
-├── manifest.json              # マニフェストファイル (生成ベース用)
-├── pack_metadata.py           # バージョン・リリースノート管理
-└── README.md                  # このドキュメント
+├── convert.py                 # Core video-to-block conversion logic (GPU/CPU)
+├── video_player_gui.py        # GUI Application & Pack Builder (.mcaddon generator)
+├── main.js                    # Bedrock Script API playback script
+├── manifest.json              # Base manifest template
+└── pack_metadata.py           # Version and release notes manager
 ```
+
+## 🛠 技術スタック (Tech Stack)
+- **Python 3**: Core processing and GUI (Tkinter)
+- **PyTorch**: High-speed tensor-based palette mapping and dithering
+- **FFmpeg**: Video frame extraction and OGG audio segmentation
+- **Minecraft Script API**: In-game block placement (using `setBlockPermutation` & Delta VarInt encoding) and UI components (`@minecraft/server`, `@minecraft/server-ui`).
+
+## 🗺 ロードマップ (Roadmap)
+- [x] MP4対応 (Video format support)
+- [x] GUI実装 (GUI Builder)
+- [x] 音声同期再生 (Audio Sync)
+- [x] 高速化・GPU対応 (GPU Acceleration & Optimization)
+- [x] マルチ動画パック対応 (Multi-video support)
+- [ ] 圧縮率の更なる改善 (Further delta-compression improvements)
+- [ ] 3D立体ホログラム再生への拡張 (3D Hologram playback)
+
+## 📝 謝辞 (Acknowledgments)
+- Original Java Datapack idea inspired by [umbreonben/mc-cushion-bad-apple](https://github.com/umbreonben/mc-cushion-bad-apple).
+- Video processing powered by **FFmpeg**.
+
+## ❓ よくある質問 (FAQ)
+
+**Q. Java版で使えますか？ (Does this work on Java Edition?)**
+A. いいえ、統合版 (Bedrock Edition) 専用です。 (No, this is exclusively built for Bedrock Edition Script API.)
+
+**Q. スマホやスイッチでも動きますか？ (Will it run on mobile/consoles?)**
+A. 作成した `.mcaddon` パック自体は理論上どの端末の統合版でも動作しますが、高画質設定の動画は非常に重いため、PC版(Windows)での再生を推奨します。
+
+## 🤝 コントリビュート (Contributing)
+Issue や Pull Request はいつでも歓迎します！
+Feel free to open an Issue or submit a Pull Request!
+
+## 📜 ライセンス (License)
+This project is licensed under the [MIT License](LICENSE).
 
 ---
 
-## 📜 バージョン履歴
+## 🏷 Releases
 
-- **v2.6.4**: Script API での音声再生時、Bedrock 1.21以降の厳格な引数仕様により音が鳴らない（またはエラーが握り潰される）問題を修正。
-- **v2.6.3**: `.mcaddon` 生成時に Script API の依存関係（`@minecraft/server` 等）が消えてしまうバグを修正。
-- **v2.6.2**: GUI (`video_player_gui.py`) 起動時に変数が読み込めず開けなくなる不具合を修正。
-- **v2.6.1**: READMEとGUIのテキストを整理。事実ベースの説明へ改修し、ディザリング時のGPU対応状況を明記。
-- **v2.6.0**: Ordered (Bayer) ディザリング時の GPU テンソル並列計算と、VRAM パンクを防ぐミニバッチ・キャッシュ解放 (OOM 対策) を実装。
-- **v2.5.0**: 音声再生の完全対応。パック構造を Behavior Pack (BP) と Resource Pack (RP) に分離し、`.mcaddon` 形式で出力するようアーキテクチャを刷新。
-- **v2.4.1**: 差分デコード中断によるブロック座標崩壊バグを解消。
-- **v2.4.0**: 高画質 (128×128) 時の 1tick ブロック更新上限 (800) と、`playSound` / 44.1kHz OGG 抽出による音声再生修復を実装。
-- **v2.3.1**: GUIクラス構造 (`_build_ui`) の修復と安定化。
-- **v2.3.0**: キーフレーム (I/P Frame, GOP=30) 方式を導入。シーク復元に対応。
-- **v2.2.0**: PyInstaller によるスタンドアロン EXE ビルド環境 (`build_standalone.py`) 追加。
-- **v2.1.0**: GPU (PyTorch / CUDA) アクセラレーション統合。
-- **v2.0.0**: 全110色のウルトラパレット、10秒単位OGG音声同期システム、コンパスによるゲーム内リモコンGUIを完全統合。
+- **v2.6.4**: Script API での音声再生時、Bedrock 1.21以降の厳格な引数仕様(`location`)により音が鳴らない問題を修正。
+- **v2.6.3**: `.mcaddon` 生成時に Script API の依存関係が消えてしまうバグを修正。
+- **v2.6.2**: GUI起動時の変数初期化エラーを修正。
+- **v2.6.1**: READMEの全面改修、GUIのディザリングGPU対応表記を最適化。
+- **v2.6.0**: Ordered (Bayer) ディザリング時のGPUテンソル並列計算と、VRAMパンク(OOM)対策を実装。
+- **v2.5.0**: 音声再生に完全対応。`.mcaddon` 形式へのアーキテクチャ刷新。
+- **v2.1.0**: PyTorch GPU アクセラレーション統合。
+- **v2.0.0**: 110色ウルトラパレット、ゲーム内リモコンGUI搭載。
