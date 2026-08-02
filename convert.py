@@ -334,11 +334,19 @@ def main():
         pass
         
     import json
+    level_blocks = []
+    for item in palette:
+        block_def = {"block": item["block"]}
+        if "states" in item:
+            block_def["states"] = item["states"]
+        level_blocks.append(block_def)
+
     js_content = f"""export const {export_var} = {{
   "width": {WIDTH},
   "height": {HEIGHT},
   "frame_count": {total_frames},
   "format": "varint_rle_v2",
+  "level_blocks": {json.dumps(level_blocks, ensure_ascii=False)},
   "frames": {json.dumps(frame_strings, ensure_ascii=False)}
 }};
 """
