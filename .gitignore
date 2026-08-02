@@ -8,8 +8,15 @@ __pycache__/
 frames/
 scratch/
 test_frames*/
+bench_frames*/
+perf_output.*
 ci_frames_data.js
 *.mcpack
+
+# Benchmark-generated PNG images (never commit large test assets)
+# アドオン本体の pack_icon.png は下の !pack_icon.png で保護
+**/step*_test_frames/
+**/test_frames_bench/
 
 # IDE & Editor temporary files
 .vscode/
