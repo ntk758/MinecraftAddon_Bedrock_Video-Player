@@ -1,12 +1,11 @@
 """配布パックに埋め込むリリース情報の唯一の管理場所。"""
 
-PACK_VERSION = (2, 6, 1)
+PACK_VERSION = (2, 6, 2)
 RELEASE_NOTES = [
+    "GUI(video_player_gui.py)起動時に AttributeError: 'quality_var' などが発生して開かなくなる不具合を修正",
     "READMEおよびGUIのテキストを整理。事実ベースの説明へ改修し、ディザリング時のGPU対応状況を明記",
     "GPU超高速変換の抜本的最適化: Ordered(Bayer)ディザリング時のGPUテンソル並列計算を実装し、高画質でも最高速の変換が可能に",
     "GPU(VRAM)メモリパンク防止(OOM対策): ミニバッチ処理とキャッシュ解放を導入し、数時間規模の動画でもGPU変換が安定稼働",
-    "GPU非対応ディザリング選択時のCPUフォールバック警告表示を追加し、意図しない速度低下をユーザーへ通知",
-    "音声再生の完全対応: パック構造を Behavior Pack (BP) と Resource Pack (RP) に分離し、.mcaddon 形式で出力するようアーキテクチャを刷新",
 ]
 
 

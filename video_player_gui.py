@@ -68,6 +68,8 @@ class PackBuilderApp(tk.Tk):
         self.interval_var = tk.IntVar(value=1)
         self.duration_var = tk.StringVar()
         self.thumbnail_time_var = tk.StringVar(value="0")
+        self.quality_var = tk.StringVar(value="高画質 (128×128 / 10fps)")
+        self.palette_var = tk.StringVar(value="ウルトラ全110色（全マイクラ実在色・最高画質）")
         self.dither_var = tk.StringVar(value="Ordered (Bayer / GPU対応)")
         self.keyframe_interval_var = tk.IntVar(value=30)
         self._build_ui()
