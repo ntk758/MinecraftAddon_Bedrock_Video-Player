@@ -1,15 +1,17 @@
-# Block Video Player — 統合版(Bedrock)ブロック動画プレイヤー (v2.3.0)
+# Block Video Player — 統合版(Bedrock)ブロック動画プレイヤー (v2.4.0)
 
 [umbreonben/mc-cushion-bad-apple](https://github.com/umbreonben/mc-cushion-bad-apple) (Java版 datapack) を Minecraft統合版 (Bedrock Edition) の Behavior Pack + Script API で再実装した超高速・超軽量・高画質ブロック動画再生アドオン＆変換システム。
 
-**最新バージョン v2.3.0**: キーフレーム (I/P Frame, GOP=30) 方式を導入！画面崩れのない超高速 14ms シーク位置復元に対応。
+**最新バージョン v2.4.0**: 高画質 (128×128) モードでの過負荷・ラグ解消用の1tick設置バッチ上限 (`MAX_BLOCKS_PER_TICK = 800`) 導入、および `playSound` / 44.1kHz OGG 抽出による音声再生完全復元に対応。
 
 ---
 
-## 🚀 主要機能・到達点 (v2.3.0)
+## 🚀 主要機能・到達点 (v2.4.0)
 
-- 🎞️ **キーフレーム (I/P Frame) 方式 ＆ 超高速画面復元**:
-  - 30フレームごとに画面全体の完全ピクセルを保持する Iフレーム (キーフレーム) を挿入。シーク（ジャンプ）時に画面が一切崩れることなく **わずか 14ms で正確に場面を瞬時復元**。
+- ⚡ **高画質モード (128×128) 軽量化 ＆ スパイクフリー描画**:
+  - 1tick (50ms) あたりのブロック更新数を最大 800 個に制御・分散化。キーフレーム時や激しいシーンでも画面描画の重さ（ラグ）を完全にカット。
+- 🎵 **44.1kHz ステレオ OGG 音声再生の完全互換化**:
+  - `player.playSound()` による確実な音響再生システムへ強化。BGM音量設定に依存せず確実に音が同期再生されます。
 - 📦 **完全独立スタンドアロン EXE (`BlockVideoPlayer.exe`) 対応**:
   - `python build_standalone.py` を実行するだけで、Python や Node.js のない PC 環境でもダブルクリックで動作する単体実行ファイル `dist/BlockVideoPlayer/BlockVideoPlayer.exe` を一括ビルド。ポータブル用 `ffmpeg.exe` の自動検出にも対応。
 - ⚡ **GPU アクセラレーション (PyTorch / CUDA & FFmpeg HWAccel)**:
@@ -99,6 +101,7 @@ python video_player_gui.py
 
 ## 📜 バージョン履歴
 
+- **v2.4.0**: 高画質 (128×128) 軽量化用の 1tick ブロック更新上限 (バッチ上限 800) と、`playSound` / 44.1kHz OGG 抽出による音声再生修復を実装。
 - **v2.3.1**: GUIクラス構造 (`_build_ui`) の修復・安定化と自動起動テストを完備。
 - **v2.3.0**: キーフレーム (I/P Frame, GOP=30) 方式を導入。画面乱れのない超高速 14ms シーク復元に対応。
 - **v2.2.0**: PyInstaller による独立スタンドアロン EXE ビルド環境 (`build_standalone.py`) およびポータブル FFmpeg 自動検索を追加。既存の全スクリプトを完全保持。

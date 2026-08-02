@@ -418,15 +418,16 @@ class PackBuilderApp(tk.Tk):
                     if first_thumbnail is None:
                         first_thumbnail = thumbnail
 
-                    # 音声切り出し (10秒分割 .ogg)
+                    # 音声切り出し (10秒分割 .ogg, 44.1kHz ステレオ)
                     sounds_dir = pack_root / "sounds" / "music" / video_id
                     sounds_dir.mkdir(parents=True, exist_ok=True)
-                    self.messages.put("  音声を10秒単位(.ogg)で切り出し中…")
+                    self.messages.put("  音声を10秒単位(.ogg, 44.1kHz)で切り出し中…")
                     try:
                         self._run([
                             ffmpeg, "-y", "-i", str(video),
                             "-f", "segment", "-segment_time", "10",
                             "-vn", "-acodec", "libvorbis",
+                            "-ar", "44100", "-ac", "2", "-b:a", "192k",
                             str(sounds_dir / "chunk_%d.ogg")
                         ])
                     except Exception as e:
@@ -437,7 +438,7 @@ class PackBuilderApp(tk.Tk):
                         chunk_idx = int(ogg_file.stem.split("_")[1])
                         sound_key = f"{namespace}.{video_id}.chunk_{chunk_idx}"
                         sound_definitions[sound_key] = {
-                            "category": "music",
+                            "category": "ui",
                             "sounds": [
                                 {
                                     "name": f"sounds/music/{video_id}/{ogg_file.stem}",
