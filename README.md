@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock%201.21+-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v2.6.4](https://img.shields.io/badge/Release-v2.6.4-blue.svg)](#releases)
+[![Release v2.7.0](https://img.shields.io/badge/Release-v2.7.0-blue.svg)](#releases)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
 ## 日本語 (Japanese)
@@ -134,6 +134,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## 🏷 Releases
 
+- **v2.7.0**: Zero-copy FFmpegパイプライン導入による超高速ストリーミング対応、UTF-16バイナリエンコードによる容量削減、FFmpeg HWAccelのYUV破損バグを修正。
 - **v2.6.4**: Script API での音声再生時、Bedrock 1.21以降の厳格な引数仕様(`location`)により音が鳴らない問題を修正。
 - **v2.6.3**: `.mcaddon` 生成時に Script API の依存関係が消えてしまうバグを修正。
 - **v2.6.2**: GUI起動時の変数初期化エラーを修正。

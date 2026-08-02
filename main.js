@@ -76,35 +76,39 @@ if (VIDEO_LIST.length > 0) {
   selectVideo(VIDEO_LIST[0].id);
 }
 
-const B64_MAP = new Uint8Array(256);
-const B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-for (let i = 0; i < B64_CHARS.length; i++) {
-  B64_MAP[B64_CHARS.charCodeAt(i)] = i;
-}
-
-function decodeBase64ToBytes(b64Str) {
-  if (!b64Str) return new Uint8Array(0);
-  if (b64Str.startsWith("K:")) {
-    b64Str = b64Str.slice(2);
+function decodeUTF16BinaryToBytes(utf16Str) {
+  if (!utf16Str) return new Uint8Array(0);
+  if (utf16Str.startsWith("K:")) {
+    utf16Str = utf16Str.slice(2);
   }
-  const len = b64Str.length;
+  const len = utf16Str.length;
   if (len === 0) return new Uint8Array(0);
-  let validLen = len;
-  if (b64Str[len - 1] === "=") validLen--;
-  if (b64Str[len - 2] === "=") validLen--;
 
-  const byteLen = (validLen * 3) >> 2;
+  // 最初の文字にパディング数が記録されている
+  const padLen = utf16Str.charCodeAt(0) - 0x1000;
+  
+  // 1文字あたり 15bit
+  const bitCount = (len - 1) * 15 - padLen;
+  if (bitCount <= 0) return new Uint8Array(0);
+  
+  const byteLen = Math.floor(bitCount / 8);
   const bytes = new Uint8Array(byteLen);
-  let p = 0;
-  for (let i = 0; i < validLen; i += 4) {
-    const b0 = B64_MAP[b64Str.charCodeAt(i)];
-    const b1 = B64_MAP[b64Str.charCodeAt(i + 1)];
-    const b2 = B64_MAP[b64Str.charCodeAt(i + 2)];
-    const b3 = B64_MAP[b64Str.charCodeAt(i + 3)];
-
-    bytes[p++] = (b0 << 2) | (b1 >> 4);
-    if (p < byteLen) bytes[p++] = ((b1 & 15) << 4) | (b2 >> 2);
-    if (p < byteLen) bytes[p++] = ((b2 & 3) << 6) | b3;
+  
+  let byteIdx = 0;
+  let bitBuffer = 0;
+  let bitsInBuffer = 0;
+  
+  for (let i = 1; i < len; i++) {
+    const val15 = utf16Str.charCodeAt(i) - 0x1000;
+    bitBuffer = (bitBuffer << 15) | val15;
+    bitsInBuffer += 15;
+    
+    while (bitsInBuffer >= 8) {
+      bitsInBuffer -= 8;
+      if (byteIdx < byteLen) {
+        bytes[byteIdx++] = (bitBuffer >>> bitsInBuffer) & 0xff;
+      }
+    }
   }
   return bytes;
 }
@@ -174,7 +178,18 @@ function applyFrame(dimension, anchorLoc, frameIndex) {
 
   if (typeof diffData === "string") {
     if (diffData.length === 0) return;
-    const bytes = decodeBase64ToBytes(diffData);
+    let bytes;
+    // 互換性のため古い Base64 と 新しい UTF16 両対応とする
+    // UTF-16 バイナリエンコードは最初の文字が常にパディング数 (0x1000 + padLen)
+    if (diffData.length > 0 && diffData.charCodeAt(diffData.startsWith("K:") ? 2 : 0) >= 0x1000) {
+      bytes = decodeUTF16BinaryToBytes(diffData);
+    } else {
+      // 古い Base64 版 (もう生成されないが過去の pack 対応)
+      // Base64 デコーダは削除したためエラーを出すか無視する。今回は単純に無視（新フォーマット専用）
+      console.warn(`[${EVENT_NAMESPACE}] Old Base64 format is no longer supported.`);
+      return;
+    }
+    
     let offset = 0;
     let currIdx = 0;
     const len = bytes.length;

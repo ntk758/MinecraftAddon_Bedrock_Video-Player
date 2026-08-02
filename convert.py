@@ -221,8 +221,7 @@ def apply_custom_dither(img, palette_rgb, dither_method):
 
     return out_indices
 
-def process_single_frame(path, pal_img, width, height, num_colors, dither_method, palette_rgb=None):
-    img = Image.open(path).convert("RGB")
+def process_single_frame_img(img, pal_img, width, height, num_colors, dither_method, palette_rgb=None):
     if img.size != (width, height):
         img = img.resize((width, height), Image.Resampling.LANCZOS)
         
@@ -250,7 +249,33 @@ try:
 except ImportError:
     HAS_TORCH_CUDA = False
 
-def process_frames_gpu(files, palette_rgb, width, height, dither_method="none"):
+def rgb_to_oklab_torch(rgb_tensor):
+    # rgb_tensor: (..., 3) in range [0, 255]
+    rgb = rgb_tensor / 255.0
+    # sRGB -> linear sRGB
+    mask = rgb > 0.04045
+    linear = torch.where(mask, torch.pow((rgb + 0.055) / 1.055, 2.4), rgb / 12.92)
+    
+    # linear sRGB -> LMS
+    m1 = torch.tensor([
+        [0.4122214708, 0.5363325363, 0.0514459929],
+        [0.2119034982, 0.6806995451, 0.1073969566],
+        [0.0883024619, 0.2817188376, 0.6299787005]
+    ], dtype=rgb_tensor.dtype, device=rgb_tensor.device)
+    lms = torch.matmul(linear, m1.T)
+    
+    # 非線形変換 (cbrt)
+    lms_ = torch.sign(lms) * torch.pow(torch.abs(lms), 1.0/3.0)
+    
+    # LMS -> OKLab
+    m2 = torch.tensor([
+        [ 0.2104542553,  0.7936177850, -0.0040720468],
+        [ 1.9779984951, -2.4285922050,  0.4505937099],
+        [ 0.0259040371,  0.7827717662, -0.8086757660]
+    ], dtype=rgb_tensor.dtype, device=rgb_tensor.device)
+    return torch.matmul(lms_, m2.T)
+
+def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="none"):
     import torch
     num_colors = len(palette_rgb)
     pal_tensor = torch.tensor(palette_rgb, dtype=torch.float32, device="cuda")
@@ -272,12 +297,8 @@ def process_frames_gpu(files, palette_rgb, width, height, dither_method="none"):
         bayer_tiled = np.stack([bayer_tiled]*3, axis=-1)
         bayer_tensor = torch.tensor(bayer_tiled, dtype=torch.float32, device="cuda")
 
-    for i, file_path in enumerate(files):
-        img = Image.open(file_path).convert("RGB")
-        if img.size != (width, height):
-            img = img.resize((width, height), Image.Resampling.LANCZOS)
-        
-        img_tensor = torch.tensor(np.array(img, dtype=np.float32), device="cuda")
+    for i, img_arr in enumerate(frames_iter):
+        img_tensor = torch.tensor(img_arr, dtype=torch.float32, device="cuda")
         
         if bayer_tensor is not None:
             img_tensor += bayer_tensor
@@ -298,10 +319,12 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="PNG連番をMinecraft Bedrock用のフレーム差分データへ超高速変換します。"
     )
-    parser.add_argument("--frames-dir", default=FRAMES_DIR, help="入力PNG連番のフォルダ")
     parser.add_argument("--output", default=OUTPUT_FILE, help="出力するframes_data.jsのパス")
     parser.add_argument("--width", type=int, default=WIDTH, help="出力幅（ブロック数）")
     parser.add_argument("--height", type=int, default=HEIGHT, help="出力高さ（ブロック数）")
+    parser.add_argument("--input-video", default=None, help="入力動画ファイル（FFmpeg直接読み込み）")
+    parser.add_argument("--fps", type=float, default=20.0, help="変換フレームレート")
+    parser.add_argument("--duration", type=float, default=None, help="処理時間（秒）")
     parser.add_argument("--palette", choices=PALETTES.keys(), default="concrete", help="使用するブロック色パレット")
     parser.add_argument("--dither", action="store_true", help="ディザリングを有効化")
     parser.add_argument("--dither-method", choices=["none", "floyd", "atkinson", "burkes", "sierra", "ordered"], default="none", help="ディザリング手法")
@@ -319,6 +342,45 @@ def encode_varint(val, byte_arr):
         val >>= 7
     byte_arr.append(val & 0x7f)
 
+def bytearray_to_utf16_str(byte_arr):
+    # バイト配列を 15ビットごとに区切り、0x1000 を足して UTF-16 文字列にする
+    if not byte_arr:
+        return ""
+    bits = "".join(f"{b:08b}" for b in byte_arr)
+    
+    rem = len(bits) % 15
+    pad_len = (15 - rem) if rem != 0 else 0
+    if pad_len > 0:
+        bits += "0" * pad_len
+        
+    chars = [chr(0x1000 + pad_len)]
+    for i in range(0, len(bits), 15):
+        val_15 = int(bits[i:i+15], 2)
+        chars.append(chr(0x1000 + val_15))
+        
+    return "".join(chars)
+
+def stream_frames_from_video(video_path, width, height, fps, duration=None):
+    import subprocess
+    # hwaccel を外す。ハードウェアデコーダを経由すると、rawvideo 出力時に
+    # NV12 や YUV フォーマットが強制され、色が破損（白が緑になる等）する現象を防ぐため。
+    cmd = ["ffmpeg", "-y", "-i", video_path]
+    if duration is not None:
+        cmd.extend(["-t", str(duration)])
+    cmd.extend([
+        "-vf", f"fps={fps:g},scale={width}:{height}:flags=lanczos,format=rgb24",
+        "-f", "rawvideo", "-pix_fmt", "rgb24", "-"
+    ])
+    
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    frame_size = width * height * 3
+    
+    while True:
+        raw = proc.stdout.read(frame_size)
+        if len(raw) != frame_size:
+            break
+        yield np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3))
+
 def main():
     global WIDTH, HEIGHT
     args = parse_args()
@@ -327,7 +389,6 @@ def main():
 
     WIDTH = args.width
     HEIGHT = args.height
-    frames_dir = args.frames_dir
     output_file = args.output
     
     if args.video_id:
@@ -339,11 +400,28 @@ def main():
     level_blocks = [{"block": item["block"], "states": {}} for item in palette]
     os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
 
-    files = sorted(glob.glob(os.path.join(frames_dir, "*.png")))
-    print("Frames:", len(files))
-    if not files:
-        print(f"警告: {frames_dir}/ にPNGが見つかりません。ffmpegでフレームを書き出してください。")
-        return
+    if args.input_video:
+        print(f"Video: {args.input_video} (FPS: {args.fps})")
+        frames_iter = stream_frames_from_video(args.input_video, WIDTH, HEIGHT, args.fps, args.duration)
+        # We need the total count roughly to know if empty, but we can't get it easily.
+        # We'll just pass the generator to the processing functions.
+    else:
+        # Fallback for PNG sequences if still used
+        frames_dir = getattr(args, 'frames_dir', FRAMES_DIR)
+        files = sorted(glob.glob(os.path.join(frames_dir, "*.png")))
+        print("Frames:", len(files))
+        if not files:
+            print(f"警告: {frames_dir}/ にPNGが見つかりません。")
+            return
+        
+        def image_generator(file_list, w, h):
+            for f in file_list:
+                img = Image.open(f).convert("RGB")
+                if img.size != (w, h):
+                    img = img.resize((w, h), Image.Resampling.LANCZOS)
+                yield np.array(img, dtype=np.uint8)
+        
+        frames_iter = image_generator(files, WIDTH, HEIGHT)
 
     pal_img = create_pillow_palette_image(palette)
 
@@ -356,7 +434,7 @@ def main():
 
     if use_gpu and HAS_TORCH_CUDA and dither_method in ('none', 'ordered'):
         print(f"GPU (PyTorch / CUDA) 加速量子化を使用して超高速変換中... (Dither: {dither_method})")
-        processed_frames = process_frames_gpu(files, palette_rgb_arr, WIDTH, HEIGHT, dither_method)
+        processed_frames = process_frames_gpu(frames_iter, palette_rgb_arr, WIDTH, HEIGHT, dither_method)
     else:
         if use_gpu:
             if not HAS_TORCH_CUDA:
@@ -368,12 +446,17 @@ def main():
         palette_rgb_for_dither = palette_rgb_arr if dither_method in ('ordered', 'atkinson', 'burkes', 'sierra') else None
         
         # ThreadPoolExecutor による並列フレーム処理
-        def task(file_path):
-            return process_single_frame(file_path, pal_img, WIDTH, HEIGHT, num_colors, dither_method, palette_rgb_for_dither)
+        # 並列処理のためにはジェネレータをリスト化する必要がある
+        frames_list = list(frames_iter)
+        
+        def task(img_arr):
+            # process_single_frame には PIL Image を渡すか np array に対応させる
+            img = Image.fromarray(img_arr)
+            return process_single_frame_img(img, pal_img, WIDTH, HEIGHT, num_colors, dither_method, palette_rgb_for_dither)
 
-        max_workers = min(args.threads, len(files))
+        max_workers = min(args.threads, len(frames_list) if frames_list else 1)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            processed_frames = list(executor.map(task, files))
+            processed_frames = list(executor.map(task, frames_list))
 
     old = np.full((HEIGHT, WIDTH), -1, dtype=int)
     frame_diffs = []
@@ -413,13 +496,15 @@ def main():
                 val = (delta << 6) | (int(color) & 0x3f)
                 encode_varint(val, byte_arr)
                 prev_idx = int(idx)
-            packed_b64 = prefix + base64.b64encode(byte_arr).decode("ascii")
+            packed_b64 = prefix + bytearray_to_utf16_str(byte_arr)
         else:
-            packed_b64 = ""
+            packed_b64 = prefix
         frame_diffs.append(packed_b64)
         old = current.copy()
 
-    print(f"Keyframes (Iフレーム): {keyframe_count} 個, スキップされたフレーム数: {skipped_frames} / {len(files)}")
+    # len(files) への依存を排除する
+    total_frames = len(processed_frames)
+    print(f"Keyframes (Iフレーム): {keyframe_count} 個, スキップされたフレーム数: {skipped_frames} / {total_frames}")
 
     data = {
         "width": WIDTH,
