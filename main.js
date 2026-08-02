@@ -364,11 +364,23 @@ function seekToFrame(targetFrame, dimension, anchorLoc) {
   const gop = currentVideoData.keyframe_interval || 30;
   const startFrame = Math.floor(targetFrame / gop) * gop;
 
-  // 直前のキーフレームから目標フレームまでを短時間一括適用して完璧に画面を復元
-  for (let f = startFrame; f <= targetFrame; f++) {
-    applyFrameSync(dimension, anchorLoc, f);
+  // 既存のジョブをキャンセル
+  if (currentJobId !== null) {
+    system.clearJob(currentJobId);
+    currentJobId = null;
   }
-  syncAudioForFrame(currentFrame);
+  
+  world.sendMessage(`§e[${EVENT_NAMESPACE}] フレーム ${targetFrame} へシーク中...`);
+
+  // 非同期シークジョブを起動
+  currentJobId = system.runJob((function* () {
+    for (let f = startFrame; f <= targetFrame; f++) {
+      yield* applyFrameJob(dimension, anchorLoc, f);
+    }
+    syncAudioForFrame(currentFrame);
+    world.sendMessage(`§a[${EVENT_NAMESPACE}] シーク完了 (一時停止中)`);
+    running = false; // シーク後は一時停止状態にする
+  })());
 }
 
 function startPlayback(fallbackDimension) {
