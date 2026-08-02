@@ -1,0 +1,26 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Test / Benchmark / Temporary files
+frames/
+scratch/
+test_frames*/
+ci_frames_data.js
+*.mcpack
+
+# IDE & Editor temporary files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Preserve essential addon files
+!manifest.json
+!main.js
+!pack_icon.png
