@@ -26,7 +26,7 @@
  *   その場合は runInterval の第2引数を 2 以上にして更新頻度を落とす)
  */
 
-import { world, system, BlockPermutation, BlockVolume } from "@minecraft/server";
+import { world, system, BlockPermutation, BlockVolumeUtils } from "@minecraft/server";
 import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
 import { VIDEOS, VIDEO_LIST } from "./videos.js";
 
@@ -221,7 +221,7 @@ function applyFrame(dimension, anchorLoc, frameIndex) {
           dimension.setBlockPermutation(startLoc, permutation);
         } else {
           const endLoc = { x: anchorLoc.x + x + length - 1, y: anchorLoc.y, z: anchorLoc.z + y };
-          const volume = new BlockVolume(startLoc, endLoc);
+          const volume = BlockVolumeUtils.getBlockVolume(startLoc, endLoc);
           dimension.fillBlocks(volume, permutation);
         }
       } catch (e) {
