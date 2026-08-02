@@ -244,6 +244,27 @@ def process_single_frame(path, pal_img, width, height, num_colors, dither_method
         q = img.quantize(palette=pal_img, dither=dither_mode)
         return np.array(q, dtype=np.int32) % num_colors
 
+try:
+    import torch
+    HAS_TORCH_CUDA = torch.cuda.is_available()
+except ImportError:
+    HAS_TORCH_CUDA = False
+
+def process_frames_gpu(files, palette_rgb, width, height):
+    import torch
+    num_colors = len(palette_rgb)
+    pal_tensor = torch.tensor(palette_rgb, dtype=torch.float32, device="cuda")
+    processed_frames = []
+    for file_path in files:
+        img = Image.open(file_path).convert("RGB")
+        if img.size != (width, height):
+            img = img.resize((width, height), Image.Resampling.LANCZOS)
+        img_tensor = torch.tensor(np.array(img, dtype=np.float32), device="cuda")
+        dists = torch.cdist(img_tensor.view(-1, 3), pal_tensor)
+        idx_tensor = torch.argmin(dists, dim=1).view(height, width)
+        processed_frames.append(idx_tensor.cpu().numpy().astype(np.int32) % num_colors)
+    return processed_frames
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="PNG連番をMinecraft Bedrock用のフレーム差分データへ超高速変換します。"
@@ -257,6 +278,7 @@ def parse_args():
     parser.add_argument("--dither-method", choices=["none", "floyd", "atkinson", "burkes", "sierra", "ordered"], default="none", help="ディザリング手法")
     parser.add_argument("--video-id", default=None, help="動画ID（マルチ動画パック用）")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 4, help="使用スレッド数")
+    parser.add_argument("--gpu", action="store_true", help="PyTorch/CUDA による GPU 加速量子化を使用")
     parser.add_argument("--adaptive-fps", action="store_true", default=True, help="適応的フレームレート(静止シーンスキップ)を有効化")
     parser.add_argument("--scene-threshold", type=float, default=0.015, help="静止シーン判定しきい値(比率)")
     return parser.parse_args()
@@ -299,15 +321,24 @@ def main():
     if args.dither and dither_method == 'none':
         dither_method = 'floyd'
 
-    palette_rgb_arr = np.array([item['rgb'] for item in palette], dtype=np.float64) if dither_method in ('ordered', 'atkinson', 'burkes', 'sierra') else None
+    use_gpu = args.gpu or HAS_TORCH_CUDA
+    palette_rgb_arr = np.array([item['rgb'] for item in palette], dtype=np.float64)
 
-    # ThreadPoolExecutor による並列フレーム処理
-    def task(file_path):
-        return process_single_frame(file_path, pal_img, WIDTH, HEIGHT, num_colors, dither_method, palette_rgb_arr)
+    if use_gpu and HAS_TORCH_CUDA and dither_method == 'none':
+        print("GPU (PyTorch / CUDA) 加速量子化を使用して超高速変換中...")
+        processed_frames = process_frames_gpu(files, palette_rgb_arr, WIDTH, HEIGHT)
+    else:
+        if use_gpu and not HAS_TORCH_CUDA:
+            print("注意: GPU (PyTorch/CUDA) が利用できません。CPUスレッドプール処理にフォールバックします。")
+        palette_rgb_for_dither = palette_rgb_arr if dither_method in ('ordered', 'atkinson', 'burkes', 'sierra') else None
+        
+        # ThreadPoolExecutor による並列フレーム処理
+        def task(file_path):
+            return process_single_frame(file_path, pal_img, WIDTH, HEIGHT, num_colors, dither_method, palette_rgb_for_dither)
 
-    max_workers = min(args.threads, len(files))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        processed_frames = list(executor.map(task, files))
+        max_workers = min(args.threads, len(files))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            processed_frames = list(executor.map(task, files))
 
     old = np.full((HEIGHT, WIDTH), -1, dtype=int)
     frame_diffs = []

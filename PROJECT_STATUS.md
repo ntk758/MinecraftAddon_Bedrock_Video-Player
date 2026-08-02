@@ -3,13 +3,17 @@
 ## 1. プロジェクト概要
 本プロジェクトは、動画ファイル（MP4 / MKV / AVI / WEBM 等）を Minecraft Bedrock Edition（統合版）の Behavior Pack（.mcpack）へ超高速かつ最小容量で変換し、ゲーム内のブロック盤面上でスムーズに動動画再生するアドオン＆変換ツール群です。
 
-- **最新バージョン**: `v1.9.0`
+- **最新バージョン**: `v2.1.0`
 - **対象環境**: Minecraft Bedrock Edition 1.21.0 以上 (Script API v1.x, `@minecraft/server-ui`)
-- **変換GUI環境**: Python 3.10+ (Pillow, NumPy, Tkinter, FFmpeg)
+- **変換GUI環境**: Python 3.10+ (PyTorch/CUDA, Pillow, NumPy, Tkinter, FFmpeg)
 
 ---
 
 ## 2. 現在の達成状況と到達点
+
+### ⚡ GPU アクセラレーション (v2.1.0 新機能)
+- **PyTorch / CUDA テンソル一括減色**: GPU 上で全ピクセルの色距離計算・パレット量子化を並列実行。未搭載時・非対応時は CPU スレッドプールへ自動フォールバック。
+- **FFmpeg GPU HWAccel デコード**: `-hwaccel auto` による動画フレーム抽出のハードウェア加速。
 
 ### 🎵 音声同期 ＆ リモコンGUI (v1.9.0 新機能)
 - **10秒分割 OGG 音声同期システム**: FFmpeg で音声を10秒単位 `.ogg` に自動切り出し、`player.playMusic()` で再生・シーク位置追従。

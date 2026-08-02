@@ -427,25 +427,37 @@ class PackBuilderApp(tk.Tk):
                             ]
                         }
 
-                    # フレーム抽出
-                    ffmpeg_command = [ffmpeg, "-y", "-i", str(video)]
+                    # フレーム抽出 (FFmpeg GPU アクセラレーション -hwaccel auto 対応)
+                    ffmpeg_command = [ffmpeg, "-y", "-hwaccel", "auto", "-i", str(video)]
                     if duration is not None:
                         ffmpeg_command.extend(["-t", str(duration)])
                     ffmpeg_command.extend([
                         "-vf", f"fps={20 / interval:g},scale={width}:{height}:flags=lanczos",
                         str(frames / "output_%04d.png"),
                     ])
-                    self.messages.put("  フレームを抽出中…")
-                    self._run(ffmpeg_command)
+                    self.messages.put("  フレームを抽出中 (GPU HWAccel対応)…")
+                    try:
+                        self._run(ffmpeg_command)
+                    except Exception:
+                        # HWAccel エラー時は CPU 標準デコードにフォールバック
+                        ffmpeg_command = [ffmpeg, "-y", "-i", str(video)]
+                        if duration is not None:
+                            ffmpeg_command.extend(["-t", str(duration)])
+                        ffmpeg_command.extend([
+                            "-vf", f"fps={20 / interval:g},scale={width}:{height}:flags=lanczos",
+                            str(frames / "output_%04d.png"),
+                        ])
+                        self._run(ffmpeg_command)
 
                     # ブロックデータ変換
-                    self.messages.put("  ブロックデータへ変換中…")
+                    self.messages.put("  ブロックデータへ変換中 (GPU/CPU自動選択)…")
                     converter_command = [
                         sys.executable, str(CONVERTER), "--frames-dir", str(frames),
                         "--output", str(generated_data), "--width", str(width), "--height", str(height),
                         "--palette", palette,
                         "--dither-method", dither_method,
                         "--video-id", video_id,
+                        "--gpu",
                     ]
                     self._run(converter_command)
 
