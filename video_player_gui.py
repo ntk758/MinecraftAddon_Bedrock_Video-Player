@@ -132,8 +132,8 @@ class PackBuilderApp(tk.Tk):
         settings = ttk.LabelFrame(self, text="変換・再生設定")
         settings.grid(row=3, column=0, sticky="ew", padx=10, pady=4)
         for index, (label, variable, maximum) in enumerate((
-            ("幅", self.width_var, 256),
-            ("高さ", self.height_var, 256),
+            ("幅", self.width_var, 512),
+            ("高さ", self.height_var, 512),
             ("再生間隔 (tick)", self.interval_var, 20),
         )):
             ttk.Label(settings, text=label).grid(row=0, column=index * 2, padx=(10, 4), pady=6)
@@ -146,7 +146,7 @@ class PackBuilderApp(tk.Tk):
         ttk.Label(settings, text="画質プリセット").grid(row=1, column=0, padx=(10, 4), pady=(0, 6))
         preset = ttk.Combobox(
             settings, textvariable=self.quality_var, state="readonly", width=25,
-            values=("軽量 (64×64 / 20fps)", "標準 (96×96 / 10fps)", "高画質 (128×128 / 10fps)", "高精細 (128×128 / 5fps)"),
+            values=("軽量 (64×64 / 20fps)", "標準 (96×96 / 10fps)", "高画質 (128×128 / 10fps)", "高精細 (128×128 / 5fps)", "ウルトラ (256×256 / 5fps)", "極限 (512×512 / 2fps)"),
         )
         preset.grid(row=1, column=1, columnspan=2, padx=(0, 10), pady=(0, 6), sticky="w")
         preset.bind("<<ComboboxSelected>>", lambda _event: self._apply_quality_preset())
@@ -276,6 +276,8 @@ class PackBuilderApp(tk.Tk):
             "標準 (96×96 / 10fps)": (96, 96, 2),
             "高画質 (128×128 / 10fps)": (128, 128, 2),
             "高精細 (128×128 / 5fps)": (128, 128, 4),
+            "ウルトラ (256×256 / 5fps)": (256, 256, 4),
+            "極限 (512×512 / 2fps)": (512, 512, 10),
         }
         width, height, interval = presets[self.quality_var.get()]
         self.width_var.set(width)
@@ -318,8 +320,12 @@ class PackBuilderApp(tk.Tk):
                 messagebox.showerror("ファイルが見つかりません", f"動画ファイルが見つかりません:\n{entry['file_path']}")
                 return
 
+        # 解像度
+        width = self.width_var.get()
+        height = self.height_var.get()
+
         try:
-            width, height, interval = self.width_var.get(), self.height_var.get(), self.interval_var.get()
+            interval = self.interval_var.get()
             duration = float(self.duration_var.get()) if self.duration_var.get().strip() else None
             if min(width, height, interval) < 1 or (duration is not None and duration <= 0):
                 raise ValueError

@@ -64,11 +64,15 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
         dither_tensor = torch.tensor(bn_tiled, dtype=torch.float32, device="cuda")
 
     error_buffer = torch.zeros((height, width, 3), dtype=torch.float32, device="cuda")
+    importance_buffer = torch.zeros((height, width), dtype=torch.float32, device="cuda")
     prev_idx_tensor = None
     prev_orig_img_tensor = None
     rdo_threshold = 20.0
     me_threshold = 5.0 # 背景と見なす元画像の最大色差
     temporal_dither_weight = 0.5
+    
+    # バジェット(予算)制限: 1フレームあたり最大で画面の15%までしか更新しない (巨大スクリーン対応)
+    max_update_pixels = int(width * height * 0.15)
 
     for i, img_arr in enumerate(frames_iter):
         orig_img_tensor = torch.tensor(img_arr, dtype=torch.float32, device="cuda")
@@ -106,9 +110,35 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
             dist_to_prev = torch.norm(img_tensor - prev_colors, dim=-1) # (H, W)
             rdo_mask = dist_to_prev < rdo_threshold
             
-            # MEで完全に静止しているか、RDOで許容範囲なら再利用
-            reuse_mask = me_mask | rdo_mask
+            # 3. Budget (予算ベース描画)
+            # 変更したい(RDOでもMEでも静止判定にならなかった)ピクセル
+            want_to_update = ~(me_mask | rdo_mask)
+            
+            # 重要度バッファを更新(更新したいピクセルの色差を蓄積)
+            importance_buffer += torch.where(want_to_update, dist_to_prev, torch.zeros_like(dist_to_prev))
+            
+            # 重要度上位 K 個を抽出
+            # 画面全体で更新が必要なピクセル数が max_update_pixels を超える場合のみ予算制限を発動
+            num_want_to_update = want_to_update.sum().item()
+            if num_want_to_update > max_update_pixels:
+                # 1DにしてTop-Kを取得
+                flat_importance = importance_buffer.view(-1)
+                topk_values, topk_indices = torch.topk(flat_importance, max_update_pixels)
+                
+                # 新しい更新マスクを作成 (上位K個だけTrue)
+                budget_mask = torch.zeros_like(flat_importance, dtype=torch.bool)
+                budget_mask[topk_indices] = True
+                budget_mask = budget_mask.view(height, width)
+                
+                # 更新を許可されなかったピクセルは強制的に前フレームを維持
+                reuse_mask = ~budget_mask
+            else:
+                reuse_mask = ~want_to_update
+                
             idx_tensor = torch.where(reuse_mask, prev_idx_tensor, idx_tensor)
+            
+            # 更新されたピクセルの重要度をリセット
+            importance_buffer = torch.where(idx_tensor != prev_idx_tensor, torch.zeros_like(importance_buffer), importance_buffer)
             
         # Temporal Dithering のための誤差計算
         selected_colors = pal_tensor[idx_tensor]

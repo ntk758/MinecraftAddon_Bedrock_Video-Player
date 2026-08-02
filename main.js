@@ -54,6 +54,7 @@ let currentFrame = 0;
 let running = false;
 let timeoutId = null;
 let intervalId = null;
+let currentJobId = null;
 let paletteCache = null;
 const tempBlockLoc = { x: 0, y: 0, z: 0 };
 
@@ -167,8 +168,8 @@ function ensureTickingArea(dimension, anchor) {
   }
 }
 
-/** フレーム番号の差分を実際にブロックへ適用する */
-function applyFrame(dimension, anchorLoc, frameIndex) {
+/** フレーム番号の差分をジェネレータで少しずつ適用する */
+function* applyFrameJob(dimension, anchorLoc, frameIndex) {
   if (!currentVideoData) return;
   const diffData = currentVideoData.frames[frameIndex];
   if (!diffData) return;
@@ -193,6 +194,9 @@ function applyFrame(dimension, anchorLoc, frameIndex) {
     let offset = 0;
     let currIdx = 0;
     const len = bytes.length;
+
+    let operations = 0;
+    const MAX_OPS_PER_TICK = 4000;
 
     while (offset < len) {
       let val = 0;
@@ -229,8 +233,17 @@ function applyFrame(dimension, anchorLoc, frameIndex) {
           `[${EVENT_NAMESPACE}] block apply failed at (${startLoc.x},${startLoc.y},${startLoc.z}) level=${level} length=${length}: ${e}`
         );
       }
+      
+      operations++;
+      if (operations > MAX_OPS_PER_TICK) {
+        yield;
+        operations = 0;
+      }
     }
   } else if (Array.isArray(diffData)) {
+    // Array format is highly unlikely now but kept for fallback
+    let operations = 0;
+    const MAX_OPS_PER_TICK = 4000;
     for (let i = 0; i < diffData.length; i++) {
       const item = diffData[i];
       let x, y, level;
@@ -262,6 +275,37 @@ function applyFrame(dimension, anchorLoc, frameIndex) {
           `[${EVENT_NAMESPACE}] block resolve/apply failed at (${tempBlockLoc.x},${tempBlockLoc.y},${tempBlockLoc.z}) level=${level}: ${e}`
         );
       }
+      
+      operations++;
+      if (operations > MAX_OPS_PER_TICK) {
+        yield;
+        operations = 0;
+      }
+    }
+  }
+}
+
+function applyFrameSync(dimension, anchorLoc, frameIndex) {
+  const iterator = applyFrameJob(dimension, anchorLoc, frameIndex);
+  for (const _ of iterator) {
+    // 同期的にすべて回し切る (seekToFrame用)
+  }
+}
+
+      const permutation = paletteCache[level];
+      if (!permutation) continue;
+
+      tempBlockLoc.x = anchorLoc.x + x;
+      tempBlockLoc.y = anchorLoc.y;
+      tempBlockLoc.z = anchorLoc.z + y;
+
+      try {
+        dimension.setBlockPermutation(tempBlockLoc, permutation);
+      } catch (e) {
+        console.warn(
+          `[${EVENT_NAMESPACE}] block resolve/apply failed at (${tempBlockLoc.x},${tempBlockLoc.y},${tempBlockLoc.z}) level=${level}: ${e}`
+        );
+      }
     }
   }
 }
@@ -275,6 +319,10 @@ function stopPlayback() {
   if (intervalId !== null) {
     system.clearRun(intervalId);
     intervalId = null;
+  }
+  if (currentJobId !== null) {
+    system.clearJob(currentJobId);
+    currentJobId = null;
   }
   currentAudioChunk = -1;
   // 音楽停止
@@ -318,7 +366,7 @@ function seekToFrame(targetFrame, dimension, anchorLoc) {
 
   // 直前のキーフレームから目標フレームまでを短時間一括適用して完璧に画面を復元
   for (let f = startFrame; f <= targetFrame; f++) {
-    applyFrame(dimension, anchorLoc, f);
+    applyFrameSync(dimension, anchorLoc, f);
   }
   syncAudioForFrame(currentFrame);
 }
@@ -346,16 +394,24 @@ function startPlayback(fallbackDimension) {
   timeoutId = system.runTimeout(() => {
     timeoutId = null;
     if (!running) return;
-    intervalId = system.runInterval(() => {
-      if (!running || currentFrame >= currentVideoData.frame_count) {
+    
+    // ジェネレータによるメイン再生ループ
+    currentJobId = system.runJob((function* () {
+      while (running && currentFrame < currentVideoData.frame_count) {
+        // 1フレームを分割描画
+        yield* applyFrameJob(dimension, anchorLoc, currentFrame);
+        
+        syncAudioForFrame(currentFrame);
+        currentFrame++;
+        yield; // 次のフレームへ
+      }
+      
+      if (running) {
         stopPlayback();
         world.sendMessage(`§a[${EVENT_NAMESPACE}] 再生終了`);
-        return;
       }
-      applyFrame(dimension, anchorLoc, currentFrame);
-      syncAudioForFrame(currentFrame);
-      currentFrame++;
-    }, FRAME_INTERVAL_TICKS);
+    })());
+    
   }, START_LOAD_DELAY_TICKS);
   world.sendMessage(`§a[${EVENT_NAMESPACE}] 読み込み完了後に再生します。リモコン(コンパス)右クリックで操作GUIが開きます`);
 }
