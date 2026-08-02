@@ -548,7 +548,7 @@ class PackBuilderApp(tk.Tk):
                 bp_manifest["header"]["version"] = list(PACK_VERSION)
                 bp_manifest["modules"][0]["uuid"] = bp_mod_uuid
                 bp_manifest["modules"][0]["version"] = list(PACK_VERSION)
-                bp_manifest["dependencies"] = [{"uuid": rp_uuid, "version": list(PACK_VERSION)}]
+                bp_manifest.setdefault("dependencies", []).append({"uuid": rp_uuid, "version": list(PACK_VERSION)})
                 (bp_root / "manifest.json").write_text(
                     json.dumps(bp_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
                 )

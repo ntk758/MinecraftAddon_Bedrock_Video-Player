@@ -1,7 +1,8 @@
 """配布パックに埋め込むリリース情報の唯一の管理場所。"""
 
-PACK_VERSION = (2, 6, 2)
+PACK_VERSION = (2, 6, 3)
 RELEASE_NOTES = [
+    ".mcaddon 生成時に Script API の依存関係 (@minecraft/server 等) が消えてしまいマイクラ内でエラーになるバグを修正",
     "GUI(video_player_gui.py)起動時に AttributeError: 'quality_var' などが発生して開かなくなる不具合を修正",
     "READMEおよびGUIのテキストを整理。事実ベースの説明へ改修し、ディザリング時のGPU対応状況を明記",
     "GPU超高速変換の抜本的最適化: Ordered(Bayer)ディザリング時のGPUテンソル並列計算を実装し、高画質でも最高速の変換が可能に",
