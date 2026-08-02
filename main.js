@@ -26,7 +26,7 @@
  *   その場合は runInterval の第2引数を 2 以上にして更新頻度を落とす)
  */
 
-import { world, system, BlockPermutation } from "@minecraft/server";
+import { world, system, BlockPermutation, BlockVolume } from "@minecraft/server";
 import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
 import { VIDEOS, VIDEO_LIST } from "./videos.js";
 
@@ -203,8 +203,9 @@ function applyFrame(dimension, anchorLoc, frameIndex) {
         if ((b & 0x80) === 0) break;
         shift += 7;
       }
-      const delta = val >> 6;
-      const level = val & 0x3f;
+      const delta = val >>> 13;
+      const length = ((val >>> 7) & 0x3f) + 1;
+      const level = val & 0x7f;
       currIdx += delta;
 
       const x = currIdx % width;
@@ -213,15 +214,19 @@ function applyFrame(dimension, anchorLoc, frameIndex) {
       const permutation = paletteCache[level];
       if (!permutation) continue;
 
-      tempBlockLoc.x = anchorLoc.x + x;
-      tempBlockLoc.y = anchorLoc.y;
-      tempBlockLoc.z = anchorLoc.z + y;
-
+      const startLoc = { x: anchorLoc.x + x, y: anchorLoc.y, z: anchorLoc.z + y };
+      
       try {
-        dimension.setBlockPermutation(tempBlockLoc, permutation);
+        if (length === 1) {
+          dimension.setBlockPermutation(startLoc, permutation);
+        } else {
+          const endLoc = { x: anchorLoc.x + x + length - 1, y: anchorLoc.y, z: anchorLoc.z + y };
+          const volume = new BlockVolume(startLoc, endLoc);
+          dimension.fillBlocks(volume, permutation);
+        }
       } catch (e) {
         console.warn(
-          `[${EVENT_NAMESPACE}] block resolve/apply failed at (${tempBlockLoc.x},${tempBlockLoc.y},${tempBlockLoc.z}) level=${level}: ${e}`
+          `[${EVENT_NAMESPACE}] block apply failed at (${startLoc.x},${startLoc.y},${startLoc.z}) level=${level} length=${length}: ${e}`
         );
       }
     }

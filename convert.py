@@ -360,6 +360,38 @@ def bytearray_to_utf16_str(byte_arr):
         
     return "".join(chars)
 
+def extract_rle_chunks(changed_indices, changed_colors, width):
+    chunks = []
+    if len(changed_indices) == 0:
+        return chunks
+    
+    start_idx = int(changed_indices[0])
+    current_color = int(changed_colors[0])
+    current_y = start_idx // width
+    length = 1
+    
+    for i in range(1, len(changed_indices)):
+        idx = int(changed_indices[i])
+        color = int(changed_colors[i])
+        y = idx // width
+        
+        # 連続条件:
+        # 1. 完全に隣接している (idx == start_idx + length)
+        # 2. 同じ行に属している (y == current_y)
+        # 3. 色が同じ
+        # 4. 長さが 64 未満 (6bit制約のため、length-1が0~63に収まる)
+        if idx == start_idx + length and y == current_y and color == current_color and length < 64:
+            length += 1
+        else:
+            chunks.append((start_idx, length, current_color))
+            start_idx = idx
+            current_color = color
+            current_y = y
+            length = 1
+            
+    chunks.append((start_idx, length, current_color))
+    return chunks
+
 def stream_frames_from_video(video_path, width, height, fps, duration=None):
     import subprocess
     # hwaccel を外す。ハードウェアデコーダを経由すると、rawvideo 出力時に
@@ -488,19 +520,24 @@ def main():
 
             changed_colors = current.flat[changed_indices]
 
-        if len(changed_indices) > 0:
+        if len(changed_indices) > 0 or is_keyframe:
             byte_arr = bytearray()
+            chunks = extract_rle_chunks(changed_indices, changed_colors, WIDTH)
+            
             prev_idx = 0
-            for idx, color in zip(changed_indices, changed_colors):
-                delta = int(idx) - prev_idx
-                val = (delta << 6) | (int(color) & 0x3f)
+            for start_idx, length, color in chunks:
+                delta = start_idx - prev_idx
+                # 新 VarInt構造: [delta(可変長)] + [length-1(6bit)] + [color(7bit)]
+                val = (delta << 13) | ((length - 1) << 7) | (color & 0x7f)
                 encode_varint(val, byte_arr)
-                prev_idx = int(idx)
+                prev_idx = start_idx
+                
             packed_b64 = prefix + bytearray_to_utf16_str(byte_arr)
+            old = current.copy()
         else:
             packed_b64 = prefix
+            
         frame_diffs.append(packed_b64)
-        old = current.copy()
 
     # len(files) への依存を排除する
     total_frames = len(processed_frames)
