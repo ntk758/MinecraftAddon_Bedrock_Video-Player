@@ -243,9 +243,12 @@ function* applyFrameJob(dimension, anchorLoc, frameIndex) {
           }
         }
       } catch (e) {
-        console.warn(
-          `[${EVENT_NAMESPACE}] block apply failed at (${startLoc.x},${startLoc.y},${startLoc.z}) level=${level} length=${length}: ${e}`
-        );
+        const errMsg = String(e);
+        if (!errMsg.includes("LocationInUnloadedChunkError")) {
+          console.warn(
+            `[${EVENT_NAMESPACE}] block apply failed at (${startLoc.x},${startLoc.y},${startLoc.z}) level=${level} length=${length}: ${e}`
+          );
+        }
       }
     }
   } else if (Array.isArray(diffData)) {
@@ -279,9 +282,12 @@ function* applyFrameJob(dimension, anchorLoc, frameIndex) {
       try {
         dimension.setBlockPermutation(tempBlockLoc, permutation);
       } catch (e) {
-        console.warn(
-          `[${EVENT_NAMESPACE}] block resolve/apply failed at (${tempBlockLoc.x},${tempBlockLoc.y},${tempBlockLoc.z}) level=${level}: ${e}`
-        );
+        const errMsg = String(e);
+        if (!errMsg.includes("LocationInUnloadedChunkError")) {
+          console.warn(
+            `[${EVENT_NAMESPACE}] block resolve/apply failed at (${tempBlockLoc.x},${tempBlockLoc.y},${tempBlockLoc.z}) level=${level}: ${e}`
+          );
+        }
       }
       
       operations++;
