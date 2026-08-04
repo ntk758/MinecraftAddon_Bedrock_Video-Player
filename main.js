@@ -63,19 +63,24 @@ let currentVideoData = null;
 let currentAudioChunk = -1;
 let masterVolume = 1.0;
 
-// v3 フォーマット用: デコード済みバイナリとインデックスのキャッシュ
-let decodedBinary = null;
-let decodedIndex = null;  // Array of { offset, length, isKeyframe }
+// v4 フォーマット用: GOP チャンク遅延デコード + LRU キャッシュ
+let decodedIndex = null;  // Array of { gopId, offset, length, isKeyframe }
 let decodedVideoId = null;
+// GOP LRU キャッシュ: Map<gopId, Uint8Array> (最大 MAX_CACHED_GOPS)
+const gopCache = new Map();
+const MAX_CACHED_GOPS = 3;
+// v3 後方互換用
+let decodedBinary = null;
 
 function selectVideo(videoId) {
   if (VIDEOS[videoId]) {
     currentVideoId = videoId;
     currentVideoData = VIDEOS[videoId];
     // 動画が変わったらキャッシュをクリア
-    decodedBinary = null;
     decodedIndex = null;
     decodedVideoId = null;
+    decodedBinary = null;
+    gopCache.clear();
     return true;
   }
   return false;
@@ -94,10 +99,7 @@ function decodeUTF16BinaryToBytes(utf16Str) {
   const len = utf16Str.length;
   if (len === 0) return new Uint8Array(0);
 
-  // 最初の文字にパディング数が記録されている
   const padLen = utf16Str.charCodeAt(0) - 0x1000;
-  
-  // 1文字あたり 15bit
   const bitCount = (len - 1) * 15 - padLen;
   if (bitCount <= 0) return new Uint8Array(0);
   
@@ -123,38 +125,80 @@ function decodeUTF16BinaryToBytes(utf16Str) {
   return bytes;
 }
 
-/** v3: バイナリとインデックスを遅延デコードする */
+/** インデックスのみをデコード (v4: 高速、v3: 全バイナリ) */
 function ensureDecodedData() {
   if (!currentVideoData) return false;
-  if (decodedVideoId === currentVideoId && decodedBinary && decodedIndex) return true;
+  if (decodedVideoId === currentVideoId && decodedIndex) return true;
 
-  // v3 フォーマット (binary + index)
-  if (currentVideoData.format === "varint_rle_v3" && currentVideoData.binary && currentVideoData.index) {
-    decodedBinary = decodeUTF16BinaryToBytes(currentVideoData.binary);
-    
-    // インデックスをデコード
+  // v4 フォーマット (chunks + index)
+  if (currentVideoData.format === "varint_rle_v4" && currentVideoData.chunks && currentVideoData.index) {
+    // インデックスだけデコード (小さいので高速)
     const idxBytes = decodeUTF16BinaryToBytes(currentVideoData.index);
     decodedIndex = [];
     let pos = 0;
     const idxLen = idxBytes.length;
     while (pos < idxLen) {
-      // offset_and_flag varint
-      let val1 = 0, shift1 = 0;
+      // gop_id varint
+      let gopId = 0, sh0 = 0;
       while (pos < idxLen) {
         const b = idxBytes[pos++];
-        val1 |= (b & 0x7f) << shift1;
+        gopId |= (b & 0x7f) << sh0;
         if ((b & 0x80) === 0) break;
-        shift1 += 7;
+        sh0 += 7;
+      }
+      // offset_and_flag varint
+      let val1 = 0, sh1 = 0;
+      while (pos < idxLen) {
+        const b = idxBytes[pos++];
+        val1 |= (b & 0x7f) << sh1;
+        if ((b & 0x80) === 0) break;
+        sh1 += 7;
       }
       // length varint
-      let val2 = 0, shift2 = 0;
+      let val2 = 0, sh2 = 0;
       while (pos < idxLen) {
         const b = idxBytes[pos++];
-        val2 |= (b & 0x7f) << shift2;
+        val2 |= (b & 0x7f) << sh2;
         if ((b & 0x80) === 0) break;
-        shift2 += 7;
+        sh2 += 7;
       }
       decodedIndex.push({
+        gopId: gopId,
+        offset: val1 >>> 1,
+        length: val2,
+        isKeyframe: (val1 & 1) === 1
+      });
+    }
+    decodedBinary = null;
+    gopCache.clear();
+    decodedVideoId = currentVideoId;
+    return true;
+  }
+
+  // v3 フォーマット (binary + index)
+  if (currentVideoData.format === "varint_rle_v3" && currentVideoData.binary && currentVideoData.index) {
+    decodedBinary = decodeUTF16BinaryToBytes(currentVideoData.binary);
+    const idxBytes = decodeUTF16BinaryToBytes(currentVideoData.index);
+    decodedIndex = [];
+    let pos = 0;
+    const idxLen = idxBytes.length;
+    while (pos < idxLen) {
+      let val1 = 0, sh1 = 0;
+      while (pos < idxLen) {
+        const b = idxBytes[pos++];
+        val1 |= (b & 0x7f) << sh1;
+        if ((b & 0x80) === 0) break;
+        sh1 += 7;
+      }
+      let val2 = 0, sh2 = 0;
+      while (pos < idxLen) {
+        const b = idxBytes[pos++];
+        val2 |= (b & 0x7f) << sh2;
+        if ((b & 0x80) === 0) break;
+        sh2 += 7;
+      }
+      decodedIndex.push({
+        gopId: -1,  // v3 は GOP なし
         offset: val1 >>> 1,
         length: val2,
         isKeyframe: (val1 & 1) === 1
@@ -164,7 +208,7 @@ function ensureDecodedData() {
     return true;
   }
   
-  // v2 フォーマット (frames 配列) への後方互換
+  // v2 フォーマット (frames 配列)
   if (currentVideoData.frames) {
     decodedVideoId = currentVideoId;
     decodedBinary = null;
@@ -173,6 +217,24 @@ function ensureDecodedData() {
   }
   
   return false;
+}
+
+/** v4: GOP チャンクを遅延デコード + LRU キャッシュ */
+function ensureGopDecoded(gopId) {
+  if (gopCache.has(gopId)) return gopCache.get(gopId);
+  
+  if (!currentVideoData || !currentVideoData.chunks) return null;
+  if (gopId < 0 || gopId >= currentVideoData.chunks.length) return null;
+  
+  const decoded = decodeUTF16BinaryToBytes(currentVideoData.chunks[gopId]);
+  
+  // LRU: キャッシュが満杯なら最古のエントリを削除
+  if (gopCache.size >= MAX_CACHED_GOPS) {
+    const oldestKey = gopCache.keys().next().value;
+    gopCache.delete(oldestKey);
+  }
+  gopCache.set(gopId, decoded);
+  return decoded;
 }
 
 function initPaletteCache() {
@@ -191,7 +253,6 @@ function initPaletteCache() {
 }
 
 function getAnchor() {
-  // Vector3 { x, y, z } または undefined(未設定)が返る
   return world.getDynamicProperty(ANCHOR_KEY);
 }
 
@@ -211,11 +272,8 @@ function ensureTickingArea(dimension, anchor) {
   if (!currentVideoData) return false;
   try {
     dimension.runCommand(`tickingarea remove ${TICKING_AREA_NAME}`);
-  } catch (e) {
-    // 既存エリアがない場合のエラーは無視する。
-  }
+  } catch (e) {}
 
-  // 終点は盤面内の最後のブロック。余分な1列・1行を含めない。
   const toX = anchor.x + currentVideoData.width - 1;
   const toZ = anchor.z + currentVideoData.height - 1;
   try {
@@ -236,7 +294,7 @@ function* applyBinarySlice(dimension, anchorLoc, width, bytes, startOff, endOff)
   let operations = 0;
   const MAX_OPS_PER_TICK = 4000;
 
-  // 最初の varint はフレームヘッダ (frame_index << 1 | keyframe_flag) — スキップ
+  // 最初の varint はフレームヘッダ — スキップ
   while (offset < endOff) {
     const b = bytes[offset++];
     if ((b & 0x80) === 0) break;
@@ -301,11 +359,22 @@ function* applyFrameJob(dimension, anchorLoc, frameIndex) {
   initPaletteCache();
   const width = currentVideoData.width;
 
-  // --- v3 フォーマット (binary + index) ---
-  if (decodedBinary && decodedIndex) {
+  // --- v4 フォーマット (GOP chunks + index) ---
+  if (currentVideoData.format === "varint_rle_v4" && decodedIndex) {
     if (frameIndex < 0 || frameIndex >= decodedIndex.length) return;
     const entry = decodedIndex[frameIndex];
     if (entry.length === 0) return; // スキップフレーム
+    const gopBytes = ensureGopDecoded(entry.gopId);
+    if (!gopBytes) return;
+    yield* applyBinarySlice(dimension, anchorLoc, width, gopBytes, entry.offset, entry.offset + entry.length);
+    return;
+  }
+
+  // --- v3 フォーマット (single binary + index) ---
+  if (decodedBinary && decodedIndex) {
+    if (frameIndex < 0 || frameIndex >= decodedIndex.length) return;
+    const entry = decodedIndex[frameIndex];
+    if (entry.length === 0) return;
     yield* applyBinarySlice(dimension, anchorLoc, width, decodedBinary, entry.offset, entry.offset + entry.length);
     return;
   }

@@ -284,11 +284,11 @@ def main():
     adaptive_fps = args.adaptive_fps
     scene_threshold = args.scene_threshold
 
-    # 全フレームを1本のバイナリに連結し、フレームごとのオフセットを記録する
-    all_encoded = bytearray()
-    # frame_offsets[i] = (byte_offset, byte_length, is_keyframe)
-    frame_offsets = []
-    
+    # --- v4 GOP-Chunked Lazy Decode ---
+    GOP_SIZE = 200  # 1チャンクあたりのフレーム数
+
+    # Pass 1: 全フレームを RLE エンコードし、フレームごとのバイト列を記録
+    per_frame_bytes = []  # list of (bytearray, is_keyframe)
     prev_frame = np.full(WIDTH * HEIGHT, -1, dtype=np.int32)
     
     frame_indices = []
@@ -303,7 +303,7 @@ def main():
             diff_ratio = np.mean(flat_frame != prev_frame)
             if diff_ratio < scene_threshold:
                 skipped_frames += 1
-                frame_offsets.append((0, 0, False))  # スキップフレーム
+                per_frame_bytes.append((bytearray(), False))  # スキップフレーム
                 continue
         
         if is_keyframe:
@@ -314,27 +314,44 @@ def main():
             
         frame_indices.append(i)
         
-        start_offset = len(all_encoded)
+        encoded_data = bytearray()
         chunk_count = len(chunks)
-        encode_varint((i << 1) | (1 if is_keyframe else 0), all_encoded)
-        encode_varint(chunk_count, all_encoded)
+        encode_varint((i << 1) | (1 if is_keyframe else 0), encoded_data)
+        encode_varint(chunk_count, encoded_data)
         
         for start_x, y, length, color in chunks:
             delta = y * WIDTH + start_x
             data_val = (delta << 13) | ((length - 1) << 7) | (color & 0x7f)
-            encode_varint(data_val, all_encoded)
+            encode_varint(data_val, encoded_data)
             
         prev_frame = flat_frame.copy()
-        byte_length = len(all_encoded) - start_offset
-        frame_offsets.append((start_offset, byte_length, is_keyframe))
+        per_frame_bytes.append((encoded_data, is_keyframe))
 
-    # UTF-16 エンコード (1本化)
-    utf16_str = bytearray_to_utf16_str(all_encoded)
-    
+    # Pass 2: GOP単位でチャンクに分割し、各GOPを独立に UTF-16 エンコード
+    num_gops = (total_frames + GOP_SIZE - 1) // GOP_SIZE
+    gop_utf16_strings = []
+    # frame_index_entries[i] = (gop_id, byte_offset_in_gop, byte_length, is_keyframe)
+    frame_index_entries = []
+
+    for gop_id in range(num_gops):
+        start_f = gop_id * GOP_SIZE
+        end_f = min(start_f + GOP_SIZE, total_frames)
+        
+        gop_binary = bytearray()
+        for f in range(start_f, end_f):
+            fb, is_kf = per_frame_bytes[f]
+            offset_in_gop = len(gop_binary)
+            byte_len = len(fb)
+            gop_binary.extend(fb)
+            frame_index_entries.append((gop_id, offset_in_gop, byte_len, is_kf))
+        
+        gop_utf16_strings.append(bytearray_to_utf16_str(gop_binary))
+
     # フレームインデックスをコンパクトにエンコード
-    # 各フレーム: [byte_offset, byte_length, is_keyframe_flag] を varint 連結
+    # 各フレーム: [gop_id, byte_offset_in_gop, byte_length, is_keyframe_flag]
     index_data = bytearray()
-    for offset_val, length_val, is_kf in frame_offsets:
+    for gop_id, offset_val, length_val, is_kf in frame_index_entries:
+        encode_varint(gop_id, index_data)
         encode_varint((offset_val << 1) | (1 if is_kf else 0), index_data)
         encode_varint(length_val, index_data)
     index_utf16 = bytearray_to_utf16_str(index_data)
@@ -354,14 +371,18 @@ def main():
             block_def["states"] = item["states"]
         level_blocks.append(block_def)
 
+    # chunks 配列を JSON 文字列として出力
+    chunks_json = json.dumps(gop_utf16_strings, ensure_ascii=False)
+
     js_content = f"""export const {export_var} = {{
   "width": {WIDTH},
   "height": {HEIGHT},
   "frame_count": {total_frames},
-  "format": "varint_rle_v3",
+  "format": "varint_rle_v4",
+  "gop_size": {GOP_SIZE},
   "level_blocks": {json.dumps(level_blocks, ensure_ascii=False)},
   "index": "{index_utf16}",
-  "binary": "{utf16_str}"
+  "chunks": {chunks_json}
 }};
 """
     out_path.write_text(js_content, encoding='utf-8')

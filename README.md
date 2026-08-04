@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock%201.21+-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v3.1.0](https://img.shields.io/badge/Release-v3.1.0-blue.svg)](#releases)
+[![Release v3.2.0](https://img.shields.io/badge/Release-v3.2.0-blue.svg)](#releases)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
 ## 日本語 (Japanese)
@@ -153,6 +153,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## 🏷 Releases
 
+- **v3.2.0**: v4 GOP-Chunked 遅延デコードフォーマットを導入。200フレーム単位の独立チャンク分割+LRUキャッシュにより、高解像度動画のワールド読み込み速度を劇的に改善。
 - **v3.1.0**: 次世代 Ultra-HD (512x512) 描画、バジェットベースRDO/MEによる負荷分散、v3バイナリ連結フォーマットによる爆速ワールドロード、Temporal Dithering などを一挙に搭載。
 - **v2.8.0**: Phase 4 MVCodec 導入。動的自動ブロックパレット生成 (K-Means)、Blue Noise ディザリングと知覚最適化フィルター、GUIへのベンチマーク表示機能を追加。
 - **v2.7.0**: Zero-copy FFmpegパイプライン導入による超高速ストリーミング対応、UTF-16バイナリエンコードによる容量削減、FFmpeg HWAccelのYUV破損バグを修正。
