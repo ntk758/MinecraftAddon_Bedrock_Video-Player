@@ -127,6 +127,14 @@ Powered by Python, FFmpeg, and the latest Bedrock Script APIs, this tool aims fo
 - [x] 音声同期再生 (Audio Sync)
 - [x] 高速化・GPU対応 (GPU Acceleration & Optimization)
 - [x] マルチ動画パック対応 (Multi-video support)
+- [ ] **Phase 7: Research Edition (次世代R&D)**
+  - MVCodec独自コンテナ形式の策定
+  - GPUデコード (Script API + WebGL 等の可能性探索)
+  - Adaptive Palette (フレーム間での動的パレット切り替え)
+  - Motion Vector Prediction (高度な動き予測)
+  - Perceptual Rate-Distortion Optimization (LPIPSベース)
+  - マルチ動画同時ストリーミング再生
+  - AI補助によるブロック選択
 - [ ] 圧縮率の更なる改善 (Further delta-compression improvements)
 - [ ] 3D立体ホログラム再生への拡張 (3D Hologram playback)
 
@@ -153,7 +161,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## 🏷 Releases
 
-- **v4.0.0**: Phase 6。OkLab知覚色空間への移行による色再現性の劇的向上、シーン適応型の自動圧縮制御(RDO/ME)、NumPyベクトル化によるエンコード高速化、予測型GOPプリフェッチとスマートティック予算によるラグなし再生を実現。世界最高のMinecraft動画プレイヤーへ。
+- **v4.0.0**: Phase 6。OkLab知覚色空間への移行による色再現性の改善、シーン適応型の自動圧縮制御(RDO/ME)、NumPyベクトル化によるエンコード効率向上、予測型GOPプリフェッチとスマートティック予算による再生安定性の強化を実現。Minecraft Bedrock向け動画再生アドオンとして、高い完成度を目指した設計となっています。
 - **v3.2.0**: v4 GOP-Chunked 遅延デコードフォーマットを導入。200フレーム単位の独立チャンク分割+LRUキャッシュにより、高解像度動画のワールド読み込み速度を劇的に改善。
 - **v3.1.0**: 次世代 Ultra-HD (512x512) 描画、バジェットベースRDO/MEによる負荷分散、v3バイナリ連結フォーマットによる爆速ワールドロード、Temporal Dithering などを一挙に搭載。
 - **v2.8.0**: Phase 4 MVCodec 導入。動的自動ブロックパレット生成 (K-Means)、Blue Noise ディザリングと知覚最適化フィルター、GUIへのベンチマーク表示機能を追加。
