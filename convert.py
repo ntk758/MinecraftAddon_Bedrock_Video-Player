@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
+import hashlib
 from PIL import Image
 
 # Import MVCodec modules
@@ -279,12 +280,32 @@ def main():
     
     temp_iter = list(ffmpeg_frame_generator(args.input_video, WIDTH, HEIGHT, args.fps, args.duration)) if args.input_video else []
     
+    MIN_GOP_SIZE = 20
     gop_boundaries = [0]
     if len(temp_iter) > 0:
         last_boundary = 0
         for i in range(1, len(temp_iter)):
-            diff = np.abs(temp_iter[i].astype(np.float32) - temp_iter[i-1].astype(np.float32)).mean()
-            if diff > SCENE_CUT_THRESHOLD or (i - last_boundary) >= MAX_GOP_SIZE:
+            a = temp_iter[i].astype(np.float32)
+            b = temp_iter[i-1].astype(np.float32)
+            
+            sad = np.abs(a - b).mean()
+            
+            hist_a, _ = np.histogram(a, bins=32, range=(0, 256))
+            hist_b, _ = np.histogram(b, bins=32, range=(0, 256))
+            hist_diff = np.abs(hist_a - hist_b).sum() / a.size * 255.0
+            
+            gray_a = a.mean(axis=2)
+            gray_b = b.mean(axis=2)
+            gx_a, gy_a = np.gradient(gray_a)
+            gx_b, gy_b = np.gradient(gray_b)
+            edge_a = np.sqrt(gx_a**2 + gy_a**2)
+            edge_b = np.sqrt(gx_b**2 + gy_b**2)
+            edge_diff = np.abs(edge_a - edge_b).mean()
+            
+            scene_score = 0.5 * sad + 0.3 * hist_diff + 0.2 * edge_diff
+            
+            frames_since_last = i - last_boundary
+            if (scene_score > SCENE_CUT_THRESHOLD and frames_since_last >= MIN_GOP_SIZE) or frames_since_last >= MAX_GOP_SIZE:
                 gop_boundaries.append(i)
                 last_boundary = i
         if gop_boundaries[-1] != len(temp_iter):
@@ -301,11 +322,21 @@ def main():
         else:
             is_adaptive_palette = True
             adaptive_palettes = []
+            palette_cache = {}
             for j in range(len(gop_boundaries) - 1):
                 gop_start = gop_boundaries[j]
                 gop_end = gop_boundaries[j+1]
                 gop_frames = temp_iter[gop_start:gop_end]
-                pal = generate_auto_palette(gop_frames, ALL_BLOCKS, max_colors=64, use_gpu=(args.gpu or HAS_TORCH_CUDA))
+                
+                first_frame = gop_frames[0]
+                thumb = first_frame[::8, ::8].astype(np.uint8)
+                gop_hash = hashlib.md5(thumb.tobytes()).hexdigest()
+                
+                if gop_hash in palette_cache:
+                    pal = palette_cache[gop_hash]
+                else:
+                    pal = generate_auto_palette(gop_frames, ALL_BLOCKS, max_colors=64, use_gpu=(args.gpu or HAS_TORCH_CUDA))
+                    palette_cache[gop_hash] = pal
                 adaptive_palettes.append(pal)
             palette = adaptive_palettes[0]
     else:
