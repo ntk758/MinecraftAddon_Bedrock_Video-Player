@@ -29,7 +29,8 @@ HEIGHT = 64
 FRAMES_DIR = "frames"
 OUTPUT_DIR = "BP/scripts"
 OUTPUT_FILE = f"{OUTPUT_DIR}/frames_data.js"
-GOP_SIZE = 200
+MAX_GOP_SIZE = 300
+SCENE_CUT_THRESHOLD = 30.0
 
 try:
     import torch
@@ -37,7 +38,7 @@ try:
 except ImportError:
     HAS_TORCH_CUDA = False
 
-def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="none", apply_perceptual=True):
+def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="none", apply_perceptual=True, gop_boundaries=None):
     import torch
     from mvcodec.color import generate_blue_noise_approx_numpy, get_edge_mask_gpu
     
@@ -101,8 +102,8 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
             return 0.0, 0.0, width * height, 0.8
 
     for i, img_arr in enumerate(frames_iter):
-        if is_adaptive and i > 0 and i % GOP_SIZE == 0:
-            gop_idx = i // GOP_SIZE
+        if is_adaptive and i > 0 and gop_boundaries and i in gop_boundaries:
+            gop_idx = gop_boundaries.index(i)
             if gop_idx < len(palette_rgb):
                 pal_tensor, pal_oklab = get_pal_tensors(palette_rgb[gop_idx])
                 num_colors = len(palette_rgb[gop_idx])
@@ -276,20 +277,34 @@ def main():
     WIDTH = args.width
     HEIGHT = args.height
     
+    temp_iter = list(ffmpeg_frame_generator(args.input_video, WIDTH, HEIGHT, args.fps, args.duration)) if args.input_video else []
+    
+    gop_boundaries = [0]
+    if len(temp_iter) > 0:
+        last_boundary = 0
+        for i in range(1, len(temp_iter)):
+            diff = np.abs(temp_iter[i].astype(np.float32) - temp_iter[i-1].astype(np.float32)).mean()
+            if diff > SCENE_CUT_THRESHOLD or (i - last_boundary) >= MAX_GOP_SIZE:
+                gop_boundaries.append(i)
+                last_boundary = i
+        if gop_boundaries[-1] != len(temp_iter):
+            gop_boundaries.append(len(temp_iter))
+
     is_adaptive_palette = False
     if args.palette == "auto":
         from mvcodec.color import ALL_BLOCKS
         from mvcodec.auto_palette import generate_auto_palette
         
-        temp_iter = list(ffmpeg_frame_generator(args.input_video, WIDTH, HEIGHT, args.fps, args.duration)) if args.input_video else []
         if len(temp_iter) == 0:
             palette = []
             adaptive_palettes = []
         else:
             is_adaptive_palette = True
             adaptive_palettes = []
-            for gop_start in range(0, len(temp_iter), GOP_SIZE):
-                gop_frames = temp_iter[gop_start:gop_start+GOP_SIZE]
+            for j in range(len(gop_boundaries) - 1):
+                gop_start = gop_boundaries[j]
+                gop_end = gop_boundaries[j+1]
+                gop_frames = temp_iter[gop_start:gop_end]
                 pal = generate_auto_palette(gop_frames, ALL_BLOCKS, max_colors=64, use_gpu=(args.gpu or HAS_TORCH_CUDA))
                 adaptive_palettes.append(pal)
             palette = adaptive_palettes[0]
@@ -306,7 +321,7 @@ def main():
         sampled_originals = []
         
         def iter_wrapper():
-            for i, frame in enumerate(ffmpeg_frame_generator(args.input_video, WIDTH, HEIGHT, args.fps, args.duration)):
+            for i, frame in enumerate(temp_iter):
                 if i % sample_interval == 0 and len(sampled_originals) < 50:
                     sampled_originals.append(frame)
                 yield frame
@@ -323,7 +338,7 @@ def main():
     dither_method = args.dither_method
 
     if use_gpu and HAS_TORCH_CUDA and dither_method in ('none', 'ordered', 'blue_noise'):
-        processed_frames = process_frames_gpu(frames_iter, palette_rgb_arr, WIDTH, HEIGHT, dither_method, apply_perceptual=args.perceptual)
+        processed_frames = process_frames_gpu(frames_iter, palette_rgb_arr, WIDTH, HEIGHT, dither_method, apply_perceptual=args.perceptual, gop_boundaries=gop_boundaries)
     else:
         palette_rgb_for_dither = palette_rgb_arr[0] if is_adaptive_palette and dither_method in ('ordered', 'atkinson', 'burkes', 'sierra') else (palette_rgb_arr if dither_method in ('ordered', 'atkinson', 'burkes', 'sierra') else None)
         frames_list = list(frames_iter)
@@ -345,7 +360,7 @@ def main():
     scene_threshold = args.scene_threshold
 
     # --- v4 GOP-Chunked Lazy Decode ---
-    # GOP_SIZE is defined globally
+    # GOP boundaries are calculated dynamically
 
     # Pass 1: 全フレームを RLE エンコードし、フレームごとのバイト列を記録
     per_frame_bytes = []  # list of (bytearray, is_keyframe)
@@ -388,14 +403,14 @@ def main():
         per_frame_bytes.append((encoded_data, is_keyframe))
 
     # Pass 2: GOP単位でチャンクに分割し、各GOPを独立に UTF-16 エンコード
-    num_gops = (total_frames + GOP_SIZE - 1) // GOP_SIZE
+    num_gops = max(0, len(gop_boundaries) - 1)
     gop_utf16_strings = []
     # frame_index_entries[i] = (gop_id, byte_offset_in_gop, byte_length, is_keyframe)
     frame_index_entries = []
 
     for gop_id in range(num_gops):
-        start_f = gop_id * GOP_SIZE
-        end_f = min(start_f + GOP_SIZE, total_frames)
+        start_f = gop_boundaries[gop_id]
+        end_f = min(gop_boundaries[gop_id + 1], total_frames)
         
         gop_binary = bytearray()
         for f in range(start_f, end_f):
@@ -450,7 +465,7 @@ def main():
   "height": {HEIGHT},
   "frame_count": {total_frames},
   "format": "varint_rle_v4",
-  "gop_size": {GOP_SIZE},
+  "gop_boundaries": {gop_boundaries},
   "adaptive_palette": {"true" if is_adaptive_palette else "false"},
   "level_blocks": {json.dumps(level_blocks, ensure_ascii=False)},
   "index": "{index_utf16}",

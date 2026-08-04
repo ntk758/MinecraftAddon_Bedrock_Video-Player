@@ -294,9 +294,12 @@ class VideoPlayer {
       this.activePalette = this.videoData.adaptive_palette ? this.paletteCache[this.currentGopId] : this.paletteCache;
 
       const gopBytes = this.ensureGopDecoded(entry.gopId);
-      const gopSize = this.videoData.gop_size || 200;
-      if (frameIndex % gopSize >= gopSize * 0.8) {
-        this.ensureGopDecoded(entry.gopId + 1);
+      const lookaheadFrame = frameIndex + 10;
+      if (lookaheadFrame < this.decodedIndex.length) {
+        const nextGopId = this.decodedIndex[lookaheadFrame].gopId;
+        if (nextGopId > entry.gopId) {
+          this.ensureGopDecoded(nextGopId);
+        }
       }
       if (!gopBytes) return;
       yield* this.applyBinarySlice(width, gopBytes, entry.offset, entry.offset + entry.length);
