@@ -512,14 +512,15 @@ function startPlayback(fallbackDimension) {
         frameIterator = applyFrameJob(dimension, anchorLoc, currentFrame);
       }
 
-      // 1 tick内で描画を進める
-      const { done } = frameIterator.next();
-
-      if (done) {
-        // フレーム描画完了
-        syncAudioForFrame(currentFrame);
-        currentFrame++;
-        frameIterator = null;
+      // 1ティック内でフレーム全体を描画しきる
+      while (true) {
+        const { done } = frameIterator.next();
+        if (done) {
+          syncAudioForFrame(currentFrame);
+          currentFrame++;
+          frameIterator = null;
+          break;
+        }
       }
     }, FRAME_INTERVAL_TICKS);
     
