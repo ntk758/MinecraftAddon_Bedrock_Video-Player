@@ -3,13 +3,19 @@
 ## 1. プロジェクト概要
 本プロジェクトは、動画ファイル（MP4 / MKV / AVI / WEBM 等）を Minecraft Bedrock Edition（統合版）の Behavior Pack（.mcpack）へ超高速かつ最小容量で変換し、ゲーム内のブロック盤面上でスムーズに動動画再生するアドオン＆変換ツール群です。
 
-- **最新バージョン**: `v2.4.0`
+- **最新バージョン**: `v5.0.0` (Phase 7 Research Edition)
 - **対象環境**: Minecraft Bedrock Edition 1.21.0 以上 (Script API v1.x, `@minecraft/server-ui`)
 - **変換GUI環境**: Python 3.10+ (PyTorch/CUDA, Pillow, NumPy, Tkinter, FFmpeg) または **独立スタンドアロン EXE (`BlockVideoPlayer.exe`)**
 
 ---
 
 ## 2. 現在の達成状況と到達点
+
+### 🔬 Phase 7: Research Edition 完成 (v5.0.0 新機能)
+- **オブジェクト指向JSエンジン (VideoPlayer)**: `VideoPlayer` クラスの導入により、1つのワールド内で複数のスクリーン（マルチスクリーン）同時再生が可能に。
+- **局所的SSIMベースの知覚的RDO**: エッジやディテールを保持しつつ、人間の視覚特性（SSIM）に合わせたレート歪み最適化を実現。
+- **シーン適応型パレット & シーンGOP**: `0.5*SAD + 0.3*Hist + 0.2*Edge` の式に基づく動的GOPリサイズと、パレットハッシュを用いたシーンごとの適応型パレット切り替え。
+- **統合ベンチマークフレームワーク**: `benchmark/` 傘下に SSIM, PSNR, LPIPS, $\Delta E_{2000}$ を測定するモジュラー設計のフレームワークを構築 (`run.py --deep` 対応)。
 
 ### ⚡ 高画質軽量化バッチ上限 ＆ 音楽再生補修 (v2.4.0 新機能)
 - **128×128高画質での重さ解消 (MAX_BLOCKS_PER_TICK = 800)**: 1tick内でのブロック設置上限数を設定し、描画スパイク（ラグ）を解消。

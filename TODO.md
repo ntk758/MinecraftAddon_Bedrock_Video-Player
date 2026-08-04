@@ -4,13 +4,21 @@
 
 ---
 
-## 🔴 優先度: 高 (High Priority)
+## 🔴 優先度: 高 (High Priority / Phase 7.x Next-Gen Prediction)
 
-### 1. 音声同期再生機能 (Audio Sync System)
+### 1. Motion Vector Prediction (高度な動き予測)
+- **概要**: ブロック単位での動きベクトル（Motion Vector）を算出し、フレーム間のパン・スクロールなどの動きを予測して圧縮効率を飛躍的に高める。
+- **実装案**: マクロブロックベースの探索アルゴリズム（Diamond Search 等）の導入。
+
+### 2. Tile Dictionary (タイル辞書圧縮)
+- **概要**: 頻出するブロックのパターン（例：テキスト、UI要素、特定のテクスチャ）を辞書化し、インデックス参照で描画する。
+- **実装案**: 空間的冗長性を排除するLZ77ベースのアプローチをタイルに適用。
+
+### 3. 音声同期再生機能 (Audio Sync System)
 - **概要**: 動画の音声トラック（AAC / MP3）を Minecraft の Custom Sound Resource Pack（`sounds.json` + `.ogg`）へ書き出し。
 - **実装案**: 
   - `video_player_gui.py` で FFmpeg を使い音声 `.ogg` を同時出力し、Resource Pack を自動ビルド。
-  - `main.js` の `startPlayback()` 実行時に `dimension.playSound()` または `world.playSound()` を呼び出し、映像と音声を完全に同期再生。
+  - `VideoPlayer` クラスの再生時に音声を同期させる。
 
 ### 2. GUI の Web アプリケーション化 (Web-based Converter)
 - **概要**: Tkinter ベースのローカル GUI に加え、PyScript または WebAssembly (Wasm) + FFmpeg.wasm を用いて、ブラウザ上で完結する Web 版コンバーターを開発。

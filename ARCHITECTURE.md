@@ -9,13 +9,13 @@
 ```mermaid
 flowchart TD
     A[動画ファイル MP4/MKV] -->|FFmpeg| B[PNG連番画像]
-    B -->|convert.py / ThreadPoolExecutor| C[Pillow Quantize / Dither]
-    C -->|色クラスタリング| D[全50+色マイクラブロックマッピング]
-    D -->|差分検出 & Adaptive FPS| E[Delta VarInt 符号化]
+    B -->|局所的SSIMベース Perceptual RDO| C[Pillow Quantize / Dither]
+    C -->|シーン適応型パレット (パレットハッシュ)| D[全50+色マイクラブロックマッピング]
+    D -->|シーン適応型GOP (0.5*SAD + 0.3*Hist + 0.2*Edge)| E[Delta VarInt 符号化]
     E -->|Base64 エンコード| F[frames_video_id.js]
     F -->|videos.js 自動生成| G[Behavior Pack .mcpack]
     G -->|Minecraft インポート| H[Script API / main.js]
-    H -->|Base64 & VarInt 高速デコード| I[BlockPermutation 一括キャッシュ]
+    H -->|オブジェクト指向 VideoPlayer クラス| I[マルチスクリーン同時再生]
     I -->|dimension.setBlockPermutation| J[ゲーム内スクリーン盤面描画]
 ```
 
@@ -88,11 +88,20 @@ export const FRAME_DATA = {
 
 ## 4. Minecraft 側 (`main.js`) 描画最適化設計
 
-1. **`BlockPermutation` の一括事前キャッシュ (`initPaletteCache`)**:
+1. **`VideoPlayer` クラスによるオブジェクト指向化**:
+   - `VideoPlayer` クラスをインスタンス化することで、座標や状態を個別にカプセル化し、同一ワールド内で複数のスクリーンを独立して同時再生可能なマルチスクリーンアーキテクチャを実現。
+2. **`BlockPermutation` の一括事前キャッシュ (`initPaletteCache`)**:
    - C++ バインディングである `BlockPermutation.resolve(blockId, states)` を毎フレーム呼び出すと非常に重いため、起動時に配列へ 1 回だけキャッシュ。
-2. **単一座標オブジェクトの再利用 (`tempBlockLoc`)**:
-   - ガベージコレクション (GC) によるフレーム落ちを完全に防ぐため、`{ x: 0, y: 0, z: 0 }` オブジェクトを 1 つだけ生成してインスタンスを使い回し。
-3. **`tickingarea` の自動設置**:
-   - プレイヤーが離れても盤面ブロックがアンロードされないよう、`setup` 時に領域 `badapple_area` を自動生成。
-4. **二重起動・ゴースト再生の防止**:
-   - `timeoutId` と `intervalId` を独立管理し、`stopPlayback()` で確実に `system.clearRun()` を実行。
+3. **単一座標オブジェクトの再利用 (`tempBlockLoc`)**:
+   - ガベージコレクション (GC) によるフレーム落ちを完全に防ぐため、各プレイヤーインスタンス内で `{ x: 0, y: 0, z: 0 }` オブジェクトを 1 つだけ生成してインスタンスを使い回し。
+
+---
+
+## 5. Phase 7: エンコーダーパイプラインの進化
+
+1. **局所的SSIMベースの知覚的RDO (Perceptual Rate-Distortion Optimization)**:
+   - 従来の一律な圧縮ではなく、エッジやディテール（文字など）が集中する重要な領域を局所的SSIMで判定し、視覚的品質を保持したままレート歪み最適化を実施。
+2. **シーン適応型GOP (Scene Adaptive GOP)**:
+   - 評価式 `0.5*SAD (Sum of Absolute Differences) + 0.3*Hist (Histogram Diff) + 0.2*Edge (Edge Diff)` に基づき、シーンチェンジを動的に検知。静的なシーンではGOPを長く、激しいシーンでは短く自動調整。
+3. **シーン適応型パレット (Adaptive Palette)**:
+   - シーンごとに最適なカラーパレットを算出し、パレットハッシュで管理。シーン転換時に動的にパレットを切り替えることで色再現性を極限まで高める。
