@@ -68,7 +68,7 @@ let decodedIndex = null;  // Array of { gopId, offset, length, isKeyframe }
 let decodedVideoId = null;
 // GOP LRU キャッシュ: Map<gopId, Uint8Array> (最大 MAX_CACHED_GOPS)
 const gopCache = new Map();
-const MAX_CACHED_GOPS = 3;
+const MAX_CACHED_GOPS = 4;
 // v3 後方互換用
 let decodedBinary = null;
 
@@ -365,6 +365,11 @@ function* applyFrameJob(dimension, anchorLoc, frameIndex) {
     const entry = decodedIndex[frameIndex];
     if (entry.length === 0) return; // スキップフレーム
     const gopBytes = ensureGopDecoded(entry.gopId);
+    // 予測型 GOP プリフェッチ: 次の GOP を先読みデコード
+    const gopSize = currentVideoData.gop_size || 200;
+    if (frameIndex % gopSize >= gopSize * 0.8) {
+      ensureGopDecoded(entry.gopId + 1);
+    }
     if (!gopBytes) return;
     yield* applyBinarySlice(dimension, anchorLoc, width, gopBytes, entry.offset, entry.offset + entry.length);
     return;
@@ -512,8 +517,11 @@ function startPlayback(fallbackDimension) {
         frameIterator = applyFrameJob(dimension, anchorLoc, currentFrame);
       }
 
-      // 1ティック内でフレーム全体を描画しきる
-      while (true) {
+      // スマートティック予算: 最大N回のyieldを1ティックで処理
+      // 通常デルタフレーム(少ないブロック更新)は1ティックで完了
+      // キーフレーム(全画面更新)は複数ティックに分散してラグ防止
+      const MAX_YIELDS_PER_TICK = 12;
+      for (let yc = 0; yc < MAX_YIELDS_PER_TICK; yc++) {
         const { done } = frameIterator.next();
         if (done) {
           syncAudioForFrame(currentFrame);

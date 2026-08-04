@@ -20,7 +20,7 @@ from mvcodec.color import (
 from mvcodec.encode import (
     encode_varint,
     bytearray_to_utf16_str,
-    extract_rle_chunks
+    extract_rle_chunks_fast
 )
 from mvcodec.evaluate import calculate_ssim_global
 
@@ -42,6 +42,7 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
     
     num_colors = len(palette_rgb)
     pal_tensor = torch.tensor(palette_rgb, dtype=torch.float32, device="cuda")
+    pal_oklab = rgb_to_oklab_torch(pal_tensor)
     processed_frames = []
 
     dither_tensor = None
@@ -67,12 +68,25 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
     importance_buffer = torch.zeros((height, width), dtype=torch.float32, device="cuda")
     prev_idx_tensor = None
     prev_orig_img_tensor = None
-    rdo_threshold = 20.0
-    me_threshold = 5.0 # 背景と見なす元画像の最大色差
-    temporal_dither_weight = 0.5
     
-    # バジェット(予算)制限: 1フレームあたり最大で画面の15%までしか更新しない (巨大スクリーン対応)
+    # シーン適応型圧縮用の初期パラメータ
+    rdo_threshold = 20.0
+    me_threshold = 5.0
+    temporal_dither_weight = 0.5
     max_update_pixels = int(width * height * 0.15)
+    
+    def analyze_scene(diff_ratio):
+        # フレーム変化率に基づいてパラメータを動的に決定
+        if diff_ratio < 0.01:
+            return 40.0, 3.0, int(width * height * 0.05), 0.2
+        elif diff_ratio < 0.05:
+            return 25.0, 5.0, int(width * height * 0.10), 0.4
+        elif diff_ratio < 0.20:
+            return 15.0, 7.0, int(width * height * 0.20), 0.5
+        elif diff_ratio < 0.50:
+            return 8.0, 10.0, int(width * height * 0.35), 0.6
+        else:
+            return 0.0, 0.0, width * height, 0.8
 
     for i, img_arr in enumerate(frames_iter):
         orig_img_tensor = torch.tensor(img_arr, dtype=torch.float32, device="cuda")
@@ -90,32 +104,39 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
             img_tensor += bias
             img_tensor = torch.clamp(img_tensor, 0, 255)
 
-        dists = torch.cdist(img_tensor.view(-1, 3), pal_tensor)
+        # Pillar 1: OkLab 知覚色空間でのカラーマッチング
+        img_oklab = rgb_to_oklab_torch(img_tensor.view(-1, 3))
+        dists = torch.cdist(img_oklab, pal_oklab)
         idx_tensor = torch.argmin(dists, dim=1).view(height, width)
         
         # Rate-Distortion Optimization (RDO) & Motion Estimation (ME)
         if prev_idx_tensor is not None and prev_orig_img_tensor is not None:
-            # 1. ME Mask (背景静止化)
-            # オリジナル画像同士の絶対誤差(SAD)を計算し、小さなノイズレベルの変化なら「静止」とみなす
-            diff_orig = torch.abs(orig_img_tensor - prev_orig_img_tensor).mean(dim=-1) # (H, W)
-            # PyTorchのAvgPool2dを使って3x3領域で平均化し、孤立したノイズを除去（周辺も静止しているか確認）
+            # Pillar 2: シーン適応型圧縮
+            # 変化ピクセル率を大まかに計算 (RGB空間の絶対差分)
+            diff_orig = torch.abs(orig_img_tensor - prev_orig_img_tensor).mean(dim=-1)
             diff_orig_pool = torch.nn.functional.avg_pool2d(
                 diff_orig.unsqueeze(0).unsqueeze(0), kernel_size=3, stride=1, padding=1
             ).squeeze(0).squeeze(0)
             
+            diff_ratio = (diff_orig_pool > 5.0).float().mean().item()
+            rdo_threshold, me_threshold, max_update_pixels, temporal_dither_weight = analyze_scene(diff_ratio)
+            
+            # 1. ME Mask (背景静止化 - RGBベースで計算)
             me_mask = diff_orig_pool < me_threshold
             
-            # 2. RDO (ディザリング抑制)
-            prev_colors = pal_tensor[prev_idx_tensor] # (H, W, 3)
-            dist_to_prev = torch.norm(img_tensor - prev_colors, dim=-1) # (H, W)
-            rdo_mask = dist_to_prev < rdo_threshold
+            # 2. RDO (ディザリング抑制 - OkLabベースで計算)
+            prev_colors = pal_tensor[prev_idx_tensor] # (H, W, 3) - still needed for buffer
+            prev_colors_oklab = pal_oklab[prev_idx_tensor]
+            dist_to_prev_oklab = torch.norm(img_oklab.view(height, width, 3) - prev_colors_oklab, dim=-1)
+            # OkLab Euclidean dist scale is ~0.0-1.5, we scale the threshold for RGB-equivalent mapping (roughly / 255.0)
+            rdo_mask = dist_to_prev_oklab < (rdo_threshold / 255.0)
             
             # 3. Budget (予算ベース描画)
             # 変更したい(RDOでもMEでも静止判定にならなかった)ピクセル
             want_to_update = ~(me_mask | rdo_mask)
             
             # 重要度バッファを更新(更新したいピクセルの色差を蓄積)
-            importance_buffer += torch.where(want_to_update, dist_to_prev, torch.zeros_like(dist_to_prev))
+            importance_buffer += torch.where(want_to_update, dist_to_prev_oklab, torch.zeros_like(dist_to_prev_oklab))
             
             # 重要度上位 K 個を抽出
             # 画面全体で更新が必要なピクセル数が max_update_pixels を超える場合のみ予算制限を発動
@@ -149,9 +170,8 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
         processed_frames.append(idx_tensor.cpu().numpy().astype(np.int32) % num_colors)
         prev_idx_tensor = idx_tensor.clone()
         prev_orig_img_tensor = orig_img_tensor.clone()
-
-        del orig_img_tensor, img_tensor, dists, idx_tensor, selected_colors
-        if i % 64 == 63:
+        
+        if i % 64 == 0:
             torch.cuda.empty_cache()
 
     return processed_frames
@@ -308,9 +328,9 @@ def main():
         
         if is_keyframe:
             keyframes_count += 1
-            chunks = extract_rle_chunks(flat_frame, np.full_like(flat_frame, -1), WIDTH, HEIGHT, num_colors)
+            chunks = extract_rle_chunks_fast(flat_frame, np.full_like(flat_frame, -1), WIDTH, HEIGHT)
         else:
-            chunks = extract_rle_chunks(flat_frame, prev_frame, WIDTH, HEIGHT, num_colors)
+            chunks = extract_rle_chunks_fast(flat_frame, prev_frame, WIDTH, HEIGHT)
             
         frame_indices.append(i)
         
