@@ -1,36 +1,12 @@
 /**
  * Bad Apple Cushion Player - 統合版移植版 (v2: カラー対応)
- *
- * Java版 mc-cushion-bad-apple (datapack + .mcfunction) を Script API に置き換えたもの。
- * Bad Apple専用ではなく、convert.py で変換した任意のカラー動画を再生できる。
- * - .mcfunctionを大量生成する代わりに、フレーム差分を frames_data.js に1本化して起動時に読み込む
- * - schedule function の連鎖の代わりに system.runInterval(fn, 1) で1tickごとにコールバック
- * - コマンドパーサを経由せず dimension.setBlockPermutation() を直接呼ぶ
- * - 原点座標(アンカー)は Java版の marker エンティティの代わりに
- *   world.setDynamicProperty()/getDynamicProperty() で保存する。
- *   (実機で判明: 統合版に "minecraft:marker" というエンティティは存在せず、
- *    spawnEntity("minecraft:marker", ...) は InvalidArgumentError になる)
- * - 各ピクセルの色は、Minecraft公式マップカラー定義由来の16色concreteパレットに
- *   最近傍マッチングされる(convert.py側の処理)。発光ブロックの明度で階調を
- *   作っていたv1は色相がバラバラで見た目が絵にならなかったため廃止した。
- *
- * 操作方法 (datapackのfunctionコマンドの代わりに /scriptevent を使う):
- *   /scriptevent badapple:setup   … プレイヤーの足元を起点に原点座標を保存
- *   /scriptevent badapple:start   … 再生開始
- *   /scriptevent badapple:stop    … 停止して盤面をクリア
- *   /scriptevent badapple:list    … 収録動画一覧を表示
- *   /scriptevent badapple:play <id> … 指定した動画を選択して再生
- *
- * 未検証事項(実機で必ず確認すること):
- * - 64x64=4096ブロックの差分を1tick内に処理しきれるか(重い場合は間引きが必要。
- *   その場合は runInterval の第2引数を 2 以上にして更新頻度を落とす)
+ * (v3: Object-Oriented Multi-Screen & Adaptive Palette Support)
  */
 
 import { world, system, BlockPermutation } from "@minecraft/server";
 import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
 import { VIDEOS, VIDEO_LIST } from "./videos.js";
 
-// video_player_gui.py がパック作成時にこの2つの値を設定する。
 const EVENT_NAMESPACE = "badapple";
 const FRAME_INTERVAL_TICKS = 1;
 const EVENT_PREFIX = `${EVENT_NAMESPACE}:`;
@@ -40,56 +16,17 @@ const MESSAGE_PREFIX = `§b[${EVENT_NAMESPACE}]`;
 const START_LOAD_DELAY_TICKS = 5;
 const TICKING_AREA_NAME = "badapple_area";
 
-// リモコン用設定
 const REMOTE_CONTROL_ITEM = "minecraft:compass";
-const TICKS_PER_AUDIO_CHUNK = 200; // 10秒 = 200 ticks
+const TICKS_PER_AUDIO_CHUNK = 200;
 
-// 旧v1.3.0パックの生成データとの後方互換性。
-// 統合版の無色テラコッタは minecraft:terracotta ではなく minecraft:hardened_clay。
 const BLOCK_ID_ALIASES = {
   "minecraft:terracotta": "minecraft:hardened_clay",
 };
 
-let currentFrame = 0;
-let running = false;
-let timeoutId = null;
-let intervalId = null;
-let currentJobId = null;
-let paletteCache = null;
-const tempBlockLoc = { x: 0, y: 0, z: 0 };
+let mainIntervalId = null;
+const activePlayers = new Map(); // key: "x,y,z"
 
-let currentVideoId = null;
-let currentVideoData = null;
-let currentAudioChunk = -1;
-let masterVolume = 1.0;
-
-// v4 フォーマット用: GOP チャンク遅延デコード + LRU キャッシュ
-let decodedIndex = null;  // Array of { gopId, offset, length, isKeyframe }
-let decodedVideoId = null;
-// GOP LRU キャッシュ: Map<gopId, Uint8Array> (最大 MAX_CACHED_GOPS)
-const gopCache = new Map();
-const MAX_CACHED_GOPS = 4;
-// v3 後方互換用
-let decodedBinary = null;
-
-function selectVideo(videoId) {
-  if (VIDEOS[videoId]) {
-    currentVideoId = videoId;
-    currentVideoData = VIDEOS[videoId];
-    // 動画が変わったらキャッシュをクリア
-    decodedIndex = null;
-    decodedVideoId = null;
-    decodedBinary = null;
-    gopCache.clear();
-    return true;
-  }
-  return false;
-}
-
-// Auto-select first available video
-if (VIDEO_LIST.length > 0) {
-  selectVideo(VIDEO_LIST[0].id);
-}
+let globalSelectedVideoId = VIDEO_LIST.length > 0 ? VIDEO_LIST[0].id : null;
 
 function decodeUTF16BinaryToBytes(utf16Str) {
   if (!utf16Str) return new Uint8Array(0);
@@ -125,160 +62,408 @@ function decodeUTF16BinaryToBytes(utf16Str) {
   return bytes;
 }
 
-/** インデックスのみをデコード (v4: 高速、v3: 全バイナリ) */
-function ensureDecodedData() {
-  if (!currentVideoData) return false;
-  if (decodedVideoId === currentVideoId && decodedIndex) return true;
+class VideoPlayer {
+  constructor(anchor, dimension, videoId) {
+    this.anchor = anchor;
+    this.dimension = dimension;
+    this.videoId = videoId;
+    this.videoData = VIDEOS[videoId];
+    
+    this.currentFrame = 0;
+    this.running = false;
+    this.currentAudioChunk = -1;
+    this.masterVolume = 1.0;
+    
+    this.decodedIndex = null;
+    this.decodedVideoId = null;
+    this.gopCache = new Map();
+    this.MAX_CACHED_GOPS = 4;
+    this.decodedBinary = null;
+    
+    this.paletteCache = null;
+    this.currentGopId = -1;
+    this.activePalette = null;
+    
+    this.frameIterator = null;
+    this.startDelayTicks = 0;
+    this.currentJobId = null;
 
-  // v4 フォーマット (chunks + index)
-  if (currentVideoData.format === "varint_rle_v4" && currentVideoData.chunks && currentVideoData.index) {
-    // インデックスだけデコード (小さいので高速)
-    const idxBytes = decodeUTF16BinaryToBytes(currentVideoData.index);
-    decodedIndex = [];
-    let pos = 0;
-    const idxLen = idxBytes.length;
-    while (pos < idxLen) {
-      // gop_id varint
-      let gopId = 0, sh0 = 0;
+    this.tempBlockLoc = { x: 0, y: 0, z: 0 };
+  }
+
+  ensureDecodedData() {
+    if (!this.videoData) return false;
+    if (this.decodedVideoId === this.videoId && this.decodedIndex) return true;
+
+    if (this.videoData.format === "varint_rle_v4" && this.videoData.chunks && this.videoData.index) {
+      const idxBytes = decodeUTF16BinaryToBytes(this.videoData.index);
+      this.decodedIndex = [];
+      let pos = 0;
+      const idxLen = idxBytes.length;
       while (pos < idxLen) {
-        const b = idxBytes[pos++];
-        gopId |= (b & 0x7f) << sh0;
-        if ((b & 0x80) === 0) break;
-        sh0 += 7;
+        let gopId = 0, sh0 = 0;
+        while (pos < idxLen) {
+          const b = idxBytes[pos++];
+          gopId |= (b & 0x7f) << sh0;
+          if ((b & 0x80) === 0) break;
+          sh0 += 7;
+        }
+        let val1 = 0, sh1 = 0;
+        while (pos < idxLen) {
+          const b = idxBytes[pos++];
+          val1 |= (b & 0x7f) << sh1;
+          if ((b & 0x80) === 0) break;
+          sh1 += 7;
+        }
+        let val2 = 0, sh2 = 0;
+        while (pos < idxLen) {
+          const b = idxBytes[pos++];
+          val2 |= (b & 0x7f) << sh2;
+          if ((b & 0x80) === 0) break;
+          sh2 += 7;
+        }
+        this.decodedIndex.push({
+          gopId: gopId,
+          offset: val1 >>> 1,
+          length: val2,
+          isKeyframe: (val1 & 1) === 1
+        });
       }
-      // offset_and_flag varint
-      let val1 = 0, sh1 = 0;
-      while (pos < idxLen) {
-        const b = idxBytes[pos++];
-        val1 |= (b & 0x7f) << sh1;
-        if ((b & 0x80) === 0) break;
-        sh1 += 7;
-      }
-      // length varint
-      let val2 = 0, sh2 = 0;
-      while (pos < idxLen) {
-        const b = idxBytes[pos++];
-        val2 |= (b & 0x7f) << sh2;
-        if ((b & 0x80) === 0) break;
-        sh2 += 7;
-      }
-      decodedIndex.push({
-        gopId: gopId,
-        offset: val1 >>> 1,
-        length: val2,
-        isKeyframe: (val1 & 1) === 1
-      });
+      this.decodedBinary = null;
+      this.gopCache.clear();
+      this.decodedVideoId = this.videoId;
+      return true;
     }
-    decodedBinary = null;
-    gopCache.clear();
-    decodedVideoId = currentVideoId;
-    return true;
-  }
 
-  // v3 フォーマット (binary + index)
-  if (currentVideoData.format === "varint_rle_v3" && currentVideoData.binary && currentVideoData.index) {
-    decodedBinary = decodeUTF16BinaryToBytes(currentVideoData.binary);
-    const idxBytes = decodeUTF16BinaryToBytes(currentVideoData.index);
-    decodedIndex = [];
-    let pos = 0;
-    const idxLen = idxBytes.length;
-    while (pos < idxLen) {
-      let val1 = 0, sh1 = 0;
+    if (this.videoData.format === "varint_rle_v3" && this.videoData.binary && this.videoData.index) {
+      this.decodedBinary = decodeUTF16BinaryToBytes(this.videoData.binary);
+      const idxBytes = decodeUTF16BinaryToBytes(this.videoData.index);
+      this.decodedIndex = [];
+      let pos = 0;
+      const idxLen = idxBytes.length;
       while (pos < idxLen) {
-        const b = idxBytes[pos++];
-        val1 |= (b & 0x7f) << sh1;
-        if ((b & 0x80) === 0) break;
-        sh1 += 7;
+        let val1 = 0, sh1 = 0;
+        while (pos < idxLen) {
+          const b = idxBytes[pos++];
+          val1 |= (b & 0x7f) << sh1;
+          if ((b & 0x80) === 0) break;
+          sh1 += 7;
+        }
+        let val2 = 0, sh2 = 0;
+        while (pos < idxLen) {
+          const b = idxBytes[pos++];
+          val2 |= (b & 0x7f) << sh2;
+          if ((b & 0x80) === 0) break;
+          sh2 += 7;
+        }
+        this.decodedIndex.push({
+          gopId: -1,
+          offset: val1 >>> 1,
+          length: val2,
+          isKeyframe: (val1 & 1) === 1
+        });
       }
-      let val2 = 0, sh2 = 0;
-      while (pos < idxLen) {
-        const b = idxBytes[pos++];
-        val2 |= (b & 0x7f) << sh2;
-        if ((b & 0x80) === 0) break;
-        sh2 += 7;
-      }
-      decodedIndex.push({
-        gopId: -1,  // v3 は GOP なし
-        offset: val1 >>> 1,
-        length: val2,
-        isKeyframe: (val1 & 1) === 1
-      });
+      this.decodedVideoId = this.videoId;
+      return true;
     }
-    decodedVideoId = currentVideoId;
-    return true;
-  }
-  
-  // v2 フォーマット (frames 配列)
-  if (currentVideoData.frames) {
-    decodedVideoId = currentVideoId;
-    decodedBinary = null;
-    decodedIndex = null;
-    return true;
-  }
-  
-  return false;
-}
 
-/** v4: GOP チャンクを遅延デコード + LRU キャッシュ */
-function ensureGopDecoded(gopId) {
-  if (gopCache.has(gopId)) return gopCache.get(gopId);
-  
-  if (!currentVideoData || !currentVideoData.chunks) return null;
-  if (gopId < 0 || gopId >= currentVideoData.chunks.length) return null;
-  
-  const decoded = decodeUTF16BinaryToBytes(currentVideoData.chunks[gopId]);
-  
-  // LRU: キャッシュが満杯なら最古のエントリを削除
-  if (gopCache.size >= MAX_CACHED_GOPS) {
-    const oldestKey = gopCache.keys().next().value;
-    gopCache.delete(oldestKey);
+    if (this.videoData.frames) {
+      this.decodedVideoId = this.videoId;
+      this.decodedBinary = null;
+      this.decodedIndex = null;
+      return true;
+    }
+    return false;
   }
-  gopCache.set(gopId, decoded);
-  return decoded;
-}
 
-function initPaletteCache() {
-  if (!currentVideoData) return;
-  if (!paletteCache || paletteCache.length !== currentVideoData.level_blocks.length) {
-    paletteCache = currentVideoData.level_blocks.map((spec) => {
-      const blockId = BLOCK_ID_ALIASES[spec.block] ?? spec.block;
+  ensureGopDecoded(gopId) {
+    if (this.gopCache.has(gopId)) return this.gopCache.get(gopId);
+    if (!this.videoData || !this.videoData.chunks) return null;
+    if (gopId < 0 || gopId >= this.videoData.chunks.length) return null;
+    
+    const decoded = decodeUTF16BinaryToBytes(this.videoData.chunks[gopId]);
+    if (this.gopCache.size >= this.MAX_CACHED_GOPS) {
+      const oldestKey = this.gopCache.keys().next().value;
+      this.gopCache.delete(oldestKey);
+    }
+    this.gopCache.set(gopId, decoded);
+    return decoded;
+  }
+
+  initPaletteCache() {
+    if (!this.videoData) return;
+    if (this.videoData.adaptive_palette) {
+      if (!this.paletteCache) {
+        this.paletteCache = this.videoData.level_blocks.map(gopPalettes => 
+          gopPalettes.map(spec => {
+            const blockId = BLOCK_ID_ALIASES[spec.block] ?? spec.block;
+            try {
+              return BlockPermutation.resolve(blockId, spec.states);
+            } catch (e) {
+              return BlockPermutation.resolve("minecraft:dirt");
+            }
+          })
+        );
+      }
+    } else {
+      if (!this.paletteCache || this.paletteCache.length !== this.videoData.level_blocks.length) {
+        this.paletteCache = this.videoData.level_blocks.map((spec) => {
+          const blockId = BLOCK_ID_ALIASES[spec.block] ?? spec.block;
+          try {
+            return BlockPermutation.resolve(blockId, spec.states);
+          } catch (e) {
+            return BlockPermutation.resolve("minecraft:dirt");
+          }
+        });
+      }
+    }
+  }
+
+  *applyBinarySlice(width, bytes, startOff, endOff) {
+    let offset = startOff;
+    let currIdx = 0;
+    let operations = 0;
+    const MAX_OPS_PER_TICK = 4000;
+
+    while (offset < endOff) {
+      const b = bytes[offset++];
+      if ((b & 0x80) === 0) break;
+    }
+    while (offset < endOff) {
+      const b = bytes[offset++];
+      if ((b & 0x80) === 0) break;
+    }
+
+    while (offset < endOff) {
+      let val = 0;
+      let shift = 0;
+      while (offset < endOff) {
+        const b = bytes[offset++];
+        val |= (b & 0x7f) << shift;
+        if ((b & 0x80) === 0) break;
+        shift += 7;
+      }
+      const delta = val >>> 13;
+      const length = ((val >>> 7) & 0x3f) + 1;
+      const level = val & 0x7f;
+      currIdx = delta;
+
+      const x = currIdx % width;
+      const y = (currIdx / width) | 0;
+
+      const permutation = this.activePalette ? this.activePalette[level] : null;
+      if (!permutation) continue;
+
+      const bx = this.anchor.x + x;
+      const bz = this.anchor.z + y;
+
       try {
-        return BlockPermutation.resolve(blockId, spec.states);
-      } catch (e) {
-        console.warn(`[${EVENT_NAMESPACE}] Failed to resolve permutation for ${blockId}: ${e}`);
-        return BlockPermutation.resolve("minecraft:dirt");
-      }
-    });
-  }
-}
-
-function getAnchor() {
-  return world.getDynamicProperty(ANCHOR_KEY);
-}
-
-function getPlaybackDimension(fallbackDimension) {
-  const dimensionId = world.getDynamicProperty(ANCHOR_DIMENSION_KEY);
-  if (typeof dimensionId === "string") {
-    try {
-      return world.getDimension(dimensionId);
-    } catch (e) {
-      console.warn(`[${EVENT_NAMESPACE}] saved dimension is unavailable: ${e}`);
+        if (length === 1) {
+          this.tempBlockLoc.x = bx;
+          this.tempBlockLoc.y = this.anchor.y;
+          this.tempBlockLoc.z = bz;
+          this.dimension.setBlockPermutation(this.tempBlockLoc, permutation);
+          operations++;
+          if (operations > MAX_OPS_PER_TICK) { yield; operations = 0; }
+        } else {
+          for (let i = 0; i < length; i++) {
+            this.tempBlockLoc.x = bx + i;
+            this.tempBlockLoc.y = this.anchor.y;
+            this.tempBlockLoc.z = bz;
+            this.dimension.setBlockPermutation(this.tempBlockLoc, permutation);
+            operations++;
+            if (operations > MAX_OPS_PER_TICK) { yield; operations = 0; }
+          }
+        }
+      } catch (e) {}
     }
   }
-  return fallbackDimension;
+
+  *applyFrameJob(frameIndex) {
+    if (!this.videoData) return;
+    if (!this.ensureDecodedData()) return;
+    this.initPaletteCache();
+    const width = this.videoData.width;
+
+    if (this.videoData.format === "varint_rle_v4" && this.decodedIndex) {
+      if (frameIndex < 0 || frameIndex >= this.decodedIndex.length) return;
+      const entry = this.decodedIndex[frameIndex];
+      if (entry.length === 0) return;
+
+      this.currentGopId = entry.gopId;
+      this.activePalette = this.videoData.adaptive_palette ? this.paletteCache[this.currentGopId] : this.paletteCache;
+
+      const gopBytes = this.ensureGopDecoded(entry.gopId);
+      const gopSize = this.videoData.gop_size || 200;
+      if (frameIndex % gopSize >= gopSize * 0.8) {
+        this.ensureGopDecoded(entry.gopId + 1);
+      }
+      if (!gopBytes) return;
+      yield* this.applyBinarySlice(width, gopBytes, entry.offset, entry.offset + entry.length);
+      return;
+    }
+
+    this.currentGopId = -1;
+    this.activePalette = this.videoData.adaptive_palette ? this.paletteCache[0] : this.paletteCache;
+
+    if (this.decodedBinary && this.decodedIndex) {
+      if (frameIndex < 0 || frameIndex >= this.decodedIndex.length) return;
+      const entry = this.decodedIndex[frameIndex];
+      if (entry.length === 0) return;
+      yield* this.applyBinarySlice(width, this.decodedBinary, entry.offset, entry.offset + entry.length);
+      return;
+    }
+
+    const diffData = this.videoData.frames?.[frameIndex];
+    if (!diffData) return;
+    if (typeof diffData === "string") {
+      if (diffData.length === 0) return;
+      let bytes;
+      if (diffData.length > 0 && diffData.charCodeAt(diffData.startsWith("K:") ? 2 : 0) >= 0x1000) {
+        bytes = decodeUTF16BinaryToBytes(diffData);
+      } else {
+        return;
+      }
+      yield* this.applyBinarySlice(width, bytes, 0, bytes.length);
+    }
+  }
+
+  syncAudioForFrame(frameIndex) {
+    if (!this.videoData || this.masterVolume <= 0) return;
+    const targetChunk = Math.floor((frameIndex * FRAME_INTERVAL_TICKS) / TICKS_PER_AUDIO_CHUNK);
+    if (targetChunk !== this.currentAudioChunk) {
+      this.currentAudioChunk = targetChunk;
+      const trackId = `${EVENT_NAMESPACE}.${this.videoId}.chunk_${targetChunk}`;
+      for (const p of world.getAllPlayers()) {
+        try {
+          p.stopMusic();
+          p.playSound(trackId, { location: p.location, volume: this.masterVolume, pitch: 1.0 });
+        } catch (e) {
+          try {
+            p.playMusic(trackId, { volume: this.masterVolume, loop: false });
+          } catch (e2) {}
+        }
+      }
+    }
+  }
+
+  tick() {
+    if (!this.running) return;
+
+    if (this.startDelayTicks > 0) {
+      this.startDelayTicks--;
+      return;
+    }
+
+    if (!this.frameIterator) {
+      if (this.currentFrame >= this.videoData.frame_count) {
+        this.stopPlayback();
+        world.sendMessage(`§a[${EVENT_NAMESPACE}] 再生終了 (${this.anchor.x},${this.anchor.y},${this.anchor.z})`);
+        return;
+      }
+      this.frameIterator = this.applyFrameJob(this.currentFrame);
+    }
+
+    const MAX_YIELDS_PER_TICK = 12;
+    for (let yc = 0; yc < MAX_YIELDS_PER_TICK; yc++) {
+      const { done } = this.frameIterator.next();
+      if (done) {
+        this.syncAudioForFrame(this.currentFrame);
+        this.currentFrame++;
+        this.frameIterator = null;
+        break;
+      }
+    }
+  }
+
+  stopPlayback() {
+    this.running = false;
+    this.currentAudioChunk = -1;
+    if (this.currentJobId !== null) {
+      system.clearJob(this.currentJobId);
+      this.currentJobId = null;
+    }
+    for (const p of world.getAllPlayers()) {
+      try { p.stopMusic(); } catch (e) {}
+    }
+  }
+
+  stopAndClear() {
+    this.stopPlayback();
+    if (!this.videoData) return;
+    
+    this.initPaletteCache();
+    let clearPermutation = null;
+    if (this.videoData.adaptive_palette && this.paletteCache && this.paletteCache[0]) {
+      clearPermutation = this.paletteCache[0][0];
+    } else if (this.paletteCache) {
+      clearPermutation = this.paletteCache[0];
+    }
+    if (!clearPermutation) return;
+
+    for (let y = 0; y < this.videoData.height; y++) {
+      for (let x = 0; x < this.videoData.width; x++) {
+        this.dimension.setBlockPermutation(
+          { x: this.anchor.x + x, y: this.anchor.y, z: this.anchor.z + y },
+          clearPermutation
+        );
+      }
+    }
+  }
+
+  seekToFrame(targetFrame) {
+    if (!this.videoData) return;
+    targetFrame = Math.max(0, Math.min(targetFrame, this.videoData.frame_count - 1));
+    this.currentFrame = targetFrame;
+    this.currentAudioChunk = -1;
+
+    const gop = this.videoData.keyframe_interval || 30;
+    const startFrame = Math.floor(targetFrame / gop) * gop;
+
+    if (this.currentJobId !== null) {
+      system.clearJob(this.currentJobId);
+      this.currentJobId = null;
+    }
+    
+    world.sendMessage(`§e[${EVENT_NAMESPACE}] フレーム ${targetFrame} へシーク中...`);
+
+    const self = this;
+    this.currentJobId = system.runJob((function* () {
+      for (let f = startFrame; f <= targetFrame; f++) {
+        yield* self.applyFrameJob(f);
+      }
+      self.syncAudioForFrame(self.currentFrame);
+      world.sendMessage(`§a[${EVENT_NAMESPACE}] シーク完了 (一時停止中)`);
+      self.running = false;
+    })());
+  }
 }
 
-function ensureTickingArea(dimension, anchor) {
-  if (!currentVideoData) return false;
+function startMainLoop() {
+  if (mainIntervalId !== null) return;
+  mainIntervalId = system.runInterval(() => {
+    for (const player of activePlayers.values()) {
+      player.tick();
+    }
+  }, FRAME_INTERVAL_TICKS);
+}
+
+function getAnchorKeyStr(anchor) {
+  return `${anchor.x},${anchor.y},${anchor.z}`;
+}
+
+function ensureTickingArea(dimension, anchor, videoData) {
+  if (!videoData) return false;
+  const areaName = `${TICKING_AREA_NAME}_${anchor.x}_${anchor.y}_${anchor.z}`;
   try {
-    dimension.runCommand(`tickingarea remove ${TICKING_AREA_NAME}`);
+    dimension.runCommand(`tickingarea remove ${areaName}`);
   } catch (e) {}
 
-  const toX = anchor.x + currentVideoData.width - 1;
-  const toZ = anchor.z + currentVideoData.height - 1;
+  const toX = anchor.x + videoData.width - 1;
+  const toZ = anchor.z + videoData.height - 1;
   try {
     dimension.runCommand(
-      `tickingarea add ${anchor.x} ${anchor.y} ${anchor.z} ${toX} ${anchor.y} ${toZ} ${TICKING_AREA_NAME}`
+      `tickingarea add ${anchor.x} ${anchor.y} ${anchor.z} ${toX} ${anchor.y} ${toZ} ${areaName}`
     );
     return true;
   } catch (e) {
@@ -287,304 +472,99 @@ function ensureTickingArea(dimension, anchor) {
   }
 }
 
-/** バイナリバッファの指定範囲を RLE デコードしてブロックを配置するジェネレータ */
-function* applyBinarySlice(dimension, anchorLoc, width, bytes, startOff, endOff) {
-  let offset = startOff;
-  let currIdx = 0;
-  let operations = 0;
-  const MAX_OPS_PER_TICK = 4000;
-
-  // 最初の varint はフレームヘッダ — スキップ
-  while (offset < endOff) {
-    const b = bytes[offset++];
-    if ((b & 0x80) === 0) break;
-  }
-  // 2番目の varint は chunk_count — スキップ
-  while (offset < endOff) {
-    const b = bytes[offset++];
-    if ((b & 0x80) === 0) break;
-  }
-
-  while (offset < endOff) {
-    let val = 0;
-    let shift = 0;
-    while (offset < endOff) {
-      const b = bytes[offset++];
-      val |= (b & 0x7f) << shift;
-      if ((b & 0x80) === 0) break;
-      shift += 7;
-    }
-    const delta = val >>> 13;
-    const length = ((val >>> 7) & 0x3f) + 1;
-    const level = val & 0x7f;
-    currIdx = delta;
-
-    const x = currIdx % width;
-    const y = (currIdx / width) | 0;
-
-    const permutation = paletteCache[level];
-    if (!permutation) continue;
-
-    const bx = anchorLoc.x + x;
-    const bz = anchorLoc.z + y;
-
-    try {
-      if (length === 1) {
-        tempBlockLoc.x = bx;
-        tempBlockLoc.y = anchorLoc.y;
-        tempBlockLoc.z = bz;
-        dimension.setBlockPermutation(tempBlockLoc, permutation);
-        operations++;
-        if (operations > MAX_OPS_PER_TICK) { yield; operations = 0; }
-      } else {
-        for (let i = 0; i < length; i++) {
-          tempBlockLoc.x = bx + i;
-          tempBlockLoc.y = anchorLoc.y;
-          tempBlockLoc.z = bz;
-          dimension.setBlockPermutation(tempBlockLoc, permutation);
-          operations++;
-          if (operations > MAX_OPS_PER_TICK) { yield; operations = 0; }
-        }
-      }
-    } catch (e) {
-      // LocationInUnloadedChunkError は無視
-    }
-  }
-}
-
-/** フレーム番号の差分をジェネレータで少しずつ適用する */
-function* applyFrameJob(dimension, anchorLoc, frameIndex) {
-  if (!currentVideoData) return;
-  if (!ensureDecodedData()) return;
-  initPaletteCache();
-  const width = currentVideoData.width;
-
-  // --- v4 フォーマット (GOP chunks + index) ---
-  if (currentVideoData.format === "varint_rle_v4" && decodedIndex) {
-    if (frameIndex < 0 || frameIndex >= decodedIndex.length) return;
-    const entry = decodedIndex[frameIndex];
-    if (entry.length === 0) return; // スキップフレーム
-    const gopBytes = ensureGopDecoded(entry.gopId);
-    // 予測型 GOP プリフェッチ: 次の GOP を先読みデコード
-    const gopSize = currentVideoData.gop_size || 200;
-    if (frameIndex % gopSize >= gopSize * 0.8) {
-      ensureGopDecoded(entry.gopId + 1);
-    }
-    if (!gopBytes) return;
-    yield* applyBinarySlice(dimension, anchorLoc, width, gopBytes, entry.offset, entry.offset + entry.length);
-    return;
-  }
-
-  // --- v3 フォーマット (single binary + index) ---
-  if (decodedBinary && decodedIndex) {
-    if (frameIndex < 0 || frameIndex >= decodedIndex.length) return;
-    const entry = decodedIndex[frameIndex];
-    if (entry.length === 0) return;
-    yield* applyBinarySlice(dimension, anchorLoc, width, decodedBinary, entry.offset, entry.offset + entry.length);
-    return;
-  }
-
-  // --- v2 後方互換: frames 配列 ---
-  const diffData = currentVideoData.frames?.[frameIndex];
-  if (!diffData) return;
-
-  if (typeof diffData === "string") {
-    if (diffData.length === 0) return;
-    let bytes;
-    if (diffData.length > 0 && diffData.charCodeAt(diffData.startsWith("K:") ? 2 : 0) >= 0x1000) {
-      bytes = decodeUTF16BinaryToBytes(diffData);
-    } else {
-      return;
-    }
-    yield* applyBinarySlice(dimension, anchorLoc, width, bytes, 0, bytes.length);
-  }
-}
-
-function applyFrameSync(dimension, anchorLoc, frameIndex) {
-  const iterator = applyFrameJob(dimension, anchorLoc, frameIndex);
-  for (const _ of iterator) {
-    // 同期的にすべて回し切る (seekToFrame用)
-  }
-}
-function stopPlayback() {
-  running = false;
-  if (timeoutId !== null) {
-    system.clearRun(timeoutId);
-    timeoutId = null;
-  }
-  if (intervalId !== null) {
-    system.clearRun(intervalId);
-    intervalId = null;
-  }
-  if (currentJobId !== null) {
-    system.clearJob(currentJobId);
-    currentJobId = null;
-  }
-  currentAudioChunk = -1;
-  // 音楽停止
-  for (const player of world.getAllPlayers()) {
-    try {
-      player.stopMusic();
-    } catch (e) {}
-  }
-}
-
-function syncAudioForFrame(frameIndex) {
-  if (!currentVideoData || masterVolume <= 0) return;
-  const targetChunk = Math.floor((frameIndex * FRAME_INTERVAL_TICKS) / TICKS_PER_AUDIO_CHUNK);
-  if (targetChunk !== currentAudioChunk) {
-    currentAudioChunk = targetChunk;
-    const trackId = `${EVENT_NAMESPACE}.${currentVideoId}.chunk_${targetChunk}`;
-    for (const player of world.getAllPlayers()) {
-      try {
-        player.stopMusic();
-        player.playSound(trackId, { location: player.location, volume: masterVolume, pitch: 1.0 });
-      } catch (e) {
-        console.warn(`[${EVENT_NAMESPACE}] playSound error: ${e}`);
-        try {
-          player.playMusic(trackId, { volume: masterVolume, loop: false });
-        } catch (e2) {
-          console.warn(`[${EVENT_NAMESPACE}] playMusic error: ${e2}`);
-        }
-      }
-    }
-  }
-}
-
-function seekToFrame(targetFrame, dimension, anchorLoc) {
-  if (!currentVideoData) return;
-  targetFrame = Math.max(0, Math.min(targetFrame, currentVideoData.frame_count - 1));
-  currentFrame = targetFrame;
-  currentAudioChunk = -1;
-
-  const gop = currentVideoData.keyframe_interval || 30;
-  const startFrame = Math.floor(targetFrame / gop) * gop;
-
-  // 既存のジョブをキャンセル
-  if (currentJobId !== null) {
-    system.clearJob(currentJobId);
-    currentJobId = null;
-  }
-  
-  world.sendMessage(`§e[${EVENT_NAMESPACE}] フレーム ${targetFrame} へシーク中...`);
-
-  // 非同期シークジョブを起動
-  currentJobId = system.runJob((function* () {
-    for (let f = startFrame; f <= targetFrame; f++) {
-      yield* applyFrameJob(dimension, anchorLoc, f);
-    }
-    syncAudioForFrame(currentFrame);
-    world.sendMessage(`§a[${EVENT_NAMESPACE}] シーク完了 (一時停止中)`);
-    running = false; // シーク後は一時停止状態にする
-  })());
-}
-
-function startPlayback(fallbackDimension) {
-  if (!currentVideoData) {
-    world.sendMessage(`§c[${EVENT_NAMESPACE}] 動画が選択されていません。/scriptevent ${EVENT_PREFIX}list で一覧を確認してください`);
-    return;
-  }
-  const anchorLoc = getAnchor();
-  if (!anchorLoc) {
-    world.sendMessage(`§c[${EVENT_NAMESPACE}] 原点が見つかりません。先に /scriptevent ${EVENT_PREFIX}setup を実行してください`);
-    return;
-  }
-  const dimension = getPlaybackDimension(fallbackDimension);
-  if (!ensureTickingArea(dimension, anchorLoc)) {
-    world.sendMessage(`§c[${EVENT_NAMESPACE}] tickingareaの設定に失敗しました。setupをやり直してください`);
-    return;
-  }
-
-  stopPlayback();
-  currentFrame = 0;
-  running = true;
-
-  timeoutId = system.runTimeout(() => {
-    timeoutId = null;
-    if (!running) return;
-    
-    let frameIterator = null;
-
-    intervalId = system.runInterval(() => {
-      if (!running) return;
-
-      if (!frameIterator) {
-        if (currentFrame >= currentVideoData.frame_count) {
-          stopPlayback();
-          world.sendMessage(`§a[${EVENT_NAMESPACE}] 再生終了`);
-          return;
-        }
-        frameIterator = applyFrameJob(dimension, anchorLoc, currentFrame);
-      }
-
-      // スマートティック予算: 最大N回のyieldを1ティックで処理
-      // 通常デルタフレーム(少ないブロック更新)は1ティックで完了
-      // キーフレーム(全画面更新)は複数ティックに分散してラグ防止
-      const MAX_YIELDS_PER_TICK = 12;
-      for (let yc = 0; yc < MAX_YIELDS_PER_TICK; yc++) {
-        const { done } = frameIterator.next();
-        if (done) {
-          syncAudioForFrame(currentFrame);
-          currentFrame++;
-          frameIterator = null;
-          break;
-        }
-      }
-    }, FRAME_INTERVAL_TICKS);
-    
-  }, START_LOAD_DELAY_TICKS);
-  world.sendMessage(`§a[${EVENT_NAMESPACE}] 読み込み完了後に再生します。リモコン(コンパス)右クリックで操作GUIが開きます`);
-}
-
 function setup(player) {
-  if (!currentVideoData) {
-    world.sendMessage(`§c[${EVENT_NAMESPACE}] 動画が読み込まれていません`);
+  if (!globalSelectedVideoId) {
+    world.sendMessage(`§c[${EVENT_NAMESPACE}] 動画が選択されていません`);
     return;
   }
+  const videoData = VIDEOS[globalSelectedVideoId];
   const loc = player.location;
   const anchor = {
     x: Math.floor(loc.x),
     y: Math.floor(loc.y),
-    z: Math.floor(loc.z) - currentVideoData.height,
+    z: Math.floor(loc.z) - videoData.height,
   };
-  world.setDynamicProperty(ANCHOR_KEY, anchor);
-  world.setDynamicProperty(ANCHOR_DIMENSION_KEY, player.dimension.id);
-
-  const dimension = player.dimension;
-  if (!ensureTickingArea(dimension, anchor)) {
-    world.sendMessage(`§c[${EVENT_NAMESPACE}] tickingareaの設定に失敗しました。ワールドのチート設定を確認してください`);
+  
+  if (!ensureTickingArea(player.dimension, anchor, videoData)) {
+    world.sendMessage(`§c[${EVENT_NAMESPACE}] tickingareaの設定に失敗しました。チート設定を確認してください`);
     return;
   }
+  
+  const keyStr = getAnchorKeyStr(anchor);
+  const vp = new VideoPlayer(anchor, player.dimension, globalSelectedVideoId);
+  activePlayers.set(keyStr, vp);
+  world.setDynamicProperty(ANCHOR_KEY, anchor); // For single remote control backwards compatibility
+  world.setDynamicProperty(ANCHOR_DIMENSION_KEY, player.dimension.id);
+  startMainLoop();
+
   world.sendMessage(`§a[${EVENT_NAMESPACE}] セットアップ完了。リモコン(コンパス)を使用するか /scriptevent ${EVENT_PREFIX}start で再生します`);
 }
 
-function stopAndClear(fallbackDimension) {
-  stopPlayback();
-  if (!currentVideoData) return;
-  const anchorLoc = getAnchor();
-  if (!anchorLoc) return;
-  const dimension = getPlaybackDimension(fallbackDimension);
-
-  const clearSpec = currentVideoData.level_blocks[0];
-  const clearPermutation = BlockPermutation.resolve(clearSpec.block, clearSpec.states);
-
-  for (let y = 0; y < currentVideoData.height; y++) {
-    for (let x = 0; x < currentVideoData.width; x++) {
-      dimension.setBlockPermutation(
-        { x: anchorLoc.x + x, y: anchorLoc.y, z: anchorLoc.z + y },
-        clearPermutation
-      );
-    }
+function getPlaybackDimension(fallbackDimension) {
+  const dimensionId = world.getDynamicProperty(ANCHOR_DIMENSION_KEY);
+  if (typeof dimensionId === "string") {
+    try {
+      return world.getDimension(dimensionId);
+    } catch (e) {}
   }
-  world.sendMessage(`§a[${EVENT_NAMESPACE}] 停止・盤面クリア完了`);
+  return fallbackDimension;
 }
 
-// --- リモコン GUI コントローラー (ActionFormData) ---
+function startPlayback(dimension) {
+  const anchorLoc = world.getDynamicProperty(ANCHOR_KEY);
+  if (!anchorLoc) {
+    world.sendMessage(`§c[${EVENT_NAMESPACE}] 原点が見つかりません。先に /scriptevent ${EVENT_PREFIX}setup を実行してください`);
+    return;
+  }
+  const keyStr = getAnchorKeyStr(anchorLoc);
+  let vp = activePlayers.get(keyStr);
+  if (!vp) {
+    if (!globalSelectedVideoId) return;
+    vp = new VideoPlayer(anchorLoc, dimension, globalSelectedVideoId);
+    activePlayers.set(keyStr, vp);
+    startMainLoop();
+  }
+  
+  vp.stopPlayback();
+  vp.currentFrame = 0;
+  vp.running = true;
+  vp.startDelayTicks = START_LOAD_DELAY_TICKS;
+  world.sendMessage(`§a[${EVENT_NAMESPACE}] 読み込み完了後に再生します`);
+}
+
+function stopAndClearAll(dimension) {
+  const anchorLoc = world.getDynamicProperty(ANCHOR_KEY);
+  if (anchorLoc) {
+    const keyStr = getAnchorKeyStr(anchorLoc);
+    let vp = activePlayers.get(keyStr);
+    if (vp) {
+      vp.stopAndClear();
+      world.sendMessage(`§a[${EVENT_NAMESPACE}] 停止・盤面クリア完了`);
+    }
+  }
+}
+
+function getActivePlayer() {
+  const anchorLoc = world.getDynamicProperty(ANCHOR_KEY);
+  if (anchorLoc) {
+    return activePlayers.get(getAnchorKeyStr(anchorLoc));
+  }
+  return null;
+}
+
 function showRemoteControlGUI(player) {
+  const vp = getActivePlayer();
+  const running = vp ? vp.running : false;
+  const currentVideoId = vp ? vp.videoId : globalSelectedVideoId;
+  const videoData = VIDEOS[currentVideoId];
+  
   const statusStr = running ? "§a再生中" : "§c停止中";
   const titleStr = currentVideoId ? currentVideoId : "未選択";
+  const currentFrame = vp ? vp.currentFrame : 0;
+  const masterVolume = vp ? vp.masterVolume : 1.0;
+  
   const currentSec = Math.floor((currentFrame * FRAME_INTERVAL_TICKS) / 20);
-  const totalSec = currentVideoData ? Math.floor((currentVideoData.frame_count * FRAME_INTERVAL_TICKS) / 20) : 0;
+  const totalSec = videoData ? Math.floor((videoData.frame_count * FRAME_INTERVAL_TICKS) / 20) : 0;
 
   const form = new ActionFormData()
     .title("🎬 動画プレイヤー リモコン")
@@ -603,36 +583,30 @@ function showRemoteControlGUI(player) {
     const dimension = player.dimension;
 
     switch (selection) {
-      case 0: // ▶ 再生 / 一時停止
-        if (running) {
-          stopPlayback();
+      case 0:
+        if (vp && vp.running) {
+          vp.stopPlayback();
           world.sendMessage(`${MESSAGE_PREFIX} §e一時停止しました`);
         } else {
           startPlayback(dimension);
         }
         break;
-
-      case 1: // ⏹ 停止
-        stopAndClear(dimension);
+      case 1:
+        stopAndClearAll(dimension);
         break;
-
-      case 2: // ⏭ 次の動画
+      case 2:
         switchVideoIndex(1, player);
         break;
-
-      case 3: // ⏮ 前の動画
+      case 3:
         switchVideoIndex(-1, player);
         break;
-
-      case 4: // 🔊 音量設定
+      case 4:
         showVolumeGUI(player);
         break;
-
-      case 5: // ⏩ シーク
+      case 5:
         showSeekGUI(player);
         break;
-
-      case 6: // 📜 動画リスト
+      case 6:
         showVideoSelectGUI(player);
         break;
     }
@@ -641,32 +615,39 @@ function showRemoteControlGUI(player) {
 
 function switchVideoIndex(direction, player) {
   if (VIDEO_LIST.length === 0) return;
-  let currentIdx = VIDEO_LIST.findIndex((v) => v.id === currentVideoId);
+  const vp = getActivePlayer();
+  const cvId = vp ? vp.videoId : globalSelectedVideoId;
+  let currentIdx = VIDEO_LIST.findIndex((v) => v.id === cvId);
   if (currentIdx === -1) currentIdx = 0;
   let newIdx = (currentIdx + direction + VIDEO_LIST.length) % VIDEO_LIST.length;
-  selectVideo(VIDEO_LIST[newIdx].id);
-  world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${currentVideoId}' に切り替えました`);
+  globalSelectedVideoId = VIDEO_LIST[newIdx].id;
+  world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${globalSelectedVideoId}' を次回から再生します。またはsetupし直してください。`);
   showRemoteControlGUI(player);
 }
 
 function showVolumeGUI(player) {
+  const vp = getActivePlayer();
+  const mv = vp ? vp.masterVolume : 1.0;
   const form = new ModalFormData()
     .title("🔊 音量設定")
-    .slider("マスター音量 (%)", 0, 100, 10, Math.round(masterVolume * 100));
+    .slider("マスター音量 (%)", 0, 100, 10, Math.round(mv * 100));
 
   form.show(player).then((response) => {
     if (response.canceled) return;
-    masterVolume = response.formValues[0] / 100.0;
-    world.sendMessage(`${MESSAGE_PREFIX} §a音量を ${Math.round(masterVolume * 100)}% に設定しました`);
-    currentAudioChunk = -1;
-    if (running) syncAudioForFrame(currentFrame);
+    if (vp) {
+      vp.masterVolume = response.formValues[0] / 100.0;
+      vp.currentAudioChunk = -1;
+      if (vp.running) vp.syncAudioForFrame(vp.currentFrame);
+      world.sendMessage(`${MESSAGE_PREFIX} §a音量を ${Math.round(vp.masterVolume * 100)}% に設定しました`);
+    }
   });
 }
 
 function showSeekGUI(player) {
-  if (!currentVideoData) return;
-  const maxSec = Math.floor((currentVideoData.frame_count * FRAME_INTERVAL_TICKS) / 20);
-  const currentSec = Math.floor((currentFrame * FRAME_INTERVAL_TICKS) / 20);
+  const vp = getActivePlayer();
+  if (!vp || !vp.videoData) return;
+  const maxSec = Math.floor((vp.videoData.frame_count * FRAME_INTERVAL_TICKS) / 20);
+  const currentSec = Math.floor((vp.currentFrame * FRAME_INTERVAL_TICKS) / 20);
 
   const form = new ModalFormData()
     .title("⏩ シーク (時間ジャンプ)")
@@ -676,20 +657,16 @@ function showSeekGUI(player) {
     if (response.canceled) return;
     const targetSec = response.formValues[0];
     const targetFrame = Math.floor((targetSec * 20) / FRAME_INTERVAL_TICKS);
-    const anchorLoc = getAnchor();
-    if (anchorLoc) {
-      seekToFrame(targetFrame, player.dimension, anchorLoc);
-      world.sendMessage(`${MESSAGE_PREFIX} §a${targetSec}秒目 (Frame: ${targetFrame}) にシークしました`);
-    } else {
-      world.sendMessage(`§c[${EVENT_NAMESPACE}] 先に setup を実行してください`);
-    }
+    vp.seekToFrame(targetFrame);
   });
 }
 
 function showVideoSelectGUI(player) {
+  const vp = getActivePlayer();
+  const cvId = vp ? vp.videoId : globalSelectedVideoId;
   const form = new ActionFormData().title("📜 動画ライブラリ").body("再生する動画タイトルを選択してください:");
   for (const v of VIDEO_LIST) {
-    const isSel = v.id === currentVideoId ? " §a[選択中]" : "";
+    const isSel = v.id === cvId ? " §a[選択中]" : "";
     form.button(`${v.title}${isSel}\n${v.frame_count} frames (${v.width}x${v.height})`);
   }
 
@@ -697,14 +674,13 @@ function showVideoSelectGUI(player) {
     if (response.canceled) return;
     const selectedVideo = VIDEO_LIST[response.selection];
     if (selectedVideo) {
-      selectVideo(selectedVideo.id);
-      world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${selectedVideo.id}' を選択しました`);
+      globalSelectedVideoId = selectedVideo.id;
+      world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${selectedVideo.id}' を選択しました (setupし直すかstartすると切り替わります)`);
       showRemoteControlGUI(player);
     }
   });
 }
 
-// リモコンアイテム右クリックイベント
 world.afterEvents.itemUse.subscribe((event) => {
   if (event.itemStack.typeId === REMOTE_CONTROL_ITEM) {
     showRemoteControlGUI(event.source);
@@ -730,7 +706,7 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
       startPlayback(dimension);
       break;
     case "stop":
-      stopAndClear(dimension);
+      stopAndClearAll(dimension);
       break;
     case "gui":
     case "remote":
@@ -742,7 +718,7 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
       } else {
         world.sendMessage(`${MESSAGE_PREFIX} §e収録動画一覧:`);
         for (const v of VIDEO_LIST) {
-          const selected = v.id === currentVideoId ? " §a[選択中]" : "";
+          const selected = v.id === globalSelectedVideoId ? " §a[選択中]" : "";
           world.sendMessage(`  §f- §b${v.id}§f: ${v.title} (${v.frame_count} frames, ${v.width}x${v.height})${selected}`);
         }
         world.sendMessage(`${MESSAGE_PREFIX} §f再生: /scriptevent ${EVENT_PREFIX}play <動画ID>`);
@@ -752,11 +728,14 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
       const videoId = event.message?.trim();
       if (!videoId) {
         startPlayback(dimension);
-      } else if (selectVideo(videoId)) {
-        world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${videoId}' を選択しました`);
-        startPlayback(dimension);
       } else {
-        world.sendMessage(`§c${MESSAGE_PREFIX} 動画 '${videoId}' が見つかりません。/scriptevent ${EVENT_PREFIX}list で一覧を確認してください`);
+        if (VIDEOS[videoId]) {
+          globalSelectedVideoId = videoId;
+          world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${videoId}' を選択しました`);
+          startPlayback(dimension);
+        } else {
+          world.sendMessage(`§c${MESSAGE_PREFIX} 動画 '${videoId}' が見つかりません。/scriptevent ${EVENT_PREFIX}list で一覧を確認してください`);
+        }
       }
       break;
     default:

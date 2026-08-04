@@ -29,6 +29,7 @@ HEIGHT = 64
 FRAMES_DIR = "frames"
 OUTPUT_DIR = "BP/scripts"
 OUTPUT_FILE = f"{OUTPUT_DIR}/frames_data.js"
+GOP_SIZE = 200
 
 try:
     import torch
@@ -40,9 +41,20 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
     import torch
     from mvcodec.color import generate_blue_noise_approx_numpy, get_edge_mask_gpu
     
-    num_colors = len(palette_rgb)
-    pal_tensor = torch.tensor(palette_rgb, dtype=torch.float32, device="cuda")
-    pal_oklab = rgb_to_oklab_torch(pal_tensor)
+    is_adaptive = isinstance(palette_rgb, list)
+    
+    def get_pal_tensors(pal_data):
+        t = torch.tensor(pal_data, dtype=torch.float32, device="cuda")
+        o = rgb_to_oklab_torch(t)
+        return t, o
+        
+    if is_adaptive:
+        pal_tensor, pal_oklab = get_pal_tensors(palette_rgb[0])
+        num_colors = len(palette_rgb[0])
+    else:
+        pal_tensor, pal_oklab = get_pal_tensors(palette_rgb)
+        num_colors = len(palette_rgb)
+
     processed_frames = []
 
     dither_tensor = None
@@ -89,6 +101,12 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
             return 0.0, 0.0, width * height, 0.8
 
     for i, img_arr in enumerate(frames_iter):
+        if is_adaptive and i > 0 and i % GOP_SIZE == 0:
+            gop_idx = i // GOP_SIZE
+            if gop_idx < len(palette_rgb):
+                pal_tensor, pal_oklab = get_pal_tensors(palette_rgb[gop_idx])
+                num_colors = len(palette_rgb[gop_idx])
+                
         orig_img_tensor = torch.tensor(img_arr, dtype=torch.float32, device="cuda")
         img_tensor = orig_img_tensor.clone()
         
@@ -128,8 +146,17 @@ def process_frames_gpu(frames_iter, palette_rgb, width, height, dither_method="n
             prev_colors = pal_tensor[prev_idx_tensor] # (H, W, 3) - still needed for buffer
             prev_colors_oklab = pal_oklab[prev_idx_tensor]
             dist_to_prev_oklab = torch.norm(img_oklab.view(height, width, 3) - prev_colors_oklab, dim=-1)
-            # OkLab Euclidean dist scale is ~0.0-1.5, we scale the threshold for RGB-equivalent mapping (roughly / 255.0)
-            rdo_mask = dist_to_prev_oklab < (rdo_threshold / 255.0)
+            
+            # --- Feature 1: Localized SSIM-based Perceptual RDO ---
+            gray = orig_img_tensor.mean(dim=-1, keepdim=True).permute(2, 0, 1).unsqueeze(0)
+            mean_sq = torch.nn.functional.avg_pool2d(gray, 3, stride=1, padding=1)**2
+            sq_mean = torch.nn.functional.avg_pool2d(gray**2, 3, stride=1, padding=1)
+            variance = torch.clamp(sq_mean - mean_sq, min=0.0).squeeze()
+            norm_var = torch.clamp(variance / 500.0, 0.0, 1.0)
+            perceptual_scale = 1.0 + (1.0 - norm_var) * 2.0 # Edges=1x threshold, Flat=3x threshold
+            
+            local_rdo_threshold = (rdo_threshold / 255.0) * perceptual_scale
+            rdo_mask = dist_to_prev_oklab < local_rdo_threshold
             
             # 3. Budget (予算ベース描画)
             # 変更したい(RDOでもMEでも静止判定にならなかった)ピクセル
@@ -249,16 +276,26 @@ def main():
     WIDTH = args.width
     HEIGHT = args.height
     
+    is_adaptive_palette = False
     if args.palette == "auto":
         from mvcodec.color import ALL_BLOCKS
         from mvcodec.auto_palette import generate_auto_palette
         
-        # サンプリング用に一度ジェネレータを回すのは重いので、本来ならここで動画パスから専用関数を呼ぶ。
-        # 今回は簡易的にジェネレータを作る
-        temp_iter = ffmpeg_frame_generator(args.input_video, WIDTH, HEIGHT, args.fps, args.duration) if args.input_video else []
-        palette = generate_auto_palette(temp_iter, ALL_BLOCKS, max_colors=64, use_gpu=(args.gpu or HAS_TORCH_CUDA))
+        temp_iter = list(ffmpeg_frame_generator(args.input_video, WIDTH, HEIGHT, args.fps, args.duration)) if args.input_video else []
+        if len(temp_iter) == 0:
+            palette = []
+            adaptive_palettes = []
+        else:
+            is_adaptive_palette = True
+            adaptive_palettes = []
+            for gop_start in range(0, len(temp_iter), GOP_SIZE):
+                gop_frames = temp_iter[gop_start:gop_start+GOP_SIZE]
+                pal = generate_auto_palette(gop_frames, ALL_BLOCKS, max_colors=64, use_gpu=(args.gpu or HAS_TORCH_CUDA))
+                adaptive_palettes.append(pal)
+            palette = adaptive_palettes[0]
     else:
         palette = PALETTES[args.palette]
+        adaptive_palettes = [palette]
         
     num_colors = len(palette)
     pal_img = create_palette_image(palette)
@@ -279,13 +316,16 @@ def main():
         sampled_originals = []
 
     use_gpu = args.gpu or HAS_TORCH_CUDA
-    palette_rgb_arr = np.array([item['rgb'] for item in palette], dtype=np.float64)
+    if is_adaptive_palette:
+        palette_rgb_arr = [np.array([item['rgb'] for item in pal], dtype=np.float64) for pal in adaptive_palettes]
+    else:
+        palette_rgb_arr = np.array([item['rgb'] for item in palette], dtype=np.float64)
     dither_method = args.dither_method
 
     if use_gpu and HAS_TORCH_CUDA and dither_method in ('none', 'ordered', 'blue_noise'):
         processed_frames = process_frames_gpu(frames_iter, palette_rgb_arr, WIDTH, HEIGHT, dither_method, apply_perceptual=args.perceptual)
     else:
-        palette_rgb_for_dither = palette_rgb_arr if dither_method in ('ordered', 'atkinson', 'burkes', 'sierra') else None
+        palette_rgb_for_dither = palette_rgb_arr[0] if is_adaptive_palette and dither_method in ('ordered', 'atkinson', 'burkes', 'sierra') else (palette_rgb_arr if dither_method in ('ordered', 'atkinson', 'burkes', 'sierra') else None)
         frames_list = list(frames_iter)
         
         def task(img_arr):
@@ -305,7 +345,7 @@ def main():
     scene_threshold = args.scene_threshold
 
     # --- v4 GOP-Chunked Lazy Decode ---
-    GOP_SIZE = 200  # 1チャンクあたりのフレーム数
+    # GOP_SIZE is defined globally
 
     # Pass 1: 全フレームを RLE エンコードし、フレームごとのバイト列を記録
     per_frame_bytes = []  # list of (bytearray, is_keyframe)
@@ -384,12 +424,23 @@ def main():
         pass
         
     import json
-    level_blocks = []
-    for item in palette:
-        block_def = {"block": item["block"]}
-        if "states" in item:
-            block_def["states"] = item["states"]
-        level_blocks.append(block_def)
+    if is_adaptive_palette:
+        level_blocks = []
+        for pal in adaptive_palettes:
+            gop_blocks = []
+            for item in pal:
+                block_def = {"block": item["block"]}
+                if "states" in item:
+                    block_def["states"] = item["states"]
+                gop_blocks.append(block_def)
+            level_blocks.append(gop_blocks)
+    else:
+        level_blocks = []
+        for item in palette:
+            block_def = {"block": item["block"]}
+            if "states" in item:
+                block_def["states"] = item["states"]
+            level_blocks.append(block_def)
 
     # chunks 配列を JSON 文字列として出力
     chunks_json = json.dumps(gop_utf16_strings, ensure_ascii=False)
@@ -400,6 +451,7 @@ def main():
   "frame_count": {total_frames},
   "format": "varint_rle_v4",
   "gop_size": {GOP_SIZE},
+  "adaptive_palette": {"true" if is_adaptive_palette else "false"},
   "level_blocks": {json.dumps(level_blocks, ensure_ascii=False)},
   "index": "{index_utf16}",
   "chunks": {chunks_json}
