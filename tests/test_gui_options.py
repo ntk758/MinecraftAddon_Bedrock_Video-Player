@@ -1,0 +1,85 @@
+import sys
+import os
+
+# プロジェクトルートをパスに追加
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from video_player_gui import (
+    DITHER_OPTIONS,
+    PALETTE_OPTIONS,
+    resolve_dither,
+    resolve_palette,
+)
+
+
+def test_dither_options_all_7():
+    """全ディザ選択肢(7種)の判定テスト"""
+    expected = {
+        "なし (最速 / GPU対応)": "none",
+        "Blue Noise (超高画質 / GPU対応)": "blue_noise",
+        "Ordered (Bayer / GPU対応)": "ordered",
+        "Floyd-Steinberg (高画質 / CPU専用)": "floyd",
+        "Atkinson (高画質 / CPU専用)": "atkinson",
+        "Burkes (高画質 / CPU専用)": "burkes",
+        "Sierra Lite (高画質 / CPU専用)": "sierra",
+    }
+
+    assert len(expected) == 7, "7種類のディザ選択肢が定義されていること"
+    assert set(DITHER_OPTIONS.keys()) == set(expected.keys()), "DITHER_OPTIONS のキーが一致すること"
+
+    for text, expected_value in expected.items():
+        actual = resolve_dither(text)
+        assert actual == expected_value, (
+            f"resolve_dither('{text}') returned '{actual}', expected '{expected_value}'"
+        )
+        print(f"PASS: dither '{text}' -> '{actual}'")
+
+
+def test_dither_prefix_matching():
+    """ディザの startswith 判定動作テスト"""
+    assert resolve_dither("Floyd-Steinberg") == "floyd"
+    assert resolve_dither("Atkinson") == "atkinson"
+    assert resolve_dither("Burkes") == "burkes"
+    assert resolve_dither("Sierra Lite") == "sierra"
+    assert resolve_dither("Ordered (Bayer)") == "ordered"
+    assert resolve_dither("Blue Noise") == "blue_noise"
+    assert resolve_dither("Unknown") == "none"
+    print("PASS: dither prefix matching")
+
+
+def test_palette_options():
+    """パレット選択肢の判定テスト"""
+    expected = {
+        "自動 (動画解析・最適化)": "auto",
+        "全39色(concrete + terracotta + 自発光)": "full",
+        "拡張 33色（concrete + terracotta）": "expanded",
+        "基本 16色（concrete）": "concrete",
+    }
+
+    assert set(PALETTE_OPTIONS.keys()) == set(expected.keys()), "PALETTE_OPTIONS のキーが一致すること"
+
+    for text, expected_value in expected.items():
+        actual = resolve_palette(text)
+        assert actual == expected_value, (
+            f"resolve_palette('{text}') returned '{actual}', expected '{expected_value}'"
+        )
+        print(f"PASS: palette '{text}' -> '{actual}'")
+
+
+def test_readme_no_invalid_colors():
+    """README.md に 55色 / 110色 / 112色 の記述が残っていないことを検証"""
+    readme_path = os.path.join(os.path.dirname(__file__), "..", "README.md")
+    with open(readme_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    for pattern in ["55色", "110色", "112色"]:
+        assert pattern not in content, f"README.md に '{pattern}' が残っています"
+    print("PASS: README color count check (no 55色/110色/112色)")
+
+
+if __name__ == "__main__":
+    test_dither_options_all_7()
+    test_dither_prefix_matching()
+    test_palette_options()
+    test_readme_no_invalid_colors()
+    print("All GUI option tests passed successfully!")

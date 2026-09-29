@@ -50,6 +50,60 @@ def get_ffmpeg_path() -> str | None:
     return shutil.which("ffmpeg")
 
 
+# パレット選択肢 (表示名 -> convert.py 内部オプション値)
+PALETTE_OPTIONS: dict[str, str] = {
+    "自動 (動画解析・最適化)": "auto",
+    "全39色(concrete + terracotta + 自発光)": "full",
+    "拡張 33色（concrete + terracotta）": "expanded",
+    "基本 16色（concrete）": "concrete",
+}
+
+# ディザリング選択肢 (表示名 -> convert.py 内部オプション値)
+DITHER_OPTIONS: dict[str, str] = {
+    "なし (最速 / GPU対応)": "none",
+    "Blue Noise (超高画質 / GPU対応)": "blue_noise",
+    "Ordered (Bayer / GPU対応)": "ordered",
+    "Floyd-Steinberg (高画質 / CPU専用)": "floyd",
+    "Atkinson (高画質 / CPU専用)": "atkinson",
+    "Burkes (高画質 / CPU専用)": "burkes",
+    "Sierra Lite (高画質 / CPU専用)": "sierra",
+}
+
+
+def resolve_palette(pal_text: str) -> str:
+    """パレット表示文字列から convert.py 用の引数名を判定する。"""
+    if pal_text in PALETTE_OPTIONS:
+        return PALETTE_OPTIONS[pal_text]
+    if pal_text.startswith("自動"):
+        return "auto"
+    elif pal_text.startswith("全39"):
+        return "full"
+    elif pal_text.startswith("拡張"):
+        return "expanded"
+    else:
+        return "concrete"
+
+
+def resolve_dither(dither_text: str) -> str:
+    """ディザ表示文字列から convert.py 用の引数名を判定する。"""
+    if dither_text in DITHER_OPTIONS:
+        return DITHER_OPTIONS[dither_text]
+    if dither_text.startswith("Floyd"):
+        return "floyd"
+    elif dither_text.startswith("Atkinson"):
+        return "atkinson"
+    elif dither_text.startswith("Burkes"):
+        return "burkes"
+    elif dither_text.startswith("Sierra"):
+        return "sierra"
+    elif dither_text.startswith("Ordered"):
+        return "ordered"
+    elif dither_text.startswith("Blue Noise"):
+        return "blue_noise"
+    else:
+        return "none"
+
+
 class PackBuilderApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -151,33 +205,18 @@ class PackBuilderApp(tk.Tk):
         preset.grid(row=1, column=1, columnspan=2, padx=(0, 10), pady=(0, 6), sticky="w")
         preset.bind("<<ComboboxSelected>>", lambda _event: self._apply_quality_preset())
 
-        # パレット選択 (全110色対応)
+        # パレット選択
         ttk.Label(settings, text="パレット").grid(row=1, column=3, padx=(10, 4), pady=(0, 6))
         ttk.Combobox(
             settings, textvariable=self.palette_var, state="readonly", width=42,
-            values=(
-                "自動 (動画解析・最適化)",
-                "ウルトラ全110色（全マイクラ実在色・最高画質）",
-                "全55色（concrete + terracotta + 自発光 + wool + 鉱石）",
-                "全39色（concrete + terracotta + 自発光）",
-                "拡張 33色（concrete + terracotta）",
-                "基本 16色（concrete）",
-            ),
+            values=tuple(PALETTE_OPTIONS.keys()),
         ).grid(row=1, column=4, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
 
-        # ディザリング選択 (全6種対応)
+        # ディザリング選択 (全7種対応)
         ttk.Label(settings, text="ディザリング").grid(row=2, column=0, padx=(10, 4), pady=(0, 6))
         ttk.Combobox(
             settings, textvariable=self.dither_var, state="readonly", width=42,
-            values=(
-                "なし (最速 / GPU対応)",
-                "Blue Noise (超高画質 / GPU対応)",
-                "Ordered (Bayer / GPU対応)",
-                "Floyd-Steinberg (高画質 / CPU専用)",
-                "Atkinson (高画質 / CPU専用)",
-                "Burkes (高画質 / CPU専用)",
-                "Sierra Lite (高画質 / CPU専用)"
-            ),
+            values=tuple(DITHER_OPTIONS.keys()),
         ).grid(row=2, column=1, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
 
         # 知覚最適化(エッジ減衰)オプション
@@ -337,34 +376,10 @@ class PackBuilderApp(tk.Tk):
         namespace = self.namespace_var.get().strip()
 
         # パレット選択
-        pal_text = self.palette_var.get()
-        if pal_text.startswith("自動"):
-            palette = "auto"
-        elif pal_text.startswith("ウルトラ") or pal_text.startswith("全55"):
-            palette = "all_55"
-        elif pal_text.startswith("全39"):
-            palette = "full"
-        elif pal_text.startswith("拡張"):
-            palette = "expanded"
-        else:
-            palette = "concrete"
+        palette = resolve_palette(self.palette_var.get())
 
         # ディザリング選択
-        dither_text = self.dither_var.get()
-        if dither_text == "Floyd-Steinberg":
-            dither_method = "floyd"
-        elif dither_text == "Atkinson":
-            dither_method = "atkinson"
-        elif dither_text == "Burkes":
-            dither_method = "burkes"
-        elif dither_text == "Sierra Lite":
-            dither_method = "sierra"
-        elif dither_text.startswith("Ordered"):
-            dither_method = "ordered"
-        elif dither_text.startswith("Blue Noise"):
-            dither_method = "blue_noise"
-        else:
-            dither_method = "none"
+        dither_method = resolve_dither(self.dither_var.get())
 
         if not pack_name:
             messagebox.showerror("パック表示名", "パック表示名を入力してください。")

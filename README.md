@@ -21,7 +21,7 @@ Python と FFmpeg、そして最新の Bedrock Script API を活用し、極限�
 - ⚡ **GPU (PyTorch) 超高速変換対応** (Ordered Bayer ディザリングによるテンソル並列計算)
 - 🎵 **OGG音声・完全同期再生** (.mcaddon出力対応)
 - 🎮 **ゲーム内リモコンGUI搭載** (コンパス右クリックでシーク・音量調整・再生操作)
-- 👑 **マイクラ実在ブロック 112色パレット** による高品質な色再現
+- 👑 **マイクラ実在ブロック 39色パレット** による高品質な色再現
 - 📚 **マルチ動画対応** (1つのパックに複数の動画を収録可能)
 
 ### 💻 必要な環境 (Requirements)
@@ -85,7 +85,7 @@ Powered by Python, FFmpeg, and the latest Bedrock Script APIs, this tool aims fo
 - ⚡ **Ultra-fast GPU (PyTorch) Conversion** using Ordered Bayer dithering tensor parallelization.
 - 🎵 **Fully Synchronized OGG Audio** playback within the `.mcaddon`.
 - 🎮 **In-game Remote Control GUI** (Right-click with a compass to seek, adjust volume, and play/pause).
-- 👑 **High-quality Color Reproduction** using a palette of 112 actual Minecraft blocks.
+- 👑 **High-quality Color Reproduction** using a palette of 39 actual Minecraft blocks.
 - 📚 **Multi-video Support** (Include multiple videos in a single pack).
 
 ### 💻 Requirements
@@ -174,4 +174,4 @@ This project is licensed under the [MIT License](LICENSE).
 - **v2.6.0**: Ordered (Bayer) ディザリング時のGPUテンソル並列計算と、VRAMパンク(OOM)対策を実装。
 - **v2.5.0**: 音声再生に完全対応。`.mcaddon` 形式へのアーキテクチャ刷新。
 - **v2.1.0**: PyTorch GPU アクセラレーション統合。
-- **v2.0.0**: 110色ウルトラパレット、ゲーム内リモコンGUI搭載。
+- **v2.0.0**: 拡張パレット、ゲーム内リモコンGUI搭載。
