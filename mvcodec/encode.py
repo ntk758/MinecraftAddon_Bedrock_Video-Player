@@ -69,5 +69,9 @@ def extract_rle_chunks_fast(frame, prev_frame, width, height):
                 run_start = s + split_points[i]
                 run_len = split_points[i+1] - split_points[i]
                 color = int(seg_colors[split_points[i]])
+                while run_len > 64:
+                    chunks.append((int(run_start), y, 64, color))
+                    run_start += 64
+                    run_len -= 64
                 chunks.append((int(run_start), y, int(run_len), color))
     return chunks
