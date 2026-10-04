@@ -1,89 +1,139 @@
 # Minecraft Bedrock Video Player
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.12](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
-[![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock%201.21+-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v4.0.0](https://img.shields.io/badge/Release-v5.2.0-blue.svg)](#releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
+[![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock-brightgreen.svg)](https://www.minecraft.net/)
+[![Release v5.2.0](https://img.shields.io/badge/Release-v5.2.0-blue.svg)](#-releases)
+[![CI](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml/badge.svg)](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
+
+[日本語](#日本語-japanese) | [English](#english)
 
 ## 日本語 (Japanese)
 
 ### 📖 概要 (Overview)
-> **⚠️ 重要事項 (Important Note):** 
+> **⚠️ 重要事項 (Important Note):**
 > このプロジェクトは、コアアルゴリズム設計からPythonスクリプト、Bedrock Script API、GUIアプリケーション、最適化ロジック、そしてこのREADMEに至るまで、**すべて AI (Claude Opus / GPT / Gemini Pro等のエージェント) によって自律的に設計・プログラミング・構築されたものです**。
 
-Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを「マイクラのブロック」へ変換し、ゲーム内で映像と音声を同期再生できるアドオン構築ツールです。
-
-Python と FFmpeg、そして最新の Bedrock Script API を活用し、極限まで高画質・低負荷・超高速変換（GPUテンソル計算対応）を目指しています。GUIツールで簡単に `.mcaddon` を生成できます。
+Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを「マイクラのブロック」へ変換し、ゲーム内で映像と音声を同期再生できるアドオン構築ツールです。GUI で動画を選んでボタンを押すだけで、そのままインポートできる `.mcaddon` を作成します。
 
 ### ✨ 特徴 (Features)
-- 🎬 **MP4 等の動画から直接ブロック動画パック生成**
-- ⚡ **GPU (PyTorch) 変換対応**: NVIDIA (CUDA)・AMD (ROCm / DirectML)・Intel (DirectML) に対応。OkLab 色空間でのマッチングとレート歪み最適化を GPU で実行
-- 🎵 **OGG音声・完全同期再生** (.mcaddon出力対応)
-- 🎮 **ゲーム内リモコンGUI搭載** (コンパス右クリックでシーク・音量調整・再生操作)
-- 👑 **マイクラ実在ブロック 39色パレット** による高品質な色再現
-- 📚 **マルチ動画対応** (1つのパックに複数の動画を収録可能)
+- 🎬 **MP4 等の動画から直接ブロック動画アドオンを生成** (映像は Behavior Pack、音声は Resource Pack)
+- 🎵 **音声の同期再生** (10 秒単位の OGG に分割し、再生位置に合わせて切り替え)
+- 🎮 **ゲーム内リモコン** (コンパスを使うと再生・一時停止・シーク・音量・動画切替の画面が開く)
+- 📚 **マルチ動画対応** (1 つのアドオンに複数の動画を収録)
+- 👑 **マイクラ実在ブロック 39 色パレット** (コンクリート・テラコッタ・発光ブロック) と、動画ごとに色を選ぶ自動パレット
+- 🗜 **差分圧縮** (変化したブロックだけを書き換える RLE + VarInt 形式。シーンごとのキーフレームで高速シーク)
+- ⚡ **GPU 変換対応**: NVIDIA (CUDA)・AMD (ROCm / DirectML)・Intel (DirectML)。GPU が無くても CPU で変換可能
 
 ### 💻 必要な環境 (Requirements)
-- **OS**: Windows 10 / 11
-- **Minecraft**: Bedrock Edition (v1.21.0 以降)
-- **Python**: 3.12 以降
-- **FFmpeg**: (実行ファイルと同階層またはPATHに設定)
-- **GPU 変換 (任意)**: NVIDIA / AMD / Intel の GPU と PyTorch (下記「GPU の設定」参照)。無い場合や動作確認に失敗した場合は自動で CPU 変換になります
+| 項目 | 内容 |
+|---|---|
+| OS | Windows 10 / 11 (変換ツール)。Linux でもコマンドラインで変換可能 |
+| Minecraft | Bedrock Edition 最新版 (安定版 Script API `@minecraft/server` 1.19.0 / `@minecraft/server-ui` 1.2.0 を使用。**ベータ API は不要**) |
+| Python | **3.12** (3.13 でも CPU 変換は動きますが、AMD GPU 用の DirectML は 3.12 までの対応です) |
+| FFmpeg | PATH に通すか、`video_player_gui.py` と同じフォルダに `ffmpeg.exe` を置く |
+| GPU (任意) | NVIDIA / AMD / Intel。PyTorch の追加が必要 ([GPU の設定](#4-gpu-の設定-任意)) |
 
 ### 🚀 インストールと使い方 (Installation & Usage)
 
 #### 1. Python のインストール
-Python 3.12 以上が必要です。以下のいずれかの方法でインストールしてください。
 - **Microsoft Store**: [Python 3.12 をインストール](https://apps.microsoft.com/detail/9ncvdn91xzqp) (推奨・最も簡単です)
-- **公式サイト**: [Python.org](https://www.python.org/downloads/windows/) からインストーラーをダウンロード（「Add Python to PATH」に必ずチェックを入れてください）
+- **公式サイト**: [Python.org](https://www.python.org/downloads/windows/) から 3.12 のインストーラーをダウンロード (「Add Python to PATH」に必ずチェック)
 
 #### 2. FFmpeg のインストール
-動画や音声の解析に FFmpeg が必要です。
-- **Winget を使う場合 (Windows 10/11)**:
-  コマンドプロンプトまたはPowerShellを開き、以下を実行します。
+- **winget を使う場合**: コマンドプロンプトまたは PowerShell で次を実行し、ターミナルを開き直します。
   ```bash
   winget install Gyan.FFmpeg
   ```
-  （インストール後、PCの再起動またはコマンドプロンプトの再起動が必要です）
-- **手動インストール**:
-  [FFmpeg公式サイト](https://ffmpeg.org/download.html) から Windows 向けのビルド(gyan.dev 等)をダウンロードし、解凍して `ffmpeg.exe` をこのツールのフォルダ(`video_player_gui.py` と同じ場所) に配置するか、システムの環境変数PATHに追加してください。
+- **手動インストール**: [FFmpeg 公式サイト](https://ffmpeg.org/download.html) から Windows 向けビルド (gyan.dev 等) を入手し、`ffmpeg.exe` をこのツールのフォルダに置くか PATH に追加します。
 
 #### 3. ツールのセットアップ
-1. このリポジトリをダウンロード（ZIPでダウンロードして解凍、または `git clone`）します。
-2. コマンドプロンプト等でツールのフォルダを開き、必要な Python パッケージをインストールします。
-   ```bash
-   pip install -r requirements.txt
-   ```
-   GPU を使う場合は、下の「GPU の設定」に従って PyTorch を追加してください。
+このリポジトリをダウンロード (ZIP を解凍、または `git clone`) し、フォルダ内で必要なパッケージをインストールします。
+```bash
+pip install -r requirements.txt
+```
 
-#### GPU の設定 (任意)
-GUI の「変換デバイス」(コマンドラインでは `--device`) が「自動」なら、**CUDA / ROCm → DirectML → CPU** の順に使えるものを選びます。選んだ GPU で事前に小さなテスト変換を行い、失敗した場合は CPU に切り替えます。使われたデバイスは処理ログの `[MVCodec] 減色デバイス:` に表示されます。
+#### 4. GPU の設定 (任意)
+GPU を使わない場合はこの手順は不要です。
 
 | GPU | OS | インストール方法 |
 |---|---|---|
 | NVIDIA | Windows / Linux | [PyTorch 公式サイト](https://pytorch.org/get-started/locally/) の CUDA 版 `torch` |
-| AMD Radeon | Windows | `pip install -r requirements-directml.txt` (torch-directml。**Python 3.12 以下が必要**) または AMD 公式の ROCm 版 PyTorch for Windows (対応 GPU は AMD のドキュメントを参照) |
+| AMD Radeon | Windows | `pip install -r requirements-directml.txt` (DirectML) または AMD 公式の ROCm 版 PyTorch for Windows (対応 GPU は AMD のドキュメントを参照) |
 | AMD Radeon | Linux | [PyTorch 公式サイト](https://pytorch.org/get-started/locally/) の ROCm 版 `torch` |
-| Intel Arc / 内蔵 GPU | Windows | `pip install -r requirements-directml.txt` |
+| Intel Arc / 内蔵 GPU | Windows | `pip install -r requirements-directml.txt` (DirectML) |
 
-- ROCm 版 PyTorch は CUDA と同じ扱い (`--device cuda` / `rocm`) で動きます。
-- GPU 経路は OkLab 色空間でのマッチング・知覚的 RDO・時間方向ディザを行うため、CPU 経路 (Pillow) と結果が異なります (RDO により容量は小さめ)。GPU が使えるディザは「なし / Blue Noise / Ordered」で、それ以外のディザは CPU で処理されます。
-- 参考 (AMD Radeon RX 9070 XT + DirectML, 256×256): 減色処理のみで約 200 fps (同じ処理の PyTorch CPU 実行は約 107 fps)。ただし変換全体では CPU 経路 (Pillow) の方が処理が軽いため速いことがあります。
-3. GUIアプリを起動します。
-   ```bash
-   python video_player_gui.py
+- GUI の「変換デバイス」が **自動** なら **CUDA / ROCm → DirectML → CPU** の順に使えるものを選びます。DirectML では内蔵 GPU より単体 GPU を優先します。
+- 変換前に GPU で小さなテスト変換を行い、失敗した場合は自動で CPU 変換に切り替えます。
+- 実際に使われたデバイスは処理ログの `[MVCodec] 減色デバイス: AMD Radeon RX 9070 XT (directml)` のような行で確認できます。
+- GPU 経路は OkLab 色空間での色合わせ・知覚的なレート歪み最適化 (RDO)・時間方向ディザを行うため、CPU 経路 (Pillow) とは仕上がりが異なり、容量は小さめになります。処理が重い分、**変換全体が CPU より速くなるとは限りません** (例: RX 9070 XT + DirectML、256×256 で減色処理は約 200 fps)。
+- GPU で処理できるディザは「なし / Blue Noise / Ordered」です。それ以外のディザを選ぶと CPU で処理されます。
+
+#### 5. GUI で .mcaddon を作成
+```bash
+python video_player_gui.py
+```
+1. **動画リスト**: 「動画を追加」で動画を選びます (複数可)。「ID編集」で動画 ID (英小文字・数字・`_`)、「サムネ秒編集」でアイコンに使う場面を変更できます。
+2. **出力 .mcaddon**: 保存先を指定します。
+3. **パック名・実行コマンド**: パック表示名と、ゲーム内コマンドの接頭辞 (既定 `badapple`) を設定します。
+4. **変換・再生設定**:
+
+   | 設定 | 説明 |
+   |---|---|
+   | 画質プリセット | 幅・高さ・再生間隔をまとめて設定します (下表) |
+   | 幅 / 高さ | スクリーンのブロック数 (最大 512) |
+   | 再生間隔 (tick) | 1 フレームを表示する tick 数。20 ÷ 間隔 = fps |
+   | キーフレーム間隔 | 何フレームごとに全画面を描き直すか (シークの速さに影響)。0 ならシーンの先頭のみ |
+   | パレット | 自動 (動画ごとに最適化) / 全 39 色 / 拡張 33 色 / 基本 16 色 |
+   | ディザリング | なし / Blue Noise / Ordered (GPU 対応)、Floyd-Steinberg / Atkinson / Burkes / Sierra Lite (CPU のみ) |
+   | 知覚最適化 | 輪郭部分だけにディザをかけて、平坦部のちらつきを抑えます |
+   | 変換デバイス | 自動 / NVIDIA CUDA・AMD ROCm / DirectML / CPU のみ |
+
+   | 画質プリセット | 解像度 | fps | 目安 |
+   |---|---|---|---|
+   | 軽量 | 64×64 | 20 | 動きの多い動画・低スペック向け |
+   | 標準 | 96×96 | 10 | |
+   | 高画質 (既定) | 128×128 | 10 | |
+   | 高精細 | 128×128 | 5 | |
+   | ウルトラ | 256×256 | 5 | 重い。PC 版推奨 |
+   | 極限 | 512×512 | 2 | 非常に重い。PC 版推奨 |
+5. **「.mcaddon を作成」** を押すと、処理ログに進行状況が表示され、完了するとダイアログが出ます。
+
+#### 6. Minecraft で再生
+1. 作成した `.mcaddon` をダブルクリックしてインポートします。
+2. ワールドの設定で **ビヘイビアーパック** と **リソースパック** の両方を有効にします (同じパック名で 2 つあります)。`/scriptevent` を使うため **チートを有効** にしてください。
+3. スクリーンを置きたい場所に立ち、次のコマンドを実行します (`badapple` は GUI で設定した接頭辞)。
    ```
+   /scriptevent badapple:setup
+   ```
+   スクリーンは **プレイヤーの足元の高さに、東 (+X) と北 (-Z) 方向へ水平に** 作られます。範囲内のブロックは上書きされるので、平らで何もない場所で実行し、上空から見下ろしてください。
+4. **コンパスを使う** (右クリック / 長押し) とリモコンが開きます。
 
-#### 4. GUIの操作
-   - 「動画を追加」ボタンで MP4 などを選択します。
-   - 「画質」「パレット」「ディザリング (GPU対応を推奨)」を設定します。
-   - 「ビルド開始」を押して `.mcaddon` を生成します。
-5. **Minecraftへの導入**:
-   - 出力された `.mcaddon` をダブルクリックしてインポートします。
-   - ワールド設定で **Behavior Pack** と **Resource Pack** を有効にします。
-   - 安定版の Script API (`@minecraft/server` 1.19.0 / `@minecraft/server-ui` 1.2.0) を使っているため、「ベータ API」の有効化は不要です。Minecraft を最新版に更新してください。
-   - ゲーム内でコンパスを持ち、右クリックしてリモコンから再生を開始します。
+| リモコンのボタン | 動作 |
+|---|---|
+| ▶ 再生 / 再開・⏸ 一時停止 | 一時停止やシークした位置から再開します |
+| ⏹ 停止 ＆ クリア | 再生を止め、スクリーンを単色 (パレットの先頭のブロック) で塗りつぶします |
+| ⏭ 次の動画・⏮ 前の動画・📜 動画リスト | 再生する動画を切り替えます |
+| 🔊 音量設定 | 0〜100% |
+| ⏩ シーク | 秒数を指定して移動します (移動後は一時停止) |
+
+| コマンド | 動作 |
+|---|---|
+| `/scriptevent badapple:setup` | 現在地にスクリーンを設置 |
+| `/scriptevent badapple:start` | 選択中の動画を最初から再生 |
+| `/scriptevent badapple:list` | 収録動画の一覧 |
+| `/scriptevent badapple:play <動画ID>` | 指定した動画を再生 |
+| `/scriptevent badapple:gui` | リモコン画面を開く |
+| `/scriptevent badapple:stop` | 停止してスクリーンを単色で塗りつぶす |
+
+#### スタンドアロン EXE (任意)
+Python が無い PC 向けに、PyInstaller で単体の実行ファイルを作れます。DirectML (torch-directml) がビルド環境に入っていれば同梱されます。
+```bash
+pip install pyinstaller
+python build_standalone.py
+```
+`dist/BlockVideoPlayer/BlockVideoPlayer.exe` ができます。同じフォルダに `ffmpeg.exe` を置くと PATH の設定が不要になります。
 
 ---
 
@@ -92,31 +142,32 @@ GUI の「変換デバイス」(コマンドラインでは `--device`) が「�
 ### 📖 Overview
 > **⚠️ Note:** This entire project—including the Python scripts, Minecraft add-on JavaScript, GUI application, and this README—was **fully designed, programmed, and generated by AI**.
 
-An add-on building tool for Minecraft Bedrock Edition that converts video files (like MP4) into "Minecraft blocks" and plays them in-game with synchronized audio.
-
-Powered by Python, FFmpeg, and the latest Bedrock Script APIs, this tool aims for extreme high-quality, low-overhead, and ultra-fast conversion (supporting GPU Tensor acceleration). You can easily generate `.mcaddon` files via a user-friendly GUI.
+A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a `.mcaddon` that plays them in Minecraft Bedrock Edition with synchronized audio. Pick your videos in the GUI, press one button, and import the result.
 
 ### ✨ Features
-- 🎬 **Direct Video-to-Block Pack Generation** from MP4 and other formats.
-- ⚡ **GPU (PyTorch) Conversion** on NVIDIA (CUDA), AMD (ROCm / DirectML) and Intel (DirectML) GPUs.
-- 🎵 **Fully Synchronized OGG Audio** playback within the `.mcaddon`.
-- 🎮 **In-game Remote Control GUI** (Right-click with a compass to seek, adjust volume, and play/pause).
-- 👑 **High-quality Color Reproduction** using a palette of 39 actual Minecraft blocks.
-- 📚 **Multi-video Support** (Include multiple videos in a single pack).
+- 🎬 **Video → block add-on** (video in the Behavior Pack, audio in the Resource Pack)
+- 🎵 **Synchronized audio** (10-second OGG chunks switched by playback position)
+- 🎮 **In-game remote control** (use a compass: play/pause, seek, volume, switch videos)
+- 📚 **Multiple videos per add-on**
+- 👑 **39-color palette of real blocks** (concrete, terracotta, light sources) plus a per-video automatic palette
+- 🗜 **Delta compression** (only changed blocks are rewritten; RLE + VarInt, per-scene keyframes for fast seeking)
+- ⚡ **GPU conversion** on NVIDIA (CUDA), AMD (ROCm / DirectML) and Intel (DirectML); CPU works too
 
 ### 💻 Requirements
-- **OS**: Windows 10 / 11
-- **Minecraft**: Bedrock Edition (v1.21.0+)
-- **Python**: 3.12+
-- **FFmpeg**: Required in the PATH or same directory.
+- **OS**: Windows 10 / 11 for the GUI (the CLI also runs on Linux)
+- **Minecraft**: latest Bedrock Edition (stable Script API `@minecraft/server` 1.19.0 / `@minecraft/server-ui` 1.2.0 — **Beta APIs are not required**)
+- **Python**: 3.12 (3.13 works for CPU conversion, but DirectML supports up to 3.12)
+- **FFmpeg**: on PATH or next to `video_player_gui.py`
 
 ### 🚀 Usage
-1. Install Python requirements: `pip install -r requirements.txt`. For GPU conversion add PyTorch: CUDA build (NVIDIA), ROCm build (AMD on Linux / AMD's Windows preview), or `pip install -r requirements-directml.txt` (AMD / Intel on Windows, Python ≤ 3.12). The converter picks CUDA/ROCm → DirectML → CPU automatically (`--device` to override) and falls back to CPU if a GPU self-test fails.
-2. Run `python video_player_gui.py` to open the GUI.
-3. Add your videos, configure quality/dithering (GPU recommended), and click "Build".
-4. Import the generated `.mcaddon` to Minecraft.
-5. Enable both the **Behavior Pack** and **Resource Pack**. The add-on uses the stable Script API (`@minecraft/server` 1.19.0), so **Beta APIs are not required**—just keep Minecraft up to date.
-6. Hold a compass in-game and right-click to open the remote control and start playing!
+1. `pip install -r requirements.txt`
+2. Optional GPU: CUDA build of PyTorch (NVIDIA), ROCm build (AMD on Linux, or AMD's PyTorch for Windows), or `pip install -r requirements-directml.txt` (AMD / Intel on Windows). With **Device = Auto** the converter tries CUDA/ROCm → DirectML → CPU, runs a small self-test on the GPU and falls back to CPU if it fails. The log line `[MVCodec] 減色デバイス:` shows the device in use.
+3. Run `python video_player_gui.py`, add videos, choose a quality preset / palette / dithering / device, and press **".mcaddon を作成"** (Create .mcaddon).
+4. Import the `.mcaddon`, enable both the Behavior Pack and the Resource Pack, and turn on cheats (for `/scriptevent`).
+5. Stand where the screen should be and run `/scriptevent badapple:setup` (`badapple` is the command prefix set in the GUI). The screen is built horizontally at your foot level, extending east (+X) and north (−Z); blocks in that area are overwritten.
+6. Use a compass to open the remote control, or use `/scriptevent badapple:start | list | play <id> | gui | stop`.
+
+To build a standalone EXE: `pip install pyinstaller` then `python build_standalone.py` (bundles torch-directml when installed).
 
 ---
 
@@ -124,23 +175,33 @@ Powered by Python, FFmpeg, and the latest Bedrock Script APIs, this tool aims fo
 
 ```text
 .
-├── convert.py                 # Core video-to-block conversion CLI (2-pass streaming, GPU/CPU)
-├── mvcodec/                   # Codec library (palettes, quantization, RLE/VarInt encoder, Python decoder)
-├── video_player_gui.py        # GUI Application & Pack Builder (.mcaddon generator)
-├── main.js                    # Bedrock Script API playback script
-├── codec.js                   # Minecraft-independent decoder shared by main.js and the Node tests
-├── manifest.json              # Base manifest template
-├── pack_metadata.py           # Version and release notes manager
+├── video_player_gui.py        # GUI & pack builder (.mcaddon generator)
+├── convert.py                 # Video → block data converter CLI (2-pass streaming, GPU/CPU)
+├── mvcodec/                   # Codec library
+│   ├── color.py               #   Palettes, dithering, OkLab
+│   ├── auto_palette.py        #   Per-scene automatic palette (K-Means)
+│   ├── device.py              #   GPU backend detection (CUDA / ROCm / DirectML)
+│   ├── encode.py              #   RLE + VarInt encoder, 15-bit string packing
+│   └── decode.py              #   Python reference decoder (benchmark / tests)
+├── main.js                    # In-game player (Bedrock Script API)
+├── codec.js                   # Minecraft-independent decoder shared by main.js and Node tests
+├── manifest.json              # Behavior Pack manifest template
+├── pack_metadata.py           # Version and release notes
 ├── build_standalone.py        # PyInstaller build for the standalone EXE
 ├── benchmark/                 # Quality / size benchmark (PSNR, SSIM, ΔE2000, LPIPS)
-└── tests/                     # pytest + Node round-trip tests
+├── scripts/                   # Utilities (demo GIF generator)
+├── tests/                     # pytest + Node round-trip tests
+└── requirements*.txt          # Runtime / dev / benchmark / DirectML dependencies
 ```
 
+データ形式やゲーム内の描画方式の詳細は [ARCHITECTURE.md](ARCHITECTURE.md) を参照してください。
+
 ## 🛠 技術スタック (Tech Stack)
-- **Python 3**: Core processing and GUI (Tkinter)
-- **PyTorch**: Tensor-based palette mapping and dithering on CUDA / ROCm / DirectML (`mvcodec/device.py`)
-- **FFmpeg**: Video frame extraction and OGG audio segmentation
-- **Minecraft Script API**: In-game block placement (using `setBlockPermutation` & RLE + VarInt encoding) and UI components (`@minecraft/server`, `@minecraft/server-ui`).
+- **Python 3.12**: 変換処理と GUI (Tkinter)
+- **NumPy / Pillow**: 減色・ディザ (CPU)
+- **PyTorch**: GPU 減色 (CUDA / ROCm / DirectML)
+- **FFmpeg**: フレーム抽出・OGG 音声分割
+- **Minecraft Script API**: `setBlockPermutation` によるブロック描画と、`@minecraft/server-ui` のリモコン画面
 
 ## 🧪 開発者向け (Development)
 ```bash
@@ -148,37 +209,72 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 - `tests/test_codec_v4.py` は変換結果を Python デコーダと `codec.js` (Node.js が必要) の両方で復元し、一致・シーク・パレット切替を検証します。
-- コマンドラインからの変換: `python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 --fps 10` (`--frames-dir` で PNG 連番も可)。
-- 画質ベンチマーク: `pip install -r requirements-benchmark.txt` の後 `python benchmark/run.py --video in.mp4 --output out.js --fps 10`。
+- `tests/test_device.py` は GPU の選択と CPU へのフォールバックを検証します (PyTorch があれば GPU 用の処理も CPU で実行して確認)。
+- GitHub Actions (`.github/workflows/ci.yml`) で push / PR ごとにテストと参考ベンチマークを実行します。
+
+コマンドラインでの変換:
+```bash
+python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 --fps 10 --palette auto --device auto
+```
+
+| 主なオプション | 説明 |
+|---|---|
+| `--input-video` / `--frames-dir` | 入力動画、または画像連番フォルダ |
+| `--width` `--height` `--fps` `--duration` | 解像度・fps (最大 20)・変換する秒数 |
+| `--palette` | `concrete` / `expanded` / `full` / `auto` |
+| `--dither-method` | `none` / `blue_noise` / `ordered` / `floyd` / `atkinson` / `burkes` / `sierra` |
+| `--device` | `auto` / `cuda` / `rocm` / `directml` / `cpu` |
+| `--keyframe-interval` | キーフレーム間隔 (0 でシーン先頭のみ) |
+| `--no-adaptive-fps` / `--no-perceptual` | 変化の少ないフレームの省略・知覚最適化を無効化 |
+| `--ffmpeg` | ffmpeg のパス |
+
+画質ベンチマーク:
+```bash
+pip install -r requirements-benchmark.txt
+python benchmark/run.py --video in.mp4 --output out.js --fps 10
+```
+
+## ❓ よくある質問 (FAQ)
+
+**Q. Java版で使えますか？ (Does this work on Java Edition?)**
+A. いいえ、統合版 (Bedrock Edition) 専用です。
+
+**Q. スマホやスイッチでも動きますか？ (Will it run on mobile/consoles?)**
+A. `.mcaddon` 自体はどの端末の統合版でも動作するはずですが、高画質設定は非常に重いため PC 版を推奨します。
+
+**Q. GPU があるのに CPU で変換されます。**
+A. 処理ログの `[MVCodec]` の行を確認してください。PyTorch (または torch-directml) が入っていない場合や、GPU のテスト変換に失敗した場合は CPU になります。DirectML は Python 3.13 に対応していないため、Python 3.12 の環境に `requirements-directml.txt` を入れてください。Floyd-Steinberg などの CPU 専用ディザを選んでいる場合も CPU で処理されます。
+
+**Q. 「ffmpeg が見つかりません」と表示されます。**
+A. `ffmpeg -version` がターミナルで動くか確認してください。動かない場合は `ffmpeg.exe` をツール (または EXE) と同じフォルダに置いてください。
+
+**Q. 再生が重い・カクつきます。**
+A. 解像度を下げる (軽量・標準プリセット) か、fps を下げてください。1 tick あたりのブロック設置数には上限があり、超えた分は次の tick に持ち越されます。
+
+**Q. 作り直したアドオンを入れたら同じパックが 2 つ並びます / 更新されません。**
+A. パック名とコマンド接頭辞が同じなら同じパック (同じ UUID) として作られ、バージョンはビルドごとに上がります。名前か接頭辞を変えると別のパックとして扱われます。
 
 ## 🗺 ロードマップ (Roadmap)
 - [x] MP4対応 (Video format support)
 - [x] GUI実装 (GUI Builder)
 - [x] 音声同期再生 (Audio Sync)
-- [x] 高速化・GPU対応 (GPU Acceleration & Optimization)
+- [x] GPU対応 (NVIDIA CUDA / AMD ROCm・DirectML / Intel DirectML)
 - [x] マルチ動画パック対応 (Multi-video support)
-- [x] **Phase 7: Research Edition (次世代R&D) - 完了 (Phase 7.1-7.3)**
-  - オブジェクト指向JSエンジン実装 (VideoPlayerクラスによるマルチスクリーン再生)
+- [x] **Phase 7: Research Edition**
+  - オブジェクト指向JSエンジン (VideoPlayer クラスによるマルチスクリーン再生)
   - 局所的SSIMベースの知覚的RDO (エッジ・ディテール保存)
-  - シーン適応型パレット & シーンGOP (0.5*SAD + 0.3*Hist + 0.2*Edge を用いた動的GOPリサイズとパレットハッシュ)
-  - 統合ベンチマークフレームワークの確立 (SSIM, PSNR, LPIPS, ΔE2000)
+  - シーン適応型パレット & シーンGOP (0.5*SAD + 0.3*Hist + 0.2*Edge)
+  - 統合ベンチマーク (SSIM, PSNR, LPIPS, ΔE2000)
 - [ ] **Phase 7.x: 次世代予測圧縮 (Next-Gen Prediction)**
-  - Motion Vector Prediction (高度な動き予測)
-  - Tile Dictionary (タイルベースの辞書圧縮)
-- [ ] 圧縮率の更なる改善 (Further delta-compression improvements)
-- [ ] 3D立体ホログラム再生への拡張 (3D Hologram playback)
+  - Motion Vector Prediction (動き予測)
+  - Tile Dictionary (タイル辞書圧縮)
+- [ ] 3D立体ホログラム再生 (3D Hologram playback)
+
+詳細は [TODO.md](TODO.md) を参照してください。
 
 ## 📝 謝辞 (Acknowledgments)
 - Original Java Datapack idea inspired by [umbreonben/mc-cushion-bad-apple](https://github.com/umbreonben/mc-cushion-bad-apple).
 - Video processing powered by **FFmpeg**.
-
-## ❓ よくある質問 (FAQ)
-
-**Q. Java版で使えますか？ (Does this work on Java Edition?)**
-A. いいえ、統合版 (Bedrock Edition) 専用です。 (No, this is exclusively built for Bedrock Edition Script API.)
-
-**Q. スマホやスイッチでも動きますか？ (Will it run on mobile/consoles?)**
-A. 作成した `.mcaddon` パック自体は理論上どの端末の統合版でも動作しますが、高画質設定の動画は非常に重いため、PC版(Windows)での再生を推奨します。
 
 ## 🤝 コントリビュート (Contributing)
 Issue や Pull Request はいつでも歓迎します！
@@ -193,12 +289,12 @@ This project is licensed under the [MIT License](LICENSE).
 
 - **v5.2.0**: AMD GPU 対応。ROCm 版 PyTorch (Linux / Windows) と DirectML (Windows の AMD / Intel GPU) で GPU 変換が可能に。GUI に「変換デバイス」選択を追加し、GPU の動作確認に失敗した場合は自動で CPU 変換へ切り替え。GUI からの変換が引数エラーで失敗していた v5.1.0 の不具合を修正。
 - **v5.1.0**: 品質改善リリース。自動パレット使用時にシーン切替で色が崩れる問題 (GOP 先頭を必ずキーフレーム化)、横長動画・サムネイルが中央に配置されない問題、シーク後に再開できず先頭に戻る問題、別の動画を選んでも切り替わらない問題、EXE 版で変換できない問題を修正。再生速度を動画データの fps から決定、変換を 2 パスのストリーミング化してメモリ使用量を削減、盤面クリアの分割実行、再ビルド時もパック UUID を維持、CI でテストとベンチマークを実行するよう改善。
-- **v5.0.0**: Phase 7 Research Edition。オブジェクト指向JSエンジンによるマルチスクリーン再生、SSIMベースの知覚的RDO、シーン適応型パレット＆GOPを導入。「世界最高峰のMinecraftビデオプレイヤー」として次世代の画質と圧縮効率を実現。
-- **v4.0.0**: Phase 6。OkLab知覚色空間への移行による色再現性の改善、シーン適応型の自動圧縮制御(RDO/ME)、NumPyベクトル化によるエンコード効率向上、予測型GOPプリフェッチとスマートティック予算による再生安定性の強化を実現。Minecraft Bedrock向け動画再生アドオンとして、高い完成度を目指した設計となっています。
-- **v3.2.0**: v4 GOP-Chunked 遅延デコードフォーマットを導入。200フレーム単位の独立チャンク分割+LRUキャッシュにより、高解像度動画のワールド読み込み速度を劇的に改善。
-- **v3.1.0**: 次世代 Ultra-HD (512x512) 描画、バジェットベースRDO/MEによる負荷分散、v3バイナリ連結フォーマットによる爆速ワールドロード、Temporal Dithering などを一挙に搭載。
+- **v5.0.0**: Phase 7 Research Edition。オブジェクト指向JSエンジンによるマルチスクリーン再生、SSIMベースの知覚的RDO、シーン適応型パレット＆GOPを導入。
+- **v4.0.0**: Phase 6。OkLab知覚色空間への移行による色再現性の改善、シーン適応型の自動圧縮制御(RDO/ME)、NumPyベクトル化によるエンコード効率向上、予測型GOPプリフェッチとスマートティック予算による再生安定性の強化。
+- **v3.2.0**: v4 GOP-Chunked 遅延デコードフォーマットを導入。GOP 単位の独立チャンク分割+LRUキャッシュにより、高解像度動画のワールド読み込み速度を改善。
+- **v3.1.0**: Ultra-HD (512x512) 描画、バジェットベースRDO/MEによる負荷分散、v3バイナリ連結フォーマットによる高速ワールドロード、Temporal Dithering などを搭載。
 - **v2.8.0**: Phase 4 MVCodec 導入。動的自動ブロックパレット生成 (K-Means)、Blue Noise ディザリングと知覚最適化フィルター、GUIへのベンチマーク表示機能を追加。
-- **v2.7.0**: Zero-copy FFmpegパイプライン導入による超高速ストリーミング対応、UTF-16バイナリエンコードによる容量削減、FFmpeg HWAccelのYUV破損バグを修正。
+- **v2.7.0**: Zero-copy FFmpegパイプライン導入によるストリーミング対応、UTF-16バイナリエンコードによる容量削減、FFmpeg HWAccelのYUV破損バグを修正。
 - **v2.6.4**: Script API での音声再生時、Bedrock 1.21以降の厳格な引数仕様(`location`)により音が鳴らない問題を修正。
 - **v2.6.3**: `.mcaddon` 生成時に Script API の依存関係が消えてしまうバグを修正。
 - **v2.6.2**: GUI起動時の変数初期化エラーを修正。

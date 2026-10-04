@@ -305,8 +305,8 @@ class PackBuilderApp(tk.Tk):
         # --- 説明文 ---
         ttk.Label(
             self,
-            text="動画をPNG連番へ抽出し、ブロック色の差分データに変換して、"
-                 "インポート可能なBehavior Pack（.mcpack）を出力します。複数動画の一括搭載に対応。",
+            text="動画をブロック色の差分データに変換し、音声付きでインポート可能な"
+                 "アドオン（.mcaddon = Behavior Pack + Resource Pack）を出力します。複数動画の一括搭載に対応。",
             wraplength=740,
         ).grid(row=4, column=0, sticky="w", **pad)
 
@@ -317,7 +317,7 @@ class PackBuilderApp(tk.Tk):
             foreground="#555555",
         ).grid(row=5, column=0, sticky="w", **pad)
 
-        self.build_button = ttk.Button(self, text=".mcpack を作成", command=self._start_build)
+        self.build_button = ttk.Button(self, text=".mcaddon を作成", command=self._start_build)
         self.build_button.grid(row=6, column=0, pady=6)
         self.progress = ttk.Progressbar(self, mode="indeterminate")
         self.progress.grid(row=7, column=0, sticky="ew", padx=10, pady=4)
