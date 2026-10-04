@@ -39,6 +39,8 @@ def build_standalone_exe():
         "--add-data", f"{APP_DIR / 'main.js'}{os.pathsep}.",
         "--add-data", f"{APP_DIR / 'codec.js'}{os.pathsep}.",
         "--add-data", f"{APP_DIR / 'manifest.json'}{os.pathsep}.",
+        # GUI の翻訳ファイル
+        "--add-data", f"{APP_DIR / 'locales'}{os.pathsep}locales",
         str(main_gui)
     ]
     # DirectML (AMD / Intel GPU) 版 PyTorch がビルド環境にあれば DLL ごと同梱する

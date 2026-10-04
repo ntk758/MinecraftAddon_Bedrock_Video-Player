@@ -34,6 +34,7 @@ Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを
 - 👑 **マイクラ実在ブロック 39 色パレット** (コンクリート・テラコッタ・発光ブロック) と、動画ごとに色を選ぶ自動パレット
 - 🗜 **差分圧縮** (変化したブロックだけを書き換える RLE + VarInt 形式。シーンごとのキーフレームで高速シーク)
 - ⚡ **GPU 変換対応**: NVIDIA (CUDA)・AMD (ROCm / DirectML)・Intel (DirectML)。GPU が無くても CPU で変換可能
+- 🌐 **GUI は 10 言語対応**: 日本語・English・简体中文・繁體中文・한국어・Español・Português (Brasil)・Français・Deutsch・Русский
 
 ### 💻 必要な環境 (Requirements)
 | 項目 | 内容 |
@@ -83,6 +84,8 @@ GPU を使わない場合はこの手順は不要です。
 ```bash
 python video_player_gui.py
 ```
+画面右上の **🌐 言語 (Language)** で表示言語を切り替えられます。初回は Windows の表示言語に合わせて選ばれ、選んだ言語は次回以降も使われます (入力中の内容はそのまま引き継がれます)。
+
 1. **動画リスト**: 「動画を追加」で動画を選びます (複数可)。「ID編集」で動画 ID (英小文字・数字・`_`)、「サムネ秒編集」でアイコンに使う場面を変更できます。
 2. **出力 .mcaddon**: 保存先を指定します。
 3. **パック名・実行コマンド**: パック表示名と、ゲーム内コマンドの接頭辞 (既定 `badapple`) を設定します。
@@ -161,6 +164,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - 👑 **39-color palette of real blocks** (concrete, terracotta, light sources) plus a per-video automatic palette
 - 🗜 **Delta compression** (only changed blocks are rewritten; RLE + VarInt, per-scene keyframes for fast seeking)
 - ⚡ **GPU conversion** on NVIDIA (CUDA), AMD (ROCm / DirectML) and Intel (DirectML); CPU works too
+- 🌐 **GUI in 10 languages**: Japanese, English, Simplified/Traditional Chinese, Korean, Spanish, Portuguese (Brazil), French, German, Russian
 
 ### 💻 Requirements
 - **OS**: Windows 10 / 11 for the GUI (the CLI also runs on Linux)
@@ -171,7 +175,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 ### 🚀 Usage
 1. `pip install -r requirements.txt`
 2. Optional GPU: CUDA build of PyTorch (NVIDIA), ROCm build (AMD on Linux, or AMD's PyTorch for Windows), or `pip install -r requirements-directml.txt` (AMD / Intel on Windows). With **Device = Auto** the converter tries CUDA/ROCm → DirectML → CPU, runs a small self-test on the GPU and falls back to CPU if it fails. The log line `[MVCodec] 減色デバイス:` shows the device in use.
-3. Run `python video_player_gui.py`, add videos, choose a quality preset / palette / dithering / device, and press **".mcaddon を作成"** (Create .mcaddon).
+3. Run `python video_player_gui.py` (switch the UI language with **🌐 Language** at the top right — it follows your Windows display language by default), add videos, choose a quality preset / palette / dithering / device, and press **".mcaddon を作成"** (Create .mcaddon).
 4. Import the `.mcaddon`, enable both the Behavior Pack and the Resource Pack, and turn on cheats (for `/scriptevent`).
 5. Stand where the screen should be and run `/scriptevent badapple:setup` (`badapple` is the command prefix set in the GUI). The screen is built horizontally at your foot level, extending east (+X) and north (−Z); blocks in that area are overwritten.
 6. Use a compass to open the remote control, or use `/scriptevent badapple:start | list | play <id> | gui | stop`.
@@ -185,6 +189,8 @@ A prebuilt Windows EXE (with DirectML) and a ready-to-play sample add-on are on 
 ```text
 .
 ├── video_player_gui.py        # GUI & pack builder (.mcaddon generator)
+├── gui_i18n.py                # GUI translations loader, language detection, saved settings
+├── locales/                   # GUI translations (one JSON per language, en.json is the reference)
 ├── convert.py                 # Video → block data converter CLI (2-pass streaming, GPU/CPU)
 ├── mvcodec/                   # Codec library
 │   ├── color.py               #   Palettes, dithering, OkLab
@@ -221,6 +227,8 @@ pytest -q
 - `tests/test_codec_v4.py` は変換結果を Python デコーダと `codec.js` (Node.js が必要) の両方で復元し、一致・シーク・パレット切替を検証します。
 - `tests/test_device.py` は GPU の選択と CPU へのフォールバックを検証します (PyTorch があれば GPU 用の処理も CPU で実行して確認)。
 - GitHub Actions (`.github/workflows/ci.yml`) で push / PR ごとにテストと参考ベンチマークを実行します。
+
+GUI の翻訳を追加・修正するには `locales/` の JSON を編集します。新しい言語は `en.json` をコピーして `<言語コード>.json` を作るだけで選択肢に現れます。`tests/test_i18n.py` がキーと `{プレースホルダー}` の過不足を検査します。翻訳の改善 PR も歓迎です。
 
 コマンドラインでの変換:
 ```bash

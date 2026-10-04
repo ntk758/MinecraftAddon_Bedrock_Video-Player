@@ -1,4 +1,4 @@
-"""動画からMinecraft Bedrock用の.mcpackを作成するGUI。複数動画搭載・10秒分割音声同期・キーフレーム対応。"""
+"""動画から Minecraft Bedrock 用の .mcaddon を作成する GUI。複数動画搭載・音声同期・多言語対応。"""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from gui_i18n import LOCALES, Translator, available_languages, initial_language, load_settings, save_settings
 from pack_metadata import PACK_VERSION, RELEASE_NOTES, changelog_markdown, manifest_description, version_text
 
 
@@ -83,38 +84,46 @@ def get_ffmpeg_path() -> str | None:
     return shutil.which("ffmpeg")
 
 
-# パレット選択肢 (表示名 -> convert.py 内部オプション値)
-PALETTE_OPTIONS: dict[str, str] = {
-    "自動 (動画解析・最適化)": "auto",
-    "全39色(concrete + terracotta + 自発光)": "full",
-    "拡張 33色（concrete + terracotta）": "expanded",
-    "基本 16色（concrete）": "concrete",
+# 選択肢の値 (convert.py に渡す値)。表示名は locales/*.json の "<種類>.<値>" キー
+PALETTE_VALUES = ("auto", "full", "expanded", "concrete")
+DITHER_VALUES = ("none", "blue_noise", "ordered", "floyd", "atkinson", "burkes", "sierra")
+DEVICE_VALUES = ("auto", "cuda", "directml", "cpu")
+# 画質プリセット: キー -> (幅, 高さ, 再生間隔 tick)
+QUALITY_PRESETS: dict[str, tuple[int, int, int]] = {
+    "light": (64, 64, 1),
+    "standard": (96, 96, 2),
+    "high": (128, 128, 2),
+    "detail": (128, 128, 4),
+    "ultra": (256, 256, 4),
+    "extreme": (512, 512, 10),
 }
-
-# ディザリング選択肢 (表示名 -> convert.py 内部オプション値)
-DITHER_OPTIONS: dict[str, str] = {
-    "なし (最速 / GPU対応)": "none",
-    "Blue Noise (超高画質 / GPU対応)": "blue_noise",
-    "Ordered (Bayer / GPU対応)": "ordered",
-    "Floyd-Steinberg (高画質 / CPU専用)": "floyd",
-    "Atkinson (高画質 / CPU専用)": "atkinson",
-    "Burkes (高画質 / CPU専用)": "burkes",
-    "Sierra Lite (高画質 / CPU専用)": "sierra",
-}
+DEFAULT_PRESET = "high"
+DEFAULT_PALETTE = "expanded"
+DEFAULT_DITHER = "blue_noise"
+DEFAULT_DEVICE = "auto"
 
 
-# 変換デバイス選択肢 (表示名 -> convert.py --device の値)
-DEVICE_OPTIONS: dict[str, str] = {
-    "自動 (GPU があれば使用)": "auto",
-    "NVIDIA CUDA / AMD ROCm": "cuda",
-    "DirectML (Windows の AMD / Intel / NVIDIA)": "directml",
-    "CPU のみ": "cpu",
-}
+def option_labels(tr: Translator, kind: str, values) -> dict[str, str]:
+    """{表示名: 値} (コンボボックス用、表示順を保つ)"""
+    return {tr(f"{kind}.{value}"): value for value in values}
+
+
+def _all_language_labels(kind: str, values) -> dict[str, str]:
+    labels = {}
+    for language in LOCALES:
+        labels.update(option_labels(Translator(language), kind, values))
+    return labels
+
+
+# 日本語の表示名 -> 値 (互換用)
+PALETTE_OPTIONS: dict[str, str] = option_labels(Translator("ja"), "palette", PALETTE_VALUES)
+DITHER_OPTIONS: dict[str, str] = option_labels(Translator("ja"), "dither", DITHER_VALUES)
+DEVICE_OPTIONS: dict[str, str] = option_labels(Translator("ja"), "device", DEVICE_VALUES)
 
 
 def resolve_device(device_text: str) -> str:
-    """デバイス表示文字列から convert.py 用の値を判定する。"""
-    return DEVICE_OPTIONS.get(device_text, "auto")
+    """デバイス表示文字列 (どの言語でも可) から convert.py 用の値を判定する。"""
+    return _all_language_labels("device", DEVICE_VALUES).get(device_text, "auto")
 
 
 def build_converter_args(
@@ -141,9 +150,10 @@ def build_converter_args(
 
 
 def resolve_palette(pal_text: str) -> str:
-    """パレット表示文字列から convert.py 用の引数名を判定する。"""
-    if pal_text in PALETTE_OPTIONS:
-        return PALETTE_OPTIONS[pal_text]
+    """パレット表示文字列 (どの言語でも可) から convert.py 用の引数名を判定する。"""
+    labels = _all_language_labels("palette", PALETTE_VALUES)
+    if pal_text in labels:
+        return labels[pal_text]
     if pal_text.startswith("自動"):
         return "auto"
     elif pal_text.startswith("全39"):
@@ -155,9 +165,10 @@ def resolve_palette(pal_text: str) -> str:
 
 
 def resolve_dither(dither_text: str) -> str:
-    """ディザ表示文字列から convert.py 用の引数名を判定する。"""
-    if dither_text in DITHER_OPTIONS:
-        return DITHER_OPTIONS[dither_text]
+    """ディザ表示文字列 (どの言語でも可) から convert.py 用の引数名を判定する。"""
+    labels = _all_language_labels("dither", DITHER_VALUES)
+    if dither_text in labels:
+        return labels[dither_text]
     if dither_text.startswith("Floyd"):
         return "floyd"
     elif dither_text.startswith("Atkinson"):
@@ -175,14 +186,15 @@ def resolve_dither(dither_text: str) -> str:
 
 
 class PackBuilderApp(tk.Tk):
-    def __init__(self) -> None:
+    def __init__(self, language: str | None = None) -> None:
         super().__init__()
-        self.title("Block Video Player Pack Builder")
-        self.minsize(780, 660)
+        self.settings = load_settings()
+        self.tr = Translator(language or initial_language(self.settings))
+        self.title(self.tr("app.title"))
+        self.minsize(780, 700)
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(5, weight=0)
-        self.rowconfigure(9, weight=1)
         self.messages = queue.Queue()
+        self.building = False
 
         self.output_var = tk.StringVar(value=str(APP_DIR / "VideoPlayer.mcaddon"))
         self.pack_name_var = tk.StringVar(value="Block Video Player")
@@ -191,34 +203,97 @@ class PackBuilderApp(tk.Tk):
         self.height_var = tk.IntVar(value=64)
         self.interval_var = tk.IntVar(value=1)
         self.duration_var = tk.StringVar(value="")
-        self.thumbnail_time_var = tk.StringVar(value="0")
-        self.quality_var = tk.StringVar(value="高画質 (128×128 / 10fps)")
-        self.palette_var = tk.StringVar(value="拡張 33色（concrete + terracotta）")
-        self.dither_var = tk.StringVar(value="Blue Noise (超高画質 / GPU対応)")
         self.keyframe_interval_var = tk.IntVar(value=30)
         self.perceptual_var = tk.BooleanVar(value=True)
-        self.device_var = tk.StringVar(value="自動 (GPU があれば使用)")
+        # コンボボックスは表示名を持つので、言語切替時に値から表示名を作り直す
+        self.language_var = tk.StringVar()
+        self.quality_var = tk.StringVar()
+        self.palette_var = tk.StringVar()
+        self.dither_var = tk.StringVar()
+        self.device_var = tk.StringVar()
+        self.preset_key = DEFAULT_PRESET
+        self._set_option_labels(DEFAULT_PALETTE, DEFAULT_DITHER, DEFAULT_DEVICE)
+        self.namespace_var.trace_add("write", lambda *_: self._update_command_hint())
+
         self._build_ui()
         self._apply_quality_preset()
         self.after(100, self._drain_messages)
 
+    # --- 言語 ---
+    def _preset_labels(self) -> dict[str, str]:
+        return {self.tr(f"preset.{key}"): key for key in QUALITY_PRESETS}
+
+    def _selected_values(self) -> tuple[str, str, str]:
+        """現在の言語の表示名から (パレット, ディザ, デバイス) の値を得る。"""
+        palette = option_labels(self.tr, "palette", PALETTE_VALUES).get(self.palette_var.get(), DEFAULT_PALETTE)
+        dither = option_labels(self.tr, "dither", DITHER_VALUES).get(self.dither_var.get(), DEFAULT_DITHER)
+        device = option_labels(self.tr, "device", DEVICE_VALUES).get(self.device_var.get(), DEFAULT_DEVICE)
+        return palette, dither, device
+
+    def _set_option_labels(self, palette: str, dither: str, device: str) -> None:
+        self.palette_var.set(self.tr(f"palette.{palette}"))
+        self.dither_var.set(self.tr(f"dither.{dither}"))
+        self.device_var.set(self.tr(f"device.{device}"))
+        self.quality_var.set(self.tr(f"preset.{self.preset_key}"))
+        self.language_var.set(dict(available_languages())[self.tr.language])
+
+    def change_language(self, language: str) -> None:
+        """表示言語を切り替える。入力内容・動画リスト・ログは引き継ぐ。"""
+        if language == self.tr.language or self.building:
+            return
+        values = self._selected_values()
+        videos = [self.video_tree.item(iid)["values"] for iid in self.video_tree.get_children()]
+        log_text = self.log.get("1.0", "end-1c")
+
+        self.tr = Translator(language)
+        self._set_option_labels(*values)
+        for child in self.winfo_children():
+            child.destroy()
+        self._build_ui()
+        for row in videos:
+            self.video_tree.insert("", "end", values=row)
+        if log_text:
+            self._append_log(log_text)
+        self.title(self.tr("app.title"))
+
+        self.settings["language"] = language
+        save_settings(self.settings)
+
+    def _on_language_selected(self) -> None:
+        names = {name: code for code, name in available_languages()}
+        self.change_language(names.get(self.language_var.get(), self.tr.language))
+
     def _build_ui(self) -> None:
+        tr = self.tr
         pad = {"padx": 10, "pady": 4}
 
+        # --- 言語選択 ---
+        top_bar = ttk.Frame(self)
+        top_bar.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
+        top_bar.columnconfigure(0, weight=1)
+        ttk.Label(top_bar, text=tr("language.label")).grid(row=0, column=1, padx=(0, 6))
+        language_box = ttk.Combobox(
+            top_bar, textvariable=self.language_var, state="readonly", width=20,
+            values=tuple(name for _code, name in available_languages()),
+        )
+        language_box.grid(row=0, column=2)
+        language_box.bind("<<ComboboxSelected>>", lambda _event: self._on_language_selected())
+        self.language_box = language_box
+
         # --- 動画リストセクション ---
-        video_frame = ttk.LabelFrame(self, text="動画リスト（複数搭載対応）")
-        video_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 4))
+        video_frame = ttk.LabelFrame(self, text=tr("videos.frame"))
+        video_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(6, 4))
         video_frame.columnconfigure(0, weight=1)
         video_frame.rowconfigure(0, weight=1)
 
         cols = ("video_id", "file_path", "thumb_sec")
         self.video_tree = ttk.Treeview(video_frame, columns=cols, show="headings", height=5)
-        self.video_tree.heading("video_id", text="動画ID")
-        self.video_tree.heading("file_path", text="ファイルパス")
-        self.video_tree.heading("thumb_sec", text="サムネ秒")
+        self.video_tree.heading("video_id", text=tr("videos.col_id"))
+        self.video_tree.heading("file_path", text=tr("videos.col_path"))
+        self.video_tree.heading("thumb_sec", text=tr("videos.col_thumb"))
         self.video_tree.column("video_id", width=120, minwidth=80)
         self.video_tree.column("file_path", width=400, minwidth=200)
-        self.video_tree.column("thumb_sec", width=80, minwidth=60)
+        self.video_tree.column("thumb_sec", width=100, minwidth=60)
         self.video_tree.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=6)
 
         tree_scroll = ttk.Scrollbar(video_frame, orient="vertical", command=self.video_tree.yview)
@@ -227,110 +302,108 @@ class PackBuilderApp(tk.Tk):
 
         btn_frame = ttk.Frame(video_frame)
         btn_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 6))
-        ttk.Button(btn_frame, text="動画を追加", command=self._add_videos).pack(side="left", padx=(0, 4))
-        ttk.Button(btn_frame, text="選択解除(削除)", command=self._remove_selected).pack(side="left", padx=4)
-        ttk.Button(btn_frame, text="ID編集", command=self._edit_video_id).pack(side="left", padx=4)
-        ttk.Button(btn_frame, text="サムネ秒編集", command=self._edit_thumb_sec).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text=tr("videos.add"), command=self._add_videos).pack(side="left", padx=(0, 4))
+        ttk.Button(btn_frame, text=tr("videos.remove"), command=self._remove_selected).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text=tr("videos.edit_id"), command=self._edit_video_id).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text=tr("videos.edit_thumb"), command=self._edit_thumb_sec).pack(side="left", padx=4)
 
         # --- 出力先 ---
         out_frame = ttk.Frame(self)
-        out_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
+        out_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=4)
         out_frame.columnconfigure(1, weight=1)
-        ttk.Label(out_frame, text="出力 .mcaddon").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Label(out_frame, text=tr("output.label")).grid(row=0, column=0, sticky="w", padx=(0, 6))
         ttk.Entry(out_frame, textvariable=self.output_var).grid(row=0, column=1, sticky="ew", padx=(0, 6))
-        ttk.Button(out_frame, text="保存先…", command=self._select_output).grid(row=0, column=2)
+        ttk.Button(out_frame, text=tr("output.browse"), command=self._select_output).grid(row=0, column=2)
 
         # --- パック基本設定 ---
-        pack_settings = ttk.LabelFrame(self, text="パック名・実行コマンド")
-        pack_settings.grid(row=2, column=0, sticky="ew", padx=10, pady=4)
+        pack_settings = ttk.LabelFrame(self, text=tr("pack.frame"))
+        pack_settings.grid(row=3, column=0, sticky="ew", padx=10, pady=4)
         pack_settings.columnconfigure(1, weight=1)
-        ttk.Label(pack_settings, text="パック表示名").grid(row=0, column=0, padx=(10, 4), pady=6, sticky="w")
+        ttk.Label(pack_settings, text=tr("pack.name")).grid(row=0, column=0, padx=(10, 4), pady=6, sticky="w")
         ttk.Entry(pack_settings, textvariable=self.pack_name_var).grid(row=0, column=1, padx=(0, 10), pady=6, sticky="ew")
-        ttk.Label(pack_settings, text="コマンド接頭辞").grid(row=1, column=0, padx=(10, 4), pady=(0, 6), sticky="w")
+        ttk.Label(pack_settings, text=tr("pack.namespace")).grid(row=1, column=0, padx=(10, 4), pady=(0, 6), sticky="w")
         ttk.Entry(pack_settings, textvariable=self.namespace_var).grid(row=1, column=1, padx=(0, 10), pady=(0, 6), sticky="ew")
         self.command_hint = ttk.Label(pack_settings, text="", foreground="#555555")
         self.command_hint.grid(row=2, column=0, columnspan=2, padx=10, pady=(0, 6), sticky="w")
-        self.namespace_var.trace_add("write", lambda *_: self._update_command_hint())
         self._update_command_hint()
 
         # --- 変換・再生設定 ---
-        settings = ttk.LabelFrame(self, text="変換・再生設定")
-        settings.grid(row=3, column=0, sticky="ew", padx=10, pady=4)
-        for index, (label, variable, maximum) in enumerate((
-            ("幅", self.width_var, 512),
-            ("高さ", self.height_var, 512),
-            ("再生間隔 (tick)", self.interval_var, 20),
+        settings = ttk.LabelFrame(self, text=tr("settings.frame"))
+        settings.grid(row=4, column=0, sticky="ew", padx=10, pady=4)
+        for index, (key, variable, maximum) in enumerate((
+            ("settings.width", self.width_var, 512),
+            ("settings.height", self.height_var, 512),
+            ("settings.interval", self.interval_var, 20),
         )):
-            ttk.Label(settings, text=label).grid(row=0, column=index * 2, padx=(10, 4), pady=6)
+            ttk.Label(settings, text=tr(key)).grid(row=0, column=index * 2, padx=(10, 4), pady=6)
             ttk.Spinbox(settings, from_=1, to=maximum, textvariable=variable, width=7).grid(
                 row=0, column=index * 2 + 1, padx=(0, 10), pady=6
             )
-        ttk.Label(settings, text="キーフレーム間隔").grid(row=0, column=6, padx=(10, 4), pady=6)
+        ttk.Label(settings, text=tr("settings.keyframe")).grid(row=0, column=6, padx=(10, 4), pady=6)
         ttk.Spinbox(settings, from_=0, to=300, textvariable=self.keyframe_interval_var, width=7).grid(row=0, column=7, padx=(0, 10), pady=6)
 
-        ttk.Label(settings, text="画質プリセット").grid(row=1, column=0, padx=(10, 4), pady=(0, 6))
+        ttk.Label(settings, text=tr("settings.preset")).grid(row=1, column=0, padx=(10, 4), pady=(0, 6))
         preset = ttk.Combobox(
-            settings, textvariable=self.quality_var, state="readonly", width=25,
-            values=("軽量 (64×64 / 20fps)", "標準 (96×96 / 10fps)", "高画質 (128×128 / 10fps)", "高精細 (128×128 / 5fps)", "ウルトラ (256×256 / 5fps)", "極限 (512×512 / 2fps)"),
+            settings, textvariable=self.quality_var, state="readonly", width=28,
+            values=tuple(self._preset_labels()),
         )
         preset.grid(row=1, column=1, columnspan=2, padx=(0, 10), pady=(0, 6), sticky="w")
         preset.bind("<<ComboboxSelected>>", lambda _event: self._apply_quality_preset())
 
         # パレット選択
-        ttk.Label(settings, text="パレット").grid(row=1, column=3, padx=(10, 4), pady=(0, 6))
+        ttk.Label(settings, text=tr("settings.palette")).grid(row=1, column=3, padx=(10, 4), pady=(0, 6))
         ttk.Combobox(
-            settings, textvariable=self.palette_var, state="readonly", width=42,
-            values=tuple(PALETTE_OPTIONS.keys()),
-        ).grid(row=1, column=4, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
+            settings, textvariable=self.palette_var, state="readonly", width=46,
+            values=tuple(option_labels(tr, "palette", PALETTE_VALUES)),
+        ).grid(row=1, column=4, columnspan=4, padx=(0, 10), pady=(0, 6), sticky="w")
 
         # ディザリング選択 (全7種対応)
-        ttk.Label(settings, text="ディザリング").grid(row=2, column=0, padx=(10, 4), pady=(0, 6))
+        ttk.Label(settings, text=tr("settings.dither")).grid(row=2, column=0, padx=(10, 4), pady=(0, 6))
         ttk.Combobox(
-            settings, textvariable=self.dither_var, state="readonly", width=42,
-            values=tuple(DITHER_OPTIONS.keys()),
+            settings, textvariable=self.dither_var, state="readonly", width=46,
+            values=tuple(option_labels(tr, "dither", DITHER_VALUES)),
         ).grid(row=2, column=1, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
 
         # 知覚最適化(エッジ減衰)オプション
         ttk.Checkbutton(
-            settings, text="知覚最適化 (輪郭をクッキリさせる)", variable=self.perceptual_var
-        ).grid(row=3, column=0, columnspan=2, padx=(10, 4), pady=(0, 6), sticky="w")
+            settings, text=tr("settings.perceptual"), variable=self.perceptual_var
+        ).grid(row=3, column=0, columnspan=3, padx=(10, 4), pady=(0, 6), sticky="w")
 
         # 変換デバイス (GPU: CUDA / ROCm / DirectML)
-        ttk.Label(settings, text="変換デバイス").grid(row=3, column=3, padx=(10, 4), pady=(0, 6))
+        ttk.Label(settings, text=tr("settings.device")).grid(row=3, column=3, padx=(10, 4), pady=(0, 6))
         ttk.Combobox(
-            settings, textvariable=self.device_var, state="readonly", width=42,
-            values=tuple(DEVICE_OPTIONS.keys()),
-        ).grid(row=3, column=4, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
+            settings, textvariable=self.device_var, state="readonly", width=46,
+            values=tuple(option_labels(tr, "device", DEVICE_VALUES)),
+        ).grid(row=3, column=4, columnspan=4, padx=(0, 10), pady=(0, 6), sticky="w")
 
         # --- 説明文 ---
-        ttk.Label(
-            self,
-            text="動画をブロック色の差分データに変換し、音声付きでインポート可能な"
-                 "アドオン（.mcaddon = Behavior Pack + Resource Pack）を出力します。複数動画の一括搭載に対応。",
-            wraplength=740,
-        ).grid(row=4, column=0, sticky="w", **pad)
+        ttk.Label(self, text=tr("info.description"), wraplength=740).grid(row=5, column=0, sticky="w", **pad)
 
-        ttk.Label(
-            self,
-            text=f"パック版 v{version_text()}  |  " + " / ".join(RELEASE_NOTES[:2]),
-            wraplength=740,
-            foreground="#555555",
-        ).grid(row=5, column=0, sticky="w", **pad)
+        version_info = tr("info.version", version=version_text())
+        if tr.language == "ja":
+            # リリースノートは日本語のみ
+            version_info += "  |  " + " / ".join(RELEASE_NOTES[:2])
+        ttk.Label(self, text=version_info, wraplength=740, foreground="#555555").grid(row=6, column=0, sticky="w", **pad)
 
-        self.build_button = ttk.Button(self, text=".mcaddon を作成", command=self._start_build)
-        self.build_button.grid(row=6, column=0, pady=6)
+        self.build_button = ttk.Button(self, text=tr("build.button"), command=self._start_build)
+        self.build_button.grid(row=7, column=0, pady=6)
         self.progress = ttk.Progressbar(self, mode="indeterminate")
-        self.progress.grid(row=7, column=0, sticky="ew", padx=10, pady=4)
+        self.progress.grid(row=8, column=0, sticky="ew", padx=10, pady=4)
 
-        ttk.Label(self, text="処理ログ").grid(row=8, column=0, sticky="w", padx=10, pady=(4, 0))
+        ttk.Label(self, text=tr("log.label")).grid(row=9, column=0, sticky="w", padx=10, pady=(4, 0))
         self.log = tk.Text(self, height=12, state="disabled", wrap="word")
-        self.log.grid(row=9, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.log.grid(row=10, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.rowconfigure(10, weight=1)
+
+        if self.building:
+            self.build_button.configure(state="disabled")
+            language_box.configure(state="disabled")
 
     # --- 動画リスト操作 ---
     def _add_videos(self) -> None:
         paths = filedialog.askopenfilenames(
-            title="動画を選択（複数選択可）",
-            filetypes=[("動画", "*.mp4 *.mkv *.avi *.mov *.webm"), ("すべてのファイル", "*.*")],
+            title=self.tr("dialog.select_videos_title"),
+            filetypes=[(self.tr("dialog.video_files"), "*.mp4 *.mkv *.avi *.mov *.webm"), (self.tr("dialog.all_files"), "*.*")],
         )
         for path in paths:
             p = Path(path)
@@ -346,7 +419,7 @@ class PackBuilderApp(tk.Tk):
     def _remove_selected(self) -> None:
         selected = self.video_tree.selection()
         if not selected:
-            messagebox.showwarning("選択してください", "削除する動画をリストから選択してください。")
+            messagebox.showwarning(self.tr("warn.select_title"), self.tr("warn.select_remove"))
             return
         for iid in selected:
             self.video_tree.delete(iid)
@@ -354,56 +427,53 @@ class PackBuilderApp(tk.Tk):
     def _edit_video_id(self) -> None:
         selected = self.video_tree.selection()
         if not selected:
-            messagebox.showwarning("選択してください", "IDを編集する動画を選択してください。")
+            messagebox.showwarning(self.tr("warn.select_title"), self.tr("warn.select_edit_id"))
             return
         iid = selected[0]
         values = self.video_tree.item(iid)["values"]
         from tkinter import simpledialog
-        new_id = simpledialog.askstring("動画ID編集", f"新しいID ({values[0]}):", initialvalue=values[0])
+        new_id = simpledialog.askstring(
+            self.tr("edit_id.title"), self.tr("edit_id.prompt", current=values[0]), initialvalue=values[0], parent=self
+        )
         if new_id and re.fullmatch(r"[a-z0-9_]+", new_id):
             self.video_tree.item(iid, values=(new_id, values[1], values[2]))
         elif new_id:
-            messagebox.showerror("無効なID", "IDは英小文字・数字・アンダースコアのみです。")
+            messagebox.showerror(self.tr("edit_id.invalid_title"), self.tr("edit_id.invalid"))
 
     def _edit_thumb_sec(self) -> None:
         selected = self.video_tree.selection()
         if not selected:
-            messagebox.showwarning("選択してください", "サムネ秒を編集する動画を選択してください。")
+            messagebox.showwarning(self.tr("warn.select_title"), self.tr("warn.select_edit_thumb"))
             return
         iid = selected[0]
         values = self.video_tree.item(iid)["values"]
         from tkinter import simpledialog
-        new_sec = simpledialog.askstring("サムネイル秒数", f"秒数 ({values[2]}):", initialvalue=str(values[2]))
+        new_sec = simpledialog.askstring(
+            self.tr("edit_thumb.title"), self.tr("edit_thumb.prompt", current=values[2]), initialvalue=str(values[2]), parent=self
+        )
         if new_sec is not None:
             try:
                 float(new_sec)
                 self.video_tree.item(iid, values=(values[0], values[1], new_sec))
             except ValueError:
-                messagebox.showerror("数値エラー", "数値を入力してください。")
+                messagebox.showerror(self.tr("edit_thumb.invalid_title"), self.tr("edit_thumb.invalid"))
 
     def _update_command_hint(self) -> None:
-        namespace = self.namespace_var.get().strip() or "<接頭辞>"
-        self.command_hint.configure(
-            text=f"実行: /scriptevent {namespace}:setup | {namespace}:list | {namespace}:play <動画ID> | {namespace}:stop"
-        )
+        if not hasattr(self, "command_hint") or not self.command_hint.winfo_exists():
+            return
+        namespace = self.namespace_var.get().strip() or self.tr("pack.namespace_placeholder")
+        self.command_hint.configure(text=self.tr("pack.hint", ns=namespace))
 
     def _apply_quality_preset(self) -> None:
-        presets = {
-            "軽量 (64×64 / 20fps)": (64, 64, 1),
-            "標準 (96×96 / 10fps)": (96, 96, 2),
-            "高画質 (128×128 / 10fps)": (128, 128, 2),
-            "高精細 (128×128 / 5fps)": (128, 128, 4),
-            "ウルトラ (256×256 / 5fps)": (256, 256, 4),
-            "極限 (512×512 / 2fps)": (512, 512, 10),
-        }
-        width, height, interval = presets[self.quality_var.get()]
+        self.preset_key = self._preset_labels().get(self.quality_var.get(), self.preset_key)
+        width, height, interval = QUALITY_PRESETS[self.preset_key]
         self.width_var.set(width)
         self.height_var.set(height)
         self.interval_var.set(interval)
 
     def _select_output(self) -> None:
         path = filedialog.asksaveasfilename(
-            title=".mcaddonの保存先",
+            title=self.tr("dialog.save_title"),
             defaultextension=".mcaddon",
             filetypes=[("Minecraft Addon", "*.mcaddon")],
         )
@@ -421,12 +491,12 @@ class PackBuilderApp(tk.Tk):
             })
 
         if not video_entries:
-            messagebox.showerror("動画が必要です", "動画リストに少なくとも1つの動画を追加してください。")
+            messagebox.showerror(self.tr("error.no_videos_title"), self.tr("error.no_videos"))
             return
 
         output = Path(self.output_var.get().strip())
         if not output.name:
-            messagebox.showerror("出力先が必要です", ".mcaddonの保存先を指定してください。")
+            messagebox.showerror(self.tr("error.no_output_title"), self.tr("error.no_output"))
             return
         if output.suffix.lower() != ".mcaddon":
             output = output.with_suffix(".mcaddon")
@@ -434,7 +504,7 @@ class PackBuilderApp(tk.Tk):
 
         for entry in video_entries:
             if not Path(entry["file_path"]).is_file():
-                messagebox.showerror("ファイルが見つかりません", f"動画ファイルが見つかりません:\n{entry['file_path']}")
+                messagebox.showerror(self.tr("error.file_missing_title"), self.tr("error.file_missing", path=entry["file_path"]))
                 return
 
         # 解像度
@@ -447,35 +517,29 @@ class PackBuilderApp(tk.Tk):
             if min(width, height, interval) < 1 or (duration is not None and duration <= 0):
                 raise ValueError
         except (tk.TclError, ValueError):
-            messagebox.showerror("変換設定", "幅・高さ・再生間隔は1以上にしてください。")
+            messagebox.showerror(self.tr("error.settings_title"), self.tr("error.settings"))
             return
 
         pack_name = self.pack_name_var.get().strip()
         namespace = self.namespace_var.get().strip()
 
-        # パレット選択
-        palette = resolve_palette(self.palette_var.get())
-
-        # ディザリング選択
-        dither_method = resolve_dither(self.dither_var.get())
+        palette, dither_method, device = self._selected_values()
 
         if not pack_name:
-            messagebox.showerror("パック表示名", "パック表示名を入力してください。")
+            messagebox.showerror(self.tr("error.pack_name_title"), self.tr("error.pack_name"))
             return
         if not re.fullmatch(r"[a-z0-9_.\-]+", namespace) or namespace == "minecraft":
-            messagebox.showerror(
-                "コマンド接頭辞",
-                "`minecraft` は予約済みです。badapple や movie のような独自の名前を、"
-                "英小文字・数字・_・-・.だけで入力してください。",
-            )
+            messagebox.showerror(self.tr("error.namespace_title"), self.tr("error.namespace"))
             return
 
+        self.building = True
         self.build_button.configure(state="disabled")
+        self.language_box.configure(state="disabled")
         self.progress.start(12)
         threading.Thread(
             target=self._build_pack,
             args=(video_entries, output, pack_name, namespace, width, height, interval, duration, palette, dither_method,
-                  resolve_device(self.device_var.get())),
+                  device),
             daemon=True,
         ).start()
 
@@ -489,7 +553,7 @@ class PackBuilderApp(tk.Tk):
         for line in process.stdout:
             self.messages.put(line.rstrip())
         if process.wait() != 0:
-            raise RuntimeError(f"コマンドが終了コード {process.returncode} で失敗しました。")
+            raise RuntimeError(self.tr("build.cmd_failed", code=process.returncode))
 
     def _build_pack(
         self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
@@ -499,13 +563,13 @@ class PackBuilderApp(tk.Tk):
         try:
             ffmpeg = get_ffmpeg_path()
             if not ffmpeg:
-                raise RuntimeError("ffmpeg が見つかりません。アプリと同階層に ffmpeg.exe を置くか PATH 設定を確認してください。")
+                raise RuntimeError(self.tr("build.ffmpeg_missing"))
             required_files = [MANIFEST, MAIN_SCRIPT, CODEC_SCRIPT]
             if not getattr(sys, "frozen", False):
                 required_files.append(CONVERTER)
             for required in required_files:
                 if not required.is_file():
-                    raise RuntimeError(f"必要なファイルがありません: {required}")
+                    raise RuntimeError(self.tr("build.missing_file", path=required))
 
             with tempfile.TemporaryDirectory(prefix="block-video-player-") as temp_dir:
                 temp = Path(temp_dir)
@@ -526,20 +590,20 @@ class PackBuilderApp(tk.Tk):
                     video_id = entry["video_id"]
                     thumb_sec = entry["thumb_sec"]
 
-                    self.messages.put(f"--- [{vi}/{total_videos}] 動画 '{video_id}' を処理中 ---")
+                    self.messages.put(self.tr("build.processing", index=vi, total=total_videos, id=video_id))
 
                     generated_data = scripts / f"frames_{video_id}.js"
                     thumbnail = temp / f"thumb_{video_id}.png"
 
                     # サムネイル生成
-                    self.messages.put(f"  サムネイルを切り出し中 (秒={thumb_sec})…")
+                    self.messages.put(self.tr("build.thumbnail", sec=thumb_sec))
                     self._run([
                         ffmpeg, "-y", "-ss", str(thumb_sec), "-i", str(video), "-frames:v", "1",
                         "-vf", "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black",
                         str(thumbnail),
                     ])
                     if not thumbnail.is_file() or thumbnail.stat().st_size == 0:
-                        raise RuntimeError(f"サムネイル生成失敗: {video_id}")
+                        raise RuntimeError(self.tr("build.thumbnail_failed", id=video_id))
 
                     if first_thumbnail is None:
                         first_thumbnail = thumbnail
@@ -547,7 +611,7 @@ class PackBuilderApp(tk.Tk):
                     # 音声切り出し (10秒分割 .ogg, 44.1kHz ステレオ)
                     sounds_dir = rp_root / "sounds" / "music" / video_id
                     sounds_dir.mkdir(parents=True, exist_ok=True)
-                    self.messages.put(f"  音声を{AUDIO_CHUNK_SECONDS}秒単位(.ogg, 44.1kHz)で切り出し中…")
+                    self.messages.put(self.tr("build.audio", sec=AUDIO_CHUNK_SECONDS))
                     try:
                         self._run([
                             ffmpeg, "-y", "-i", str(video),
@@ -557,7 +621,7 @@ class PackBuilderApp(tk.Tk):
                             str(sounds_dir / "chunk_%d.ogg")
                         ])
                     except Exception as e:
-                        self.messages.put(f"  警告: 音声抽出スキップ (無音動画またはエラー): {e}")
+                        self.messages.put(self.tr("build.audio_skipped", error=e))
 
                     ogg_files = sorted(sounds_dir.glob("chunk_*.ogg"), key=lambda p: int(p.stem.split("_")[1]))
                     for ogg_file in ogg_files:
@@ -574,7 +638,7 @@ class PackBuilderApp(tk.Tk):
                         }
 
                     # ブロックデータ変換
-                    self.messages.put("  ブロックデータへ変換中 (Zero-copy GPU/CPU自動選択)…")
+                    self.messages.put(self.tr("build.converting"))
                     converter_args = [
                         *converter_command(),
                         *build_converter_args(
@@ -612,7 +676,7 @@ class PackBuilderApp(tk.Tk):
                     )
 
                 # videos.js 自動生成
-                self.messages.put("videos.js（動画インデックス）を生成中…")
+                self.messages.put(self.tr("build.videos_index"))
                 videos_js_lines = []
                 for entry in video_index_entries:
                     vid = entry["id"]
@@ -696,14 +760,7 @@ class PackBuilderApp(tk.Tk):
             video_names = ", ".join(e["id"] for e in video_index_entries)
             self.messages.put((
                 "success",
-                f"作成完了: {output}\n"
-                f"収録動画: {video_names} ({total_videos}本)\n"
-                f"コマンド一覧:\n"
-                f"  /scriptevent {namespace}:setup  … 原点セットアップ\n"
-                f"  /scriptevent {namespace}:list   … 動画一覧表示\n"
-                f"  /scriptevent {namespace}:play <動画ID>  … 再生\n"
-                f"  /scriptevent {namespace}:gui    … リモコンGUI起動\n"
-                f"  /scriptevent {namespace}:stop   … 停止・クリア",
+                self.tr("build.success", output=output, videos=video_names, count=total_videos, ns=namespace),
             ))
         except Exception as error:
             self.messages.put(("error", str(error)))
@@ -713,15 +770,17 @@ class PackBuilderApp(tk.Tk):
             while True:
                 message = self.messages.get_nowait()
                 if isinstance(message, tuple):
+                    self.building = False
                     self.progress.stop()
                     self.build_button.configure(state="normal")
+                    self.language_box.configure(state="readonly")
                     kind, text = message
                     if kind == "success":
                         self._append_log(text)
-                        messagebox.showinfo("完了", text + "\nMinecraftでファイルを開いてインポートしてください。")
+                        messagebox.showinfo(self.tr("build.done_title"), text + "\n" + self.tr("build.import_hint"))
                     else:
-                        self._append_log("エラー: " + text)
-                        messagebox.showerror("作成に失敗しました", text)
+                        self._append_log(self.tr("log.error_prefix") + text)
+                        messagebox.showerror(self.tr("build.failed_title"), text)
                 else:
                     self._append_log(message)
         except queue.Empty:
