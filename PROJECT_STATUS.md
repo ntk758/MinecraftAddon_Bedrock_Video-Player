@@ -3,13 +3,19 @@
 ## 1. プロジェクト概要
 本プロジェクトは、動画ファイル（MP4 / MKV / AVI / WEBM 等）を Minecraft Bedrock Edition（統合版）の Behavior Pack（.mcpack）へ超高速かつ最小容量で変換し、ゲーム内のブロック盤面上でスムーズに動動画再生するアドオン＆変換ツール群です。
 
-- **最新バージョン**: `v5.1.0` (Phase 7 Research Edition + 品質改善)
+- **最新バージョン**: `v5.2.0` (AMD GPU 対応)
 - **対象環境**: Minecraft Bedrock Edition 最新版 (安定版 Script API `@minecraft/server` 1.19.0 / `@minecraft/server-ui` 1.2.0。ベータ API 不要)
-- **変換GUI環境**: Python 3.12+ (PyTorch/CUDA, Pillow, NumPy, Tkinter, FFmpeg) または **独立スタンドアロン EXE (`BlockVideoPlayer.exe`)**
+- **変換GUI環境**: Python 3.12+ (PyTorch: CUDA / ROCm / DirectML, Pillow, NumPy, Tkinter, FFmpeg) または **独立スタンドアロン EXE (`BlockVideoPlayer.exe`)**
 
 ---
 
 ## 2. 現在の達成状況と到達点
+
+### 🟥 AMD GPU 対応 (v5.2.0)
+- **GPU バックエンドの抽象化 (`mvcodec/device.py`)**: CUDA / ROCm / DirectML を自動検出 (`--device auto`)。DirectML では内蔵 GPU より単体 GPU を優先。
+- **DirectML 互換の距離計算**: `torch.cdist` を行列積ベースの二乗距離に置き換え。
+- **GPU 自己テストと CPU フォールバック**: 未対応演算などで GPU 処理が動かない場合は変換前に検出して CPU へ切り替え。
+- **GUI の変換デバイス選択** と、GUI からの変換が引数エラーで失敗していた不具合の修正。
 
 ### 🛠 品質改善 (v5.1.0)
 - **GOP 先頭の強制キーフレーム化**: 自動パレットのシーン切替で色が崩れる問題を解消。シークも直近キーフレームから正しく復元。
@@ -38,7 +44,7 @@
 - **既存開発ファイル保持**: `convert.py`, `video_player_gui.py`, `main.js` 等のソースコードは 100% 維持。
 
 ### ⚡ GPU アクセラレーション (v2.1.0 新機能)
-- **PyTorch / CUDA テンソル一括減色**: GPU 上で全ピクセルの色距離計算・パレット量子化を並列実行。未搭載時・非対応時は CPU スレッドプールへ自動フォールバック。
+- **PyTorch テンソル一括減色 (CUDA / ROCm / DirectML)**: GPU 上で全ピクセルの色距離計算・パレット量子化を並列実行。未搭載時・非対応時は CPU スレッドプールへ自動フォールバック。
 - **FFmpeg GPU HWAccel デコード**: `-hwaccel auto` による動画フレーム抽出のハードウェア加速。
 
 ### 🎵 音声同期 ＆ リモコンGUI (v1.9.0 新機能)

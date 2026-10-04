@@ -103,6 +103,43 @@ DITHER_OPTIONS: dict[str, str] = {
 }
 
 
+# 変換デバイス選択肢 (表示名 -> convert.py --device の値)
+DEVICE_OPTIONS: dict[str, str] = {
+    "自動 (GPU があれば使用)": "auto",
+    "NVIDIA CUDA / AMD ROCm": "cuda",
+    "DirectML (Windows の AMD / Intel / NVIDIA)": "directml",
+    "CPU のみ": "cpu",
+}
+
+
+def resolve_device(device_text: str) -> str:
+    """デバイス表示文字列から convert.py 用の値を判定する。"""
+    return DEVICE_OPTIONS.get(device_text, "auto")
+
+
+def build_converter_args(
+    video: Path, output: Path, ffmpeg: str, width: int, height: int, interval: int,
+    palette: str, dither_method: str, keyframe_interval: int, device: str,
+    perceptual: bool, duration: float | None,
+) -> list[str]:
+    """convert.py に渡す引数 (起動コマンド部分を除く)。"""
+    args = [
+        "--input-video", str(video),
+        "--ffmpeg", ffmpeg,
+        "--fps", str(20 / interval),
+        "--output", str(output), "--width", str(width), "--height", str(height),
+        "--palette", palette,
+        "--dither-method", dither_method,
+        "--keyframe-interval", str(keyframe_interval),
+        "--device", device,
+    ]
+    if not perceptual:
+        args.append("--no-perceptual")
+    if duration is not None:
+        args.extend(["--duration", str(duration)])
+    return args
+
+
 def resolve_palette(pal_text: str) -> str:
     """パレット表示文字列から convert.py 用の引数名を判定する。"""
     if pal_text in PALETTE_OPTIONS:
@@ -160,6 +197,7 @@ class PackBuilderApp(tk.Tk):
         self.dither_var = tk.StringVar(value="Blue Noise (超高画質 / GPU対応)")
         self.keyframe_interval_var = tk.IntVar(value=30)
         self.perceptual_var = tk.BooleanVar(value=True)
+        self.device_var = tk.StringVar(value="自動 (GPU があれば使用)")
         self._build_ui()
         self._apply_quality_preset()
         self.after(100, self._drain_messages)
@@ -256,6 +294,13 @@ class PackBuilderApp(tk.Tk):
         ttk.Checkbutton(
             settings, text="知覚最適化 (輪郭をクッキリさせる)", variable=self.perceptual_var
         ).grid(row=3, column=0, columnspan=2, padx=(10, 4), pady=(0, 6), sticky="w")
+
+        # 変換デバイス (GPU: CUDA / ROCm / DirectML)
+        ttk.Label(settings, text="変換デバイス").grid(row=3, column=3, padx=(10, 4), pady=(0, 6))
+        ttk.Combobox(
+            settings, textvariable=self.device_var, state="readonly", width=42,
+            values=tuple(DEVICE_OPTIONS.keys()),
+        ).grid(row=3, column=4, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
 
         # --- 説明文 ---
         ttk.Label(
@@ -429,7 +474,8 @@ class PackBuilderApp(tk.Tk):
         self.progress.start(12)
         threading.Thread(
             target=self._build_pack,
-            args=(video_entries, output, pack_name, namespace, width, height, interval, duration, palette, dither_method),
+            args=(video_entries, output, pack_name, namespace, width, height, interval, duration, palette, dither_method,
+                  resolve_device(self.device_var.get())),
             daemon=True,
         ).start()
 
@@ -447,7 +493,8 @@ class PackBuilderApp(tk.Tk):
 
     def _build_pack(
         self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
-        width: int, height: int, interval: int, duration: float | None, palette: str, dither_method: str
+        width: int, height: int, interval: int, duration: float | None, palette: str, dither_method: str,
+        device: str,
     ) -> None:
         try:
             ffmpeg = get_ffmpeg_path()
@@ -530,21 +577,11 @@ class PackBuilderApp(tk.Tk):
                     self.messages.put("  ブロックデータへ変換中 (Zero-copy GPU/CPU自動選択)…")
                     converter_args = [
                         *converter_command(),
-                        "--input-video", str(video),
-                        "--ffmpeg", ffmpeg,
-                        "--fps", str(20 / interval),
-                        "--output", str(generated_data), "--width", str(width), "--height", str(height),
-                        "--palette", palette,
-                        "--dither-method", dither_method,
-                        "--video-id", video_id,
-                        "--keyframe-interval", str(self.keyframe_interval_var.get()),
-                        "--gpu",
+                        *build_converter_args(
+                            video, generated_data, ffmpeg, width, height, interval, palette, dither_method,
+                            self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
+                        ),
                     ]
-                    if not self.perceptual_var.get():
-                        converter_args.append("--no-perceptual")
-                    if duration is not None:
-                        converter_args.extend(["--duration", str(duration)])
-
                     self._run(converter_args)
 
                     frame_count = 0

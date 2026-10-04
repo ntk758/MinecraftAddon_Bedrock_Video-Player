@@ -59,9 +59,10 @@ def expected_indices(frame, palette):
     )
 
 
-def run_convert(frames_dir, out, *extra):
+def run_convert(frames_dir, out, *extra, device="cpu"):
+    """既定は CPU (Pillow) 減色。期待値と完全一致を比べるため GPU の自動選択を避ける。"""
     argv = ["--frames-dir", str(frames_dir), "--output", str(out), "--width", str(WIDTH), "--height", str(HEIGHT),
-            "--fps", "10", "--threads", "2", *extra]
+            "--fps", "10", "--threads", "2", "--device", device, *extra]
     assert convert.main(argv) == 0
     return load_frame_data(out)
 
@@ -118,7 +119,7 @@ def test_adaptive_palette_switch_keeps_colors_correct(tmp_path, monkeypatch):
     """GOP ごとにパレット番号の意味が変わっても、表示色が各 GOP のパレットで正しく再現されること。"""
     calls = []
 
-    def rotating_palette(frames_iter, all_blocks, max_colors=110, use_gpu=False, sample_stride=10, seed=0):
+    def rotating_palette(frames_iter, all_blocks, max_colors=110, device=None, sample_stride=10, seed=0):
         shift = 7 * len(calls)
         calls.append(shift)
         return all_blocks[shift:] + all_blocks[:shift]
@@ -160,3 +161,14 @@ def test_codec_js_matches_python_decoder(tmp_path):
     assert decoded["keyframes"] == [i for i, e in enumerate(parse_index(data)) if e[3]]
     assert decoded["staleGopFrames"] == []
     assert decoded["seekMismatches"] == []
+
+
+@pytest.mark.parametrize("palette", ["full", "auto"])
+def test_auto_device_output_is_consistent(tmp_path, palette):
+    """GPU が自動選択される環境でも、出力がシーク可能で全画素が描画されること。"""
+    make_scene_frames(tmp_path / "frames")
+    data = run_convert(tmp_path / "frames", tmp_path / "out.js", "--palette", palette, device="auto")
+    entries = parse_index(data)
+    assert all(entries[start][3] for start in data["gop_boundaries"][:-1])
+    for index_board, _rgb in iter_decoded_frames(data):
+        assert index_board.min() >= 0

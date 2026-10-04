@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock%201.21+-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v4.0.0](https://img.shields.io/badge/Release-v5.1.0-blue.svg)](#releases)
+[![Release v4.0.0](https://img.shields.io/badge/Release-v5.2.0-blue.svg)](#releases)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
 ## 日本語 (Japanese)
@@ -18,7 +18,7 @@ Python と FFmpeg、そして最新の Bedrock Script API を活用し、極限�
 
 ### ✨ 特徴 (Features)
 - 🎬 **MP4 等の動画から直接ブロック動画パック生成**
-- ⚡ **GPU (PyTorch) 超高速変換対応** (Ordered Bayer ディザリングによるテンソル並列計算)
+- ⚡ **GPU (PyTorch) 変換対応**: NVIDIA (CUDA)・AMD (ROCm / DirectML)・Intel (DirectML) に対応。OkLab 色空間でのマッチングとレート歪み最適化を GPU で実行
 - 🎵 **OGG音声・完全同期再生** (.mcaddon出力対応)
 - 🎮 **ゲーム内リモコンGUI搭載** (コンパス右クリックでシーク・音量調整・再生操作)
 - 👑 **マイクラ実在ブロック 39色パレット** による高品質な色再現
@@ -29,7 +29,7 @@ Python と FFmpeg、そして最新の Bedrock Script API を活用し、極限�
 - **Minecraft**: Bedrock Edition (v1.21.0 以降)
 - **Python**: 3.12 以降
 - **FFmpeg**: (実行ファイルと同階層またはPATHに設定)
-- **GPU 変換 (任意)**: CUDA 対応の NVIDIA GPU と PyTorch。無い場合は自動で CPU 変換になります
+- **GPU 変換 (任意)**: NVIDIA / AMD / Intel の GPU と PyTorch (下記「GPU の設定」参照)。無い場合や動作確認に失敗した場合は自動で CPU 変換になります
 
 ### 🚀 インストールと使い方 (Installation & Usage)
 
@@ -55,7 +55,21 @@ Python 3.12 以上が必要です。以下のいずれかの方法でインス�
    ```bash
    pip install -r requirements.txt
    ```
-   GPU (CUDA) で高速変換したい場合は、[PyTorch 公式サイト](https://pytorch.org/get-started/locally/) の手順で CUDA 版 `torch` も追加してください。
+   GPU を使う場合は、下の「GPU の設定」に従って PyTorch を追加してください。
+
+#### GPU の設定 (任意)
+GUI の「変換デバイス」(コマンドラインでは `--device`) が「自動」なら、**CUDA / ROCm → DirectML → CPU** の順に使えるものを選びます。選んだ GPU で事前に小さなテスト変換を行い、失敗した場合は CPU に切り替えます。使われたデバイスは処理ログの `[MVCodec] 減色デバイス:` に表示されます。
+
+| GPU | OS | インストール方法 |
+|---|---|---|
+| NVIDIA | Windows / Linux | [PyTorch 公式サイト](https://pytorch.org/get-started/locally/) の CUDA 版 `torch` |
+| AMD Radeon | Windows | `pip install -r requirements-directml.txt` (torch-directml。**Python 3.12 以下が必要**) または AMD 公式の ROCm 版 PyTorch for Windows (対応 GPU は AMD のドキュメントを参照) |
+| AMD Radeon | Linux | [PyTorch 公式サイト](https://pytorch.org/get-started/locally/) の ROCm 版 `torch` |
+| Intel Arc / 内蔵 GPU | Windows | `pip install -r requirements-directml.txt` |
+
+- ROCm 版 PyTorch は CUDA と同じ扱い (`--device cuda` / `rocm`) で動きます。
+- GPU 経路は OkLab 色空間でのマッチング・知覚的 RDO・時間方向ディザを行うため、CPU 経路 (Pillow) と結果が異なります (RDO により容量は小さめ)。GPU が使えるディザは「なし / Blue Noise / Ordered」で、それ以外のディザは CPU で処理されます。
+- 参考 (AMD Radeon RX 9070 XT + DirectML, 256×256): 減色処理のみで約 200 fps (同じ処理の PyTorch CPU 実行は約 107 fps)。ただし変換全体では CPU 経路 (Pillow) の方が処理が軽いため速いことがあります。
 3. GUIアプリを起動します。
    ```bash
    python video_player_gui.py
@@ -84,7 +98,7 @@ Powered by Python, FFmpeg, and the latest Bedrock Script APIs, this tool aims fo
 
 ### ✨ Features
 - 🎬 **Direct Video-to-Block Pack Generation** from MP4 and other formats.
-- ⚡ **Ultra-fast GPU (PyTorch) Conversion** using Ordered Bayer dithering tensor parallelization.
+- ⚡ **GPU (PyTorch) Conversion** on NVIDIA (CUDA), AMD (ROCm / DirectML) and Intel (DirectML) GPUs.
 - 🎵 **Fully Synchronized OGG Audio** playback within the `.mcaddon`.
 - 🎮 **In-game Remote Control GUI** (Right-click with a compass to seek, adjust volume, and play/pause).
 - 👑 **High-quality Color Reproduction** using a palette of 39 actual Minecraft blocks.
@@ -97,7 +111,7 @@ Powered by Python, FFmpeg, and the latest Bedrock Script APIs, this tool aims fo
 - **FFmpeg**: Required in the PATH or same directory.
 
 ### 🚀 Usage
-1. Install Python requirements: `pip install -r requirements.txt` (optionally add a CUDA build of `torch` for GPU conversion).
+1. Install Python requirements: `pip install -r requirements.txt`. For GPU conversion add PyTorch: CUDA build (NVIDIA), ROCm build (AMD on Linux / AMD's Windows preview), or `pip install -r requirements-directml.txt` (AMD / Intel on Windows, Python ≤ 3.12). The converter picks CUDA/ROCm → DirectML → CPU automatically (`--device` to override) and falls back to CPU if a GPU self-test fails.
 2. Run `python video_player_gui.py` to open the GUI.
 3. Add your videos, configure quality/dithering (GPU recommended), and click "Build".
 4. Import the generated `.mcaddon` to Minecraft.
@@ -124,7 +138,7 @@ Powered by Python, FFmpeg, and the latest Bedrock Script APIs, this tool aims fo
 
 ## 🛠 技術スタック (Tech Stack)
 - **Python 3**: Core processing and GUI (Tkinter)
-- **PyTorch**: High-speed tensor-based palette mapping and dithering
+- **PyTorch**: Tensor-based palette mapping and dithering on CUDA / ROCm / DirectML (`mvcodec/device.py`)
 - **FFmpeg**: Video frame extraction and OGG audio segmentation
 - **Minecraft Script API**: In-game block placement (using `setBlockPermutation` & RLE + VarInt encoding) and UI components (`@minecraft/server`, `@minecraft/server-ui`).
 
@@ -177,6 +191,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## 🏷 Releases
 
+- **v5.2.0**: AMD GPU 対応。ROCm 版 PyTorch (Linux / Windows) と DirectML (Windows の AMD / Intel GPU) で GPU 変換が可能に。GUI に「変換デバイス」選択を追加し、GPU の動作確認に失敗した場合は自動で CPU 変換へ切り替え。GUI からの変換が引数エラーで失敗していた v5.1.0 の不具合を修正。
 - **v5.1.0**: 品質改善リリース。自動パレット使用時にシーン切替で色が崩れる問題 (GOP 先頭を必ずキーフレーム化)、横長動画・サムネイルが中央に配置されない問題、シーク後に再開できず先頭に戻る問題、別の動画を選んでも切り替わらない問題、EXE 版で変換できない問題を修正。再生速度を動画データの fps から決定、変換を 2 パスのストリーミング化してメモリ使用量を削減、盤面クリアの分割実行、再ビルド時もパック UUID を維持、CI でテストとベンチマークを実行するよう改善。
 - **v5.0.0**: Phase 7 Research Edition。オブジェクト指向JSエンジンによるマルチスクリーン再生、SSIMベースの知覚的RDO、シーン適応型パレット＆GOPを導入。「世界最高峰のMinecraftビデオプレイヤー」として次世代の画質と圧縮効率を実現。
 - **v4.0.0**: Phase 6。OkLab知覚色空間への移行による色再現性の改善、シーン適応型の自動圧縮制御(RDO/ME)、NumPyベクトル化によるエンコード効率向上、予測型GOPプリフェッチとスマートティック予算による再生安定性の強化を実現。Minecraft Bedrock向け動画再生アドオンとして、高い完成度を目指した設計となっています。

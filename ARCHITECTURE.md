@@ -10,7 +10,7 @@
 flowchart TD
     A[動画ファイル MP4/MKV または PNG連番] -->|FFmpeg rawvideo パイプ / 縮小+レターボックス| B[RGB フレームストリーム]
     B -->|Pass 1: シーン適応型GOP 0.5*SAD + 0.3*Hist + 0.2*Edge| C[GOP 境界 + GOP ごとの自動パレット]
-    B -->|Pass 2: OkLab 減色 + 知覚的RDO (GPU) / Pillow 減色 (CPU)| D[パレット番号フレーム]
+    B -->|Pass 2: OkLab 減色 + 知覚的RDO (GPU: CUDA/ROCm/DirectML) / Pillow 減色 (CPU)| D[パレット番号フレーム]
     C --> D
     D -->|行単位 RLE 差分 + VarInt| E[GOP 単位バイナリ]
     E -->|15bit/文字 UTF-16 パッキング| F[frames_video_id.js]

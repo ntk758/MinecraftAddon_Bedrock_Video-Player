@@ -4,10 +4,16 @@ import os
 # プロジェクトルートをパスに追加
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from pathlib import Path
+
+import convert
 from video_player_gui import (
+    DEVICE_OPTIONS,
     DITHER_OPTIONS,
     PALETTE_OPTIONS,
+    build_converter_args,
     build_manifest_version,
+    resolve_device,
     resolve_dither,
     resolve_palette,
     stable_pack_uuid,
@@ -93,6 +99,28 @@ def test_manifest_version_increases_with_build_time():
     v2 = build_manifest_version(now=1_800_000_000 + 120)
     assert v1[:2] == list(PACK_VERSION[:2])
     assert v2[2] > v1[2]
+
+
+def test_converter_args_are_accepted_by_convert():
+    """GUI が組み立てる引数を convert.py がそのまま受け付けること (引数名の食い違い防止)"""
+    for device in DEVICE_OPTIONS.values():
+        for perceptual, duration in [(True, None), (False, 12.5)]:
+            argv = build_converter_args(
+                Path("in.mp4"), Path("out.js"), "ffmpeg", 128, 128, 2, "auto", "blue_noise",
+                30, device, perceptual, duration,
+            )
+            args = convert.parse_args(argv)
+            assert args.device == device
+            assert args.fps == 10.0
+            assert args.perceptual is perceptual
+            assert args.duration == duration
+
+
+def test_device_options():
+    assert resolve_device("自動 (GPU があれば使用)") == "auto"
+    assert resolve_device("DirectML (Windows の AMD / Intel / NVIDIA)") == "directml"
+    assert resolve_device("不明") == "auto"
+    assert set(DEVICE_OPTIONS.values()) <= set(convert.DEVICE_CHOICES)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ from mvcodec.color import (
     process_single_frame_img,
     rgb_to_oklab_torch,
 )
+from mvcodec.device import DEVICE_CHOICES, detect_gpu, empty_cache, squared_distances
 from mvcodec.encode import (
     MAX_PALETTE_COLORS,
     bytearray_to_utf16_str,
@@ -47,12 +48,7 @@ SSIM_SAMPLE_INTERVAL = 10
 SSIM_MAX_SAMPLES = 50
 CPU_BATCH_SIZE = 256
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
-
-try:
-    import torch
-    HAS_TORCH_CUDA = torch.cuda.is_available()
-except ImportError:
-    HAS_TORCH_CUDA = False
+GPU_DITHER_METHODS = ("none", "ordered", "blue_noise")
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +190,7 @@ def analyze_gops(frames, palette_for_gop=None):
     return boundaries, palettes
 
 
-def make_auto_palette_builder(use_gpu):
+def make_auto_palette_builder(gpu):
     from mvcodec.auto_palette import generate_auto_palette
 
     cache = {}
@@ -204,7 +200,7 @@ def make_auto_palette_builder(use_gpu):
         thumb_hash = hashlib.md5(np.ascontiguousarray(first_frame[::8, ::8]).tobytes()).hexdigest()
         if thumb_hash not in cache:
             cache[thumb_hash] = generate_auto_palette(
-                samples, ALL_BLOCKS, max_colors=AUTO_PALETTE_MAX_COLORS, use_gpu=use_gpu, sample_stride=1
+                samples, ALL_BLOCKS, max_colors=AUTO_PALETTE_MAX_COLORS, device=gpu.torch_device if gpu else None, sample_stride=1
             )
         return cache[thumb_hash]
 
@@ -223,16 +219,19 @@ def iter_gop_ids(gop_boundaries):
 
 
 def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
-                        dither_method="none", apply_perceptual=True):
-    """GPU (CUDA) で OkLab 色空間マッチング + RDO + 時間方向ディザを行い、フレームごとに (H, W) のパレット番号を返す。
+                        dither_method="none", apply_perceptual=True, gpu=None):
+    """GPU (CUDA / ROCm / DirectML) で OkLab 色空間マッチング + RDO + 時間方向ディザを行い、フレームごとに (H, W) のパレット番号を返す。
 
     パレットが切り替わる GOP 境界では前フレーム参照 (RDO / 時間方向ディザ) をリセットする。
+    gpu が None の場合は PyTorch の CPU 実行になる (テスト用)。
     """
     import torch
     from mvcodec.color import generate_blue_noise_approx_numpy, get_edge_mask_gpu
 
+    device = gpu.torch_device if gpu is not None else torch.device("cpu")
+
     def get_pal_tensors(pal_data):
-        t = torch.tensor(pal_data, dtype=torch.float32, device="cuda")
+        t = torch.tensor(pal_data, dtype=torch.float32, device=device)
         return t, rgb_to_oklab_torch(t)
 
     dither_tensor = None
@@ -245,10 +244,10 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
         ], dtype=np.float32)
         bayer = ((bayer / 16.0) - 0.5) * 32.0
         bayer_tiled = np.tile(bayer, (height // 4 + 1, width // 4 + 1))[:height, :width]
-        dither_tensor = torch.tensor(np.stack([bayer_tiled] * 3, axis=-1), dtype=torch.float32, device="cuda")
+        dither_tensor = torch.tensor(np.stack([bayer_tiled] * 3, axis=-1), dtype=torch.float32, device=device)
     elif dither_method == "blue_noise":
         bn = (generate_blue_noise_approx_numpy(width, height) - 0.5) * 64.0
-        dither_tensor = torch.tensor(np.stack([bn] * 3, axis=-1), dtype=torch.float32, device="cuda")
+        dither_tensor = torch.tensor(np.stack([bn] * 3, axis=-1), dtype=torch.float32, device=device)
 
     def analyze_scene(diff_ratio):
         # フレーム変化率に基づいて (RDO閾値, ME閾値, 更新予算, 時間方向ディザ重み) を決定
@@ -272,12 +271,12 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
             current_palette = gop_palettes_rgb[gop_id]
             pal_tensor, pal_oklab = get_pal_tensors(current_palette)
             # パレット番号の意味が変わるので前フレーム由来の状態は全て破棄する
-            error_buffer = torch.zeros((height, width, 3), dtype=torch.float32, device="cuda")
-            importance_buffer = torch.zeros((height, width), dtype=torch.float32, device="cuda")
+            error_buffer = torch.zeros((height, width, 3), dtype=torch.float32, device=device)
+            importance_buffer = torch.zeros((height, width), dtype=torch.float32, device=device)
             prev_idx_tensor = None
             prev_orig_img_tensor = None
 
-        orig_img_tensor = torch.tensor(img_arr, dtype=torch.float32, device="cuda")
+        orig_img_tensor = torch.tensor(img_arr, dtype=torch.float32, device=device)
         img_tensor = orig_img_tensor.clone()
 
         # Temporal Dithering (前フレームからの誤差を加算)
@@ -290,7 +289,7 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
 
         # OkLab 知覚色空間でのカラーマッチング
         img_oklab = rgb_to_oklab_torch(img_tensor.view(-1, 3))
-        idx_tensor = torch.argmin(torch.cdist(img_oklab, pal_oklab), dim=1).view(height, width)
+        idx_tensor = torch.argmin(squared_distances(img_oklab, pal_oklab), dim=1).view(height, width)
 
         # Rate-Distortion Optimization (RDO) & Motion Estimation (ME)
         if prev_idx_tensor is not None:
@@ -346,7 +345,7 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
         prev_orig_img_tensor = orig_img_tensor.clone()
 
         if i % 64 == 0:
-            torch.cuda.empty_cache()
+            empty_cache(gpu)
 
 
 def quantize_frames_cpu(frames, gop_palettes, gop_boundaries, width, height,
@@ -401,7 +400,9 @@ def parse_args(argv=None):
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 4)
     parser.add_argument("--keyframe-interval", type=int, default=30,
                         help="GOP 内のキーフレーム間隔。0 なら各 GOP の先頭のみ")
-    parser.add_argument("--gpu", action="store_true", help="CUDA が使えれば GPU を使う (CUDA 検出時は既定で使用)")
+    parser.add_argument("--device", default="auto", choices=DEVICE_CHOICES,
+                        help="減色に使うデバイス。auto は CUDA/ROCm → DirectML → CPU の順に自動選択")
+    parser.add_argument("--gpu", action="store_true", help="互換用 (GPU は --device auto で自動使用されます)")
     parser.add_argument("--adaptive-fps", action=argparse.BooleanOptionalAction, default=True,
                         help="変化の少ないフレームを省略する (--no-adaptive-fps で無効)")
     parser.add_argument("--scene-threshold", type=float, default=0.015,
@@ -419,6 +420,41 @@ def parse_args(argv=None):
     return args
 
 
+def gpu_self_test(gpu, dither_method, apply_perceptual):
+    """選んだ GPU で減色処理が最後まで動くかを小さな入力で確かめる (DirectML の未対応演算などを事前に検出)。"""
+    rng = np.random.default_rng(0)
+    frames = [rng.integers(0, 256, size=(8, 8, 3), dtype=np.uint8) for _ in range(3)]
+    palette_rgb = np.array([item["rgb"] for item in PALETTES["full"]], dtype=np.float64)
+    results = list(quantize_frames_gpu(frames, [palette_rgb], [0, len(frames)], 8, 8,
+                                       dither_method, apply_perceptual, gpu=gpu))
+    if len(results) != len(frames) or any(r.shape != (8, 8) or r.min() < 0 or r.max() >= len(palette_rgb) for r in results):
+        raise RuntimeError("GPU の減色結果が不正です")
+
+
+def select_gpu(preference, dither_method, apply_perceptual):
+    """GPU を選び、動作確認に失敗したら CPU にフォールバックする。"""
+    if preference == "cpu":
+        print("[MVCodec] 減色デバイス: CPU (--device cpu)")
+        return None
+    gpu = detect_gpu(preference)
+    if gpu is None:
+        if preference != "auto":
+            print(f"[MVCodec] 警告: --device {preference} の GPU が見つからないため CPU で変換します", file=sys.stderr)
+        print("[MVCodec] 減色デバイス: CPU (利用可能な GPU なし)")
+        return None
+    test_dither = dither_method if dither_method in GPU_DITHER_METHODS else "none"
+    try:
+        gpu_self_test(gpu, test_dither, apply_perceptual)
+    except Exception as error:
+        print(f"[MVCodec] 警告: {gpu.describe()} で GPU 処理を実行できないため CPU で変換します: {error}", file=sys.stderr)
+        return None
+    if dither_method not in GPU_DITHER_METHODS:
+        print(f"[MVCodec] 減色デバイス: CPU (ディザ '{dither_method}' は CPU 専用。自動パレットは {gpu.describe()} を使用)")
+    else:
+        print(f"[MVCodec] 減色デバイス: {gpu.describe()}")
+    return gpu
+
+
 def level_block_specs(palette):
     specs = []
     for item in palette:
@@ -429,16 +465,23 @@ def level_block_specs(palette):
     return specs
 
 
+def _use_utf8_for_pipes():
+    """GUI などからパイプ経由で起動された時、ログの日本語を UTF-8 で書き出す (cp932 で化けるのを防ぐ)。"""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure") and not stream.isatty():
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv=None):
+    _use_utf8_for_pipes()
     args = parse_args(argv)
     width, height = args.width, args.height
     frame_source = make_frame_source(args)
-    # CUDA が使える環境では常に GPU を使う (--gpu は互換のため残している)
-    use_gpu = HAS_TORCH_CUDA
+    gpu = select_gpu(args.device, args.dither_method, args.perceptual)
 
     # --- Pass 1: GOP 分割 (+ 自動パレット) ---
     is_adaptive_palette = args.palette == "auto"
-    palette_builder = make_auto_palette_builder(use_gpu) if is_adaptive_palette else None
+    palette_builder = make_auto_palette_builder(gpu) if is_adaptive_palette else None
     gop_boundaries, adaptive_palettes = analyze_gops(frame_source(), palette_builder)
     total_frames = gop_boundaries[-1]
     if total_frames == 0:
@@ -471,9 +514,9 @@ def main(argv=None):
 
     dither_method = args.dither_method
     pass2_frames = tee_originals(frame_source())
-    if use_gpu and dither_method in ("none", "ordered", "blue_noise"):
+    if gpu is not None and dither_method in GPU_DITHER_METHODS:
         quantized = quantize_frames_gpu(pass2_frames, gop_palettes_rgb, gop_boundaries, width, height,
-                                        dither_method, apply_perceptual=args.perceptual)
+                                        dither_method, apply_perceptual=args.perceptual, gpu=gpu)
     else:
         quantized = quantize_frames_cpu(pass2_frames, gop_palettes, gop_boundaries, width, height,
                                         dither_method, args.perceptual, args.threads)

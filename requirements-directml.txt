@@ -1,0 +1,3 @@
+# Windows で AMD / Intel GPU を使う場合 (DirectML)。torch-directml は Python 3.12 以下に対応
+-r requirements.txt
+torch-directml

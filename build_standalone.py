@@ -41,6 +41,13 @@ def build_standalone_exe():
         "--add-data", f"{APP_DIR / 'manifest.json'}{os.pathsep}.",
         str(main_gui)
     ]
+    # DirectML (AMD / Intel GPU) 版 PyTorch がビルド環境にあれば DLL ごと同梱する
+    try:
+        import torch_directml  # noqa: F401
+        cmd[-1:-1] = ["--collect-all", "torch_directml"]
+        print("      torch-directml を同梱します")
+    except ImportError:
+        pass
 
     print("[2/3] 単体 EXE のビルドを開始します...")
     subprocess.check_call(cmd)
