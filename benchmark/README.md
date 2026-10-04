@@ -15,15 +15,19 @@ Phase 7 (Research Edition) にて導入された、マルチモジュール型�
 
 ## 使用方法 (Usage)
 
-`run.py` スクリプトを使用してベンチマークを実行します。
+リポジトリのルートで `benchmark/run.py` を実行します。出力ファイルが無ければ `convert.py` で変換してから、ゲーム内と同じ規則で盤面を復元し (`mvcodec/decode.py`)、元動画と同じ解像度・fps で比較します。
 
 ```bash
-python run.py --deep
+pip install -r requirements-benchmark.txt
+python benchmark/run.py --video input.mp4 --output out.js --fps 10
 ```
 
 ### オプション
-- `--deep`: すべての指標（LPIPSを含む）を詳細に測定します。
-- `--fast`: SSIM と PSNR のみを高速に測定します。
+- `--fps`: 変換時の fps (比較には出力ファイルに記録された fps を使います)。
+- `--force`: 出力ファイルがあっても変換し直します。
+- `--deep`: LPIPS も測定します (`torch` と `lpips` が必要)。
+
+MS-SSIM は未実装のため常に `nan` と表示されます。
 
 ## アーキテクチャ
 本フレームワークはモジュール化されており、新しい評価指標やデータセットを容易に追加できます。

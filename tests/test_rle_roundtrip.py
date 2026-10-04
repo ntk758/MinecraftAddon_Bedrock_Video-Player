@@ -49,7 +49,7 @@ def decode_frame(encoded_data, prev_frame, width, height):
     return decoded
 
 
-def test_roundtrip(width, height, flat_frame, prev_frame):
+def check_roundtrip(width, height, flat_frame, prev_frame):
     chunks = extract_rle_chunks_fast(flat_frame, prev_frame, width, height)
     encoded = encode_frame(chunks, width)
     decoded = decode_frame(encoded, prev_frame, width, height)
@@ -67,7 +67,7 @@ def test_solid_frames():
     for size in [128, 256]:
         prev = np.full(size * size, -1, dtype=np.int32)
         frame = np.full(size * size, 5, dtype=np.int32)
-        test_roundtrip(size, size, frame, prev)
+        check_roundtrip(size, size, frame, prev)
         print(f"PASS: solid frame {size}x{size}")
 
 
@@ -77,17 +77,17 @@ def test_width_64_backward_compatibility():
     # 単色
     prev = np.full(size * size, -1, dtype=np.int32)
     frame = np.full(size * size, 3, dtype=np.int32)
-    test_roundtrip(size, size, frame, prev)
+    check_roundtrip(size, size, frame, prev)
 
     # 差分更新
     frame2 = frame.copy()
     frame2[100:164] = 7  # 64ピクセル更新 (1行分)
-    test_roundtrip(size, size, frame2, frame)
+    check_roundtrip(size, size, frame2, frame)
 
     # ランダム
     rng = np.random.default_rng(42)
     frame_rand = rng.integers(0, 16, size=size * size, dtype=np.int32)
-    test_roundtrip(size, size, frame_rand, prev)
+    check_roundtrip(size, size, frame_rand, prev)
     print("PASS: width 64 compatibility")
 
 
@@ -99,7 +99,7 @@ def test_boundary_run_lengths():
     for run_len in [63, 64, 65, 127, 128, 129, 192, 200, 256]:
         frame = prev.copy()
         frame[width * 2 + 10 : width * 2 + 10 + run_len] = 12
-        test_roundtrip(width, height, frame, prev)
+        check_roundtrip(width, height, frame, prev)
         print(f"PASS: run_length={run_len}")
 
 

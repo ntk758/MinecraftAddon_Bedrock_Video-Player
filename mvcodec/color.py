@@ -78,10 +78,11 @@ ALL_BLOCKS = CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE
 PALETTES = {
     "concrete": CONCRETE_PALETTE,
     "expanded": CONCRETE_PALETTE + TERRACOTTA_PALETTE,
-    "full": CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE,
-    "all_55": ALL_BLOCKS,
-    "ultra_110": ALL_BLOCKS,
+    "full": ALL_BLOCKS,
 }
+
+# ブロックID -> RGB (デコーダ・評価用)
+BLOCK_RGB = {item["block"]: tuple(item["rgb"]) for item in ALL_BLOCKS + WOOL_PALETTE}
 
 def create_palette_image(palette):
     pal_img = Image.new("P", (1, 1))

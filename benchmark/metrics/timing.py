@@ -1,10 +1,12 @@
-import time
 import subprocess
+import sys
+import time
 
-def measure_conversion_time(video_path, output_path, fps, convert_script='convert.py'):
+
+def measure_conversion_time(video_path, output_path, fps, convert_script="convert.py", extra_args=()):
     start_time = time.time()
-    cmd = ["python", convert_script, "--video", video_path, "--output", output_path, "--fps", str(fps)]
+    cmd = [sys.executable, convert_script, "--input-video", video_path, "--output", output_path,
+           "--fps", str(fps), *extra_args]
     print(f"Running conversion: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
-    encode_time = time.time() - start_time
-    return encode_time
+    return time.time() - start_time

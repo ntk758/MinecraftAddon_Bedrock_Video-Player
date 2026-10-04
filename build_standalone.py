@@ -32,10 +32,13 @@ def build_standalone_exe():
         "--onedir",
         "--windowed",
         "--name", "BlockVideoPlayer",
-        "--add-data", f"{APP_DIR / 'convert.py'}{os.pathsep}.",
+        "--paths", str(APP_DIR),
+        # 変換器は EXE 内で `--run-converter` として import 実行されるため、モジュールとして同梱する
+        "--hidden-import", "convert",
+        "--collect-submodules", "mvcodec",
         "--add-data", f"{APP_DIR / 'main.js'}{os.pathsep}.",
+        "--add-data", f"{APP_DIR / 'codec.js'}{os.pathsep}.",
         "--add-data", f"{APP_DIR / 'manifest.json'}{os.pathsep}.",
-        "--add-data", f"{APP_DIR / 'pack_metadata.py'}{os.pathsep}.",
         str(main_gui)
     ]
 

@@ -1,0 +1,4 @@
+# ベンチマーク (benchmark/run.py) 用の追加依存
+-r requirements.txt
+scikit-image>=0.22
+# --deep (LPIPS) を使う場合のみ: torch, lpips

@@ -2,7 +2,7 @@ import argparse
 import os
 import numpy as np
 
-from compare import parse_js_output, decode_frames_to_rgb, extract_video_frames
+from compare import ROOT, load_output, decode_frames_to_rgb, extract_video_frames
 from metrics.timing import measure_conversion_time
 from metrics.psnr import calculate_psnr
 from metrics.ssim import calculate_ssim
@@ -14,24 +14,25 @@ def main():
     parser = argparse.ArgumentParser(description="Modular Benchmark CLI")
     parser.add_argument('--video', type=str, required=True, help="Path to original video")
     parser.add_argument('--output', type=str, required=True, help="Path to output frames.js")
-    parser.add_argument('--fps', type=int, default=10, help="Target FPS")
-    parser.add_argument('--convert_script', type=str, default='convert.py', help="Path to convert script")
+    parser.add_argument('--fps', type=float, default=10, help="Target FPS")
+    parser.add_argument('--convert_script', type=str, default=str(ROOT / 'convert.py'), help="Path to convert script")
+    parser.add_argument('--force', action='store_true', help="Re-run conversion even if output exists")
     parser.add_argument('--deep', action='store_true', help="Run deeper metrics like LPIPS")
     args = parser.parse_args()
 
     encode_time = 0
-    if not os.path.exists(args.output):
+    if args.force or not os.path.exists(args.output):
         print(f"{args.output} not found. Running conversion...")
         encode_time = measure_conversion_time(args.video, args.output, args.fps, args.convert_script)
     else:
         print(f"{args.output} found. Skipping conversion.")
 
     size_mb = os.path.getsize(args.output) / (1024 * 1024)
-    fmt, resolution, js_frames = parse_js_output(args.output)
-    print(f"Parsed JS: Format={fmt}, Resolution={resolution}, Frames={len(js_frames)}")
+    data, resolution, data_fps = load_output(args.output)
+    print(f"Parsed JS: Format={data['format']}, Resolution={resolution}, Frames={data['frame_count']}, FPS={data_fps}")
 
-    decoded_frames = decode_frames_to_rgb(js_frames, resolution, fmt)
-    orig_frames = extract_video_frames(args.video, args.fps, resolution)
+    decoded_frames = decode_frames_to_rgb(data)
+    orig_frames = extract_video_frames(args.video, data_fps, resolution)
 
     min_len = min(len(decoded_frames), len(orig_frames))
     if min_len == 0:
@@ -61,7 +62,7 @@ def main():
     results = {
         "encode_time": encode_time,
         "size_mb": size_mb,
-        "fps": args.fps,
+        "fps": data_fps,
         "psnr": np.nanmean(psnr_vals) if psnr_vals else float('nan'),
         "ssim": np.nanmean(ssim_vals) if ssim_vals else float('nan'),
         "ms_ssim": np.nanmean(ms_ssim_vals) if ms_ssim_vals else float('nan'),

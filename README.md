@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock%201.21+-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v4.0.0](https://img.shields.io/badge/Release-v4.0.0-blue.svg)](#releases)
+[![Release v4.0.0](https://img.shields.io/badge/Release-v5.1.0-blue.svg)](#releases)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
 ## 日本語 (Japanese)
@@ -29,6 +29,7 @@ Python と FFmpeg、そして最新の Bedrock Script API を活用し、極限�
 - **Minecraft**: Bedrock Edition (v1.21.0 以降)
 - **Python**: 3.12 以降
 - **FFmpeg**: (実行ファイルと同階層またはPATHに設定)
+- **GPU 変換 (任意)**: CUDA 対応の NVIDIA GPU と PyTorch。無い場合は自動で CPU 変換になります
 
 ### 🚀 インストールと使い方 (Installation & Usage)
 
@@ -52,8 +53,9 @@ Python 3.12 以上が必要です。以下のいずれかの方法でインス�
 1. このリポジトリをダウンロード（ZIPでダウンロードして解凍、または `git clone`）します。
 2. コマンドプロンプト等でツールのフォルダを開き、必要な Python パッケージをインストールします。
    ```bash
-   pip install pillow numpy torch
+   pip install -r requirements.txt
    ```
+   GPU (CUDA) で高速変換したい場合は、[PyTorch 公式サイト](https://pytorch.org/get-started/locally/) の手順で CUDA 版 `torch` も追加してください。
 3. GUIアプリを起動します。
    ```bash
    python video_player_gui.py
@@ -66,7 +68,7 @@ Python 3.12 以上が必要です。以下のいずれかの方法でインス�
 5. **Minecraftへの導入**:
    - 出力された `.mcaddon` をダブルクリックしてインポートします。
    - ワールド設定で **Behavior Pack** と **Resource Pack** を有効にします。
-   - **【重要】** ワールド設定の **「実験 (Experiments)」** から **「ベータ API (Beta APIs)」** を必ずオンにしてください。
+   - 安定版の Script API (`@minecraft/server` 1.19.0 / `@minecraft/server-ui` 1.2.0) を使っているため、「ベータ API」の有効化は不要です。Minecraft を最新版に更新してください。
    - ゲーム内でコンパスを持ち、右クリックしてリモコンから再生を開始します。
 
 ---
@@ -95,11 +97,11 @@ Powered by Python, FFmpeg, and the latest Bedrock Script APIs, this tool aims fo
 - **FFmpeg**: Required in the PATH or same directory.
 
 ### 🚀 Usage
-1. Install Python requirements: `pip install pillow numpy torch`.
+1. Install Python requirements: `pip install -r requirements.txt` (optionally add a CUDA build of `torch` for GPU conversion).
 2. Run `python video_player_gui.py` to open the GUI.
 3. Add your videos, configure quality/dithering (GPU recommended), and click "Build".
 4. Import the generated `.mcaddon` to Minecraft.
-5. **[IMPORTANT]** Enable both the **Behavior Pack** and **Resource Pack**, and make sure to turn on **"Beta APIs"** under the Experiments tab in your world settings.
+5. Enable both the **Behavior Pack** and **Resource Pack**. The add-on uses the stable Script API (`@minecraft/server` 1.19.0), so **Beta APIs are not required**—just keep Minecraft up to date.
 6. Hold a compass in-game and right-click to open the remote control and start playing!
 
 ---
@@ -108,18 +110,32 @@ Powered by Python, FFmpeg, and the latest Bedrock Script APIs, this tool aims fo
 
 ```text
 .
-├── convert.py                 # Core video-to-block conversion logic (GPU/CPU)
+├── convert.py                 # Core video-to-block conversion CLI (2-pass streaming, GPU/CPU)
+├── mvcodec/                   # Codec library (palettes, quantization, RLE/VarInt encoder, Python decoder)
 ├── video_player_gui.py        # GUI Application & Pack Builder (.mcaddon generator)
 ├── main.js                    # Bedrock Script API playback script
+├── codec.js                   # Minecraft-independent decoder shared by main.js and the Node tests
 ├── manifest.json              # Base manifest template
-└── pack_metadata.py           # Version and release notes manager
+├── pack_metadata.py           # Version and release notes manager
+├── build_standalone.py        # PyInstaller build for the standalone EXE
+├── benchmark/                 # Quality / size benchmark (PSNR, SSIM, ΔE2000, LPIPS)
+└── tests/                     # pytest + Node round-trip tests
 ```
 
 ## 🛠 技術スタック (Tech Stack)
 - **Python 3**: Core processing and GUI (Tkinter)
 - **PyTorch**: High-speed tensor-based palette mapping and dithering
 - **FFmpeg**: Video frame extraction and OGG audio segmentation
-- **Minecraft Script API**: In-game block placement (using `setBlockPermutation` & Delta VarInt encoding) and UI components (`@minecraft/server`, `@minecraft/server-ui`).
+- **Minecraft Script API**: In-game block placement (using `setBlockPermutation` & RLE + VarInt encoding) and UI components (`@minecraft/server`, `@minecraft/server-ui`).
+
+## 🧪 開発者向け (Development)
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+- `tests/test_codec_v4.py` は変換結果を Python デコーダと `codec.js` (Node.js が必要) の両方で復元し、一致・シーク・パレット切替を検証します。
+- コマンドラインからの変換: `python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 --fps 10` (`--frames-dir` で PNG 連番も可)。
+- 画質ベンチマーク: `pip install -r requirements-benchmark.txt` の後 `python benchmark/run.py --video in.mp4 --output out.js --fps 10`。
 
 ## 🗺 ロードマップ (Roadmap)
 - [x] MP4対応 (Video format support)
@@ -161,6 +177,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## 🏷 Releases
 
+- **v5.1.0**: 品質改善リリース。自動パレット使用時にシーン切替で色が崩れる問題 (GOP 先頭を必ずキーフレーム化)、横長動画・サムネイルが中央に配置されない問題、シーク後に再開できず先頭に戻る問題、別の動画を選んでも切り替わらない問題、EXE 版で変換できない問題を修正。再生速度を動画データの fps から決定、変換を 2 パスのストリーミング化してメモリ使用量を削減、盤面クリアの分割実行、再ビルド時もパック UUID を維持、CI でテストとベンチマークを実行するよう改善。
 - **v5.0.0**: Phase 7 Research Edition。オブジェクト指向JSエンジンによるマルチスクリーン再生、SSIMベースの知覚的RDO、シーン適応型パレット＆GOPを導入。「世界最高峰のMinecraftビデオプレイヤー」として次世代の画質と圧縮効率を実現。
 - **v4.0.0**: Phase 6。OkLab知覚色空間への移行による色再現性の改善、シーン適応型の自動圧縮制御(RDO/ME)、NumPyベクトル化によるエンコード効率向上、予測型GOPプリフェッチとスマートティック予算による再生安定性の強化を実現。Minecraft Bedrock向け動画再生アドオンとして、高い完成度を目指した設計となっています。
 - **v3.2.0**: v4 GOP-Chunked 遅延デコードフォーマットを導入。200フレーム単位の独立チャンク分割+LRUキャッシュにより、高解像度動画のワールド読み込み速度を劇的に改善。

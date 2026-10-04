@@ -3,13 +3,20 @@
 ## 1. プロジェクト概要
 本プロジェクトは、動画ファイル（MP4 / MKV / AVI / WEBM 等）を Minecraft Bedrock Edition（統合版）の Behavior Pack（.mcpack）へ超高速かつ最小容量で変換し、ゲーム内のブロック盤面上でスムーズに動動画再生するアドオン＆変換ツール群です。
 
-- **最新バージョン**: `v5.0.0` (Phase 7 Research Edition)
-- **対象環境**: Minecraft Bedrock Edition 1.21.0 以上 (Script API v1.x, `@minecraft/server-ui`)
-- **変換GUI環境**: Python 3.10+ (PyTorch/CUDA, Pillow, NumPy, Tkinter, FFmpeg) または **独立スタンドアロン EXE (`BlockVideoPlayer.exe`)**
+- **最新バージョン**: `v5.1.0` (Phase 7 Research Edition + 品質改善)
+- **対象環境**: Minecraft Bedrock Edition 最新版 (安定版 Script API `@minecraft/server` 1.19.0 / `@minecraft/server-ui` 1.2.0。ベータ API 不要)
+- **変換GUI環境**: Python 3.12+ (PyTorch/CUDA, Pillow, NumPy, Tkinter, FFmpeg) または **独立スタンドアロン EXE (`BlockVideoPlayer.exe`)**
 
 ---
 
 ## 2. 現在の達成状況と到達点
+
+### 🛠 品質改善 (v5.1.0)
+- **GOP 先頭の強制キーフレーム化**: 自動パレットのシーン切替で色が崩れる問題を解消。シークも直近キーフレームから正しく復元。
+- **2 パス・ストリーミング変換**: 動画全体をメモリに載せずに変換 (長尺・高解像度でもメモリ一定)。
+- **fps を動画データに格納**: 再生速度・音声同期・シーク時間を各動画の fps から決定。
+- **再生まわりの不具合修正**: シーク後の再開、動画切替、大画面の盤面クリア (runJob で分割) など。
+- **テストと CI**: Python デコーダと `codec.js` の往復テスト、Ubuntu 上での pytest・ベンチマーク実行。
 
 ### 🔬 Phase 7: Research Edition 完成 (v5.0.0 新機能)
 - **オブジェクト指向JSエンジン (VideoPlayer)**: `VideoPlayer` クラスの導入により、1つのワールド内で複数のスクリーン（マルチスクリーン）同時再生が可能に。
@@ -47,7 +54,7 @@
 - **マイクラ側描画負荷**: 1tick (50ms) あたりわずか **0.48 ms**（負荷率 1% 以下）。`BlockPermutation` 一括キャッシュと単一座標オブジェクト使い回しによりメモリGCスパイクを撲滅。
 
 ### 🎨 高精細な色再現性と表現力
-- **全50+色マイクラブロック解析**: 16色 Concrete + 17色 Terracotta + 6種 自発光ブロック（`sea_lantern`, `glowstone`, `shroomlight`, 3種 `froglight`）+ 16色 Wool + 8種 鉱石/金属ブロック。
+- **39色マイクラブロックパレット**: 16色 Concrete + 17色 Terracotta + 6種 自発光ブロック（`sea_lantern`, `glowstone`, `shroomlight`, 3種 `froglight`）。自動パレットはこの中から動画ごとに選択。
 - **CIELAB 色空間最適化**: 人間視覚モデル上での色距離 $\Delta E$ 再計算。
 - **全5種類ディザリング**: `Floyd-Steinberg`, `Atkinson`, `Burkes`, `Sierra-Lite`, `Ordered (4x4 Bayer Matrix)` を自由選択。
 
@@ -61,14 +68,17 @@
 
 ```
 .
-├── convert.py                 # コア変換スクリプト (Delta VarInt Base64, 55色パレット, 5種ディザ)
+├── convert.py                 # コア変換 CLI (2パス・ストリーミング, GPU/CPU)
+├── mvcodec/                   # パレット・減色・RLE/VarInt エンコーダ・Python デコーダ
 ├── video_player_gui.py        # 複数動画対応 GUI アプリケーション (Tkinter / Treeview)
-├── main.js                    # Bedrock Script API 再生スクリプト (Base64/VarIntデコーダー, Permutationキャッシュ)
-├── manifest.json              # Behavior Pack マニフェストファイル
+├── main.js                    # Bedrock Script API 再生スクリプト (VideoPlayer クラス)
+├── codec.js                   # Minecraft 非依存のデコーダ (main.js と Node テストで共有)
+├── manifest.json              # Behavior Pack マニフェストのテンプレート
 ├── pack_metadata.py           # リリースバージョン・更新履歴の一元管理
-├── PERFORMANCE_REPORT.md      # 最新パフォーマンス報告
-├── .github/workflows/         # CI 性能回帰自動テスト (5%低下判定)
-│   └── benchmark_regression.yml
+├── build_standalone.py        # スタンドアロン EXE ビルド (PyInstaller)
+├── benchmark/                 # 画質・容量ベンチマーク
+├── tests/                     # pytest + Node 往復テスト
+├── .github/workflows/ci.yml   # CI (テスト + 参考ベンチマーク)
 ├── PROJECT_STATUS.md          # [本書] 現在のプロジェクト進捗
 ├── ARCHITECTURE.md            # アーキテクチャ・データ構造・描画仕様
 ├── DECISIONS.md               # 採否判断マトリクスと技術的根拠

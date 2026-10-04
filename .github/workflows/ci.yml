@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt -r requirements-benchmark.txt
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check main.js
+          node --check codec.js
+
+      - name: Run tests (Python + codec.js round trip)
+        run: pytest -q
+
+      # 共有ランナーは性能のばらつきが大きいため、速度・画質は失敗判定せずジョブサマリーに記録する
+      - name: Benchmark (informational)
+        run: |
+          ffmpeg -v error -y -f lavfi -i "testsrc2=size=320x180:rate=30:duration=10" bench_input.mp4
+          python benchmark/run.py --video bench_input.mp4 --output bench_output.js --fps 10 --force | tee bench_report.md
+          echo "## Benchmark (testsrc2, 64x64, 10fps)" >> "$GITHUB_STEP_SUMMARY"
+          sed -n '/^| Metric/,$p' bench_report.md >> "$GITHUB_STEP_SUMMARY"

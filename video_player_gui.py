@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 import zipfile
 from pathlib import Path
@@ -23,7 +24,39 @@ from pack_metadata import PACK_VERSION, RELEASE_NOTES, changelog_markdown, manif
 APP_DIR = Path(__file__).resolve().parent
 MANIFEST = APP_DIR / "manifest.json"
 MAIN_SCRIPT = APP_DIR / "main.js"
+CODEC_SCRIPT = APP_DIR / "codec.js"
 CONVERTER = APP_DIR / "convert.py"
+# main.js の AUDIO_CHUNK_SECONDS と一致させること
+AUDIO_CHUNK_SECONDS = 10
+# EXE 版で自分自身を変換器として起動するための引数
+RUN_CONVERTER_FLAG = "--run-converter"
+# 再ビルドしたパックをワールドが「新しい版」と認識できるよう、ビルド時刻をパッチ番号に使う
+BUILD_STAMP_EPOCH = 1704067200  # 2024-01-01T00:00:00Z
+
+
+def subprocess_kwargs() -> dict:
+    """EXE (windowed) から ffmpeg 等を起動する時にコンソール窓を出さない。"""
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
+def converter_command() -> list[str]:
+    """convert.py を起動するコマンドの先頭部分。EXE 版では自分自身を変換モードで起動する。"""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, RUN_CONVERTER_FLAG]
+    return [sys.executable, str(CONVERTER)]
+
+
+def stable_pack_uuid(namespace: str, pack_name: str, role: str) -> str:
+    """同じパック名・接頭辞なら毎回同じ UUID にする (再ビルドしても別パック扱いにならない)。"""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"block-video-player/{namespace}/{pack_name}/{role}"))
+
+
+def build_manifest_version(now: float | None = None) -> list[int]:
+    """[major, minor, ビルド時刻(分)]。UUID が同じでも新しいビルドとして読み込ませるため。"""
+    now = time.time() if now is None else now
+    return [PACK_VERSION[0], PACK_VERSION[1], max(0, int(now - BUILD_STAMP_EPOCH) // 60)]
 
 
 def get_ffmpeg_path() -> str | None:
@@ -402,7 +435,10 @@ class PackBuilderApp(tk.Tk):
 
     def _run(self, command: list[str]) -> None:
         self.messages.put("$ " + subprocess.list2cmdline(command))
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            encoding="utf-8", errors="replace", **subprocess_kwargs(),
+        )
         assert process.stdout is not None
         for line in process.stdout:
             self.messages.put(line.rstrip())
@@ -417,7 +453,10 @@ class PackBuilderApp(tk.Tk):
             ffmpeg = get_ffmpeg_path()
             if not ffmpeg:
                 raise RuntimeError("ffmpeg が見つかりません。アプリと同階層に ffmpeg.exe を置くか PATH 設定を確認してください。")
-            for required in (MANIFEST, MAIN_SCRIPT, CONVERTER):
+            required_files = [MANIFEST, MAIN_SCRIPT, CODEC_SCRIPT]
+            if not getattr(sys, "frozen", False):
+                required_files.append(CONVERTER)
+            for required in required_files:
                 if not required.is_file():
                     raise RuntimeError(f"必要なファイルがありません: {required}")
 
@@ -442,16 +481,14 @@ class PackBuilderApp(tk.Tk):
 
                     self.messages.put(f"--- [{vi}/{total_videos}] 動画 '{video_id}' を処理中 ---")
 
-                    frames = temp / f"frames_{video_id}"
                     generated_data = scripts / f"frames_{video_id}.js"
                     thumbnail = temp / f"thumb_{video_id}.png"
-                    frames.mkdir()
 
                     # サムネイル生成
                     self.messages.put(f"  サムネイルを切り出し中 (秒={thumb_sec})…")
                     self._run([
                         ffmpeg, "-y", "-ss", str(thumb_sec), "-i", str(video), "-frames:v", "1",
-                        "-vf", "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-ih)/2:(oh-ih)/2:black",
+                        "-vf", "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black",
                         str(thumbnail),
                     ])
                     if not thumbnail.is_file() or thumbnail.stat().st_size == 0:
@@ -463,11 +500,11 @@ class PackBuilderApp(tk.Tk):
                     # 音声切り出し (10秒分割 .ogg, 44.1kHz ステレオ)
                     sounds_dir = rp_root / "sounds" / "music" / video_id
                     sounds_dir.mkdir(parents=True, exist_ok=True)
-                    self.messages.put("  音声を10秒単位(.ogg, 44.1kHz)で切り出し中…")
+                    self.messages.put(f"  音声を{AUDIO_CHUNK_SECONDS}秒単位(.ogg, 44.1kHz)で切り出し中…")
                     try:
                         self._run([
                             ffmpeg, "-y", "-i", str(video),
-                            "-f", "segment", "-segment_time", "10",
+                            "-f", "segment", "-segment_time", str(AUDIO_CHUNK_SECONDS),
                             "-vn", "-acodec", "libvorbis",
                             "-ar", "44100", "-ac", "2", "-b:a", "192k",
                             str(sounds_dir / "chunk_%d.ogg")
@@ -491,9 +528,10 @@ class PackBuilderApp(tk.Tk):
 
                     # ブロックデータ変換
                     self.messages.put("  ブロックデータへ変換中 (Zero-copy GPU/CPU自動選択)…")
-                    converter_command = [
-                        sys.executable, str(CONVERTER), 
+                    converter_args = [
+                        *converter_command(),
                         "--input-video", str(video),
+                        "--ffmpeg", ffmpeg,
                         "--fps", str(20 / interval),
                         "--output", str(generated_data), "--width", str(width), "--height", str(height),
                         "--palette", palette,
@@ -503,11 +541,11 @@ class PackBuilderApp(tk.Tk):
                         "--gpu",
                     ]
                     if not self.perceptual_var.get():
-                        converter_command.append("--no-perceptual")
+                        converter_args.append("--no-perceptual")
                     if duration is not None:
-                        converter_command.extend(["--duration", str(duration)])
-                        
-                    self._run(converter_command)
+                        converter_args.extend(["--duration", str(duration)])
+
+                    self._run(converter_args)
 
                     frame_count = 0
                     try:
@@ -552,20 +590,21 @@ class PackBuilderApp(tk.Tk):
                 (scripts / "videos.js").write_text("\n".join(videos_js_lines), encoding="utf-8")
 
                 # manifest.json
-                bp_uuid = str(uuid.uuid4())
-                rp_uuid = str(uuid.uuid4())
-                bp_mod_uuid = str(uuid.uuid4())
-                rp_mod_uuid = str(uuid.uuid4())
+                bp_uuid = stable_pack_uuid(namespace, pack_name, "bp")
+                rp_uuid = stable_pack_uuid(namespace, pack_name, "rp")
+                bp_mod_uuid = stable_pack_uuid(namespace, pack_name, "bp-script")
+                rp_mod_uuid = stable_pack_uuid(namespace, pack_name, "rp-resources")
+                manifest_version = build_manifest_version()
 
                 # BP manifest
                 bp_manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
                 bp_manifest["header"]["name"] = f"{pack_name} v{version_text()}"
                 bp_manifest["header"]["description"] = manifest_description()
                 bp_manifest["header"]["uuid"] = bp_uuid
-                bp_manifest["header"]["version"] = list(PACK_VERSION)
+                bp_manifest["header"]["version"] = manifest_version
                 bp_manifest["modules"][0]["uuid"] = bp_mod_uuid
-                bp_manifest["modules"][0]["version"] = list(PACK_VERSION)
-                bp_manifest.setdefault("dependencies", []).append({"uuid": rp_uuid, "version": list(PACK_VERSION)})
+                bp_manifest["modules"][0]["version"] = manifest_version
+                bp_manifest.setdefault("dependencies", []).append({"uuid": rp_uuid, "version": manifest_version})
                 (bp_root / "manifest.json").write_text(
                     json.dumps(bp_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
                 )
@@ -577,7 +616,7 @@ class PackBuilderApp(tk.Tk):
                         "name": f"{pack_name} Res v{version_text()}",
                         "description": manifest_description(),
                         "uuid": rp_uuid,
-                        "version": list(PACK_VERSION),
+                        "version": manifest_version,
                         "min_engine_version": bp_manifest["header"]["min_engine_version"]
                     },
                     "modules": [
@@ -585,10 +624,10 @@ class PackBuilderApp(tk.Tk):
                             "description": "Resources",
                             "type": "resources",
                             "uuid": rp_mod_uuid,
-                            "version": list(PACK_VERSION)
+                            "version": manifest_version
                         }
                     ],
-                    "dependencies": [{"uuid": bp_uuid, "version": list(PACK_VERSION)}]
+                    "dependencies": [{"uuid": bp_uuid, "version": manifest_version}]
                 }
                 (rp_root / "manifest.json").write_text(
                     json.dumps(rp_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -596,12 +635,12 @@ class PackBuilderApp(tk.Tk):
 
                 # main.js
                 main_text = MAIN_SCRIPT.read_text(encoding="utf-8")
+                # 再生速度は各動画データの fps から決まるため、ここでは接頭辞だけ差し替える
                 main_text = main_text.replace(
                     'const EVENT_NAMESPACE = "badapple";', f'const EVENT_NAMESPACE = "{namespace}";'
-                ).replace(
-                    "const FRAME_INTERVAL_TICKS = 1;", f"const FRAME_INTERVAL_TICKS = {interval};"
                 )
                 (scripts / "main.js").write_text(main_text, encoding="utf-8")
+                shutil.copy2(CODEC_SCRIPT, scripts / "codec.js")
 
                 if first_thumbnail and first_thumbnail.is_file():
                     shutil.copy2(first_thumbnail, rp_root / "pack_icon.png")
@@ -659,5 +698,18 @@ class PackBuilderApp(tk.Tk):
         self.log.configure(state="disabled")
 
 
+def run_converter_mode(argv: list[str]) -> int:
+    """EXE 版の変換モード。GUI から `BlockVideoPlayer.exe --run-converter ...` として起動される。"""
+    if sys.stdout is None:  # windowed EXE で標準出力が無い場合
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = sys.stdout
+    import convert
+
+    return convert.main(argv)
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == RUN_CONVERTER_FLAG:
+        sys.exit(run_converter_mode(sys.argv[2:]))
     PackBuilderApp().mainloop()

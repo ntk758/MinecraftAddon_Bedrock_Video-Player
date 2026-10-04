@@ -1,70 +1,27 @@
-import re
-import json
-import cv2
-import numpy as np
+"""convert.py の出力 (FRAME_DATA v4) と元動画を同じ解像度・fps のフレーム列にそろえる。"""
+import sys
+from pathlib import Path
 
-BASIC_COLOR_MAP = {
-    0: (0, 0, 0),       1: (255, 255, 255), 2: (255, 0, 0),     3: (0, 255, 0),
-    4: (0, 0, 255),     5: (255, 255, 0),   6: (0, 255, 255),   7: (255, 0, 255),
-}
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-def parse_js_output(js_path):
-    with open(js_path, 'r', encoding='utf-8') as f:
-        content = f.read()
+from convert import ffmpeg_frame_generator  # noqa: E402
+from mvcodec.decode import iter_decoded_frames, load_frame_data  # noqa: E402
 
-    fmt_match = re.search(r'(?:const|let|var)\s+FORMAT\s*=\s*(["\'])(.*?)\1', content)
-    fmt = fmt_match.group(2) if fmt_match else "unknown"
 
-    res_match = re.search(r'(?:const|let|var)\s+RESOLUTION\s*=\s*\[(\d+),\s*(\d+)\]', content)
-    resolution = (int(res_match.group(1)), int(res_match.group(2))) if res_match else (64, 36)
+def load_output(js_path):
+    """出力ファイルを読み込み (data, resolution, fps) を返す。"""
+    data = load_frame_data(js_path)
+    return data, (data["width"], data["height"]), data.get("fps", 20.0)
 
-    frames_match = re.search(r'(?:const|let|var)\s+(?:FRAMES|LEVEL_BLOCKS|level_blocks)\s*=\s*(\[.*\])\s*;', content, re.DOTALL)
-    frames = []
-    if frames_match:
-        try:
-            frames = json.loads(frames_match.group(1))
-        except json.JSONDecodeError:
-            print("Warning: Could not parse frames as strict JSON.")
-    return fmt, resolution, frames
 
-def decode_frames_to_rgb(frames, resolution, fmt):
+def decode_frames_to_rgb(data):
+    """ゲーム内と同じ規則で盤面を再構築し、各フレームの表示色 (H, W, 3) を返す。"""
+    return [rgb for _index, rgb in iter_decoded_frames(data)]
+
+
+def extract_video_frames(video_path, fps, resolution, ffmpeg="ffmpeg"):
+    """変換時と同じ FFmpeg フィルタ (縮小+レターボックス) で元動画のフレームを取り出す。"""
     width, height = resolution
-    decoded = []
-    try:
-        from mvcodec.color import ALL_BLOCKS
-        color_map = {i: block.rgb for i, block in enumerate(ALL_BLOCKS)}
-    except ImportError:
-        color_map = BASIC_COLOR_MAP
-
-    for frame_data in frames:
-        img = np.zeros((height, width, 3), dtype=np.uint8)
-        if isinstance(frame_data, list):
-            idx = 0
-            for y in range(height):
-                for x in range(width):
-                    if idx < len(frame_data):
-                        val = frame_data[idx]
-                        if isinstance(val, int):
-                            img[y, x] = color_map.get(val, (0,0,0))
-                        idx += 1
-        decoded.append(img)
-    return decoded
-
-def extract_video_frames(video_path, fps, resolution):
-    cap = cv2.VideoCapture(video_path)
-    frames = []
-    orig_fps = cap.get(cv2.CAP_PROP_FPS)
-    if orig_fps == 0: orig_fps = fps
-    frame_interval = max(1, int(round(orig_fps / fps)))
-    width, height = resolution
-    count = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret: break
-        if count % frame_interval == 0:
-            frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(frame)
-        count += 1
-    cap.release()
-    return frames
+    return list(ffmpeg_frame_generator(video_path, width, height, fps, ffmpeg=ffmpeg))

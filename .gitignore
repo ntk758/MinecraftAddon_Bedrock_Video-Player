@@ -34,3 +34,9 @@ Thumbs.db
 !manifest.json
 !main.js
 !pack_icon.png
+
+# Converter / build outputs
+test_out.js
+demo_output.js
+demo.gif
+*.mcaddon

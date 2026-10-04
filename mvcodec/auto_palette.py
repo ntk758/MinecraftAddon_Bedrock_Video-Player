@@ -1,19 +1,22 @@
 import numpy as np
 
-def generate_auto_palette(frames_iter, all_blocks, max_colors=110, use_gpu=False):
+def generate_auto_palette(frames_iter, all_blocks, max_colors=110, use_gpu=False, sample_stride=10, seed=0):
     """
     動画のフレーム群から代表色を抽出し、all_blocksの中から最適なMinecraftブロックを選出する。
+    sample_stride フレームごとに 1 枚をサンプリングする (呼び出し側で間引き済みなら 1)。
+    同じ入力からは常に同じパレットを返すよう乱数シードを固定している。
     """
+    rng = np.random.default_rng(seed)
     sampled_pixels = []
     # 最初の数十フレームからピクセルをサンプリング
     for i, frame in enumerate(frames_iter):
-        if i % 10 == 0:
+        if i % sample_stride == 0:
             h, w, c = frame.shape
             # 1フレームあたり 1000 ピクセル程度をサンプリング
-            indices = np.random.choice(h * w, 1000, replace=False)
+            indices = rng.choice(h * w, min(1000, h * w), replace=False)
             sampled = frame.reshape(-1, 3)[indices]
             sampled_pixels.append(sampled)
-        if len(sampled_pixels) >= 30: # 300フレーム分まで
+        if len(sampled_pixels) >= 30:
             break
             
     if not sampled_pixels:
@@ -30,7 +33,8 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, use_gpu=False
         num_clusters = min(max_colors, len(all_blocks))
         
         # K-Means++ のように初期化（ここではランダム）
-        indices = torch.randperm(X.shape[0])[:num_clusters]
+        generator = torch.Generator().manual_seed(seed)
+        indices = torch.randperm(X.shape[0], generator=generator)[:num_clusters].to(device)
         centroids = X[indices]
         
         for _ in range(10): # 最大10イテレーション

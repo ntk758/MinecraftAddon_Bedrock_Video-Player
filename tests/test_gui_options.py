@@ -7,9 +7,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from video_player_gui import (
     DITHER_OPTIONS,
     PALETTE_OPTIONS,
+    build_manifest_version,
     resolve_dither,
     resolve_palette,
+    stable_pack_uuid,
 )
+from pack_metadata import PACK_VERSION
 
 
 def test_dither_options_all_7():
@@ -75,6 +78,21 @@ def test_readme_no_invalid_colors():
     for pattern in ["55色", "110色", "112色"]:
         assert pattern not in content, f"README.md に '{pattern}' が残っています"
     print("PASS: README color count check (no 55色/110色/112色)")
+
+
+def test_pack_uuid_is_stable_per_pack():
+    """同じパック名・接頭辞なら UUID が変わらず、BP/RP では異なること"""
+    bp1 = stable_pack_uuid("badapple", "Block Video Player", "bp")
+    assert bp1 == stable_pack_uuid("badapple", "Block Video Player", "bp")
+    assert bp1 != stable_pack_uuid("badapple", "Block Video Player", "rp")
+    assert bp1 != stable_pack_uuid("movie", "Block Video Player", "bp")
+
+
+def test_manifest_version_increases_with_build_time():
+    v1 = build_manifest_version(now=1_800_000_000)
+    v2 = build_manifest_version(now=1_800_000_000 + 120)
+    assert v1[:2] == list(PACK_VERSION[:2])
+    assert v2[2] > v1[2]
 
 
 if __name__ == "__main__":

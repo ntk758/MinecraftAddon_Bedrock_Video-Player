@@ -1,69 +1,62 @@
-import sys
-import os
+"""動画を変換し、ゲーム内と同じ規則で復元した盤面からデモ GIF を作る。
+
+使い方:
+    python scripts/generate_demo_gif.py <入力動画> [--output demo.gif] [--width 128] [--height 128] [--fps 10] [--duration 5]
+"""
+import argparse
 import subprocess
-import json
-import re
+import sys
+import tempfile
 from pathlib import Path
-import numpy as np
+
 from PIL import Image
 
-# プロジェクトルートをパスに追加
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from mvcodec.color import PALETTES
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-def generate_demo():
-    input_video = "C:/Users/nakat/Downloads/test.mp4"
-    if not os.path.exists(input_video):
-        input_video = "C:/Users/nakat/Downloads/videoplayback (1).mp4"
-    if not os.path.exists(input_video):
-        print(f"Test video not found: {input_video}")
-        return
+from mvcodec.decode import iter_decoded_frames, load_frame_data  # noqa: E402
 
-    root_dir = Path(__file__).resolve().parent.parent
-    output_js = root_dir / "demo_output.js"
-    output_gif = root_dir / "demo.gif"
-    
-    width = 128
-    height = 128
-    fps = 10.0
-    duration = 5.0 # デモ用なので5秒
-    
-    print("Running convert.py...")
-    # sys.executable を使って convert.py を呼び出す
-    cmd = [
-        sys.executable,
-        str(root_dir / "convert.py"),
-        "--input-video", input_video,
-        "--output", str(output_js),
-        "--width", str(width),
-        "--height", str(height),
-        "--palette", "auto",
-        "--dither-method", "floyd", # CPUでも動くようにfloydを指定
-        "--duration", str(duration),
-        "--fps", str(fps)
-    ]
-    subprocess.run(cmd, check=True)
-    
-    print("Parsing generated JS...")
-    if not output_js.exists():
-        print("Error: demo_output.js not found.")
-        return
-        
-    js_text = output_js.read_text(encoding="utf-8")
-    
-    # export const FRAME_DATA = { ... }; から JSON 部分を抽出
-    match = re.search(r"export const FRAME_DATA = (\{.*\});", js_text, re.DOTALL)
-    if not match:
-        print("Error: FRAME_DATA not found in JS.")
-        return
-        
-    data = json.loads(match.group(1))
-    
-    # 実際はBase64エンコードされたDelta VarInt + RLE が入っているので、デコードが必要。
-    # しかし、デコードをPythonで書くのは面倒なので、元の画像を直接生成するのではなく、
-    # convert.py 内に "デモ出力用の隠しフラグ" を持たせるか、あるいは...
-    pass
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("video", help="入力動画ファイル")
+    parser.add_argument("--output", default=str(ROOT / "demo.gif"))
+    parser.add_argument("--width", type=int, default=128)
+    parser.add_argument("--height", type=int, default=128)
+    parser.add_argument("--fps", type=float, default=10.0)
+    parser.add_argument("--duration", type=float, default=5.0, help="変換する秒数")
+    parser.add_argument("--palette", default="auto")
+    parser.add_argument("--dither-method", default="floyd", help="既定は CPU でも動く floyd")
+    parser.add_argument("--scale", type=int, default=4, help="GIF の拡大倍率")
+    args = parser.parse_args()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        output_js = Path(temp_dir) / "demo_output.js"
+        cmd = [
+            sys.executable, str(ROOT / "convert.py"),
+            "--input-video", args.video,
+            "--output", str(output_js),
+            "--width", str(args.width),
+            "--height", str(args.height),
+            "--palette", args.palette,
+            "--dither-method", args.dither_method,
+            "--duration", str(args.duration),
+            "--fps", str(args.fps),
+        ]
+        print("Running convert.py...")
+        subprocess.run(cmd, check=True)
+        data = load_frame_data(output_js)
+
+    size = (data["width"] * args.scale, data["height"] * args.scale)
+    frames = [Image.fromarray(rgb).resize(size, Image.Resampling.NEAREST) for _idx, rgb in iter_decoded_frames(data)]
+    if not frames:
+        print("Error: フレームがありません。", file=sys.stderr)
+        return 1
+    frames[0].save(args.output, save_all=True, append_images=frames[1:], optimize=True,
+                   duration=int(1000 / args.fps), loop=0)
+    print(f"Demo GIF saved to {args.output}")
+    return 0
+
 
 if __name__ == "__main__":
-    # convert.py の内部で RLE や Base64 化される前の生のフレーム配列が欲しい。
-    pass
+    sys.exit(main())
