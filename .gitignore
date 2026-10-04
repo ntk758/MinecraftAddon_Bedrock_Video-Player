@@ -36,7 +36,7 @@ Thumbs.db
 !pack_icon.png
 
 # Converter / build outputs
-test_out.js
-demo_output.js
-demo.gif
+/test_out.js
+/demo_output.js
+/demo.gif
 *.mcaddon

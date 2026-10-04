@@ -7,6 +7,15 @@
 [![CI](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml/badge.svg)](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
+<p align="center">
+  <img src="docs/images/demo.gif" alt="左: 元映像 / 右: 128×72 ブロックに変換した映像 (Left: source video, right: converted to 128×72 Minecraft blocks)" width="800">
+  <br>
+  <sub>左: 元映像 / 右: 128×72 ブロックに変換した映像 (ゲーム内と同じ規則で復元した画面) — Left: source / Right: converted to blocks</sub>
+</p>
+
+**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v5.2.0.mcaddon` (サンプル映像入り) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v5.2.0-windows-x64.zip` (Python 不要) を使ってください。
+Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
+
 [日本語](#日本語-japanese) | [English](#english)
 
 ## 日本語 (Japanese)
@@ -128,7 +137,7 @@ python video_player_gui.py
 | `/scriptevent badapple:stop` | 停止してスクリーンを単色で塗りつぶす |
 
 #### スタンドアロン EXE (任意)
-Python が無い PC 向けに、PyInstaller で単体の実行ファイルを作れます。DirectML (torch-directml) がビルド環境に入っていれば同梱されます。
+ビルド済みの EXE は [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) からダウンロードできます (DirectML 同梱)。自分でビルドする場合は PyInstaller を使います。DirectML (torch-directml) がビルド環境に入っていれば同梱されます。
 ```bash
 pip install pyinstaller
 python build_standalone.py
@@ -167,7 +176,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 5. Stand where the screen should be and run `/scriptevent badapple:setup` (`badapple` is the command prefix set in the GUI). The screen is built horizontally at your foot level, extending east (+X) and north (−Z); blocks in that area are overwritten.
 6. Use a compass to open the remote control, or use `/scriptevent badapple:start | list | play <id> | gui | stop`.
 
-To build a standalone EXE: `pip install pyinstaller` then `python build_standalone.py` (bundles torch-directml when installed).
+A prebuilt Windows EXE (with DirectML) and a ready-to-play sample add-on are on the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest). To build the EXE yourself: `pip install pyinstaller` then `python build_standalone.py`.
 
 ---
 
@@ -190,6 +199,7 @@ To build a standalone EXE: `pip install pyinstaller` then `python build_standalo
 ├── build_standalone.py        # PyInstaller build for the standalone EXE
 ├── benchmark/                 # Quality / size benchmark (PSNR, SSIM, ΔE2000, LPIPS)
 ├── scripts/                   # Utilities (demo GIF generator)
+├── docs/images/               # README demo GIF and social preview image
 ├── tests/                     # pytest + Node round-trip tests
 └── requirements*.txt          # Runtime / dev / benchmark / DirectML dependencies
 ```
