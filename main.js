@@ -3,7 +3,7 @@
  * (v3: Object-Oriented Multi-Screen & Adaptive Palette Support)
  */
 
-import { world, system, BlockPermutation, BlockVolume } from "@minecraft/server";
+import { world, system, BlockPermutation, BlockVolume, ListBlockVolume } from "@minecraft/server";
 import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
 import { VIDEOS, VIDEO_LIST } from "./videos.js";
 import {
@@ -43,6 +43,16 @@ const BLOCKS_PER_YIELD = 500;
 const MAX_YIELDS_PER_TICK = MAX_BLOCKS_PER_TICK / BLOCKS_PER_YIELD;
 // 1 tick の描画にかける時間の上限 (ミリ秒)。ブロック数の上限より先に達したら次の tick へ持ち越す
 const TICK_TIME_BUDGET_MS = 30;
+// fillBlocks 1 回で置くブロック数の上限 (公式の上限は未公開。コミュニティでは 32768 が安全とされる)
+const MAX_FILL_BLOCKS = 32768;
+// list 方式で 1 回の fillBlocks(ListBlockVolume) に入れる座標の数
+const LIST_BATCH = 4096;
+// 描画方式: rect = 同じ色の長方形を fillBlocks / list = 色ごとの座標リストを fillBlocks / block = 1 個ずつ
+const RENDER_MODES = ["rect", "list", "block"];
+const RENDER_MODE_KEY = `${EVENT_NAMESPACE}:render_mode`;
+// tickingarea の上限: 1 区画 100 チャンク (10x10 に分割)、ワールド全体で 10 区画 (他のパック用に残す)
+const TICKING_AREA_CHUNKS_PER_SIDE = 10;
+const MAX_TICKING_AREAS = 8;
 // 盤面の比較 (変わったブロックを探す走査) をこの画素数ごとに区切って tick を跨ぐ
 const PIXELS_PER_SCAN_YIELD = 32768;
 // 何フレーム先の GOP を先読みするか
@@ -53,6 +63,11 @@ const BLOCK_ID_ALIASES = {
 };
 
 let mainIntervalId = null;
+
+function currentRenderMode() {
+  const saved = world.getDynamicProperty(RENDER_MODE_KEY);
+  return RENDER_MODES.includes(saved) ? saved : "rect";
+}
 const activePlayers = new Map(); // key: "x,y,z"
 
 let globalSelectedVideoId = VIDEO_LIST.length > 0 ? VIDEO_LIST[0].id : null;
@@ -334,6 +349,17 @@ class VideoPlayer {
    * fillBlocks が使えない環境では 1 個ずつ setBlockPermutation で置く。
    */
   *placeChangedBlocks(width) {
+    if (this.useFill === undefined) this.useFill = typeof this.dimension.fillBlocks === "function";
+    const mode = this.useFill ? currentRenderMode() : "block";
+    if (mode === "list") {
+      yield* this.placeChangedBlocksAsLists(width);
+      return;
+    }
+    yield* this.placeChangedBlocksAsRects(width, mode === "rect");
+  }
+
+  /** rect / block 方式 (useRects が false なら 1 個ずつ)。 */
+  *placeChangedBlocksAsRects(width, useRects) {
     const video = this.videoData;
     const board = this.board;
     const next = this.nextBoard;
@@ -342,7 +368,6 @@ class VideoPlayer {
     const rows = next.length / width;
     // 縦に伸ばしてよい行のまとまり (平面は全行、立体は奥行き 1 段ぶんの高さ)
     const contiguousRows = isVolume(video) ? video.height : rows;
-    if (this.useFill === undefined) this.useFill = typeof this.dimension.fillBlocks === "function";
     const from = { x: 0, y: 0, z: 0 };
     const to = { x: 0, y: 0, z: 0 };
     let operations = 0;
@@ -361,9 +386,11 @@ class VideoPlayer {
         }
         let x1 = x;
         while (x1 + 1 < width && next[p + x1 + 1 - x] === level && board[p + x1 + 1 - x] !== level) x1++;
+        if (useRects && x1 - x + 1 > MAX_FILL_BLOCKS) x1 = x + MAX_FILL_BLOCKS - 1;
         let r1 = r;
-        if (this.useFill) {
-          while (r1 + 1 < rows && (r1 + 1) % contiguousRows !== 0) {
+        if (useRects) {
+          // 1 回の fillBlocks が MAX_FILL_BLOCKS を超えない範囲で下へ伸ばす
+          while (r1 + 1 < rows && (r1 + 1) % contiguousRows !== 0 && (r1 + 2 - r) * (x1 - x + 1) <= MAX_FILL_BLOCKS) {
             const base = (r1 + 1) * width + x;
             let sameRun = true;
             for (let k = 0; k <= x1 - x; k++) {
@@ -379,7 +406,7 @@ class VideoPlayer {
         const permutation = level === airLevel ? this.airPermutation : palette ? palette[level] : null;
         const area = (x1 - x + 1) * (r1 - r + 1);
 
-        if (area > 1 && this.useFill && permutation) {
+        if (area > 1 && useRects && permutation) {
           for (let rr = r; rr <= r1; rr++) board.fill(level, rr * width + x, rr * width + x1 + 1);
           cellToWorld(video, this.anchor, p, from);
           cellToWorld(video, this.anchor, r1 * width + x1, to);
@@ -418,6 +445,57 @@ class VideoPlayer {
         yield;
       }
     }
+    if (failures > 0) {
+      warnOnce("setBlock", `Failed to place ${failures} block(s). The screen may be outside the loaded area`);
+    }
+  }
+
+  /**
+   * list 方式: 変わったマスを色ごとの座標リストにまとめ、fillBlocks(ListBlockVolume) で置く。
+   * 1 フレームの呼び出し回数がおよそ「色の数」になる (形に関係なく少ない)。
+   * 盤面は置いた後で更新するので、途中で一時停止・シークしても表示とずれない。
+   */
+  *placeChangedBlocksAsLists(width) {
+    const video = this.videoData;
+    const board = this.board;
+    const next = this.nextBoard;
+    const palette = this.activePalette;
+    const airLevel = isVolume(video) ? video.air_level : -2;
+    const groups = new Map();
+    let failures = 0;
+    const self = this;
+
+    function* flush(level, group) {
+      if (group.cells.length === 0) return;
+      const permutation = level === airLevel ? self.airPermutation : palette ? palette[level] : null;
+      if (permutation) {
+        try {
+          self.dimension.fillBlocks(new ListBlockVolume(group.locations), permutation);
+        } catch (e) {
+          failures += group.cells.length;
+          warnOnce("fill-list", `fillBlocks(ListBlockVolume) failed: ${e}`);
+        }
+      }
+      for (const cell of group.cells) board[cell] = level;
+      group.cells = [];
+      group.locations = [];
+      yield;
+    }
+
+    for (let p = 0; p < next.length; p++) {
+      if (p % PIXELS_PER_SCAN_YIELD === PIXELS_PER_SCAN_YIELD - 1) yield;
+      const level = next[p];
+      if (level === board[p] || level < 0) continue;
+      let group = groups.get(level);
+      if (!group) {
+        group = { cells: [], locations: [] };
+        groups.set(level, group);
+      }
+      group.cells.push(p);
+      group.locations.push(cellToWorld(video, this.anchor, p, { x: 0, y: 0, z: 0 }));
+      if (group.cells.length >= LIST_BATCH) yield* flush(level, group);
+    }
+    for (const [level, group] of groups) yield* flush(level, group);
     if (failures > 0) {
       warnOnce("setBlock", `Failed to place ${failures} block(s). The screen may be outside the loaded area`);
     }
@@ -651,29 +729,157 @@ function startMainLoop() {
   }, 1);
 }
 
+/**
+ * 描画 API の速さを実機で測る (/scriptevent <接頭辞>:bench)。スクリーンの範囲を使うので、先に setup が必要。
+ * 同じマス (最大 64x64) を白黒交互に塗り替え、方式ごとの 1 ブロックあたりの時間を表示する。
+ */
+function runBenchmark(player) {
+  const vp = getActivePlayer();
+  if (!vp || !vp.videoData) {
+    notify("no_anchor", EVENT_PREFIX);
+    return;
+  }
+  const dimension = vp.dimension;
+  const side = Math.min(64, vp.videoData.width, footprintOf(vp.videoData).sizeZ);
+  const base = { x: vp.anchor.x, y: vp.anchor.y, z: vp.anchor.z };
+  const colors = [BlockPermutation.resolve("minecraft:white_concrete"), BlockPermutation.resolve("minecraft:black_concrete")];
+  const cells = [];
+  for (let z = 0; z < side; z++) for (let x = 0; x < side; x++) cells.push({ x: base.x + x, y: base.y, z: base.z + z });
+  const rounds = 6;
+
+  const methods = [
+    ["setBlockPermutation", (perm) => {
+      for (const loc of cells) dimension.setBlockPermutation(loc, perm);
+      return cells.length;
+    }],
+    ["fillBlocks(row)", (perm) => {
+      for (let z = 0; z < side; z++) {
+        dimension.fillBlocks(new BlockVolume({ x: base.x, y: base.y, z: base.z + z }, { x: base.x + side - 1, y: base.y, z: base.z + z }), perm);
+      }
+      return side;
+    }],
+    ["fillBlocks(area)", (perm) => {
+      dimension.fillBlocks(new BlockVolume(base, { x: base.x + side - 1, y: base.y, z: base.z + side - 1 }), perm);
+      return 1;
+    }],
+    ["fillBlocks(list)", (perm) => {
+      dimension.fillBlocks(new ListBlockVolume(cells), perm);
+      return 1;
+    }],
+    ["structure.place", (perm, round) => {
+      const id = `${EVENT_NAMESPACE}:bench_${round % 2}`;
+      world.structureManager.place(id, dimension, base);
+      return 1;
+    }],
+    ["runCommand(fill)", (perm, round) => {
+      const block = round % 2 === 0 ? "white_concrete" : "black_concrete";
+      for (let z = 0; z < side; z++) {
+        dimension.runCommand(`fill ${base.x} ${base.y} ${base.z + z} ${base.x + side - 1} ${base.y} ${base.z + z} ${block}`);
+      }
+      return side;
+    }],
+  ];
+
+  notify("bench_start", side * side, rounds);
+  vp.stopPlayback();
+  system.runJob((function* () {
+    // structure.place 用に、白と黒の板をメモリ上に作っておく (計測には含めない)
+    try {
+      for (let k = 0; k < 2; k++) {
+        const id = `${EVENT_NAMESPACE}:bench_${k}`;
+        world.structureManager.delete(id);
+        const structure = world.structureManager.createEmpty(id, { x: side, y: 1, z: side });
+        for (let z = 0; z < side; z++) for (let x = 0; x < side; x++) structure.setBlockPermutation({ x, y: 0, z }, colors[k]);
+      }
+    } catch (e) {
+      warnOnce("bench-structure", `Could not prepare benchmark structures: ${e}`);
+    }
+    yield;
+    for (const [name, method] of methods) {
+      let elapsed = 0;
+      let calls = 0;
+      let failed = false;
+      for (let round = 0; round < rounds; round++) {
+        const start = Date.now();
+        try {
+          calls += method(colors[round % 2], round);
+        } catch (e) {
+          failed = true;
+          warnOnce(`bench-${name}`, `${name} failed: ${e}`);
+          break;
+        }
+        elapsed += Date.now() - start;
+        yield;
+      }
+      if (failed) {
+        notify("bench_failed", name);
+      } else {
+        const microsPerBlock = Math.round((elapsed * 1000) / (rounds * side * side) * 100) / 100;
+        notify("bench_result", name, microsPerBlock, Math.round(calls / rounds), elapsed);
+      }
+      yield;
+    }
+    vp.invalidateBoard();
+    notify("bench_done", currentRenderMode());
+  })());
+}
+
+function setRenderMode(mode) {
+  if (!RENDER_MODES.includes(mode)) {
+    notify("render_mode_usage", EVENT_PREFIX, currentRenderMode());
+    return;
+  }
+  world.setDynamicProperty(RENDER_MODE_KEY, mode);
+  notify("render_mode_set", mode);
+}
+
 function getAnchorKeyStr(anchor) {
   return `${anchor.x},${anchor.y},${anchor.z}`;
 }
 
+/**
+ * スクリーンの範囲が読み込まれ続けるよう tickingarea を登録する。
+ * 1 区画は 100 チャンクまでなので 10x10 チャンクずつに分け、最大 MAX_TICKING_AREAS 区画まで登録する。
+ * 戻り値: { added, needed }  needed > added なら一部しか常時読み込みされない (プレイヤーが近くにいれば再生はできる)
+ */
 function ensureTickingArea(dimension, anchor, videoData) {
-  if (!videoData) return false;
-  const areaName = `${TICKING_AREA_NAME}_${anchor.x}_${anchor.y}_${anchor.z}`;
+  if (!videoData) return { added: 0, needed: 0 };
+  const prefix = `${TICKING_AREA_NAME}_${anchor.x}_${anchor.y}_${anchor.z}`;
+  for (let i = 0; i < 16; i++) {
+    try {
+      dimension.runCommand(`tickingarea remove ${prefix}_${i}`);
+    } catch (e) { /* 未登録なら削除失敗は想定内 */ }
+  }
   try {
-    dimension.runCommand(`tickingarea remove ${areaName}`);
-  } catch (e) { /* 未登録なら削除失敗は想定内 */ }
+    dimension.runCommand(`tickingarea remove ${prefix}`); // 以前の版の名前
+  } catch (e) { /* 同上 */ }
 
   const { sizeX, sizeZ } = footprintOf(videoData);
-  const toX = anchor.x + sizeX - 1;
-  const toZ = anchor.z + sizeZ - 1;
-  try {
-    dimension.runCommand(
-      `tickingarea add ${anchor.x} ${anchor.y} ${anchor.z} ${toX} ${anchor.y} ${toZ} ${areaName}`
-    );
-    return true;
-  } catch (e) {
-    console.warn(`[${EVENT_NAMESPACE}] tickingarea add failed: ${e}`);
-    return false;
+  const chunk0X = Math.floor(anchor.x / 16);
+  const chunk0Z = Math.floor(anchor.z / 16);
+  const chunk1X = Math.floor((anchor.x + sizeX - 1) / 16);
+  const chunk1Z = Math.floor((anchor.z + sizeZ - 1) / 16);
+  const step = TICKING_AREA_CHUNKS_PER_SIDE;
+  const areas = [];
+  for (let cz = chunk0Z; cz <= chunk1Z; cz += step) {
+    for (let cx = chunk0X; cx <= chunk1X; cx += step) {
+      const fromX = Math.max(anchor.x, cx * 16);
+      const fromZ = Math.max(anchor.z, cz * 16);
+      const toX = Math.min(anchor.x + sizeX - 1, (cx + step) * 16 - 1);
+      const toZ = Math.min(anchor.z + sizeZ - 1, (cz + step) * 16 - 1);
+      areas.push([fromX, fromZ, toX, toZ]);
+    }
   }
+  let added = 0;
+  for (const [index, [fromX, fromZ, toX, toZ]] of areas.slice(0, MAX_TICKING_AREAS).entries()) {
+    try {
+      dimension.runCommand(`tickingarea add ${fromX} ${anchor.y} ${fromZ} ${toX} ${anchor.y} ${toZ} ${prefix}_${index}`);
+      added++;
+    } catch (e) {
+      console.warn(`[${EVENT_NAMESPACE}] tickingarea add failed: ${e}`);
+    }
+  }
+  return { added, needed: areas.length };
 }
 
 function setup(player) {
@@ -691,10 +897,9 @@ function setup(player) {
     z: Math.floor(loc.z) - footprintOf(videoData).sizeZ - (volume ? 2 : 0),
   };
   
-  if (!ensureTickingArea(player.dimension, anchor, videoData)) {
-    notify("tickingarea_failed");
-    return;
-  }
+  // 常時読み込みが一部しか登録できなくても、プレイヤーが近くにいれば再生できるので設置は続ける
+  const ticking = ensureTickingArea(player.dimension, anchor, videoData);
+  if (ticking.added < ticking.needed) notify("tickingarea_partial", ticking.added, ticking.needed);
   
   const keyStr = getAnchorKeyStr(anchor);
   const vp = new VideoPlayer(anchor, player.dimension, globalSelectedVideoId);
@@ -919,6 +1124,12 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
   const action = event.id.slice(EVENT_PREFIX.length);
 
   switch (action) {
+    case "bench":
+      runBenchmark(player);
+      break;
+    case "render":
+      setRenderMode(event.message?.trim());
+      break;
     case "setup":
       if (!player) {
         notify("setup_needs_player");

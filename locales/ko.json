@@ -155,5 +155,12 @@
   "mode.relief": "입체 부조 (밝기 = 깊이)",
   "mode.extrude": "입체 실루엣 (밝은 부분 돌출)",
   "dialog.vox_files": "MagicaVoxel (.vox)",
-  "build.vox_preview": "  입체 애니메이션 미리보기를 만드는 중…"
+  "build.vox_preview": "  입체 애니메이션 미리보기를 만드는 중…",
+  "addon.tickingarea_partial": "§e틱 영역을 %2개 중 %1개만 추가했습니다. 재생 중에는 화면 근처에 있으세요",
+  "addon.bench_start": "§e벤치마크: 각 방식으로 %1개 블록을 %2번 다시 칠합니다...",
+  "addon.bench_result": "§f%1: §b%2 µs/블록§f (회당 %3번 호출, 총 %4 ms)",
+  "addon.bench_failed": "§c%1: 사용할 수 없음",
+  "addon.bench_done": "§a벤치마크 완료. 현재 그리기 방식: %1",
+  "addon.render_mode_usage": "§e사용법: /scriptevent %1render rect|list|block (현재: %2)",
+  "addon.render_mode_set": "§a그리기 방식을 %1(으)로 설정했습니다"
 }

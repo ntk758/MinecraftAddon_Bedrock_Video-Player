@@ -5,9 +5,11 @@ export const messages = [];
 export const sounds = [];
 export const forms = [];
 // API 呼び出しの回数 (setBlockPermutation / fillBlocks) と、置いたブロックの数
-export const stats = { setBlockCalls: 0, fillCalls: 0, blocksPlaced: 0 };
+export const stats = { setBlockCalls: 0, fillCalls: 0, blocksPlaced: 0, commandFills: 0, structurePlaces: 0 };
 // false にすると fillBlocks が無い環境をまねる
 export const options = { fillBlocks: true };
+// runCommand に渡されたコマンド (tickingarea の確認用)
+export const commands = [];
 
 const jobs = new Map();
 let nextJobId = 0;
@@ -27,6 +29,13 @@ export const dimension = {
     if (!options.fillBlocks) return undefined;
     return (volume, permutation) => {
       stats.fillCalls++;
+      if (volume.locations) {
+        for (const loc of volume.locations) {
+          stats.blocksPlaced++;
+          board.set(`${loc.x},${loc.y},${loc.z}`, permutation.id);
+        }
+        return { volume };
+      }
       const { from, to } = volume;
       for (let x = Math.min(from.x, to.x); x <= Math.max(from.x, to.x); x++) {
         for (let y = Math.min(from.y, to.y); y <= Math.max(from.y, to.y); y++) {
@@ -39,7 +48,22 @@ export const dimension = {
       return { volume };
     };
   },
-  runCommand() {},
+  runCommand(command) {
+    commands.push(command);
+    // tickingarea add は 100 チャンクを超えると失敗する (実際の Minecraft と同じ制限)
+    const m = /^tickingarea add (-?\d+) -?\d+ (-?\d+) (-?\d+) -?\d+ (-?\d+)/.exec(command);
+    if (m) {
+      const [x0, z0, x1, z1] = m.slice(1).map(Number);
+      const chunks = (Math.floor(x1 / 16) - Math.floor(x0 / 16) + 1) * (Math.floor(z1 / 16) - Math.floor(z0 / 16) + 1);
+      if (chunks > 100) throw new Error(`too many chunks: ${chunks}`);
+    }
+    if (command.startsWith("fill ")) {
+      const [x0, y0, z0, x1, y1, z1, block] = command.split(" ").slice(1);
+      for (let x = +x0; x <= +x1; x++) for (let z = +z0; z <= +z1; z++) board.set(`${x},${y0},${z}`, `minecraft:${block}`);
+      stats.commandFills++;
+    }
+    return { successCount: 1 };
+  },
 };
 
 const player = {
@@ -52,6 +76,9 @@ const player = {
 };
 
 export const world = {
+  get structureManager() {
+    return structureManager;
+  },
   afterEvents: { itemUse: { subscribe: (handler) => { itemUseHandler = handler; } } },
   getDynamicProperty: (key) => dynamicProperties[key],
   setDynamicProperty: (key, value) => { dynamicProperties[key] = value; },
@@ -76,6 +103,34 @@ export const system = {
 };
 
 export const BlockPermutation = { resolve: (id) => ({ id }) };
+
+export class ListBlockVolume {
+  constructor(locations) {
+    this.locations = locations.map((loc) => ({ ...loc }));
+  }
+}
+
+const structures = new Map();
+const structureManager = {
+  createEmpty(id, size) {
+    const blocks = new Map();
+    const structure = { id, size, setBlockPermutation: (loc, perm) => blocks.set(`${loc.x},${loc.y},${loc.z}`, perm) };
+    structures.set(id, { structure, blocks });
+    return structure;
+  },
+  delete(id) {
+    return structures.delete(id);
+  },
+  place(id, _dimension, location) {
+    const entry = structures.get(typeof id === "string" ? id : id.id);
+    if (!entry) throw new Error(`no structure ${id}`);
+    stats.structurePlaces++;
+    for (const [key, perm] of entry.blocks) {
+      const [x, y, z] = key.split(",").map(Number);
+      board.set(`${location.x + x},${location.y + y},${location.z + z}`, perm.id);
+    }
+  },
+};
 
 export class BlockVolume {
   constructor(from, to) {

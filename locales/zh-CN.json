@@ -155,5 +155,12 @@
   "mode.relief": "立体浮雕（亮度 = 深度）",
   "mode.extrude": "立体剪影（挤出明亮部分）",
   "dialog.vox_files": "MagicaVoxel (.vox)",
-  "build.vox_preview": "  正在生成立体动画的预览…"
+  "build.vox_preview": "  正在生成立体动画的预览…",
+  "addon.tickingarea_partial": "§e常加载区域只添加了 %2 个中的 %1 个。播放时请留在屏幕附近",
+  "addon.bench_start": "§e基准测试: 用每种方法将 %1 个方块重绘 %2 次...",
+  "addon.bench_result": "§f%1: §b%2 µs/方块§f (每轮 %3 次调用，共 %4 ms)",
+  "addon.bench_failed": "§c%1: 不可用",
+  "addon.bench_done": "§a基准测试完成。当前绘制方式: %1",
+  "addon.render_mode_usage": "§e用法: /scriptevent %1render rect|list|block (当前: %2)",
+  "addon.render_mode_set": "§a绘制方式已设为 %1"
 }

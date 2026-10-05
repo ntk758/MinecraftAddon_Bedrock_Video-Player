@@ -155,5 +155,12 @@
   "mode.relief": "Relieve 3D (brillo = profundidad)",
   "mode.extrude": "Silueta 3D (partes claras extruidas)",
   "dialog.vox_files": "MagicaVoxel (.vox)",
-  "build.vox_preview": "  Generando una vista previa de la animación de vóxeles…"
+  "build.vox_preview": "  Generando una vista previa de la animación de vóxeles…",
+  "addon.tickingarea_partial": "§eSolo se pudieron añadir %1 de %2 áreas de carga. Quédate cerca de la pantalla mientras se reproduce",
+  "addon.bench_start": "§eBenchmark: repintando %1 bloques %2 veces con cada método...",
+  "addon.bench_result": "§f%1: §b%2 µs/bloque§f (%3 llamadas por ronda, %4 ms en total)",
+  "addon.bench_failed": "§c%1: no disponible",
+  "addon.bench_done": "§aBenchmark terminado. Modo de dibujo actual: %1",
+  "addon.render_mode_usage": "§eUso: /scriptevent %1render rect|list|block (actual: %2)",
+  "addon.render_mode_set": "§aModo de dibujo cambiado a %1"
 }

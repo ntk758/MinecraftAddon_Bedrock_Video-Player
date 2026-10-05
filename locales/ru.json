@@ -155,5 +155,12 @@
   "mode.relief": "3D-рельеф (яркость = глубина)",
   "mode.extrude": "3D-силуэт (выдавливание светлых частей)",
   "dialog.vox_files": "MagicaVoxel (.vox)",
-  "build.vox_preview": "  Создание превью воксельной анимации…"
+  "build.vox_preview": "  Создание превью воксельной анимации…",
+  "addon.tickingarea_partial": "§eУдалось добавить только %1 из %2 прогружаемых областей. Во время воспроизведения оставайтесь рядом с экраном",
+  "addon.bench_start": "§eБенчмарк: каждый способ перекрашивает %1 блоков %2 раз...",
+  "addon.bench_result": "§f%1: §b%2 мкс/блок§f (%3 вызовов за раунд, всего %4 мс)",
+  "addon.bench_failed": "§c%1: недоступно",
+  "addon.bench_done": "§aБенчмарк завершён. Текущий способ отрисовки: %1",
+  "addon.render_mode_usage": "§eИспользование: /scriptevent %1render rect|list|block (сейчас: %2)",
+  "addon.render_mode_set": "§aСпособ отрисовки: %1"
 }

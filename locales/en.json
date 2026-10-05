@@ -155,5 +155,12 @@
   "mode.relief": "3D relief (brightness = depth)",
   "mode.extrude": "3D silhouette (bright parts extruded)",
   "dialog.vox_files": "MagicaVoxel (.vox)",
-  "build.vox_preview": "  Rendering a preview of the voxel animation…"
+  "build.vox_preview": "  Rendering a preview of the voxel animation…",
+  "addon.tickingarea_partial": "§eOnly %1 of %2 ticking areas could be added. Stay near the screen while it plays",
+  "addon.bench_start": "§eBenchmark: repainting %1 blocks %2 times with each method...",
+  "addon.bench_result": "§f%1: §b%2 µs/block§f (%3 calls per round, %4 ms total)",
+  "addon.bench_failed": "§c%1: not available",
+  "addon.bench_done": "§aBenchmark finished. Current render mode: %1",
+  "addon.render_mode_usage": "§eUsage: /scriptevent %1render rect|list|block (current: %2)",
+  "addon.render_mode_set": "§aRender mode set to %1"
 }

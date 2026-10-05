@@ -155,5 +155,12 @@
   "mode.relief": "立体レリーフ (明るさ = 奥行き)",
   "mode.extrude": "立体シルエット (明るい部分を押し出し)",
   "dialog.vox_files": "MagicaVoxel (.vox)",
-  "build.vox_preview": "  立体アニメのプレビューを作成中…"
+  "build.vox_preview": "  立体アニメのプレビューを作成中…",
+  "addon.tickingarea_partial": "§e常時読み込み範囲は %2 区画中 %1 区画しか登録できませんでした。再生中はスクリーンの近くにいてください",
+  "addon.bench_start": "§eベンチマーク: %1 ブロックを各方式で %2 回塗り替えます...",
+  "addon.bench_result": "§f%1: §b%2 µs/ブロック§f (1 回あたり %3 呼び出し、合計 %4 ms)",
+  "addon.bench_failed": "§c%1: 使用できません",
+  "addon.bench_done": "§aベンチマーク完了。現在の描画方式: %1",
+  "addon.render_mode_usage": "§e使い方: /scriptevent %1render rect|list|block (現在: %2)",
+  "addon.render_mode_set": "§a描画方式を %1 にしました"
 }

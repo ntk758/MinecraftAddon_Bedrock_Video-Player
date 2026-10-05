@@ -155,5 +155,12 @@
   "mode.relief": "立體浮雕（亮度 = 深度）",
   "mode.extrude": "立體剪影（擠出明亮部分）",
   "dialog.vox_files": "MagicaVoxel (.vox)",
-  "build.vox_preview": "  正在產生立體動畫的預覽…"
+  "build.vox_preview": "  正在產生立體動畫的預覽…",
+  "addon.tickingarea_partial": "§e常駐區域只新增了 %2 個中的 %1 個。播放時請待在螢幕附近",
+  "addon.bench_start": "§e效能測試: 用每種方式將 %1 個方塊重繪 %2 次...",
+  "addon.bench_result": "§f%1: §b%2 µs/方塊§f (每輪 %3 次呼叫，共 %4 ms)",
+  "addon.bench_failed": "§c%1: 無法使用",
+  "addon.bench_done": "§a效能測試完成。目前的繪製方式: %1",
+  "addon.render_mode_usage": "§e用法: /scriptevent %1render rect|list|block (目前: %2)",
+  "addon.render_mode_set": "§a繪製方式已設為 %1"
 }
