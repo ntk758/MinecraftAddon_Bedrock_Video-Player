@@ -23,6 +23,7 @@ from mvcodec.color import (
     process_single_frame_img,
     rgb_to_oklab_torch,
 )
+from gui_i18n import LOCALES, Translator, detect_system_language
 from mvcodec.device import DEVICE_CHOICES, detect_gpu, empty_cache, squared_distances
 from mvcodec.encode import (
     MAX_PALETTE_COLORS,
@@ -49,6 +50,9 @@ SSIM_MAX_SAMPLES = 50
 CPU_BATCH_SIZE = 256
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
 GPU_DITHER_METHODS = ("none", "ordered", "blue_noise")
+
+# ログの表示言語 (main で --lang に合わせて切り替える)
+_tr = Translator(detect_system_language())
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +204,8 @@ def make_auto_palette_builder(gpu):
         thumb_hash = hashlib.md5(np.ascontiguousarray(first_frame[::8, ::8]).tobytes()).hexdigest()
         if thumb_hash not in cache:
             cache[thumb_hash] = generate_auto_palette(
-                samples, ALL_BLOCKS, max_colors=AUTO_PALETTE_MAX_COLORS, device=gpu.torch_device if gpu else None, sample_stride=1
+                samples, ALL_BLOCKS, max_colors=AUTO_PALETTE_MAX_COLORS, device=gpu.torch_device if gpu else None, sample_stride=1,
+                warn=lambda error: print(_tr("convert.palette_cpu_retry", error=error)),
             )
         return cache[thumb_hash]
 
@@ -408,6 +413,7 @@ def parse_args(argv=None):
     parser.add_argument("--scene-threshold", type=float, default=0.015,
                         help="adaptive-fps でフレームを省略する変化率のしきい値")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
+    parser.add_argument("--lang", default=None, choices=sorted(LOCALES), help="ログの表示言語 (既定は OS の言語)")
     parser.add_argument("--demo-gif", default=None, help="指定されたパスにデモ用GIFを出力する")
     args = parser.parse_args(argv)
 
@@ -428,30 +434,30 @@ def gpu_self_test(gpu, dither_method, apply_perceptual):
     results = list(quantize_frames_gpu(frames, [palette_rgb], [0, len(frames)], 8, 8,
                                        dither_method, apply_perceptual, gpu=gpu))
     if len(results) != len(frames) or any(r.shape != (8, 8) or r.min() < 0 or r.max() >= len(palette_rgb) for r in results):
-        raise RuntimeError("GPU の減色結果が不正です")
+        raise RuntimeError("GPU quantization returned invalid palette indices")
 
 
 def select_gpu(preference, dither_method, apply_perceptual):
     """GPU を選び、動作確認に失敗したら CPU にフォールバックする。"""
     if preference == "cpu":
-        print("[MVCodec] 減色デバイス: CPU (--device cpu)")
+        print(_tr("convert.device_cpu_forced"))
         return None
     gpu = detect_gpu(preference)
     if gpu is None:
         if preference != "auto":
-            print(f"[MVCodec] 警告: --device {preference} の GPU が見つからないため CPU で変換します", file=sys.stderr)
-        print("[MVCodec] 減色デバイス: CPU (利用可能な GPU なし)")
+            print(_tr("convert.device_missing", device=preference), file=sys.stderr)
+        print(_tr("convert.device_none"))
         return None
     test_dither = dither_method if dither_method in GPU_DITHER_METHODS else "none"
     try:
         gpu_self_test(gpu, test_dither, apply_perceptual)
     except Exception as error:
-        print(f"[MVCodec] 警告: {gpu.describe()} で GPU 処理を実行できないため CPU で変換します: {error}", file=sys.stderr)
+        print(_tr("convert.gpu_failed", gpu=gpu.describe(), error=error), file=sys.stderr)
         return None
     if dither_method not in GPU_DITHER_METHODS:
-        print(f"[MVCodec] 減色デバイス: CPU (ディザ '{dither_method}' は CPU 専用。自動パレットは {gpu.describe()} を使用)")
+        print(_tr("convert.device_cpu_dither", dither=dither_method, gpu=gpu.describe()))
     else:
-        print(f"[MVCodec] 減色デバイス: {gpu.describe()}")
+        print(_tr("convert.device_gpu", gpu=gpu.describe()))
     return gpu
 
 
@@ -473,8 +479,10 @@ def _use_utf8_for_pipes():
 
 
 def main(argv=None):
+    global _tr
     _use_utf8_for_pipes()
     args = parse_args(argv)
+    _tr = Translator(args.lang or detect_system_language())
     width, height = args.width, args.height
     frame_source = make_frame_source(args)
     gpu = select_gpu(args.device, args.dither_method, args.perceptual)
@@ -485,7 +493,7 @@ def main(argv=None):
     gop_boundaries, adaptive_palettes = analyze_gops(frame_source(), palette_builder)
     total_frames = gop_boundaries[-1]
     if total_frames == 0:
-        print("入力フレームがありません。", file=sys.stderr)
+        print(_tr("convert.no_frames"), file=sys.stderr)
         return 1
     num_gops = len(gop_boundaries) - 1
 

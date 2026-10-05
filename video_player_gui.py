@@ -18,7 +18,9 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from gui_i18n import LOCALES, Translator, available_languages, initial_language, load_settings, save_settings
+from gui_i18n import (
+    LOCALES, Translator, addon_lang_files, available_languages, initial_language, load_settings, save_settings,
+)
 from pack_metadata import PACK_VERSION, RELEASE_NOTES, changelog_markdown, manifest_description, version_text
 
 
@@ -129,7 +131,7 @@ def resolve_device(device_text: str) -> str:
 def build_converter_args(
     video: Path, output: Path, ffmpeg: str, width: int, height: int, interval: int,
     palette: str, dither_method: str, keyframe_interval: int, device: str,
-    perceptual: bool, duration: float | None,
+    perceptual: bool, duration: float | None, language: str = "en",
 ) -> list[str]:
     """convert.py に渡す引数 (起動コマンド部分を除く)。"""
     args = [
@@ -141,6 +143,7 @@ def build_converter_args(
         "--dither-method", dither_method,
         "--keyframe-interval", str(keyframe_interval),
         "--device", device,
+        "--lang", language,
     ]
     if not perceptual:
         args.append("--no-perceptual")
@@ -644,6 +647,7 @@ class PackBuilderApp(tk.Tk):
                         *build_converter_args(
                             video, generated_data, ffmpeg, width, height, interval, palette, dither_method,
                             self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
+                            self.tr.language,
                         ),
                     ]
                     self._run(converter_args)
@@ -674,6 +678,12 @@ class PackBuilderApp(tk.Tk):
                         json.dumps({"format_version": "1.14.0", "sound_definitions": sound_definitions}, ensure_ascii=False, indent=2),
                         encoding="utf-8"
                     )
+
+                # ゲーム内表示の翻訳 (各プレイヤーのゲーム言語で表示される)
+                for relative_path, content in addon_lang_files().items():
+                    lang_file = rp_root / relative_path
+                    lang_file.parent.mkdir(parents=True, exist_ok=True)
+                    lang_file.write_text(content, encoding="utf-8")
 
                 # videos.js 自動生成
                 self.messages.put(self.tr("build.videos_index"))

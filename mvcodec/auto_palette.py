@@ -1,10 +1,11 @@
 import numpy as np
 
-def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, sample_stride=10, seed=0):
+def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, sample_stride=10, seed=0, warn=None):
     """
     動画のフレーム群から代表色を抽出し、all_blocksの中から最適なMinecraftブロックを選出する。
     device は torch のデバイス (CUDA / ROCm / DirectML)。None なら CPU で計算する。
     sample_stride フレームごとに 1 枚をサンプリングする (呼び出し側で間引き済みなら 1)。
+    warn は GPU で失敗して CPU でやり直すときに例外を渡して呼ぶ関数 (表示言語は呼び出し側で決める)。
     同じ入力からは常に同じパレットを返すよう乱数シードを固定している。
     """
     rng = np.random.default_rng(seed)
@@ -37,7 +38,10 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, 
         if device is None:
             raise
         # GPU (DirectML 等) で未対応の演算があれば CPU でやり直す
-        print(f"[MVCodec] 警告: 自動パレットを GPU で計算できないため CPU で再計算します: {error}")
+        if warn is not None:
+            warn(error)
+        else:
+            print(f"[MVCodec] Warning: the auto palette could not be computed on the GPU; retrying on the CPU: {error}")
         return _kmeans_select(pixels, all_blocks, max_colors, None, seed)
 
 

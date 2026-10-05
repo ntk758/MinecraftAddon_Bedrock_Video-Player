@@ -112,3 +112,46 @@ def initial_language(settings: dict | None = None) -> str:
     if saved in LOCALES:
         return saved
     return detect_system_language()
+
+
+# ---------------------------------------------------------------------------
+# ゲーム内 (アドオン) の翻訳: locales/*.json の "addon.*" から Bedrock の texts/*.lang を作る
+# ---------------------------------------------------------------------------
+
+ADDON_KEY_PREFIX = "addon."
+LANG_KEY_PREFIX = "bvp."
+# GUI の言語コード -> Minecraft の言語コード (同じ言語の地域違いにも同じ翻訳を使う)
+MINECRAFT_LOCALES = {
+    "en": ("en_US", "en_GB"),
+    "ja": ("ja_JP",),
+    "zh-CN": ("zh_CN",),
+    "zh-TW": ("zh_TW",),
+    "ko": ("ko_KR",),
+    "es": ("es_ES", "es_MX"),
+    "pt-BR": ("pt_BR", "pt_PT"),
+    "fr": ("fr_FR", "fr_CA"),
+    "de": ("de_DE",),
+    "ru": ("ru_RU",),
+}
+
+
+def addon_lang_files() -> dict[str, str]:
+    """{"texts/en_US.lang": 内容, ..., "texts/languages.json": 内容} を返す。
+
+    Minecraft は翻訳の無い言語では en_US を使うため、en_US は必ず含める。
+    """
+    files = {}
+    for language, mc_codes in MINECRAFT_LOCALES.items():
+        if language not in LOCALES:
+            continue
+        lines = [
+            f"{LANG_KEY_PREFIX}{key[len(ADDON_KEY_PREFIX):]}={text}"
+            for key, text in LOCALES[language].items()
+            if key.startswith(ADDON_KEY_PREFIX)
+        ]
+        content = "\n".join(lines) + "\n"
+        for code in mc_codes:
+            files[f"texts/{code}.lang"] = content
+    codes = sorted(path[len("texts/"):-len(".lang")] for path in files)
+    files["texts/languages.json"] = json.dumps(codes, indent=2) + "\n"
+    return files

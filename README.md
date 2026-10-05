@@ -34,7 +34,7 @@ Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを
 - 👑 **マイクラ実在ブロック 39 色パレット** (コンクリート・テラコッタ・発光ブロック) と、動画ごとに色を選ぶ自動パレット
 - 🗜 **差分圧縮** (変化したブロックだけを書き換える RLE + VarInt 形式。シーンごとのキーフレームで高速シーク)
 - ⚡ **GPU 変換対応**: NVIDIA (CUDA)・AMD (ROCm / DirectML)・Intel (DirectML)。GPU が無くても CPU で変換可能
-- 🌐 **GUI は 10 言語対応**: 日本語・English・简体中文・繁體中文・한국어・Español・Português (Brasil)・Français・Deutsch・Русский
+- 🌐 **10 言語対応**: 日本語・English・简体中文・繁體中文・한국어・Español・Português (Brasil)・Français・Deutsch・Русский。GUI は画面右上で切り替え、ゲーム内のメッセージとリモコン画面は各プレイヤーの Minecraft の言語設定で表示
 
 ### 💻 必要な環境 (Requirements)
 | 項目 | 内容 |
@@ -76,7 +76,7 @@ GPU を使わない場合はこの手順は不要です。
 
 - GUI の「変換デバイス」が **自動** なら **CUDA / ROCm → DirectML → CPU** の順に使えるものを選びます。DirectML では内蔵 GPU より単体 GPU を優先します。
 - 変換前に GPU で小さなテスト変換を行い、失敗した場合は自動で CPU 変換に切り替えます。
-- 実際に使われたデバイスは処理ログの `[MVCodec] 減色デバイス: AMD Radeon RX 9070 XT (directml)` のような行で確認できます。
+- 実際に使われたデバイスは処理ログの `[MVCodec] 減色デバイス: AMD Radeon RX 9070 XT (directml)` (英語表示では `Conversion device:`) のような行で確認できます。
 - GPU 経路は OkLab 色空間での色合わせ・知覚的なレート歪み最適化 (RDO)・時間方向ディザを行うため、CPU 経路 (Pillow) とは仕上がりが異なり、容量は小さめになります。処理が重い分、**変換全体が CPU より速くなるとは限りません** (例: RX 9070 XT + DirectML、256×256 で減色処理は約 200 fps)。
 - GPU で処理できるディザは「なし / Blue Noise / Ordered」です。それ以外のディザを選ぶと CPU で処理されます。
 
@@ -164,7 +164,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - 👑 **39-color palette of real blocks** (concrete, terracotta, light sources) plus a per-video automatic palette
 - 🗜 **Delta compression** (only changed blocks are rewritten; RLE + VarInt, per-scene keyframes for fast seeking)
 - ⚡ **GPU conversion** on NVIDIA (CUDA), AMD (ROCm / DirectML) and Intel (DirectML); CPU works too
-- 🌐 **GUI in 10 languages**: Japanese, English, Simplified/Traditional Chinese, Korean, Spanish, Portuguese (Brazil), French, German, Russian
+- 🌐 **10 languages**: Japanese, English, Simplified/Traditional Chinese, Korean, Spanish, Portuguese (Brazil), French, German, Russian — in the GUI (selector at the top right) and in game (chat messages and the remote follow each player's Minecraft language)
 
 ### 💻 Requirements
 - **OS**: Windows 10 / 11 for the GUI (the CLI also runs on Linux)
@@ -174,7 +174,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 
 ### 🚀 Usage
 1. `pip install -r requirements.txt`
-2. Optional GPU: CUDA build of PyTorch (NVIDIA), ROCm build (AMD on Linux, or AMD's PyTorch for Windows), or `pip install -r requirements-directml.txt` (AMD / Intel on Windows). With **Device = Auto** the converter tries CUDA/ROCm → DirectML → CPU, runs a small self-test on the GPU and falls back to CPU if it fails. The log line `[MVCodec] 減色デバイス:` shows the device in use.
+2. Optional GPU: CUDA build of PyTorch (NVIDIA), ROCm build (AMD on Linux, or AMD's PyTorch for Windows), or `pip install -r requirements-directml.txt` (AMD / Intel on Windows). With **Device = Auto** the converter tries CUDA/ROCm → DirectML → CPU, runs a small self-test on the GPU and falls back to CPU if it fails. The log line `[MVCodec] Conversion device:` shows the device in use.
 3. Run `python video_player_gui.py` (switch the UI language with **🌐 Language** at the top right — it follows your Windows display language by default), add videos, choose a quality preset / palette / dithering / device, and press **".mcaddon を作成"** (Create .mcaddon).
 4. Import the `.mcaddon`, enable both the Behavior Pack and the Resource Pack, and turn on cheats (for `/scriptevent`).
 5. Stand where the screen should be and run `/scriptevent badapple:setup` (`badapple` is the command prefix set in the GUI). The screen is built horizontally at your foot level, extending east (+X) and north (−Z); blocks in that area are overwritten.
@@ -190,7 +190,7 @@ A prebuilt Windows EXE (with DirectML) and a ready-to-play sample add-on are on 
 .
 ├── video_player_gui.py        # GUI & pack builder (.mcaddon generator)
 ├── gui_i18n.py                # GUI translations loader, language detection, saved settings
-├── locales/                   # GUI translations (one JSON per language, en.json is the reference)
+├── locales/                   # Translations for the GUI, in-game texts (addon.*) and converter logs (convert.*); en.json is the reference
 ├── convert.py                 # Video → block data converter CLI (2-pass streaming, GPU/CPU)
 ├── mvcodec/                   # Codec library
 │   ├── color.py               #   Palettes, dithering, OkLab
@@ -228,7 +228,10 @@ pytest -q
 - `tests/test_device.py` は GPU の選択と CPU へのフォールバックを検証します (PyTorch があれば GPU 用の処理も CPU で実行して確認)。
 - GitHub Actions (`.github/workflows/ci.yml`) で push / PR ごとにテストと参考ベンチマークを実行します。
 
-GUI の翻訳を追加・修正するには `locales/` の JSON を編集します。新しい言語は `en.json` をコピーして `<言語コード>.json` を作るだけで選択肢に現れます。`tests/test_i18n.py` がキーと `{プレースホルダー}` の過不足を検査します。翻訳の改善 PR も歓迎です。
+翻訳を追加・修正するには `locales/` の JSON を編集します。1 つのファイルに GUI (通常のキー)・ゲーム内の表示 (`addon.*`、引数は `%1` `%2`)・変換器のログ (`convert.*`) がまとまっています。
+- 新しい言語は `en.json` をコピーして `<言語コード>.json` を作ると GUI の選択肢に現れます。ゲーム内でも使うには `gui_i18n.py` の `MINECRAFT_LOCALES` に Minecraft の言語コード (例: `it_IT`) を追加してください。
+- ゲーム内の文字列は、GUI でビルドするときにリソースパックの `texts/*.lang` に書き出されます。翻訳が無い言語の Minecraft では英語 (`en_US`) で表示されます。
+- `tests/test_i18n.py` がキーとプレースホルダーの過不足を、`tests/test_main_js.py` が `main.js` をモック環境で動かして、表示がすべて翻訳済みかを検査します。翻訳の改善 PR も歓迎です。
 
 コマンドラインでの変換:
 ```bash

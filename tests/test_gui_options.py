@@ -107,10 +107,11 @@ def test_converter_args_are_accepted_by_convert():
         for perceptual, duration in [(True, None), (False, 12.5)]:
             argv = build_converter_args(
                 Path("in.mp4"), Path("out.js"), "ffmpeg", 128, 128, 2, "auto", "blue_noise",
-                30, device, perceptual, duration,
+                30, device, perceptual, duration, "ko",
             )
             args = convert.parse_args(argv)
             assert args.device == device
+            assert args.lang == "ko"
             assert args.fps == 10.0
             assert args.perceptual is perceptual
             assert args.duration == duration

@@ -119,7 +119,7 @@ def test_adaptive_palette_switch_keeps_colors_correct(tmp_path, monkeypatch):
     """GOP ごとにパレット番号の意味が変わっても、表示色が各 GOP のパレットで正しく再現されること。"""
     calls = []
 
-    def rotating_palette(frames_iter, all_blocks, max_colors=110, device=None, sample_stride=10, seed=0):
+    def rotating_palette(frames_iter, all_blocks, max_colors=110, device=None, sample_stride=10, seed=0, warn=None):
         shift = 7 * len(calls)
         calls.append(shift)
         return all_blocks[shift:] + all_blocks[:shift]

@@ -48,6 +48,29 @@ const activePlayers = new Map(); // key: "x,y,z"
 
 let globalSelectedVideoId = VIDEO_LIST.length > 0 ? VIDEO_LIST[0].id : null;
 
+// プレイヤーに見せる文字列はリソースパックの texts/*.lang にあり、各プレイヤーのゲーム言語で表示される。
+// 翻訳の元は locales/*.json の "addon.*" キー (GUI がビルド時に .lang を生成し、キー名は "bvp.*" になる)。
+function tr(key, ...args) {
+  const message = { translate: `bvp.${key}` };
+  if (args.length > 0) {
+    message.with = { rawtext: args.map((arg) => (typeof arg === "object" ? arg : { text: String(arg) })) };
+  }
+  return message;
+}
+
+function textLines(...parts) {
+  const rawtext = [];
+  parts.forEach((part, index) => {
+    if (index > 0) rawtext.push({ text: "\n" });
+    rawtext.push(part);
+  });
+  return { rawtext };
+}
+
+function notify(key, ...args) {
+  world.sendMessage({ rawtext: [{ text: `${MESSAGE_PREFIX}§r ` }, tr(key, ...args)] });
+}
+
 const warnedMessages = new Set();
 function warnOnce(key, message) {
   if (warnedMessages.has(key)) return;
@@ -60,7 +83,7 @@ function resolvePermutation(spec) {
   try {
     return BlockPermutation.resolve(blockId, spec.states);
   } catch (e) {
-    warnOnce(`resolve:${blockId}`, `ブロック ${blockId} を解決できないため dirt で代用します: ${e}`);
+    warnOnce(`resolve:${blockId}`, `Cannot resolve block ${blockId}; using dirt instead: ${e}`);
     return BlockPermutation.resolve("minecraft:dirt");
   }
 }
@@ -230,7 +253,7 @@ class VideoPlayer {
       }
     }
     if (failures > 0) {
-      warnOnce("setBlock", `ブロック設置に失敗しました (${failures} 件)。スクリーンが読み込み範囲外の可能性があります`);
+      warnOnce("setBlock", `Failed to place ${failures} block(s). The screen may be outside the loaded area`);
     }
   }
 
@@ -292,7 +315,7 @@ class VideoPlayer {
           try {
             p.playMusic(trackId, { volume: this.masterVolume, loop: false });
           } catch (e2) {
-            warnOnce(`audio:${trackId}`, `音声 ${trackId} を再生できませんでした: ${e2}`);
+            warnOnce(`audio:${trackId}`, `Cannot play sound ${trackId}: ${e2}`);
           }
         }
       }
@@ -311,7 +334,7 @@ class VideoPlayer {
     if (!this.frameIterator) {
       if (this.currentFrame >= this.videoData.frame_count) {
         this.stopPlayback();
-        world.sendMessage(`§a[${EVENT_NAMESPACE}] 再生終了 (${this.anchor.x},${this.anchor.y},${this.anchor.z})`);
+        notify("playback_finished", this.anchor.x, this.anchor.y, this.anchor.z);
         return;
       }
       // 動画の fps に合わせて、表示時刻が来るまで次のフレームを始めない
@@ -396,7 +419,7 @@ class VideoPlayer {
           try {
             self.dimension.setBlockPermutation(loc, clearPermutation);
           } catch (e) {
-            warnOnce("clear", `盤面クリア中にブロック設置に失敗しました: ${e}`);
+            warnOnce("clear", `Failed to place blocks while clearing the screen: ${e}`);
           }
           if (++operations >= BLOCKS_PER_YIELD) {
             operations = 0;
@@ -405,7 +428,7 @@ class VideoPlayer {
         }
       }
       self.currentJobId = null;
-      world.sendMessage(`§a[${EVENT_NAMESPACE}] 停止・盤面クリア完了`);
+      notify("clear_done");
     })());
   }
 
@@ -426,7 +449,7 @@ class VideoPlayer {
       startFrame = Math.floor(targetFrame / gop) * gop;
     }
 
-    world.sendMessage(`§e[${EVENT_NAMESPACE}] フレーム ${targetFrame} へシーク中...`);
+    notify("seeking", targetFrame);
 
     const self = this;
     this.currentJobId = system.runJob((function* () {
@@ -436,7 +459,7 @@ class VideoPlayer {
       // targetFrame まで描画済みなので、再開時は次のフレームから
       self.currentFrame = targetFrame + 1;
       self.currentJobId = null;
-      world.sendMessage(`§a[${EVENT_NAMESPACE}] シーク完了 (一時停止中) — リモコンの ▶ で再開します`);
+      notify("seek_done");
     })());
   }
 }
@@ -477,7 +500,7 @@ function ensureTickingArea(dimension, anchor, videoData) {
 
 function setup(player) {
   if (!globalSelectedVideoId) {
-    world.sendMessage(`§c[${EVENT_NAMESPACE}] 動画が選択されていません`);
+    notify("no_video_selected");
     return;
   }
   const videoData = VIDEOS[globalSelectedVideoId];
@@ -489,7 +512,7 @@ function setup(player) {
   };
   
   if (!ensureTickingArea(player.dimension, anchor, videoData)) {
-    world.sendMessage(`§c[${EVENT_NAMESPACE}] tickingareaの設定に失敗しました。チート設定を確認してください`);
+    notify("tickingarea_failed");
     return;
   }
   
@@ -500,7 +523,7 @@ function setup(player) {
   world.setDynamicProperty(ANCHOR_DIMENSION_KEY, player.dimension.id);
   startMainLoop();
 
-  world.sendMessage(`§a[${EVENT_NAMESPACE}] セットアップ完了。リモコン(コンパス)を使用するか /scriptevent ${EVENT_PREFIX}start で再生します`);
+  notify("setup_done", EVENT_PREFIX);
 }
 
 function getPlaybackDimension(fallbackDimension) {
@@ -509,7 +532,7 @@ function getPlaybackDimension(fallbackDimension) {
     try {
       return world.getDimension(dimensionId);
     } catch (e) {
-      warnOnce(`dimension:${dimensionId}`, `ディメンション ${dimensionId} を取得できません: ${e}`);
+      warnOnce(`dimension:${dimensionId}`, `Cannot get dimension ${dimensionId}: ${e}`);
     }
   }
   return fallbackDimension;
@@ -518,7 +541,7 @@ function getPlaybackDimension(fallbackDimension) {
 function startPlayback(dimension) {
   const anchorLoc = world.getDynamicProperty(ANCHOR_KEY);
   if (!anchorLoc) {
-    world.sendMessage(`§c[${EVENT_NAMESPACE}] 原点が見つかりません。先に /scriptevent ${EVENT_PREFIX}setup を実行してください`);
+    notify("no_anchor", EVENT_PREFIX);
     return;
   }
   const keyStr = getAnchorKeyStr(anchorLoc);
@@ -533,14 +556,14 @@ function startPlayback(dimension) {
   }
 
   vp.restart();
-  world.sendMessage(`§a[${EVENT_NAMESPACE}] 読み込み完了後に再生します`);
+  notify("starting");
 }
 
 function resumeOrStartPlayback(dimension) {
   const vp = getActivePlayer();
   if (vp && vp.canResume() && (!globalSelectedVideoId || vp.videoId === globalSelectedVideoId)) {
     vp.resume();
-    world.sendMessage(`${MESSAGE_PREFIX} §a再生を再開しました`);
+    notify("resumed");
   } else {
     startPlayback(dimension);
   }
@@ -553,7 +576,7 @@ function stopAndClearAll(dimension) {
     let vp = activePlayers.get(keyStr);
     if (vp) {
       vp.stopAndClear();
-      world.sendMessage(`§e[${EVENT_NAMESPACE}] 盤面をクリアしています...`);
+      notify("clearing");
     }
   }
 }
@@ -572,8 +595,8 @@ function showRemoteControlGUI(player) {
   const currentVideoId = vp ? vp.videoId : globalSelectedVideoId;
   const videoData = VIDEOS[currentVideoId];
   
-  const statusStr = running ? "§a再生中" : "§c停止中";
-  const titleStr = currentVideoId ? currentVideoId : "未選択";
+  const statusText = tr(running ? "remote.playing" : "remote.stopped");
+  const titleText = currentVideoId ? { text: currentVideoId } : tr("remote.none");
   const currentFrame = vp ? vp.currentFrame : 0;
   const masterVolume = vp ? vp.masterVolume : 1.0;
   
@@ -581,15 +604,20 @@ function showRemoteControlGUI(player) {
   const totalSec = videoData ? Math.floor(frameToSeconds(videoData, videoData.frame_count)) : 0;
 
   const form = new ActionFormData()
-    .title("🎬 動画プレイヤー リモコン")
-    .body(`【ステータス】: ${statusStr}\n【選択中】: §b${titleStr}\n【再生位置】: ${currentSec}s / ${totalSec}s (Frame: ${currentFrame})\n【音量】: ${Math.round(masterVolume * 100)}%`)
-    .button(running ? "⏸ 一時停止" : "▶ 再生 / 再開", "textures/items/emerald")
-    .button("⏹ 停止 ＆ クリア", "textures/blocks/redstone_block")
-    .button("⏭ 次の動画", "textures/items/paper")
-    .button("⏮ 前の動画", "textures/items/paper")
-    .button("🔊 音量設定", "textures/items/repeater")
-    .button("⏩ シーク (時間移動)", "textures/items/clock")
-    .button("📜 動画リストから選択", "textures/items/book_portfolio");
+    .title(tr("remote.title"))
+    .body(textLines(
+      tr("remote.status", statusText),
+      tr("remote.selected", titleText),
+      tr("remote.position", currentSec, totalSec, currentFrame),
+      tr("remote.volume", `${Math.round(masterVolume * 100)}%`),
+    ))
+    .button(tr(running ? "remote.pause" : "remote.play"), "textures/items/emerald")
+    .button(tr("remote.stop"), "textures/blocks/redstone_block")
+    .button(tr("remote.next"), "textures/items/paper")
+    .button(tr("remote.prev"), "textures/items/paper")
+    .button(tr("remote.volume_button"), "textures/items/repeater")
+    .button(tr("remote.seek"), "textures/items/clock")
+    .button(tr("remote.library"), "textures/items/book_portfolio");
 
   form.show(player).then((response) => {
     if (response.canceled) return;
@@ -600,7 +628,7 @@ function showRemoteControlGUI(player) {
       case 0:
         if (vp && vp.running) {
           vp.stopPlayback();
-          world.sendMessage(`${MESSAGE_PREFIX} §e一時停止しました`);
+          notify("paused");
         } else {
           resumeOrStartPlayback(dimension);
         }
@@ -635,7 +663,7 @@ function switchVideoIndex(direction, player) {
   if (currentIdx === -1) currentIdx = 0;
   let newIdx = (currentIdx + direction + VIDEO_LIST.length) % VIDEO_LIST.length;
   globalSelectedVideoId = VIDEO_LIST[newIdx].id;
-  world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${globalSelectedVideoId}' を次回から再生します。またはsetupし直してください。`);
+  notify("next_video", globalSelectedVideoId);
   showRemoteControlGUI(player);
 }
 
@@ -643,8 +671,8 @@ function showVolumeGUI(player) {
   const vp = getActivePlayer();
   const mv = vp ? vp.masterVolume : 1.0;
   const form = new ModalFormData()
-    .title("🔊 音量設定")
-    .slider("マスター音量 (%)", 0, 100, 10, Math.round(mv * 100));
+    .title(tr("volume.title"))
+    .slider(tr("volume.slider"), 0, 100, 10, Math.round(mv * 100));
 
   form.show(player).then((response) => {
     if (response.canceled) return;
@@ -652,7 +680,7 @@ function showVolumeGUI(player) {
       vp.masterVolume = response.formValues[0] / 100.0;
       vp.currentAudioChunk = -1;
       if (vp.running) vp.syncAudioForFrame(vp.currentFrame);
-      world.sendMessage(`${MESSAGE_PREFIX} §a音量を ${Math.round(vp.masterVolume * 100)}% に設定しました`);
+      notify("volume_set", `${Math.round(vp.masterVolume * 100)}%`);
     }
   });
 }
@@ -664,8 +692,8 @@ function showSeekGUI(player) {
   const currentSec = Math.floor(frameToSeconds(vp.videoData, vp.currentFrame));
 
   const form = new ModalFormData()
-    .title("⏩ シーク (時間ジャンプ)")
-    .slider("再生位置 (秒)", 0, Math.max(1, maxSec), 1, currentSec);
+    .title(tr("seek.title"))
+    .slider(tr("seek.slider"), 0, Math.max(1, maxSec), 1, currentSec);
 
   form.show(player).then((response) => {
     if (response.canceled) return;
@@ -678,10 +706,12 @@ function showSeekGUI(player) {
 function showVideoSelectGUI(player) {
   const vp = getActivePlayer();
   const cvId = vp ? vp.videoId : globalSelectedVideoId;
-  const form = new ActionFormData().title("📜 動画ライブラリ").body("再生する動画タイトルを選択してください:");
+  const form = new ActionFormData().title(tr("library.title")).body(tr("library.body"));
   for (const v of VIDEO_LIST) {
-    const isSel = v.id === cvId ? " §a[選択中]" : "";
-    form.button(`${v.title}${isSel}\n${v.frame_count} frames (${v.width}x${v.height})`);
+    const rawtext = [{ text: v.title }];
+    if (v.id === cvId) rawtext.push({ text: " " }, tr("selected_tag"));
+    rawtext.push({ text: "\n" }, tr("library.item", v.frame_count, `${v.width}x${v.height}`));
+    form.button({ rawtext });
   }
 
   form.show(player).then((response) => {
@@ -689,7 +719,7 @@ function showVideoSelectGUI(player) {
     const selectedVideo = VIDEO_LIST[response.selection];
     if (selectedVideo) {
       globalSelectedVideoId = selectedVideo.id;
-      world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${selectedVideo.id}' を選択しました (setupし直すかstartすると切り替わります)`);
+      notify("video_selected_hint", selectedVideo.id);
       showRemoteControlGUI(player);
     }
   });
@@ -711,7 +741,7 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
   switch (action) {
     case "setup":
       if (!player) {
-        world.sendMessage(`§c[${EVENT_NAMESPACE}] setupはプレイヤーから実行してください`);
+        notify("setup_needs_player");
         break;
       }
       setup(player);
@@ -728,14 +758,15 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
       break;
     case "list":
       if (VIDEO_LIST.length === 0) {
-        world.sendMessage(`${MESSAGE_PREFIX} 動画が登録されていません`);
+        notify("no_videos");
       } else {
-        world.sendMessage(`${MESSAGE_PREFIX} §e収録動画一覧:`);
+        notify("video_list");
         for (const v of VIDEO_LIST) {
-          const selected = v.id === globalSelectedVideoId ? " §a[選択中]" : "";
-          world.sendMessage(`  §f- §b${v.id}§f: ${v.title} (${v.frame_count} frames, ${v.width}x${v.height})${selected}`);
+          const rawtext = [{ text: "  " }, tr("video_list_item", v.id, v.title, v.frame_count, `${v.width}x${v.height}`)];
+          if (v.id === globalSelectedVideoId) rawtext.push({ text: " " }, tr("selected_tag"));
+          world.sendMessage({ rawtext });
         }
-        world.sendMessage(`${MESSAGE_PREFIX} §f再生: /scriptevent ${EVENT_PREFIX}play <動画ID>`);
+        notify("list_play_hint", EVENT_PREFIX);
       }
       break;
     case "play":
@@ -745,10 +776,10 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
       } else {
         if (VIDEOS[videoId]) {
           globalSelectedVideoId = videoId;
-          world.sendMessage(`${MESSAGE_PREFIX} §a動画 '${videoId}' を選択しました`);
+          notify("video_selected", videoId);
           startPlayback(dimension);
         } else {
-          world.sendMessage(`§c${MESSAGE_PREFIX} 動画 '${videoId}' が見つかりません。/scriptevent ${EVENT_PREFIX}list で一覧を確認してください`);
+          notify("video_not_found", videoId, EVENT_PREFIX);
         }
       }
       break;

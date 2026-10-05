@@ -1,4 +1,5 @@
 """GUI の多言語対応 (locales/*.json と言語切替) のテスト。"""
+import json
 import os
 import re
 import string
@@ -103,3 +104,31 @@ def test_language_switch_keeps_user_input(app):
         assert [str(v) for v in rows[0]] == ["clip", "C:/videos/clip.mp4", "3"]
         assert "hello log" in app.log.get("1.0", "end")
         assert app.build_button.cget("text") == app.tr("build.button")
+
+
+# --- ゲーム内 (アドオン) の翻訳 ---
+
+def lang_placeholders(text):
+    return sorted(re.findall(r"%\d+", text))
+
+
+@pytest.mark.parametrize("language", sorted(LOCALES))
+def test_addon_strings_are_valid_lang_values(language):
+    for key, text in LOCALES[language].items():
+        if not key.startswith("addon."):
+            continue
+        assert "\n" not in text and "\r" not in text, f"{language}:{key} に改行があります (.lang は 1 行 1 項目)"
+        assert "#" not in text, f"{language}:{key} の # はコメント扱いになる可能性があります"
+        assert lang_placeholders(text) == lang_placeholders(BASE[key]), f"{language}:{key} の %n が英語版と違います"
+
+
+def test_addon_lang_files_cover_all_languages():
+    files = gui_i18n.addon_lang_files()
+    listed = json.loads(files["texts/languages.json"])
+    assert "en_US" in listed and "ja_JP" in listed
+    assert sorted(path[len("texts/"):-len(".lang")] for path in files if path.endswith(".lang")) == listed
+    english = files["texts/en_US.lang"].splitlines()
+    assert english and all(line.startswith("bvp.") and "=" in line for line in english)
+    for path, content in files.items():
+        if path.endswith(".lang"):
+            assert [line.split("=", 1)[0] for line in content.splitlines()] == [line.split("=", 1)[0] for line in english], path
