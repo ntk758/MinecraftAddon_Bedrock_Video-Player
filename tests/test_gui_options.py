@@ -94,11 +94,23 @@ def test_pack_uuid_is_stable_per_pack():
     assert bp1 != stable_pack_uuid("movie", "Block Video Player", "bp")
 
 
+def test_manifest_version_fits_bedrock_limits():
+    """Bedrock はバージョンの各要素を 0〜65535 で扱う。超えるとインポートに失敗する"""
+    for now in (1_704_067_200, 1_800_000_000, 2_000_000_000, 4_000_000_000):
+        version = build_manifest_version(now=now)
+        assert len(version) == 3
+        assert all(isinstance(v, int) and 0 <= v <= 65535 for v in version), version
+
+
 def test_manifest_version_increases_with_build_time():
+    base = 1_800_000_000
+    versions = [build_manifest_version(now=base + offset) for offset in (0, 60, 3600, 86_400 - 1, 86_400, 86_400 * 400)]
+    assert versions == sorted(versions)
+    assert len({tuple(v) for v in versions}) == len(versions)
     v1 = build_manifest_version(now=1_800_000_000)
     v2 = build_manifest_version(now=1_800_000_000 + 120)
-    assert v1[:2] == list(PACK_VERSION[:2])
-    assert v2[2] > v1[2]
+    assert v1[0] == PACK_VERSION[0]
+    assert v2 > v1
 
 
 def test_converter_args_are_accepted_by_convert():

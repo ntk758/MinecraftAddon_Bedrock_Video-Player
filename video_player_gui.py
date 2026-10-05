@@ -33,8 +33,10 @@ CONVERTER = APP_DIR / "convert.py"
 AUDIO_CHUNK_SECONDS = 10
 # EXE 版で自分自身を変換器として起動するための引数
 RUN_CONVERTER_FLAG = "--run-converter"
-# 再ビルドしたパックをワールドが「新しい版」と認識できるよう、ビルド時刻をパッチ番号に使う
+# 再ビルドしたパックをワールドが「新しい版」と認識できるよう、ビルド日時をバージョン番号に使う
 BUILD_STAMP_EPOCH = 1704067200  # 2024-01-01T00:00:00Z
+# Bedrock はバージョン番号の各要素を 16bit (0〜65535) で扱う。超えるとマニフェストが不正になりインポートできない
+MANIFEST_VERSION_MAX = 65535
 
 
 def subprocess_kwargs() -> dict:
@@ -57,9 +59,15 @@ def stable_pack_uuid(namespace: str, pack_name: str, role: str) -> str:
 
 
 def build_manifest_version(now: float | None = None) -> list[int]:
-    """[major, minor, ビルド時刻(分)]。UUID が同じでも新しいビルドとして読み込ませるため。"""
+    """[major, 2024-01-01 からの日数, その日の分 (0〜1439)]。
+
+    UUID が同じでも新しいビルドを「新しい版」として読み込ませるため、ビルドごとに必ず大きくなる値にする。
+    どの要素も MANIFEST_VERSION_MAX 以下 (日数は約 179 年分まで収まる)。
+    """
     now = time.time() if now is None else now
-    return [PACK_VERSION[0], PACK_VERSION[1], max(0, int(now - BUILD_STAMP_EPOCH) // 60)]
+    minutes = max(0, int(now - BUILD_STAMP_EPOCH) // 60)
+    days, minute_of_day = divmod(minutes, 24 * 60)
+    return [PACK_VERSION[0], min(days, MANIFEST_VERSION_MAX), minute_of_day]
 
 
 def get_ffmpeg_path() -> str | None:

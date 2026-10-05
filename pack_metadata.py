@@ -23,7 +23,11 @@ def version_text() -> str:
 
 
 def manifest_description() -> str:
-    return f"Block Video Player v{version_text()}: {RELEASE_NOTES[0]}"
+    note = RELEASE_NOTES[0]
+    prefix = f"v{version_text()}: "
+    if note.startswith(prefix):
+        note = note[len(prefix):]
+    return f"Block Video Player v{version_text()}: {note}"
 
 
 def changelog_markdown(pack_name: str) -> str:
