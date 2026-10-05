@@ -24,7 +24,7 @@ flowchart TD
 
 ---
 
-## 2. 差分データ符号化仕様 (varint_rle_v4)
+## 2. 差分データ符号化仕様 (varint_rle_v5)
 
 ### ① ランの抽出
 前フレーム (キーフレームでは「全画素未設置」) と比べて変化したピクセルを行ごとに走査し、同じ色が続く区間を 1 ラン (最大 64 ブロック) にまとめます。
@@ -33,7 +33,21 @@ flowchart TD
 ラン先頭の 1D 位置 $idx = y \times \text{width} + x$、長さ、パレット番号 ($0 \le color < 128$) を 1 つの整数に結合します。
 $$\text{val} = (idx \ll 13) \mid ((\text{length} - 1) \ll 7) \mid color$$
 
-1 フレームのバイト列は `varint(frame_no << 1 | is_keyframe)`, `varint(ラン数)`, `varint(val) × ラン数` です。VarInt は 7 ビット区切り (MSB が継続ビット) です。
+1 フレームのバイト列は次のとおりです。VarInt は 7 ビット区切り (MSB が継続ビット) です。
+
+```
+varint(frame_no << 2 | 動きベクトルあり << 1 | is_keyframe)
+[動きベクトルありの場合] varint(個数), { varint(前のブロック番号との差 - 1), varint(packed ベクトル) } × 個数
+varint(ラン数), varint(val) × ラン数        … 予測フレームとの差分
+```
+
+旧形式 `varint_rle_v4` はヘッダが `frame_no << 1 | is_keyframe` で動きベクトルがありません (デコーダは両方に対応)。
+
+### ②' 動き補償 (Motion Vector Prediction)
+- 画面を `mv_block` (8) × 8 のマクロブロックに分け、各ブロックについて前フレームを (dx, dy) ずらしたときに一致する画素が最も多い位置を探します。予測は `予測[y][x] = 前フレーム[clamp(y+dy)][clamp(x+dx)]` (範囲外は端の画素) です。
+- 探索は局所 ±`--mv-range` (既定 4) に加え、高解像度では縮小画像 (長辺約 96 画素) で画面全体の動きを ±8 の範囲で探し、その周辺も候補にします (2 段階探索)。ベクトル成分の最大値は FRAME_DATA の `mv_range` に記録され、`packed = (dy + mv_range) × (2 × mv_range + 1) + (dx + mv_range)` です。
+- エンコーダはフレームごとに「前フレームとの差分」と「動き補償 + 予測との差分」の両方を作り、**小さい方を採用** します。動き補償で悪化することはありません。キーフレームは動きベクトルを使いません。
+- 計測例 (128×72, 10fps, 39 色, ディザなし): パン映像 −41%、図形アニメ −37%。Blue Noise ディザでは模様が画面に固定されるため −16〜24%。
 
 ### ③ GOP チャンクとキーフレーム
 - フレームはシーン適応型 GOP ごとに 1 本のバイナリへ連結し、GOP 単位で遅延デコード (LRU キャッシュ + 次 GOP の先読み) します。
@@ -67,7 +81,9 @@ export const FRAME_DATA = {
   "fps": 10.0,                     // 再生速度 (main.js は 20 / fps tick ごとに 1 フレーム進める)
   "frame_count": 6573,
   "keyframe_interval": 30,
-  "format": "varint_rle_v4",
+  "format": "varint_rle_v5",
+  "mv_block": 8,                   // 動き補償のマクロブロックの大きさ
+  "mv_range": 4,                   // 動きベクトル成分の最大の絶対値
   "gop_boundaries": [0, 120, 300, ...],
   "adaptive_palette": false,       // true なら level_blocks は GOP ごとの配列
   "level_blocks": [{ "block": "minecraft:white_concrete" }, ...],
@@ -94,6 +110,9 @@ export const FRAME_DATA = {
    - チャットやリモコン画面には文字列を直接渡さず、`{ translate: "bvp.<キー>", with: {...} }` の RawMessage を渡す。各プレイヤーのクライアントが、自分のゲーム言語の `texts/<言語>.lang` で表示する (マルチプレイでもプレイヤーごとに別の言語になる)。
    - `.lang` は GUI のビルド時に `locales/*.json` の `addon.*` キーから生成する (`gui_i18n.addon_lang_files`)。翻訳の無い言語では `en_US` が使われる。
    - コンテンツログ向けの `console.warn` は開発者向けなので英語のまま。
+6. **表示中の盤面を保持した差分描画 (`board` / `placeChangedBlocks`)**:
+   - 各 `VideoPlayer` は今スクリーンに出ているパレット番号を `Int16Array` で持ち、`codec.js` の `decodeFrameInto` で次の盤面を作ってから、**値が変わったブロックだけ** を置きます。動き補償のフレームでも、置くブロック数は「実際に変わった画素」だけです。
+   - キーフレーム・盤面クリア後は盤面を「不明 (-1)」にして全ブロックを置き直すため、パレット切替やシークでも表示が崩れません。
 
 ---
 

@@ -7,6 +7,9 @@ import { world, system, BlockPermutation } from "@minecraft/server";
 import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
 import { VIDEOS, VIDEO_LIST } from "./videos.js";
 import {
+  FORMAT_V4,
+  FORMAT_V5,
+  decodeFrameInto,
   decodeUTF16BinaryToBytes,
   decodeUTF16BinaryToBytesJob,
   findKeyframeAtOrBefore,
@@ -36,6 +39,8 @@ const AUDIO_CHUNK_SECONDS = 10;
 const MAX_BLOCKS_PER_TICK = 4000;
 const BLOCKS_PER_YIELD = 500;
 const MAX_YIELDS_PER_TICK = MAX_BLOCKS_PER_TICK / BLOCKS_PER_YIELD;
+// 盤面の比較 (変わったブロックを探す走査) をこの画素数ごとに区切って tick を跨ぐ
+const PIXELS_PER_SCAN_YIELD = 32768;
 // 何フレーム先の GOP を先読みするか
 const GOP_PREFETCH_FRAMES = 10;
 
@@ -133,14 +138,22 @@ class VideoPlayer {
     this.tempBlockLoc = { x: 0, y: 0, z: 0 };
     this.cursor = { pos: 0 };
     this.run = { position: 0, length: 0, level: 0 };
+
+    // 現在スクリーンに表示しているパレット番号 (-1 は不明 = 次のフレームで必ず置き直す) と作業用の盤面
+    this.board = null;
+    this.nextBoard = null;
   }
 
   ensureDecodedData() {
     if (!this.videoData) return false;
     if (this.decodedVideoId === this.videoId && (this.decodedIndex || this.videoData.frames)) return true;
 
-    if (this.videoData.format === "varint_rle_v4" && this.videoData.chunks && this.videoData.index) {
+    const format = this.videoData.format;
+    if ((format === FORMAT_V4 || format === FORMAT_V5) && this.videoData.chunks && this.videoData.index) {
       this.decodedIndex = parseFrameIndexV4(decodeUTF16BinaryToBytes(this.videoData.index));
+      const pixels = this.videoData.width * this.videoData.height;
+      this.board = new Int16Array(pixels).fill(-1);
+      this.nextBoard = new Int16Array(pixels);
       this.decodedBinary = null;
       this.gopCache.clear();
       this.decodedVideoId = this.videoId;
@@ -257,13 +270,51 @@ class VideoPlayer {
     }
   }
 
+  /** 盤面を「不明」にして、次に描くフレームで全ブロックを置き直させる (盤面クリア後など)。 */
+  invalidateBoard() {
+    if (this.board) this.board.fill(-1);
+  }
+
+  /** nextBoard と board を比べ、変わったブロックだけを置く。tick 予算に合わせて yield する。 */
+  *placeChangedBlocks(width) {
+    const board = this.board;
+    const next = this.nextBoard;
+    const loc = this.tempBlockLoc;
+    const palette = this.activePalette;
+    let operations = 0;
+    let failures = 0;
+    for (let p = 0; p < next.length; p++) {
+      if (p % PIXELS_PER_SCAN_YIELD === PIXELS_PER_SCAN_YIELD - 1) yield;
+      const level = next[p];
+      if (level === board[p] || level < 0) continue;
+      const permutation = palette ? palette[level] : null;
+      board[p] = level;
+      if (!permutation) continue;
+      loc.x = this.anchor.x + (p % width);
+      loc.y = this.anchor.y;
+      loc.z = this.anchor.z + Math.floor(p / width);
+      try {
+        this.dimension.setBlockPermutation(loc, permutation);
+      } catch (e) {
+        failures++;
+      }
+      if (++operations >= BLOCKS_PER_YIELD) {
+        operations = 0;
+        yield;
+      }
+    }
+    if (failures > 0) {
+      warnOnce("setBlock", `Failed to place ${failures} block(s). The screen may be outside the loaded area`);
+    }
+  }
+
   *applyFrameJob(frameIndex) {
     if (!this.videoData) return;
     if (!this.ensureDecodedData()) return;
     this.initPaletteCache();
     const width = this.videoData.width;
 
-    if (this.videoData.format === "varint_rle_v4" && this.decodedIndex) {
+    if (this.board && this.decodedIndex) {
       if (frameIndex < 0 || frameIndex >= this.decodedIndex.length) return;
       const entry = this.decodedIndex[frameIndex];
 
@@ -279,7 +330,12 @@ class VideoPlayer {
 
       const gopBytes = this.ensureGopDecoded(entry.gopId);
       if (!gopBytes) return;
-      yield* this.applyBinarySlice(width, gopBytes, entry.offset, entry.offset + entry.length);
+      const isKeyframe = decodeFrameInto(
+        gopBytes, entry.offset, entry.offset + entry.length, this.board, this.nextBoard, this.videoData
+      );
+      // キーフレームはワールド上の状態に関係なく全ブロックを置き直す (パレット切替・クリア後・シーク時)
+      if (isKeyframe) this.invalidateBoard();
+      yield* this.placeChangedBlocks(width);
       return;
     }
 
@@ -400,6 +456,7 @@ class VideoPlayer {
     this.stopPlayback();
     this.frameIterator = null;
     this.currentFrame = 0;
+    this.invalidateBoard();
     if (!this.videoData) return;
 
     this.initPaletteCache();

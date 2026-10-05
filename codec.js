@@ -113,6 +113,63 @@ export function unpackRun(val, out) {
   return out;
 }
 
+export const FORMAT_V4 = "varint_rle_v4";
+export const FORMAT_V5 = "varint_rle_v5";
+
+/**
+ * 1 フレームを復元し、表示後の盤面 (パレット番号、未設置は -1) を out に書く。キーフレームなら true を返す。
+ *
+ * board は直前の盤面 (書き換えない)。規則は mvcodec/decode.py の decode_frame と同じ:
+ *  - キーフレームは全画素を未設置から描き直す
+ *  - v5 の動きベクトルは、ブロック内の各画素を board[clamp(y+dy)][clamp(x+dx)] から予測する
+ *  - 最後に差分ランを上書きする
+ * out と board は width*height の Int16Array などを使い回す (GC を避ける)。
+ */
+export function decodeFrameInto(bytes, start, end, board, out, video) {
+  const { width, height } = video;
+  const cursor = { pos: start };
+  const header = readVarint(bytes, cursor, end);
+  const isV5 = video.format === FORMAT_V5;
+  const isKeyframe = header % 2 === 1;
+  const hasMotion = isV5 && Math.floor(header / 2) % 2 === 1;
+
+  if (isKeyframe) out.fill(-1);
+  else out.set(board);
+
+  if (hasMotion) {
+    const block = video.mv_block;
+    const span = 2 * video.mv_range + 1;
+    const mbCols = Math.ceil(width / block);
+    const count = readVarint(bytes, cursor, end);
+    let mb = -1;
+    for (let k = 0; k < count; k++) {
+      mb += readVarint(bytes, cursor, end) + 1;
+      const packed = readVarint(bytes, cursor, end);
+      const dx = (packed % span) - video.mv_range;
+      const dy = Math.floor(packed / span) - video.mv_range;
+      const x0 = (mb % mbCols) * block;
+      const y0 = Math.floor(mb / mbCols) * block;
+      const x1 = Math.min(x0 + block, width);
+      const y1 = Math.min(y0 + block, height);
+      for (let y = y0; y < y1; y++) {
+        const sy = Math.min(Math.max(y + dy, 0), height - 1);
+        for (let x = x0; x < x1; x++) {
+          const sx = Math.min(Math.max(x + dx, 0), width - 1);
+          out[y * width + x] = board[sy * width + sx];
+        }
+      }
+    }
+  }
+
+  readVarint(bytes, cursor, end); // ラン数
+  const run = { position: 0, length: 0, level: 0 };
+  while (cursor.pos < end) {
+    unpackRun(readVarint(bytes, cursor, end), run);
+    out.fill(run.level, run.position, run.position + run.length);
+  }
+  return isKeyframe;
+}
+
 /** フレーム先頭のヘッダ (フレーム番号・ラン数) を読み飛ばす。 */
 export function skipFrameHeader(bytes, cursor, end) {
   readVarint(bytes, cursor, end);

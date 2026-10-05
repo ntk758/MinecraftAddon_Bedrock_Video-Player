@@ -129,3 +129,26 @@ While network transfer and JSON parsing time drop dramatically, array index look
 1. **Sub-pixel Motion Vectors**: Half-pixel interpolation for smoother camera motion (increases JS processing cost).
 2. **Linear Memory Offset `COPY`**: Encoding commands directly as linear buffer offset `COPY srcOffset, length` to eliminate $2D \rightarrow 1D$ coordinate math during runtime decoding.
 3. **Hybrid Tile-Motion Architecture**: Combining motion vectors with spatial tile dictionaries for optimal bitrate adaptation.
+
+---
+
+## 6. Implementation Notes (v5.5.0)
+
+The idea above was implemented as the `varint_rle_v5` format. Differences from the original sketch:
+
+- **Prediction is per 8×8 macroblock**, not per run: each block may carry one vector `(dx, dy)`; the predicted pixel is `prev[clamp(y+dy)][clamp(x+dx)]`. Residual differences are sent as ordinary RLE runs against the prediction, so decoding is exact (lossless with respect to the quantized frame).
+- **Two-stage search**: exhaustive local search within ±4 blocks of the original position, plus a global-motion search on a downscaled frame (long side ≈ 96 px, ±8) whose neighbourhood is added as candidates. This keeps the candidate count near 90 while reaching large pans at high resolution / low fps.
+- **Never worse than plain delta**: the encoder emits both encodings for each P-frame and keeps the smaller one. Keyframes never use motion.
+- **In-game cost is unchanged by design**: the decoder rebuilds the next board in a `Int16Array` (`codec.js` `decodeFrameInto`) and `main.js` places only blocks whose palette index actually changed. Motion compensation reduces pack size and load/parse time, not the number of `setBlockPermutation` calls (a shifted image still changes those blocks on screen).
+
+### Measured results (CPU path, palette `full`)
+
+| Clip | Size / fps | Without motion | With motion | Reduction | Extra encode time |
+|---|---|---|---|---|---|
+| Pan over a still image | 128×72 / 10 | 881 KB | 525 KB | 40.5% | +6 ms/frame |
+| Pan over a still image | 256×256 / 5 | 1865 KB | 1225 KB | 34.3% | +45 ms/frame |
+| Pan over a still image | 512×512 / 2 | 3243 KB | 2771 KB | 14.5% | +184 ms/frame |
+| Generated demo (zoom, spiral, plasma) | 128×72 / 10 | 1642 KB | 1040 KB | 36.7% | +9 ms/frame |
+| `testsrc2` (moving shapes) | 256×256 / 5 | 415 KB | 388 KB | 6.4% | +38 ms/frame |
+
+With Blue Noise dithering the reduction drops to roughly 16–24% at 128×72, because the dither pattern is fixed to the screen while the content moves.

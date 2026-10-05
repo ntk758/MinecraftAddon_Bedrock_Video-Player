@@ -24,6 +24,33 @@ def pack_run(start_x, y, length, color, width):
     return (delta << 13) | ((length - 1) << 7) | (color & 0x7f)
 
 
+def encode_frame_v5(frame_no, is_keyframe, frame, reference, width, height, vectors=None, search_range=4):
+    """varint_rle_v5 の 1 フレーム分のバイト列。
+
+    ヘッダ: varint(frame_no << 2 | 動きベクトルあり << 1 | キーフレーム)
+    動きベクトルあり: varint(個数), 各ブロックについて varint(前のブロック番号との差 - 1), varint(packed ベクトル)
+    続けて varint(ラン数) と、reference (動きベクトルがあれば予測フレーム) との差分ラン。
+    """
+    from mvcodec.motion import pack_vector
+
+    vectors = vectors or {}
+    encoded = bytearray()
+    encode_varint((frame_no << 2) | ((1 if vectors else 0) << 1) | (1 if is_keyframe else 0), encoded)
+    if vectors:
+        encode_varint(len(vectors), encoded)
+        last = -1
+        for mb in sorted(vectors):
+            dx, dy = vectors[mb]
+            encode_varint(mb - last - 1, encoded)
+            encode_varint(pack_vector(dx, dy, search_range), encoded)
+            last = mb
+    chunks = extract_rle_chunks_fast(frame, reference, width, height)
+    encode_varint(len(chunks), encoded)
+    for start_x, y, length, color in chunks:
+        encode_varint(pack_run(start_x, y, length, color, width), encoded)
+    return encoded
+
+
 def bytearray_to_utf16_str(byte_arr):
     """バイト列を 15bit/文字 の文字列へ変換する。先頭文字にパディングビット数を格納する。"""
     if not byte_arr:

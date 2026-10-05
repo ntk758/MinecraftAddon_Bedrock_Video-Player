@@ -28,17 +28,17 @@ from mvcodec.device import DEVICE_CHOICES, detect_gpu, empty_cache, squared_dist
 from mvcodec.encode import (
     MAX_PALETTE_COLORS,
     bytearray_to_utf16_str,
+    encode_frame_v5,
     encode_varint,
-    extract_rle_chunks_fast,
-    pack_run,
 )
+from mvcodec.motion import MV_BLOCK, MV_RANGE, apply_motion, estimate_motion, vector_limit
 from mvcodec.evaluate import calculate_ssim_global
 
 WIDTH = 64
 HEIGHT = 64
 OUTPUT_DIR = "BP/scripts"
 OUTPUT_FILE = f"{OUTPUT_DIR}/frames_data.js"
-FORMAT_NAME = "varint_rle_v4"
+FORMAT_NAME = "varint_rle_v5"
 MIN_GOP_SIZE = 20
 MAX_GOP_SIZE = 300
 SCENE_CUT_THRESHOLD = 30.0
@@ -410,6 +410,10 @@ def parse_args(argv=None):
     parser.add_argument("--gpu", action="store_true", help="互換用 (GPU は --device auto で自動使用されます)")
     parser.add_argument("--adaptive-fps", action=argparse.BooleanOptionalAction, default=True,
                         help="変化の少ないフレームを省略する (--no-adaptive-fps で無効)")
+    parser.add_argument("--motion", action=argparse.BooleanOptionalAction, default=True,
+                        help="動き補償 (パン・スクロールで差分を小さくする)。各フレームで小さくなる場合だけ使う (--no-motion で無効)")
+    parser.add_argument("--mv-range", type=int, default=MV_RANGE,
+                        help=f"動きベクトルの探索範囲 (ブロック数, 1〜15)。大きいほど速い動きに強いが変換が遅い")
     parser.add_argument("--scene-threshold", type=float, default=0.015,
                         help="adaptive-fps でフレームを省略する変化率のしきい値")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
@@ -423,6 +427,8 @@ def parse_args(argv=None):
         parser.error("--fps は 0 より大きく 20 以下にしてください")
     if args.keyframe_interval < 0:
         parser.error("--keyframe-interval は 0 以上にしてください")
+    if not 1 <= args.mv_range <= 15:
+        parser.error("--mv-range は 1〜15 にしてください")
     return args
 
 
@@ -538,6 +544,8 @@ def main(argv=None):
     prev_frame = None
     skipped_frames = 0
     keyframes_count = 0
+    motion_frames = 0
+    mv_limit = vector_limit(width, height, args.mv_range)
     ssim_pairs = []
     gif_frames = []
     current_gop = 0
@@ -570,15 +578,18 @@ def main(argv=None):
 
         if is_keyframe:
             keyframes_count += 1
-            chunks = extract_rle_chunks_fast(flat_frame, np.full_like(flat_frame, -1), width, height)
+            encoded = encode_frame_v5(i, True, flat_frame, np.full_like(flat_frame, -1), width, height)
         else:
-            chunks = extract_rle_chunks_fast(flat_frame, prev_frame, width, height)
-
-        encoded = bytearray()
-        encode_varint((i << 1) | (1 if is_keyframe else 0), encoded)
-        encode_varint(len(chunks), encoded)
-        for start_x, y, length, color in chunks:
-            encode_varint(pack_run(start_x, y, length, color, width), encoded)
+            encoded = encode_frame_v5(i, False, flat_frame, prev_frame, width, height)
+            if args.motion:
+                # 動き補償版も作り、小さくなる場合だけ採用する (悪化はしない)
+                vectors = estimate_motion(prev_frame, flat_frame, width, height, MV_BLOCK, args.mv_range)
+                if vectors:
+                    predicted = apply_motion(prev_frame, vectors, width, height, MV_BLOCK)
+                    with_motion = encode_frame_v5(i, False, flat_frame, predicted, width, height, vectors, mv_limit)
+                    if len(with_motion) < len(encoded):
+                        encoded = with_motion
+                        motion_frames += 1
 
         gop_binary.extend(encoded)
         frame_index_entries.append((gop_id, offset_in_gop, len(encoded), is_keyframe))
@@ -608,6 +619,8 @@ def main(argv=None):
         "frame_count": total_frames,
         "keyframe_interval": keyframe_interval,
         "format": FORMAT_NAME,
+        "mv_block": MV_BLOCK,
+        "mv_range": mv_limit,
         "gop_boundaries": gop_boundaries,
         "adaptive_palette": is_adaptive_palette,
         "level_blocks": level_blocks,
@@ -642,6 +655,7 @@ def main(argv=None):
     print(f"[MVCodec Benchmark] TotalFrames: {total_frames}")
     print(f"[MVCodec Benchmark] SkippedFrames: {skipped_frames}")
     print(f"[MVCodec Benchmark] KeyFrames: {keyframes_count}")
+    print(f"[MVCodec Benchmark] MotionFrames: {motion_frames}")
     print(f"[MVCodec Benchmark] GOPs: {num_gops}")
     return 0
 

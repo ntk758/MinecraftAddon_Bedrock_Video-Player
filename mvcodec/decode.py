@@ -9,8 +9,10 @@ import numpy as np
 
 from mvcodec.color import BLOCK_RGB
 from mvcodec.encode import UTF16_BITS_PER_CHAR, UTF16_CHAR_OFFSET
+from mvcodec.motion import apply_motion, unpack_vector
 
 FORMAT_V4 = "varint_rle_v4"
+FORMAT_V5 = "varint_rle_v5"
 
 
 def load_frame_data(js_path):
@@ -75,13 +77,50 @@ def gop_palettes(data):
     return [table] * max(1, num_gops)
 
 
+def decode_frame(buf, offset, length, board, data, frame_no=None):
+    """1 フレームを復元して新しい盤面 (1 次元, パレット番号, 未設置 -1) と、キーフレームかどうかを返す。
+
+    board は直前の盤面。codec.js の decodeFrameInto と同じ規則:
+    キーフレームは全画素を未設置から描き直し、動きベクトルは board から予測し、最後に差分ランを上書きする。
+    """
+    width, height = data["width"], data["height"]
+    is_v5 = data.get("format") == FORMAT_V5
+    pos, end = offset, offset + length
+    header, pos = read_varint(buf, pos)
+    shift = 2 if is_v5 else 1
+    if frame_no is not None and (header >> shift) != frame_no:
+        raise ValueError(f"フレーム番号の不一致: index={frame_no}, data={header >> shift}")
+    is_keyframe = (header & 1) == 1
+    has_motion = is_v5 and (header >> 1) & 1 == 1
+
+    out = np.full_like(board, -1) if is_keyframe else board.copy()
+    if has_motion:
+        count, pos = read_varint(buf, pos)
+        vectors = {}
+        mb = -1
+        for _ in range(count):
+            gap, pos = read_varint(buf, pos)
+            packed, pos = read_varint(buf, pos)
+            mb += gap + 1
+            vectors[mb] = unpack_vector(packed, data["mv_range"])
+        out = apply_motion(board, vectors, width, height, data["mv_block"])
+    _chunk_count, pos = read_varint(buf, pos)
+    while pos < end:
+        val, pos = read_varint(buf, pos)
+        start = val >> 13
+        run = ((val >> 7) & 0x3f) + 1
+        out[start:start + run] = val & 0x7f
+    return out, is_keyframe
+
+
 def iter_decoded_frames(data):
     """各フレーム表示後の盤面を (index_board, rgb_board) として順に返す。
 
     index_board は最後に設置したパレット番号 (未設置は -1)、rgb_board は実際に見えるブロック色。
-    スキップフレームは前フレームと同じ盤面を返す (ゲーム内でも盤面は更新されない)。
+    ゲーム内と同じく、パレット番号が変わった画素だけをそのフレームの GOP のパレットで塗り直す。
+    スキップフレームは前フレームと同じ盤面を返す。
     """
-    if data.get("format") != FORMAT_V4:
+    if data.get("format") not in (FORMAT_V4, FORMAT_V5):
         raise ValueError(f"未対応のフォーマットです: {data.get('format')}")
     width, height = data["width"], data["height"]
     entries = parse_index(data)
@@ -95,18 +134,9 @@ def iter_decoded_frames(data):
         if length > 0:
             if gop_id not in gop_bytes:
                 gop_bytes[gop_id] = utf16_str_to_bytes(data["chunks"][gop_id])
-            buf = gop_bytes[gop_id]
-            palette = palettes[gop_id]
-            pos, end = offset, offset + length
-            encoded_frame_no, pos = read_varint(buf, pos)
-            if (encoded_frame_no >> 1) != frame_no:
-                raise ValueError(f"フレーム番号の不一致: index={frame_no}, data={encoded_frame_no >> 1}")
-            _chunk_count, pos = read_varint(buf, pos)
-            while pos < end:
-                val, pos = read_varint(buf, pos)
-                start = val >> 13
-                run = ((val >> 7) & 0x3f) + 1
-                level = val & 0x7f
-                index_board[start:start + run] = level
-                rgb_board[start:start + run] = palette[level]
+            new_board, is_keyframe = decode_frame(gop_bytes[gop_id], offset, length, index_board, data, frame_no)
+            changed = np.ones(len(new_board), dtype=bool) if is_keyframe else new_board != index_board
+            changed &= new_board >= 0
+            rgb_board[changed] = palettes[gop_id][new_board[changed]]
+            index_board = new_board
         yield index_board.reshape(height, width).copy(), rgb_board.reshape(height, width, 3).copy()

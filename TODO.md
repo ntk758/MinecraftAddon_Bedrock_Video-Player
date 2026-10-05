@@ -6,10 +6,6 @@
 
 ## 🔴 優先度: 高 (High Priority / Phase 7.x Next-Gen Prediction)
 
-### 1. Motion Vector Prediction (高度な動き予測)
-- **概要**: ブロック単位での動きベクトル（Motion Vector）を算出し、フレーム間のパン・スクロールなどの動きを予測して圧縮効率を飛躍的に高める。
-- **実装案**: マクロブロックベースの探索アルゴリズム（Diamond Search 等）の導入。
-
 ### 2. Tile Dictionary (タイル辞書圧縮)
 - **概要**: 頻出するブロックのパターン（例：テキスト、UI要素、特定のテクスチャ）を辞書化し、インデックス参照で描画する。
 - **実装案**: 空間的冗長性を排除するLZ77ベースのアプローチをタイルに適用。
@@ -41,5 +37,6 @@
 ---
 
 ## ✅ 完了済み (Done)
+- Motion Vector Prediction: 8×8 マクロブロックの動き補償 (`varint_rle_v5`)。局所探索 + 縮小画像での全体探索。フレームごとに従来方式より小さい場合だけ採用。詳細と計測結果は `docs/research/motion_vector.md`
 - 音声同期再生 (10秒分割 OGG + Resource Pack 自動生成)
 - ゲーム内リモコン GUI (コンパス使用で `ActionFormData` / `ModalFormData`)

@@ -32,7 +32,7 @@ Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを
 - 🎮 **ゲーム内リモコン** (コンパスを使うと再生・一時停止・シーク・音量・動画切替の画面が開く)
 - 📚 **マルチ動画対応** (1 つのアドオンに複数の動画を収録)
 - 👑 **マイクラ実在ブロック 39 色パレット** (コンクリート・テラコッタ・発光ブロック) と、動画ごとに色を選ぶ自動パレット
-- 🗜 **差分圧縮** (変化したブロックだけを書き換える RLE + VarInt 形式。シーンごとのキーフレームで高速シーク)
+- 🗜 **差分圧縮 + 動き補償** (変化したブロックだけを書き換える RLE + VarInt 形式。パンやスクロールは前フレームをずらして予測し、データ量を最大 4 割削減。シーンごとのキーフレームで高速シーク)
 - ⚡ **GPU 変換対応**: NVIDIA (CUDA)・AMD (ROCm / DirectML)・Intel (DirectML)。GPU が無くても CPU で変換可能
 - 🌐 **10 言語対応**: 日本語・English・简体中文・繁體中文・한국어・Español・Português (Brasil)・Français・Deutsch・Русский。GUI は画面右上で切り替え、ゲーム内のメッセージとリモコン画面は各プレイヤーの Minecraft の言語設定で表示
 
@@ -162,7 +162,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - 🎮 **In-game remote control** (use a compass: play/pause, seek, volume, switch videos)
 - 📚 **Multiple videos per add-on**
 - 👑 **39-color palette of real blocks** (concrete, terracotta, light sources) plus a per-video automatic palette
-- 🗜 **Delta compression** (only changed blocks are rewritten; RLE + VarInt, per-scene keyframes for fast seeking)
+- 🗜 **Delta compression + motion compensation** (only changed blocks are rewritten; pans and scrolls are predicted from the shifted previous frame, cutting data by up to ~40%; per-scene keyframes for fast seeking)
 - ⚡ **GPU conversion** on NVIDIA (CUDA), AMD (ROCm / DirectML) and Intel (DirectML); CPU works too
 - 🌐 **10 languages**: Japanese, English, Simplified/Traditional Chinese, Korean, Spanish, Portuguese (Brazil), French, German, Russian — in the GUI (selector at the top right) and in game (chat messages and the remote follow each player's Minecraft language)
 
@@ -247,6 +247,7 @@ python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 
 | `--device` | `auto` / `cuda` / `rocm` / `directml` / `cpu` |
 | `--keyframe-interval` | キーフレーム間隔 (0 でシーン先頭のみ) |
 | `--no-adaptive-fps` / `--no-perceptual` | 変化の少ないフレームの省略・知覚最適化を無効化 |
+| `--no-motion` / `--mv-range` | 動き補償を無効化 / 局所探索の範囲 (既定 4、大きいほど速い動きに強いが変換が遅い) |
 | `--ffmpeg` | ffmpeg のパス |
 
 画質ベンチマーク:
@@ -287,8 +288,8 @@ A. パック名とコマンド接頭辞が同じなら同じパック (同じ UU
   - シーン適応型パレット & シーンGOP (0.5*SAD + 0.3*Hist + 0.2*Edge)
   - 統合ベンチマーク (SSIM, PSNR, LPIPS, ΔE2000)
 - [ ] **Phase 7.x: 次世代予測圧縮 (Next-Gen Prediction)**
-  - Motion Vector Prediction (動き予測)
-  - Tile Dictionary (タイル辞書圧縮)
+  - [x] Motion Vector Prediction (動き予測) — 8×8 ブロックの動き補償 + 2 段階探索 (`varint_rle_v5`)
+  - [ ] Tile Dictionary (タイル辞書圧縮)
 - [ ] 3D立体ホログラム再生 (3D Hologram playback)
 
 詳細は [TODO.md](TODO.md) を参照してください。
