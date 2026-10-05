@@ -74,8 +74,9 @@ def test_vox_roundtrip_and_orientation(tmp_path):
     color_to_level = np.full(256, AIR_LEVEL, np.int16)
     color_to_level[1], color_to_level[2] = 3, 9
     volume = vox_to_volume(models[0], (3, 4, 2), color_to_level)  # (奥行き, 高さ, 幅)
-    assert volume[0, 3, 0] == 3   # z=0 (床) は配列の一番下の行
-    assert volume[2, 0, 1] == 9   # x=1, y=2 (奥行き), z=3 (一番上)
+    # vox の y が大きいほど北 (奥行きの配列番号が小さい = ワールドの z が小さい)。z=0 (床) は一番下の行
+    assert volume[2, 3, 0] == 3   # x=0, y=0 (一番手前), z=0
+    assert volume[0, 0, 1] == 9   # x=1, y=2 (一番奥), z=3 (一番上)
     assert (volume != AIR_LEVEL).sum() == 2
 
     (tmp_path / "anim").mkdir()
@@ -223,3 +224,52 @@ def test_moving_vox_frames_are_not_skipped(tmp_path):
     assert convert.main(["--input-vox", str(vox_path), "--output", str(out), "--fps", "10"]) == 0
     data = load_frame_data(out)
     assert all(length > 0 for _gop, _offset, length, _key in parse_index(data))
+
+
+
+def test_vox_mapping_is_a_rotation_not_a_mirror():
+    """vox (x, y, z) → Minecraft (東, 上, 南) の対応が鏡像 (行列式 -1) になっていないこと。"""
+    shape = (4, 4, 4)
+    color_to_level = np.arange(256, dtype=np.int16)
+    def world_of(x, y, z):
+        volume = vox_to_volume(((4, 4, 4), np.array([[x, y, z, 1]], np.uint8)), shape, color_to_level)
+        d, row, col = np.argwhere(volume != AIR_LEVEL)[0]
+        # main.js の cellToWorld と同じ: 東 = 列、上 = 高さ-1-行、南 = 奥行きの番号
+        return np.array([col, shape[1] - 1 - row, d])
+    origin = world_of(0, 0, 0)
+    axes = np.array([world_of(1, 0, 0) - origin, world_of(0, 1, 0) - origin, world_of(0, 0, 1) - origin]).T
+    assert round(np.linalg.det(axes)) == 1
+    assert list(world_of(0, 0, 1) - origin) == [0, 1, 0]  # vox の z (上) はワールドの上
+
+
+def test_vox_scene_graph_static_objects_make_one_frame():
+    palette = np.zeros((256, 4), np.uint8)
+    cube = np.array([[x, y, z, 1] for x in range(2) for y in range(2) for z in range(2)], np.uint8)
+    scene = [
+        {"translations": [(0, (0, 0, 0))], "models": [(0, 0)]},
+        {"translations": [(0, (10, 0, 0))], "models": [(0, 0)]},
+    ]
+    frames, _ = parse_vox(write_vox([((2, 2, 2), cube)], palette, scene))
+    assert len(frames) == 1  # 2 つのオブジェクトは 2 フレームではなく同じシーン
+    size, voxels = frames[0]
+    assert len(voxels) == 16 and size[0] == 12
+
+
+def test_vox_scene_graph_animation_keyframes():
+    palette = np.zeros((256, 4), np.uint8)
+    small = np.array([[0, 0, 0, 1]], np.uint8)
+    big = np.array([[x, 0, 0, 2] for x in range(3)], np.uint8)
+    scene = [{"translations": [(0, (0, 0, 0)), (2, (5, 0, 0))], "models": [(0, 0), (1, 1)]}]
+    frames, _ = parse_vox(write_vox([((1, 1, 1), small), ((3, 1, 1), big)], palette, scene))
+    assert len(frames) == 3
+    counts = [len(v) for _s, v in frames]
+    assert counts == [1, 3, 3]  # フレーム 1 からモデル 1 に切り替わる
+    # モデルは中心 (pivot) を基準に置かれるので、中心の位置で比べる
+    centers = [float(v[:, 0].mean()) for _s, v in frames]
+    assert centers[0] == centers[1] < centers[2]  # 位置はフレーム 2 で動く (それまでは直前のキーフレーム)
+    assert centers[2] - centers[1] == 5
+
+
+def test_vox_without_rgba_uses_default_palette():
+    frames, palette = parse_vox(write_vox([((1, 1, 1), np.array([[0, 0, 0, 1]], np.uint8))]))
+    assert tuple(palette[0][:3]) == (255, 255, 255)  # 仕様の既定パレットで色番号 1 は白

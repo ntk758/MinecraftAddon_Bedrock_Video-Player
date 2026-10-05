@@ -92,7 +92,53 @@ def lift_frame(mode, indices, palette_rgb, depth, heights01=None, threshold=0.5,
 
 # ---------------------------------------------------------------------------
 # MagicaVoxel .vox
+#   仕様: https://github.com/ephtracy/voxel-model (MagicaVoxel-file-format-vox.txt / -extension.txt)
+#   シーングラフとアニメーションの解釈は opengametools の ogt_vox に合わせている
 # ---------------------------------------------------------------------------
+
+# RGBA チャンクが無いファイルで使う既定パレット (仕様書の default_palette。色番号で直接引く、0xAABBGGRR)
+VOX_DEFAULT_PALETTE = (
+    0x00000000, 0xffffffff, 0xffccffff, 0xff99ffff, 0xff66ffff, 0xff33ffff, 0xff00ffff, 0xffffccff,
+    0xffccccff, 0xff99ccff, 0xff66ccff, 0xff33ccff, 0xff00ccff, 0xffff99ff, 0xffcc99ff, 0xff9999ff,
+    0xff6699ff, 0xff3399ff, 0xff0099ff, 0xffff66ff, 0xffcc66ff, 0xff9966ff, 0xff6666ff, 0xff3366ff,
+    0xff0066ff, 0xffff33ff, 0xffcc33ff, 0xff9933ff, 0xff6633ff, 0xff3333ff, 0xff0033ff, 0xffff00ff,
+    0xffcc00ff, 0xff9900ff, 0xff6600ff, 0xff3300ff, 0xff0000ff, 0xffffffcc, 0xffccffcc, 0xff99ffcc,
+    0xff66ffcc, 0xff33ffcc, 0xff00ffcc, 0xffffcccc, 0xffcccccc, 0xff99cccc, 0xff66cccc, 0xff33cccc,
+    0xff00cccc, 0xffff99cc, 0xffcc99cc, 0xff9999cc, 0xff6699cc, 0xff3399cc, 0xff0099cc, 0xffff66cc,
+    0xffcc66cc, 0xff9966cc, 0xff6666cc, 0xff3366cc, 0xff0066cc, 0xffff33cc, 0xffcc33cc, 0xff9933cc,
+    0xff6633cc, 0xff3333cc, 0xff0033cc, 0xffff00cc, 0xffcc00cc, 0xff9900cc, 0xff6600cc, 0xff3300cc,
+    0xff0000cc, 0xffffff99, 0xffccff99, 0xff99ff99, 0xff66ff99, 0xff33ff99, 0xff00ff99, 0xffffcc99,
+    0xffcccc99, 0xff99cc99, 0xff66cc99, 0xff33cc99, 0xff00cc99, 0xffff9999, 0xffcc9999, 0xff999999,
+    0xff669999, 0xff339999, 0xff009999, 0xffff6699, 0xffcc6699, 0xff996699, 0xff666699, 0xff336699,
+    0xff006699, 0xffff3399, 0xffcc3399, 0xff993399, 0xff663399, 0xff333399, 0xff003399, 0xffff0099,
+    0xffcc0099, 0xff990099, 0xff660099, 0xff330099, 0xff000099, 0xffffff66, 0xffccff66, 0xff99ff66,
+    0xff66ff66, 0xff33ff66, 0xff00ff66, 0xffffcc66, 0xffcccc66, 0xff99cc66, 0xff66cc66, 0xff33cc66,
+    0xff00cc66, 0xffff9966, 0xffcc9966, 0xff999966, 0xff669966, 0xff339966, 0xff009966, 0xffff6666,
+    0xffcc6666, 0xff996666, 0xff666666, 0xff336666, 0xff006666, 0xffff3366, 0xffcc3366, 0xff993366,
+    0xff663366, 0xff333366, 0xff003366, 0xffff0066, 0xffcc0066, 0xff990066, 0xff660066, 0xff330066,
+    0xff000066, 0xffffff33, 0xffccff33, 0xff99ff33, 0xff66ff33, 0xff33ff33, 0xff00ff33, 0xffffcc33,
+    0xffcccc33, 0xff99cc33, 0xff66cc33, 0xff33cc33, 0xff00cc33, 0xffff9933, 0xffcc9933, 0xff999933,
+    0xff669933, 0xff339933, 0xff009933, 0xffff6633, 0xffcc6633, 0xff996633, 0xff666633, 0xff336633,
+    0xff006633, 0xffff3333, 0xffcc3333, 0xff993333, 0xff663333, 0xff333333, 0xff003333, 0xffff0033,
+    0xffcc0033, 0xff990033, 0xff660033, 0xff330033, 0xff000033, 0xffffff00, 0xffccff00, 0xff99ff00,
+    0xff66ff00, 0xff33ff00, 0xff00ff00, 0xffffcc00, 0xffcccc00, 0xff99cc00, 0xff66cc00, 0xff33cc00,
+    0xff00cc00, 0xffff9900, 0xffcc9900, 0xff999900, 0xff669900, 0xff339900, 0xff009900, 0xffff6600,
+    0xffcc6600, 0xff996600, 0xff666600, 0xff336600, 0xff006600, 0xffff3300, 0xffcc3300, 0xff993300,
+    0xff663300, 0xff333300, 0xff003300, 0xffff0000, 0xffcc0000, 0xff990000, 0xff660000, 0xff330000,
+    0xff0000ee, 0xff0000dd, 0xff0000bb, 0xff0000aa, 0xff000088, 0xff000077, 0xff000055, 0xff000044,
+    0xff000022, 0xff000011, 0xff00ee00, 0xff00dd00, 0xff00bb00, 0xff00aa00, 0xff008800, 0xff007700,
+    0xff005500, 0xff004400, 0xff002200, 0xff001100, 0xffee0000, 0xffdd0000, 0xffbb0000, 0xffaa0000,
+    0xff880000, 0xff770000, 0xff550000, 0xff440000, 0xff220000, 0xff110000, 0xffeeeeee, 0xffdddddd,
+    0xffbbbbbb, 0xffaaaaaa, 0xff888888, 0xff777777, 0xff555555, 0xff444444, 0xff222222, 0xff111111,
+)
+
+
+def _default_palette_rgba():
+    values = np.array(VOX_DEFAULT_PALETTE, dtype=np.uint32)
+    rgba = np.stack([values & 0xFF, (values >> 8) & 0xFF, (values >> 16) & 0xFF, values >> 24], axis=1).astype(np.uint8)
+    # parse_vox の戻り値は「色番号 i → palette[i - 1]」の形にそろえる
+    return np.vstack([rgba[1:], rgba[:1]])
+
 
 def _read_chunks(data, start, end):
     """[(id, content, children_bytes_range)] を順に返す。"""
@@ -106,11 +152,54 @@ def _read_chunks(data, start, end):
         pos = children_start + children_size
 
 
-def parse_vox(data):
-    """.vox のバイト列から (models, palette) を返す。
+class _Reader:
+    def __init__(self, content):
+        self.content = content
+        self.pos = 0
 
-    models: [(size_xyz, voxels)]  voxels は (N, 4) の uint8 配列 [x, y, z, 色番号(1〜255)]
-    palette: (256, 4) の RGBA。色番号 i は palette[i - 1]。RGBA チャンクが無いファイルは灰色の階調で代用する。
+    def int32(self):
+        value = struct.unpack_from("<i", self.content, self.pos)[0]
+        self.pos += 4
+        return value
+
+    def string(self):
+        length = self.int32()
+        value = self.content[self.pos:self.pos + length].decode("utf-8", errors="replace")
+        self.pos += length
+        return value
+
+    def dict(self):
+        return {self.string(): self.string() for _ in range(self.int32())}
+
+
+def _rotation_matrix(byte):
+    """nTRN の _r (1 バイト) を 3x3 の回転行列にする。"""
+    c0 = byte & 3
+    c1 = (byte >> 2) & 3
+    c2 = 3 - c0 - c1
+    matrix = np.zeros((3, 3), dtype=np.int64)
+    for row, col in enumerate((c0, c1, c2)):
+        matrix[row, col] = -1 if (byte >> (4 + row)) & 1 else 1
+    return matrix
+
+
+def _keyed(frames, frame):
+    """キーフレームのうち _f が frame 以下で一番新しいもの (無ければ最初のもの)。"""
+    best = frames[0]
+    for item in frames:
+        if int(best.get("_f", 0)) <= int(item.get("_f", 0)) <= frame:
+            best = item
+    return best
+
+
+def parse_vox(data):
+    """.vox のバイト列から (frames, palette) を返す。
+
+    frames: [(size_xyz, voxels)]  voxels は (N, 4) の uint8 配列 [x, y, z, 色番号(1〜255)]
+      - シーングラフ (nTRN / nGRP / nSHP) があれば、各アニメーションフレームについて、全オブジェクトを
+        回転・移動して 1 つにまとめた立体を返す (複数オブジェクトの静止シーンは 1 フレーム)
+      - シーングラフが無い古い形式は、モデル 1 つを 1 フレームとみなす
+    palette: (256, 4) の RGBA。色番号 i は palette[i - 1]。RGBA チャンクが無ければ仕様の既定パレット。
     """
     if data[:4] != b"VOX ":
         raise ValueError("MagicaVoxel の .vox ファイルではありません")
@@ -118,6 +207,7 @@ def parse_vox(data):
     if main is None or main[0] != "MAIN":
         raise ValueError(".vox に MAIN チャンクがありません")
     models, palette = [], None
+    nodes, hidden_layers, anim_range = {}, set(), None
     size = None
     for chunk_id, content, _children in _read_chunks(data, *main[2]):
         if chunk_id == "SIZE":
@@ -128,33 +218,151 @@ def parse_vox(data):
             models.append((size, voxels.copy()))
         elif chunk_id == "RGBA":
             palette = np.frombuffer(content, dtype=np.uint8, count=256 * 4).reshape(256, 4).copy()
+        elif chunk_id == "nTRN":
+            r = _Reader(content)
+            node_id, attrs, child = r.int32(), r.dict(), r.int32()
+            r.int32()  # reserved
+            layer = r.int32()
+            frames = [r.dict() for _ in range(r.int32())] or [{}]
+            nodes[node_id] = ("trn", attrs, child, layer, frames)
+        elif chunk_id == "nGRP":
+            r = _Reader(content)
+            node_id, attrs = r.int32(), r.dict()
+            nodes[node_id] = ("grp", attrs, [r.int32() for _ in range(r.int32())])
+        elif chunk_id == "nSHP":
+            r = _Reader(content)
+            node_id, attrs = r.int32(), r.dict()
+            shapes = []
+            for _ in range(r.int32()):
+                model_id = r.int32()
+                shapes.append({"model": model_id, **r.dict()})
+            nodes[node_id] = ("shp", attrs, shapes)
+        elif chunk_id == "LAYR":
+            r = _Reader(content)
+            layer_id, attrs = r.int32(), r.dict()
+            if attrs.get("_hidden") == "1":
+                hidden_layers.add(layer_id)
+        elif chunk_id == "META":
+            value = _Reader(content).dict().get("_anim_range")
+            if value:
+                anim_range = tuple(int(v) for v in value.split()[:2])
     if palette is None:
-        ramp = np.linspace(255, 32, 256).astype(np.uint8)
-        palette = np.stack([ramp, ramp, ramp, np.full(256, 255, np.uint8)], axis=1)
+        palette = _default_palette_rgba()
     if not models:
         raise ValueError(".vox にモデルがありません")
-    return models, palette
+    if 0 not in nodes:
+        return models, palette
+    return _evaluate_scene(models, nodes, hidden_layers, anim_range), palette
 
 
-def write_vox(models, palette=None):
-    """テスト・サンプル作成用の最小の .vox 書き出し。models は [(size_xyz, voxels)]。"""
+def _evaluate_scene(models, nodes, hidden_layers, anim_range):
+    """シーングラフを各フレームについて評価し、ワールド座標のボクセルを 1 つの立体にまとめる。"""
+    keys = set()
+    for node in nodes.values():
+        items = node[4] if node[0] == "trn" else node[2] if node[0] == "shp" else []
+        keys.update(int(item.get("_f", 0)) for item in items)
+    if anim_range is not None:
+        frame_numbers = list(range(anim_range[0], anim_range[1] + 1))
+    else:
+        frame_numbers = list(range(0, max(keys) + 1)) if keys else [0]
+
+    def collect(node_id, frame, rotation, translation, out):
+        node = nodes.get(node_id)
+        if node is None or node[1].get("_hidden") == "1":
+            return
+        if node[0] == "trn":
+            _kind, _attrs, child, layer, frames = node
+            if layer in hidden_layers:
+                return
+            key = _keyed(frames, frame)
+            local_r = _rotation_matrix(int(key["_r"])) if "_r" in key else np.eye(3, dtype=np.int64)
+            local_t = np.array([int(v) for v in key.get("_t", "0 0 0").split()], dtype=np.int64)
+            collect(child, frame, rotation @ local_r, rotation @ local_t + translation, out)
+        elif node[0] == "grp":
+            for child in node[2]:
+                collect(child, frame, rotation, translation, out)
+        else:
+            shape = _keyed(node[2], frame)
+            size, voxels = models[shape["model"]]
+            if not len(voxels):
+                return
+            pivot = np.array(size, dtype=np.float64) // 2
+            local = voxels[:, :3].astype(np.float64) + 0.5 - pivot
+            world = np.floor(local @ rotation.T.astype(np.float64)).astype(np.int64) + translation
+            out.append(np.column_stack([world, voxels[:, 3].astype(np.int64)]))
+
+    per_frame = []
+    for frame in frame_numbers:
+        parts = []
+        collect(0, frame, np.eye(3, dtype=np.int64), np.zeros(3, dtype=np.int64), parts)
+        per_frame.append(np.concatenate(parts) if parts else np.zeros((0, 4), dtype=np.int64))
+
+    occupied = [p for p in per_frame if len(p)]
+    if not occupied:
+        return [((1, 1, 1), np.zeros((0, 4), np.uint8))] * len(per_frame)
+    low = np.min([p[:, :3].min(axis=0) for p in occupied], axis=0)
+    high = np.max([p[:, :3].max(axis=0) for p in occupied], axis=0)
+    size = tuple(int(v) for v in np.minimum(high - low + 1, 256))
+    frames = []
+    for voxels in per_frame:
+        if len(voxels):
+            shifted = voxels.copy()
+            shifted[:, :3] -= low
+            keep = np.all(shifted[:, :3] < np.array(size), axis=1)
+            frames.append((size, shifted[keep].astype(np.uint8)))
+        else:
+            frames.append((size, np.zeros((0, 4), np.uint8)))
+    return frames
+
+
+def write_vox(models, palette=None, scene=None):
+    """テスト・サンプル作成用の .vox 書き出し。models は [(size_xyz, voxels)]。
+
+    scene を渡すとシーングラフも書く: [{"translations": [(f, (x, y, z))], "models": [(f, model_id)]}, ...]
+    (各要素が 1 つのオブジェクト。f はキーフレーム番号)
+    """
     def chunk(chunk_id, content=b"", children=b""):
         return chunk_id.encode("ascii") + struct.pack("<ii", len(content), len(children)) + content + children
 
+    def string(value):
+        raw = value.encode("utf-8")
+        return struct.pack("<i", len(raw)) + raw
+
+    def dictionary(values):
+        return struct.pack("<i", len(values)) + b"".join(string(k) + string(str(v)) for k, v in values.items())
+
     body = b""
-    if len(models) > 1:
+    if len(models) > 1 and scene is None:
         body += chunk("PACK", struct.pack("<i", len(models)))
     for size, voxels in models:
         voxels = np.asarray(voxels, dtype=np.uint8).reshape(-1, 4)
         body += chunk("SIZE", struct.pack("<iii", *size))
         body += chunk("XYZI", struct.pack("<i", len(voxels)) + voxels.tobytes())
+    if scene is not None:
+        ids = iter(range(1, 10 ** 6))
+        group_id = next(ids)
+        object_chunks, child_ids = b"", []
+        for obj in scene:
+            trn_id, shp_id = next(ids), next(ids)
+            child_ids.append(trn_id)
+            frames = [{"_t": " ".join(map(str, t)), "_f": f} for f, t in obj["translations"]]
+            object_chunks += chunk("nTRN", struct.pack("<i", trn_id) + dictionary({}) + struct.pack("<iii", shp_id, -1, 0)
+                                   + struct.pack("<i", len(frames)) + b"".join(dictionary(fr) for fr in frames))
+            shapes = obj["models"]
+            object_chunks += chunk("nSHP", struct.pack("<i", shp_id) + dictionary({}) + struct.pack("<i", len(shapes))
+                                   + b"".join(struct.pack("<i", m) + dictionary({"_f": f}) for f, m in shapes))
+        body += chunk("nTRN", struct.pack("<i", 0) + dictionary({}) + struct.pack("<iii", group_id, -1, -1)
+                      + struct.pack("<i", 1) + dictionary({}))
+        body += chunk("nGRP", struct.pack("<i", group_id) + dictionary({}) + struct.pack("<i", len(child_ids))
+                      + b"".join(struct.pack("<i", c) for c in child_ids))
+        body += object_chunks
     if palette is not None:
         body += chunk("RGBA", np.asarray(palette, dtype=np.uint8).reshape(256, 4).tobytes())
     return b"VOX " + struct.pack("<i", 150) + chunk("MAIN", children=body)
 
 
 def load_vox_frames(path):
-    """.vox ファイル (各モデルが 1 フレーム) またはフレームごとの .vox が並んだフォルダを読み込む。
+    """.vox ファイル (アニメーションまたは各モデルが 1 フレーム) か、フレームごとの .vox が並んだフォルダを読み込む。
 
     戻り値: (frames, palette)  frames は [(size_xyz, voxels)]、palette は最初のファイルのもの。
     """
@@ -164,9 +372,9 @@ def load_vox_frames(path):
         raise ValueError(f".vox ファイルが見つかりません: {path}")
     frames, palette = [], None
     for file in files:
-        models, file_palette = parse_vox(file.read_bytes())
+        file_frames, file_palette = parse_vox(file.read_bytes())
         palette = file_palette if palette is None else palette
-        frames.extend(models)
+        frames.extend(file_frames)
     return frames, palette
 
 
@@ -181,7 +389,8 @@ def vox_volume_shape(frames):
 def vox_to_volume(size_and_voxels, shape, color_to_level):
     """1 フレームの vox を (D, H, W) のパレット番号の立体にする。
 
-    vox の x → 幅、y → 奥行き (0 = 奥)、z → 高さ (0 = 床なので、配列の行は H-1-z)。
+    MagicaVoxel も Minecraft も右手系なので、鏡像にならないよう回転として対応させる:
+      vox の x → 幅 (東)、z → 高さ (配列の行は H-1-z)、y → 奥行き (配列は D-1-y。y が大きいほど北 = 奥)
     color_to_level は vox の色番号 (0〜255) → ブロックのパレット番号の配列。
     """
     depth, height, width = shape
@@ -192,7 +401,7 @@ def vox_to_volume(size_and_voxels, shape, color_to_level):
         y = voxels[:, 1].astype(np.int64)
         z = voxels[:, 2].astype(np.int64)
         keep = (x < width) & (y < depth) & (z < height)
-        volume[y[keep], height - 1 - z[keep], x[keep]] = color_to_level[voxels[keep, 3]]
+        volume[depth - 1 - y[keep], height - 1 - z[keep], x[keep]] = color_to_level[voxels[keep, 3]]
     return volume
 
 
