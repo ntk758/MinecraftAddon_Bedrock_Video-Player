@@ -148,5 +148,12 @@
   "convert.device_cpu_dither": "[MVCodec] Устройство конвертации: CPU (дизеринг '{dither}' только на CPU; автопалитра использует {gpu})",
   "convert.device_gpu": "[MVCodec] Устройство конвертации: {gpu}",
   "convert.no_frames": "[MVCodec] Нет входных кадров.",
-  "convert.palette_cpu_retry": "[MVCodec] Предупреждение: не удалось вычислить автопалитру на GPU; повторный расчёт на CPU: {error}"
+  "convert.palette_cpu_retry": "[MVCodec] Предупреждение: не удалось вычислить автопалитру на GPU; повторный расчёт на CPU: {error}",
+  "settings.mode": "Режим отображения",
+  "settings.depth": "Глубина (блоки)",
+  "mode.screen": "Плоский экран",
+  "mode.relief": "3D-рельеф (яркость = глубина)",
+  "mode.extrude": "3D-силуэт (выдавливание светлых частей)",
+  "dialog.vox_files": "MagicaVoxel (.vox)",
+  "build.vox_preview": "  Создание превью воксельной анимации…"
 }

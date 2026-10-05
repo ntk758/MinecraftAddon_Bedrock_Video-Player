@@ -35,6 +35,8 @@ class StreamEncoder:
     empty_value: int = -1
     # タイル辞書のタイルの大きさ (0 で無効)
     tile_size: int = TILE_SIZE
+    # 同じフレーム列を複数の設定で符号化するとき、動き探索の結果を共有する {frame_no: vectors}
+    motion_cache: dict = None
     stats: StreamStats = field(default_factory=StreamStats)
 
     def __post_init__(self):
@@ -64,7 +66,7 @@ class StreamEncoder:
             self.keyframe_interval > 0 and (frame_no - self._gop_start) % self.keyframe_interval == 0
         )
         offset = len(self._gop_binary)
-        if not is_keyframe and self.adaptive_fps and np.mean(flat != self._prev) < self.scene_threshold:
+        if not is_keyframe and self.adaptive_fps and self._change_ratio(flat) < self.scene_threshold:
             self.stats.skipped_frames += 1
             self._index_entries.append((gop_id, offset, 0, False))
             return
@@ -80,11 +82,25 @@ class StreamEncoder:
             self.tiles.update(self._prev, flat, is_keyframe)
         self._prev = flat
 
+    def _change_ratio(self, flat):
+        """前フレームから変わった割合。立体 (空気が基準) では、空気以外のマスに対する割合にする
+        (ほとんどが空気の立体では全体に対する割合が小さく出て、動いているのに省略されてしまうため)。"""
+        changed = int(np.count_nonzero(flat != self._prev))
+        if self.empty_value >= 0:
+            solid = int(np.count_nonzero((flat != self.empty_value) | (self._prev != self.empty_value)))
+            return changed / max(1, solid)
+        return changed / len(flat)
+
     def _encode_delta(self, frame_no, flat):
         """前フレームとの差分を、動き補償・タイル参照の有無の組み合わせで作り、一番小さいものを返す (悪化はしない)。"""
         predictions = [({}, self._prev)]
         if self.motion:
-            vectors = estimate_motion(self._prev, flat, self.width, self.rows, MV_BLOCK, self.mv_range)
+            if self.motion_cache is not None and frame_no in self.motion_cache:
+                vectors = self.motion_cache[frame_no]
+            else:
+                vectors = estimate_motion(self._prev, flat, self.width, self.rows, MV_BLOCK, self.mv_range)
+                if self.motion_cache is not None:
+                    self.motion_cache[frame_no] = vectors
             if vectors:
                 predictions.append((vectors, apply_motion(self._prev, vectors, self.width, self.rows, MV_BLOCK)))
 
@@ -106,6 +122,10 @@ class StreamEncoder:
             self.stats.tile_frames += 1
             self.stats.tile_refs += len(best_ops)
         return best
+
+    def payload_size(self):
+        """ここまでのデータの大きさ (UTF-16 文字に詰める前のバイト数の目安)。"""
+        return sum(len(s) for s in self._gop_strings) * 2 + len(self._gop_binary)
 
     def finish(self):
         """(GOP ごとのチャンク文字列のリスト, フレームインデックスの文字列) を返す。"""

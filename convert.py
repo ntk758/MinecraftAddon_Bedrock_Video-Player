@@ -432,8 +432,9 @@ def parse_args(argv=None):
                         help="動き補償 (パン・スクロールで差分を小さくする)。各フレームで小さくなる場合だけ使う (--no-motion で無効)")
     parser.add_argument("--mv-range", type=int, default=MV_RANGE,
                         help=f"動きベクトルの探索範囲 (ブロック数, 1〜15)。大きいほど速い動きに強いが変換が遅い")
-    parser.add_argument("--tile-size", type=int, default=8, choices=[0, 4, 8, 16],
-                        help="タイル辞書のタイルの大きさ (0 で無効)。繰り返し現れる模様を辞書から貼って差分を小さくする")
+    parser.add_argument("--tile-size", default="auto", choices=["auto", "0", "4", "8", "16"],
+                        help="タイル辞書のタイルの大きさ (0 で無効)。繰り返し現れる模様を辞書から貼って差分を小さくする。"
+                             "auto は 4 と 8 の両方で符号化して小さい方を使う")
     parser.add_argument("--scene-threshold", type=float, default=0.015,
                         help="adaptive-fps でフレームを省略する変化率のしきい値")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
@@ -523,7 +524,7 @@ def build_frame_data(args, width, height, gop_boundaries, palettes, adaptive, en
         "format": FORMAT_NAME,
         "mv_block": MV_BLOCK,
         "mv_range": encoder.mv_limit,
-        "tile_size": args.tile_size,
+        "tile_size": encoder.tile_size,
         "tile_dict_max": encoder.tiles.max_entries if encoder.tiles is not None else 0,
         "gop_boundaries": gop_boundaries,
         "adaptive_palette": adaptive,
@@ -561,12 +562,31 @@ def print_stats(out_path, encoder, num_gops, avg_ssim=0.0):
     print(f"[MVCodec Benchmark] GOPs: {num_gops}")
 
 
+class EncoderSet:
+    """タイルの大きさだけを変えた複数のエンコーダに同じフレームを流し、一番小さい結果を使う。"""
+
+    def __init__(self, encoders):
+        self.encoders = encoders
+
+    def add(self, frame_no, gop_id, frame):
+        for encoder in self.encoders:
+            encoder.add(frame_no, gop_id, frame)
+
+    def best(self):
+        return min(self.encoders, key=lambda encoder: encoder.payload_size())
+
+
 def make_encoder(args, width, rows, gop_boundaries, empty_value):
-    return StreamEncoder(
-        width=width, rows=rows, gop_boundaries=gop_boundaries, keyframe_interval=args.keyframe_interval,
-        adaptive_fps=args.adaptive_fps, scene_threshold=args.scene_threshold, motion=args.motion,
-        mv_range=args.mv_range, empty_value=empty_value, tile_size=args.tile_size,
-    )
+    tile_sizes = [4, 8] if args.tile_size == "auto" else [int(args.tile_size)]
+    motion_cache = {} if len(tile_sizes) > 1 else None
+    return EncoderSet([
+        StreamEncoder(
+            width=width, rows=rows, gop_boundaries=gop_boundaries, keyframe_interval=args.keyframe_interval,
+            adaptive_fps=args.adaptive_fps, scene_threshold=args.scene_threshold, motion=args.motion,
+            mv_range=args.mv_range, empty_value=empty_value, tile_size=tile_size, motion_cache=motion_cache,
+        )
+        for tile_size in tile_sizes
+    ])
 
 
 def convert_vox(args):
@@ -583,6 +603,7 @@ def convert_vox(args):
     gop_ids = iter_gop_ids(gop_boundaries)
     for i, frame in enumerate(frames):
         encoder.add(i, next(gop_ids), vox_to_volume(frame, (depth, height, width), color_to_level))
+    encoder = encoder.best()
     chunks, index = encoder.finish()
     frame_data = build_frame_data(args, width, height, gop_boundaries, [palette], False, encoder, chunks, index, depth)
     out_path = write_frame_data(args, frame_data)
@@ -676,6 +697,7 @@ def main(argv=None):
             encoded_frame = screen
         encoder.add(i, gop_id, encoded_frame)
 
+    encoder = encoder.best()
     chunks, index = encoder.finish()
     if encoder.stats.total_frames != total_frames:
         raise RuntimeError(

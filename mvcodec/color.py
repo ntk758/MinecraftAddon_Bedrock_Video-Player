@@ -1,3 +1,4 @@
+import functools
 import numpy as np
 from PIL import Image, ImageFilter
 
@@ -94,9 +95,11 @@ def create_palette_image(palette):
     pal_img.putpalette(pal_data)
     return pal_img
 
-def generate_blue_noise_approx_numpy(width, height):
-    np.random.seed(42)
-    noise = np.random.randint(0, 256, (height, width), dtype=np.uint8)
+@functools.lru_cache(maxsize=8)
+def _blue_noise_cached(width, height):
+    # 全体共有の乱数 (np.random.seed) は複数スレッドから同時に使うと結果が毎回変わるため、専用の乱数を使う
+    rng = np.random.default_rng(42)
+    noise = rng.integers(0, 256, (height, width), dtype=np.uint8)
     img = Image.fromarray(noise)
     blur = img.filter(ImageFilter.GaussianBlur(radius=1.5))
     noise_f = noise.astype(np.float32)
@@ -107,7 +110,13 @@ def generate_blue_noise_approx_numpy(width, height):
         hp = (hp - hp_min) / (hp_max - hp_min)
     else:
         hp = np.zeros_like(hp)
+    hp.setflags(write=False)
     return hp
+
+
+def generate_blue_noise_approx_numpy(width, height):
+    """ディザ用の高周波ノイズ (0〜1)。同じ大きさなら常に同じ模様を返す (スレッドから同時に呼んでも安全)。"""
+    return _blue_noise_cached(width, height).copy()
 
 def get_edge_mask_cpu(img_pil):
     edges = img_pil.convert("L").filter(ImageFilter.FIND_EDGES)

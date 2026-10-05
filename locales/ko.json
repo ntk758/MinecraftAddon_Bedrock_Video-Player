@@ -148,5 +148,12 @@
   "convert.device_cpu_dither": "[MVCodec] 변환 장치: CPU (디더링 '{dither}' 는 CPU 전용, 자동 팔레트는 {gpu} 사용)",
   "convert.device_gpu": "[MVCodec] 변환 장치: {gpu}",
   "convert.no_frames": "[MVCodec] 입력 프레임이 없습니다.",
-  "convert.palette_cpu_retry": "[MVCodec] 경고: GPU에서 자동 팔레트를 계산할 수 없어 CPU로 다시 계산합니다: {error}"
+  "convert.palette_cpu_retry": "[MVCodec] 경고: GPU에서 자동 팔레트를 계산할 수 없어 CPU로 다시 계산합니다: {error}",
+  "settings.mode": "표시 모드",
+  "settings.depth": "깊이 (블록)",
+  "mode.screen": "평면 화면",
+  "mode.relief": "입체 부조 (밝기 = 깊이)",
+  "mode.extrude": "입체 실루엣 (밝은 부분 돌출)",
+  "dialog.vox_files": "MagicaVoxel (.vox)",
+  "build.vox_preview": "  입체 애니메이션 미리보기를 만드는 중…"
 }

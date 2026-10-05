@@ -129,6 +129,26 @@ def test_converter_args_are_accepted_by_convert():
             assert args.duration == duration
 
 
+def test_converter_args_for_3d_modes():
+    """立体モードと .vox の引数も convert.py がそのまま受け付けること"""
+    relief = convert.parse_args(build_converter_args(
+        Path("in.mp4"), Path("out.js"), "ffmpeg", 64, 64, 2, "full", "none", 30, "cpu", True, None, "ja",
+        "relief", 24,
+    ))
+    assert (relief.mode, relief.depth, relief.input_video) == ("relief", 24, "in.mp4")
+
+    vox = convert.parse_args(build_converter_args(
+        Path("walk.VOX"), Path("out.js"), "ffmpeg", 64, 64, 2, "full", "none", 30, "cpu", True, None, "ja",
+        "relief", 24,
+    ))
+    assert (vox.mode, vox.input_vox, vox.input_video) == ("vox", "walk.VOX", None)
+
+    screen = convert.parse_args(build_converter_args(
+        Path("in.mp4"), Path("out.js"), "ffmpeg", 64, 64, 2, "full", "none", 30, "cpu", True, None, "ja",
+    ))
+    assert screen.mode == "screen"
+
+
 def test_device_options():
     assert resolve_device("自動 (GPU があれば使用)") == "auto"
     assert resolve_device("DirectML (Windows の AMD / Intel / NVIDIA)") == "directml"

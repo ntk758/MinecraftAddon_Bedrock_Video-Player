@@ -89,6 +89,7 @@ def test_language_switch_keeps_user_input(app):
     app.palette_var.set(app.tr("palette.full"))
     app.dither_var.set(app.tr("dither.atkinson"))
     app.device_var.set(app.tr("device.directml"))
+    app.mode_var.set(app.tr("mode.relief"))
     app.quality_var.set(app.tr("preset.ultra"))
     app._apply_quality_preset()
     app._append_log("hello log")
@@ -97,7 +98,7 @@ def test_language_switch_keeps_user_input(app):
         app.change_language(code)
         assert app.tr.language == code
         assert app.title() == app.tr("app.title")
-        assert app._selected_values() == ("full", "atkinson", "directml")
+        assert app._selected_values() == ("full", "atkinson", "directml", "relief")
         assert app.quality_var.get() == app.tr("preset.ultra")
         assert (app.width_var.get(), app.height_var.get()) == (256, 256)
         rows = [app.video_tree.item(i)["values"] for i in app.video_tree.get_children()]

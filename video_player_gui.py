@@ -98,6 +98,10 @@ def get_ffmpeg_path() -> str | None:
 PALETTE_VALUES = ("auto", "full", "expanded", "concrete")
 DITHER_VALUES = ("none", "blue_noise", "ordered", "floyd", "atkinson", "burkes", "sierra")
 DEVICE_VALUES = ("auto", "cuda", "directml", "cpu")
+MODE_VALUES = ("screen", "relief", "extrude")
+DEFAULT_MODE = "screen"
+DEFAULT_DEPTH = 16
+VOX_SUFFIX = ".vox"
 # 画質プリセット: キー -> (幅, 高さ, 再生間隔 tick)
 QUALITY_PRESETS: dict[str, tuple[int, int, int]] = {
     "light": (64, 64, 1),
@@ -140,10 +144,17 @@ def build_converter_args(
     video: Path, output: Path, ffmpeg: str, width: int, height: int, interval: int,
     palette: str, dither_method: str, keyframe_interval: int, device: str,
     perceptual: bool, duration: float | None, language: str = "en",
+    mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH,
 ) -> list[str]:
-    """convert.py に渡す引数 (起動コマンド部分を除く)。"""
+    """convert.py に渡す引数 (起動コマンド部分を除く)。.vox は立体アニメとして変換する。"""
+    if Path(video).suffix.lower() == VOX_SUFFIX:
+        source = ["--input-vox", str(video), "--mode", "vox"]
+    else:
+        source = ["--input-video", str(video), "--mode", mode]
+        if mode != "screen":
+            source += ["--depth", str(depth)]
     args = [
-        "--input-video", str(video),
+        *source,
         "--ffmpeg", ffmpeg,
         "--fps", str(20 / interval),
         "--output", str(output), "--width", str(width), "--height", str(height),
@@ -158,6 +169,31 @@ def build_converter_args(
     if duration is not None:
         args.extend(["--duration", str(duration)])
     return args
+
+
+class _NoAudio(Exception):
+    """.vox など音声の無い入力。"""
+
+
+def write_vox_thumbnail(vox_path: Path, png_path: Path, size: int = 256) -> None:
+    """MagicaVoxel の最初のフレームを正面から見た画像をサムネイルにする。"""
+    import numpy as np
+    from PIL import Image
+
+    from mvcodec.color import PALETTES
+    from mvcodec.volume import AIR_LEVEL, front_view, load_vox_frames, nearest_levels, vox_to_volume, vox_volume_shape
+
+    frames, vox_palette = load_vox_frames(vox_path)
+    block_rgb = np.array([item["rgb"] for item in PALETTES["full"]], dtype=np.float64)
+    color_to_level = np.full(256, AIR_LEVEL, dtype=np.int16)
+    color_to_level[1:] = nearest_levels(vox_palette[:255, :3], block_rgb)
+    shape = vox_volume_shape(frames)
+    image = Image.fromarray(front_view(vox_to_volume(frames[0], shape, color_to_level), block_rgb))
+    scale = max(1, size // max(image.size))
+    image = image.resize((image.width * scale, image.height * scale), Image.Resampling.NEAREST)
+    canvas = Image.new("RGB", (size, size))
+    canvas.paste(image, ((size - image.width) // 2, (size - image.height) // 2))
+    canvas.save(png_path)
 
 
 def resolve_palette(pal_text: str) -> str:
@@ -222,8 +258,10 @@ class PackBuilderApp(tk.Tk):
         self.palette_var = tk.StringVar()
         self.dither_var = tk.StringVar()
         self.device_var = tk.StringVar()
+        self.mode_var = tk.StringVar()
+        self.depth_var = tk.IntVar(value=DEFAULT_DEPTH)
         self.preset_key = DEFAULT_PRESET
-        self._set_option_labels(DEFAULT_PALETTE, DEFAULT_DITHER, DEFAULT_DEVICE)
+        self._set_option_labels(DEFAULT_PALETTE, DEFAULT_DITHER, DEFAULT_DEVICE, DEFAULT_MODE)
         self.namespace_var.trace_add("write", lambda *_: self._update_command_hint())
 
         self._build_ui()
@@ -234,17 +272,19 @@ class PackBuilderApp(tk.Tk):
     def _preset_labels(self) -> dict[str, str]:
         return {self.tr(f"preset.{key}"): key for key in QUALITY_PRESETS}
 
-    def _selected_values(self) -> tuple[str, str, str]:
-        """現在の言語の表示名から (パレット, ディザ, デバイス) の値を得る。"""
+    def _selected_values(self) -> tuple[str, str, str, str]:
+        """現在の言語の表示名から (パレット, ディザ, デバイス, 表示モード) の値を得る。"""
         palette = option_labels(self.tr, "palette", PALETTE_VALUES).get(self.palette_var.get(), DEFAULT_PALETTE)
         dither = option_labels(self.tr, "dither", DITHER_VALUES).get(self.dither_var.get(), DEFAULT_DITHER)
         device = option_labels(self.tr, "device", DEVICE_VALUES).get(self.device_var.get(), DEFAULT_DEVICE)
-        return palette, dither, device
+        mode = option_labels(self.tr, "mode", MODE_VALUES).get(self.mode_var.get(), DEFAULT_MODE)
+        return palette, dither, device, mode
 
-    def _set_option_labels(self, palette: str, dither: str, device: str) -> None:
+    def _set_option_labels(self, palette: str, dither: str, device: str, mode: str = DEFAULT_MODE) -> None:
         self.palette_var.set(self.tr(f"palette.{palette}"))
         self.dither_var.set(self.tr(f"dither.{dither}"))
         self.device_var.set(self.tr(f"device.{device}"))
+        self.mode_var.set(self.tr(f"mode.{mode}"))
         self.quality_var.set(self.tr(f"preset.{self.preset_key}"))
         self.language_var.set(dict(available_languages())[self.tr.language])
 
@@ -387,6 +427,17 @@ class PackBuilderApp(tk.Tk):
             values=tuple(option_labels(tr, "device", DEVICE_VALUES)),
         ).grid(row=3, column=4, columnspan=4, padx=(0, 10), pady=(0, 6), sticky="w")
 
+        # 表示モード (平面 / 立体) と立体の奥行き
+        ttk.Label(settings, text=tr("settings.mode")).grid(row=4, column=0, padx=(10, 4), pady=(0, 6))
+        ttk.Combobox(
+            settings, textvariable=self.mode_var, state="readonly", width=34,
+            values=tuple(option_labels(tr, "mode", MODE_VALUES)),
+        ).grid(row=4, column=1, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
+        ttk.Label(settings, text=tr("settings.depth")).grid(row=4, column=4, padx=(10, 4), pady=(0, 6))
+        ttk.Spinbox(settings, from_=2, to=64, textvariable=self.depth_var, width=7).grid(
+            row=4, column=5, padx=(0, 10), pady=(0, 6), sticky="w"
+        )
+
         # --- 説明文 ---
         ttk.Label(self, text=tr("info.description"), wraplength=740).grid(row=5, column=0, sticky="w", **pad)
 
@@ -414,7 +465,11 @@ class PackBuilderApp(tk.Tk):
     def _add_videos(self) -> None:
         paths = filedialog.askopenfilenames(
             title=self.tr("dialog.select_videos_title"),
-            filetypes=[(self.tr("dialog.video_files"), "*.mp4 *.mkv *.avi *.mov *.webm"), (self.tr("dialog.all_files"), "*.*")],
+            filetypes=[
+                (self.tr("dialog.video_files"), "*.mp4 *.mkv *.avi *.mov *.webm"),
+                (self.tr("dialog.vox_files"), "*.vox"),
+                (self.tr("dialog.all_files"), "*.*"),
+            ],
         )
         for path in paths:
             p = Path(path)
@@ -534,7 +589,11 @@ class PackBuilderApp(tk.Tk):
         pack_name = self.pack_name_var.get().strip()
         namespace = self.namespace_var.get().strip()
 
-        palette, dither_method, device = self._selected_values()
+        palette, dither_method, device, mode = self._selected_values()
+        try:
+            depth = max(2, min(64, int(self.depth_var.get())))
+        except (tk.TclError, ValueError):
+            depth = DEFAULT_DEPTH
 
         if not pack_name:
             messagebox.showerror(self.tr("error.pack_name_title"), self.tr("error.pack_name"))
@@ -550,7 +609,7 @@ class PackBuilderApp(tk.Tk):
         threading.Thread(
             target=self._build_pack,
             args=(video_entries, output, pack_name, namespace, width, height, interval, duration, palette, dither_method,
-                  device),
+                  device, mode, depth),
             daemon=True,
         ).start()
 
@@ -569,7 +628,7 @@ class PackBuilderApp(tk.Tk):
     def _build_pack(
         self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
         width: int, height: int, interval: int, duration: float | None, palette: str, dither_method: str,
-        device: str,
+        device: str, mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH,
     ) -> None:
         try:
             ffmpeg = get_ffmpeg_path()
@@ -606,13 +665,18 @@ class PackBuilderApp(tk.Tk):
                     generated_data = scripts / f"frames_{video_id}.js"
                     thumbnail = temp / f"thumb_{video_id}.png"
 
-                    # サムネイル生成
-                    self.messages.put(self.tr("build.thumbnail", sec=thumb_sec))
-                    self._run([
-                        ffmpeg, "-y", "-ss", str(thumb_sec), "-i", str(video), "-frames:v", "1",
-                        "-vf", "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black",
-                        str(thumbnail),
-                    ])
+                    is_vox = video.suffix.lower() == VOX_SUFFIX
+                    # サムネイル生成 (.vox は立体を正面から見た画像)
+                    if is_vox:
+                        self.messages.put(self.tr("build.vox_preview"))
+                        write_vox_thumbnail(video, thumbnail)
+                    else:
+                        self.messages.put(self.tr("build.thumbnail", sec=thumb_sec))
+                        self._run([
+                            ffmpeg, "-y", "-ss", str(thumb_sec), "-i", str(video), "-frames:v", "1",
+                            "-vf", "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black",
+                            str(thumbnail),
+                        ])
                     if not thumbnail.is_file() or thumbnail.stat().st_size == 0:
                         raise RuntimeError(self.tr("build.thumbnail_failed", id=video_id))
 
@@ -622,8 +686,11 @@ class PackBuilderApp(tk.Tk):
                     # 音声切り出し (10秒分割 .ogg, 44.1kHz ステレオ)
                     sounds_dir = rp_root / "sounds" / "music" / video_id
                     sounds_dir.mkdir(parents=True, exist_ok=True)
-                    self.messages.put(self.tr("build.audio", sec=AUDIO_CHUNK_SECONDS))
+                    if not is_vox:
+                        self.messages.put(self.tr("build.audio", sec=AUDIO_CHUNK_SECONDS))
                     try:
+                        if is_vox:
+                            raise _NoAudio()
                         self._run([
                             ffmpeg, "-y", "-i", str(video),
                             "-f", "segment", "-segment_time", str(AUDIO_CHUNK_SECONDS),
@@ -631,6 +698,8 @@ class PackBuilderApp(tk.Tk):
                             "-ar", "44100", "-ac", "2", "-b:a", "192k",
                             str(sounds_dir / "chunk_%d.ogg")
                         ])
+                    except _NoAudio:
+                        pass
                     except Exception as e:
                         self.messages.put(self.tr("build.audio_skipped", error=e))
 
@@ -655,7 +724,7 @@ class PackBuilderApp(tk.Tk):
                         *build_converter_args(
                             video, generated_data, ffmpeg, width, height, interval, palette, dither_method,
                             self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
-                            self.tr.language,
+                            self.tr.language, mode, depth,
                         ),
                     ]
                     self._run(converter_args)

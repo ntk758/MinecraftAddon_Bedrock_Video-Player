@@ -148,5 +148,12 @@
   "convert.device_cpu_dither": "[MVCodec] Périphérique de conversion : CPU (le tramage '{dither}' est réservé au CPU ; la palette automatique utilise {gpu})",
   "convert.device_gpu": "[MVCodec] Périphérique de conversion : {gpu}",
   "convert.no_frames": "[MVCodec] Aucune image en entrée.",
-  "convert.palette_cpu_retry": "[MVCodec] Avertissement : impossible de calculer la palette automatique sur le GPU ; nouveau calcul sur le CPU : {error}"
+  "convert.palette_cpu_retry": "[MVCodec] Avertissement : impossible de calculer la palette automatique sur le GPU ; nouveau calcul sur le CPU : {error}",
+  "settings.mode": "Mode d'affichage",
+  "settings.depth": "Profondeur (blocs)",
+  "mode.screen": "Écran plat",
+  "mode.relief": "Relief 3D (luminosité = profondeur)",
+  "mode.extrude": "Silhouette 3D (parties claires extrudées)",
+  "dialog.vox_files": "MagicaVoxel (.vox)",
+  "build.vox_preview": "  Création d'un aperçu de l'animation voxel…"
 }

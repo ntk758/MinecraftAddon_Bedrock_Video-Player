@@ -207,3 +207,19 @@ def test_mode_arguments_are_validated():
         convert.parse_args(["--frames-dir", "x", "--mode", "screen", "--depth-video", "d.mp4"])
     assert convert.parse_args(["--input-vox", "a.vox"]).mode == "vox"
     assert convert.parse_args(["--frames-dir", "x"]).mode == "screen"
+
+
+def test_moving_vox_frames_are_not_skipped(tmp_path):
+    """ほとんどが空気の立体でも、小さな物体が動くフレームを「変化が少ない」として省略しない。"""
+    palette = np.zeros((256, 4), np.uint8)
+    palette[0] = (230, 40, 40, 255)
+    models = []
+    for t in range(8):
+        cube = [[x, y, z, 1] for x in range(t, t + 2) for y in range(2) for z in range(2)]
+        models.append(((32, 32, 32), np.array(cube, np.uint8)))  # 32^3 のうち 8 マスだけ
+    vox_path = tmp_path / "small.vox"
+    vox_path.write_bytes(write_vox(models, palette))
+    out = tmp_path / "small.js"
+    assert convert.main(["--input-vox", str(vox_path), "--output", str(out), "--fps", "10"]) == 0
+    data = load_frame_data(out)
+    assert all(length > 0 for _gop, _offset, length, _key in parse_index(data))

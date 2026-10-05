@@ -203,3 +203,19 @@ def nearest_levels(colors_rgb, palette_rgb):
     weights = np.array([0.30, 0.59, 0.11], dtype=np.float32)
     distance = (((colors - palette) ** 2) * weights).sum(axis=2)
     return distance.argmin(axis=1).astype(np.int16)
+
+
+def front_view(volume, palette_rgb, background=(0, 0, 0)):
+    """立体を手前から見た画像 (H, W, 3)。各画素は一番手前にあるブロックの色 (サムネイル用)。"""
+    volume = np.asarray(volume)
+    depth, height, width = volume.shape
+    solid = volume != AIR_LEVEL
+    # 手前 (奥行きの大きい方) から最初に当たるボクセル
+    front_index = depth - 1 - np.argmax(solid[::-1], axis=0)
+    hit = solid.any(axis=0)
+    levels = np.take_along_axis(volume, front_index[None], axis=0)[0]
+    table = np.vstack([np.asarray(palette_rgb, dtype=np.uint8), np.zeros((128, 3), np.uint8)])
+    image = np.empty((height, width, 3), np.uint8)
+    image[:] = background
+    image[hit] = table[levels[hit]]
+    return image

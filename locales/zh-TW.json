@@ -148,5 +148,12 @@
   "convert.device_cpu_dither": "[MVCodec] 轉換裝置: CPU（混色 '{dither}' 僅支援 CPU；自動調色盤使用 {gpu}）",
   "convert.device_gpu": "[MVCodec] 轉換裝置: {gpu}",
   "convert.no_frames": "[MVCodec] 沒有輸入影格。",
-  "convert.palette_cpu_retry": "[MVCodec] 警告: 無法在 GPU 上計算自動調色盤，改用 CPU 重新計算: {error}"
+  "convert.palette_cpu_retry": "[MVCodec] 警告: 無法在 GPU 上計算自動調色盤，改用 CPU 重新計算: {error}",
+  "settings.mode": "顯示模式",
+  "settings.depth": "深度（方塊）",
+  "mode.screen": "平面螢幕",
+  "mode.relief": "立體浮雕（亮度 = 深度）",
+  "mode.extrude": "立體剪影（擠出明亮部分）",
+  "dialog.vox_files": "MagicaVoxel (.vox)",
+  "build.vox_preview": "  正在產生立體動畫的預覽…"
 }

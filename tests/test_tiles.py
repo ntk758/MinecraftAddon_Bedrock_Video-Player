@@ -81,7 +81,7 @@ def test_dictionary_rules():
 
 def test_tile_output_is_exact(outputs):
     frames, _path, data, _plain = outputs
-    assert data["tile_size"] == 8
+    assert data["tile_size"] in (4, 8)
     for frame, (index_board, _rgb) in zip(frames, iter_decoded_frames(data)):
         assert np.array_equal(index_board, expected_indices(frame))
 
@@ -116,3 +116,22 @@ def test_main_js_plays_tile_frames(outputs, tmp_path):
     *_, (index_board, _rgb) = iter_decoded_frames(data)
     blocks = [spec["block"] for spec in data["level_blocks"]]
     assert result["finalBoard"] == [blocks[i] for i in index_board.reshape(-1)]
+
+
+def test_auto_tile_size_picks_the_smaller(outputs, tmp_path):
+    frames, _path, auto, _plain = outputs
+    size = lambda d: sum(len(c) for c in d["chunks"])  # noqa: E731
+    fixed = {t: convert_frames(_frames_dir(tmp_path, frames),
+                               tmp_path / f"t{t}.js", "--tile-size", str(t)) for t in (4, 8)}
+    best = min(fixed, key=lambda t: size(fixed[t]))
+    assert auto["tile_size"] == best
+    assert size(auto) == size(fixed[best])
+
+
+def _frames_dir(tmp_path, frames):
+    directory = tmp_path / "frames"
+    if not directory.exists():
+        directory.mkdir()
+        for t, frame in enumerate(frames):
+            Image.fromarray(frame).save(directory / f"frame_{t:04d}.png")
+    return directory
