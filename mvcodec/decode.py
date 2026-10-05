@@ -139,11 +139,14 @@ def decode_frame(buf, offset, length, board, data, frame_no=None, tiles=None):
             ops.append((tile_index, recency))
         tiles.apply_ops(out, ops)
     _chunk_count, pos = read_varint(buf, pos)
+    previous_end = 0
     while pos < end:
         val, pos = read_varint(buf, pos)
-        start = val >> 13
+        # v5 は直前のランの終わりからの距離、v4 は絶対位置
+        start = previous_end + (val >> 13) if is_v5 else val >> 13
         run = ((val >> 7) & 0x3f) + 1
         out[start:start + run] = val & 0x7f
+        previous_end = start + run
     return out, is_keyframe
 
 

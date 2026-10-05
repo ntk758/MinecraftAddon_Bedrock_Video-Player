@@ -32,6 +32,8 @@ def encode_frame_v5(frame_no, is_keyframe, frame, reference, width, height, vect
     動きベクトルあり: varint(個数), 各ブロックについて varint(前のブロック番号との差 - 1), varint(packed ベクトル)
     タイル参照あり: varint(個数), 各タイルについて varint(前のタイル番号との差 - 1), varint(辞書の新しい方からの番号)
     続けて varint(ラン数) と、reference (動きベクトル・タイル参照を反映した予測) との差分ラン。
+    v5 のランの位置は「直前のランの終わりからの距離」(先頭のランは 0 から) で表す。位置の数値が小さくなり、
+    特に立体 (位置が 16〜20bit になる) でデータが大きく減る。
     """
     from mvcodec.motion import pack_vector
 
@@ -57,8 +59,11 @@ def encode_frame_v5(frame_no, is_keyframe, frame, reference, width, height, vect
             last = tile_index
     chunks = extract_rle_chunks_fast(frame, reference, width, height)
     encode_varint(len(chunks), encoded)
+    previous_end = 0
     for start_x, y, length, color in chunks:
-        encode_varint(pack_run(start_x, y, length, color, width), encoded)
+        position = y * width + start_x
+        encode_varint(pack_run(position - previous_end, 0, length, color, width), encoded)
+        previous_end = position + length
     return encoded
 
 

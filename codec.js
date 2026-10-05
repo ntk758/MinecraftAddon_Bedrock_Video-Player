@@ -208,7 +208,7 @@ export const FORMAT_V5 = "varint_rle_v5";
  * board は直前の盤面 (書き換えない)。規則は mvcodec/decode.py の decode_frame と同じ:
  *  - キーフレームは全画素を未設置から描き直す
  *  - v5 の動きベクトルは、ブロック内の各画素を board[clamp(y+dy)][clamp(x+dx)] から予測する
- *  - 続けてタイル辞書の参照を貼り、最後に差分ランを上書きする
+ *  - 続けてタイル辞書の参照を貼り、最後に差分ランを上書きする (v5 のランの位置は直前のランの終わりからの距離)
  *  - tiles (createTileDictionary の戻り値) を渡すと、復元後に辞書も更新する
  * out と board は width*height の Int16Array などを使い回す (GC を避ける)。
  */
@@ -261,9 +261,13 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
 
   readVarint(bytes, cursor, end); // ラン数
   const run = { position: 0, length: 0, level: 0 };
+  let previousEnd = 0;
   while (cursor.pos < end) {
     unpackRun(readVarint(bytes, cursor, end), run);
-    out.fill(run.level, run.position, run.position + run.length);
+    // v5 の位置は直前のランの終わりからの距離、v4 は絶対位置
+    const start = isV5 ? previousEnd + run.position : run.position;
+    out.fill(run.level, start, start + run.length);
+    previousEnd = start + run.length;
   }
   if (tiles) tiles.update(board, out, isKeyframe);
   return isKeyframe;
