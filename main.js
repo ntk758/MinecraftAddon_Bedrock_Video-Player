@@ -11,6 +11,7 @@ import {
   FORMAT_V5,
   decodeFrameInto,
   decodeUTF16BinaryToBytes,
+  isVolume,
   decodeUTF16BinaryToBytesJob,
   findKeyframeAtOrBefore,
   parseFrameIndexV3,
@@ -93,6 +94,33 @@ function resolvePermutation(spec) {
   }
 }
 
+// 盤面の 1 マス (p 番目) をワールド座標にする。
+//  平面スクリーン: 足元の高さに、x は東、行は南向き (z+)
+//  立体: x は東、高さは上向き (行 0 が一番上)、奥行き 0 が一番北 (プレイヤーから遠い側)
+function cellToWorld(videoData, anchor, p, loc) {
+  const width = videoData.width;
+  const row = Math.floor(p / width);
+  loc.x = anchor.x + (p % width);
+  if (isVolume(videoData)) {
+    const height = videoData.height;
+    loc.y = anchor.y + (height - 1 - (row % height));
+    loc.z = anchor.z + Math.floor(row / height);
+  } else {
+    loc.y = anchor.y;
+    loc.z = anchor.z + row;
+  }
+  return loc;
+}
+
+function boardSizeOf(videoData) {
+  return videoData.width * videoData.height * (isVolume(videoData) ? videoData.depth : 1);
+}
+
+// ワールド上で占める範囲の x 方向・z 方向の大きさ
+function footprintOf(videoData) {
+  return { sizeX: videoData.width, sizeZ: isVolume(videoData) ? videoData.depth : videoData.height };
+}
+
 function ticksPerFrameOf(videoData) {
   if (videoData && videoData.fps > 0) return TICKS_PER_SECOND / videoData.fps;
   return FRAME_INTERVAL_TICKS;
@@ -151,7 +179,7 @@ class VideoPlayer {
     const format = this.videoData.format;
     if ((format === FORMAT_V4 || format === FORMAT_V5) && this.videoData.chunks && this.videoData.index) {
       this.decodedIndex = parseFrameIndexV4(decodeUTF16BinaryToBytes(this.videoData.index));
-      const pixels = this.videoData.width * this.videoData.height;
+      const pixels = boardSizeOf(this.videoData);
       this.board = new Int16Array(pixels).fill(-1);
       this.nextBoard = new Int16Array(pixels);
       this.decodedBinary = null;
@@ -219,6 +247,7 @@ class VideoPlayer {
 
   initPaletteCache() {
     if (!this.videoData || this.paletteCache) return;
+    this.airPermutation = BlockPermutation.resolve("minecraft:air");
     if (this.videoData.adaptive_palette) {
       this.paletteCache = this.videoData.level_blocks.map((gopPalette) => gopPalette.map(resolvePermutation));
     } else {
@@ -275,24 +304,39 @@ class VideoPlayer {
     if (this.board) this.board.fill(-1);
   }
 
+  /**
+   * キーフレームの前に呼ぶ。平面は全マスを置き直す。
+   * 立体は空気のマスは空気のままとみなし、ブロックのあるマスだけ置き直す (空気で全体を塗り直さずに済む)。
+   */
+  prepareKeyframe() {
+    if (!this.board) return;
+    if (!isVolume(this.videoData)) {
+      this.board.fill(-1);
+      return;
+    }
+    const air = this.videoData.air_level;
+    for (let p = 0; p < this.board.length; p++) {
+      if (this.board[p] !== air) this.board[p] = -1;
+    }
+  }
+
   /** nextBoard と board を比べ、変わったブロックだけを置く。tick 予算に合わせて yield する。 */
   *placeChangedBlocks(width) {
     const board = this.board;
     const next = this.nextBoard;
     const loc = this.tempBlockLoc;
     const palette = this.activePalette;
+    const airLevel = isVolume(this.videoData) ? this.videoData.air_level : -2;
     let operations = 0;
     let failures = 0;
     for (let p = 0; p < next.length; p++) {
       if (p % PIXELS_PER_SCAN_YIELD === PIXELS_PER_SCAN_YIELD - 1) yield;
       const level = next[p];
       if (level === board[p] || level < 0) continue;
-      const permutation = palette ? palette[level] : null;
+      const permutation = level === airLevel ? this.airPermutation : palette ? palette[level] : null;
       board[p] = level;
       if (!permutation) continue;
-      loc.x = this.anchor.x + (p % width);
-      loc.y = this.anchor.y;
-      loc.z = this.anchor.z + Math.floor(p / width);
+      cellToWorld(this.videoData, this.anchor, p, loc);
       try {
         this.dimension.setBlockPermutation(loc, permutation);
       } catch (e) {
@@ -334,7 +378,7 @@ class VideoPlayer {
         gopBytes, entry.offset, entry.offset + entry.length, this.board, this.nextBoard, this.videoData
       );
       // キーフレームはワールド上の状態に関係なく全ブロックを置き直す (パレット切替・クリア後・シーク時)
-      if (isKeyframe) this.invalidateBoard();
+      if (isKeyframe) this.prepareKeyframe();
       yield* this.placeChangedBlocks(width);
       return;
     }
@@ -460,30 +504,33 @@ class VideoPlayer {
     if (!this.videoData) return;
 
     this.initPaletteCache();
-    const clearPermutation = this.videoData.adaptive_palette ? this.paletteCache?.[0]?.[0] : this.paletteCache?.[0];
+    // 平面はパレットの先頭のブロックで塗りつぶし、立体は空気にする
+    const volume = isVolume(this.videoData);
+    const clearPermutation = volume
+      ? this.airPermutation
+      : this.videoData.adaptive_palette ? this.paletteCache?.[0]?.[0] : this.paletteCache?.[0];
     if (!clearPermutation) return;
 
     // 大きなスクリーンを 1 tick で塗るとウォッチドッグに止められるため runJob で分割する
     const self = this;
-    const { width, height } = this.videoData;
+    const cells = boardSizeOf(this.videoData);
     this.currentJobId = system.runJob((function* () {
-      const loc = { x: 0, y: self.anchor.y, z: 0 };
+      const loc = { x: 0, y: 0, z: 0 };
       let operations = 0;
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          loc.x = self.anchor.x + x;
-          loc.z = self.anchor.z + y;
-          try {
-            self.dimension.setBlockPermutation(loc, clearPermutation);
-          } catch (e) {
-            warnOnce("clear", `Failed to place blocks while clearing the screen: ${e}`);
-          }
-          if (++operations >= BLOCKS_PER_YIELD) {
-            operations = 0;
-            yield;
-          }
+      for (let p = 0; p < cells; p++) {
+        cellToWorld(self.videoData, self.anchor, p, loc);
+        try {
+          self.dimension.setBlockPermutation(loc, clearPermutation);
+        } catch (e) {
+          warnOnce("clear", `Failed to place blocks while clearing the screen: ${e}`);
+        }
+        if (++operations >= BLOCKS_PER_YIELD) {
+          operations = 0;
+          yield;
         }
       }
+      // 立体は全マスが空気になったことが分かっているので、次のキーフレームで空気を置き直さずに済む
+      if (volume && self.board) self.board.fill(self.videoData.air_level);
       self.currentJobId = null;
       notify("clear_done");
     })());
@@ -542,8 +589,9 @@ function ensureTickingArea(dimension, anchor, videoData) {
     dimension.runCommand(`tickingarea remove ${areaName}`);
   } catch (e) { /* 未登録なら削除失敗は想定内 */ }
 
-  const toX = anchor.x + videoData.width - 1;
-  const toZ = anchor.z + videoData.height - 1;
+  const { sizeX, sizeZ } = footprintOf(videoData);
+  const toX = anchor.x + sizeX - 1;
+  const toZ = anchor.z + sizeZ - 1;
   try {
     dimension.runCommand(
       `tickingarea add ${anchor.x} ${anchor.y} ${anchor.z} ${toX} ${anchor.y} ${toZ} ${areaName}`
@@ -562,10 +610,12 @@ function setup(player) {
   }
   const videoData = VIDEOS[globalSelectedVideoId];
   const loc = player.location;
+  // 平面は足元から北東へ広がる。立体はプレイヤーの 2 ブロック北に、左右中央をそろえて立てる
+  const volume = isVolume(videoData);
   const anchor = {
-    x: Math.floor(loc.x),
+    x: Math.floor(loc.x) - (volume ? Math.floor(videoData.width / 2) : 0),
     y: Math.floor(loc.y),
-    z: Math.floor(loc.z) - videoData.height,
+    z: Math.floor(loc.z) - footprintOf(videoData).sizeZ - (volume ? 2 : 0),
   };
   
   if (!ensureTickingArea(player.dimension, anchor, videoData)) {

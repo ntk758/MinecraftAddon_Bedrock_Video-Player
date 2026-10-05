@@ -5,12 +5,12 @@
 //   seekMismatches: 任意フレームへキーフレームからシークした結果が通常再生と食い違ったフレーム番号
 //   motionFrames: 動きベクトルを使ったフレーム番号
 import { readFileSync } from "node:fs";
-import { decodeFrameInto, decodeUTF16BinaryToBytes, findKeyframeAtOrBefore, parseFrameIndexV4, readVarint } from "../../codec.js";
+import { decodeFrameInto, decodeUTF16BinaryToBytes, findKeyframeAtOrBefore, isVolume, parseFrameIndexV4, readVarint } from "../../codec.js";
 
 const text = readFileSync(process.argv[2], "utf8");
 const data = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
 const { width, height } = data;
-const pixels = width * height;
+const pixels = width * height * (isVolume(data) ? data.depth : 1);
 const entries = parseFrameIndexV4(decodeUTF16BinaryToBytes(data.index));
 const gops = data.chunks.map((chunk) => decodeUTF16BinaryToBytes(chunk));
 
@@ -25,11 +25,17 @@ function applyFrame(state, frameIndex) {
   if (entry.length === 0) return;
   const bytes = gops[entry.gopId];
   const isKeyframe = decodeFrameInto(bytes, entry.offset, entry.offset + entry.length, state.board, state.next, data);
-  if (isKeyframe) state.board.fill(-1);
+  // main.js の prepareKeyframe と同じ: 平面は全マス、立体は空気以外のマスを置き直す
+  if (isKeyframe) {
+    for (let p = 0; p < pixels; p++) {
+      if (!isVolume(data) || state.board[p] !== data.air_level) state.board[p] = -1;
+    }
+  }
   for (let p = 0; p < pixels; p++) {
     if (state.next[p] !== state.board[p] && state.next[p] >= 0) {
       state.board[p] = state.next[p];
-      state.gopOf[p] = entry.gopId;
+      // 空気はどのパレットでも同じなので、GOP の取り違えの検査から外す
+      state.gopOf[p] = isVolume(data) && state.next[p] === data.air_level ? -1 : entry.gopId;
     }
   }
 }

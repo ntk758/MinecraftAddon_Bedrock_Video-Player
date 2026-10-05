@@ -15,7 +15,7 @@ let itemUseHandler = null;
 export const dimension = {
   id: "overworld",
   setBlockPermutation(location, permutation) {
-    board.set(`${location.x},${location.z}`, permutation.id);
+    board.set(`${location.x},${location.y},${location.z}`, permutation.id);
   },
   runCommand() {},
 };
@@ -54,6 +54,10 @@ export const system = {
 };
 
 export const BlockPermutation = { resolve: (id) => ({ id }) };
+
+export function getAnchor(key) {
+  return dynamicProperties[key];
+}
 
 // --- テスト用の操作 ---
 export function fireScriptEvent(id, message = "") {

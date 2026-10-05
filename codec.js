@@ -114,6 +114,16 @@ export function unpackRun(val, out) {
 }
 
 export const FORMAT_V4 = "varint_rle_v4";
+
+/** 立体 (3D ホログラム) のデータか。盤面は (奥行き × 高さ) 行 × 幅 列で、空気は air_level 番。 */
+export function isVolume(video) {
+  return video.layout === "volume";
+}
+
+/** キーフレームの描き始めの状態: 立体は空気、平面スクリーンは未設置 (-1)。 */
+export function emptyLevel(video) {
+  return isVolume(video) ? video.air_level : -1;
+}
 export const FORMAT_V5 = "varint_rle_v5";
 
 /**
@@ -126,14 +136,15 @@ export const FORMAT_V5 = "varint_rle_v5";
  * out と board は width*height の Int16Array などを使い回す (GC を避ける)。
  */
 export function decodeFrameInto(bytes, start, end, board, out, video) {
-  const { width, height } = video;
+  const width = video.width;
+  const height = isVolume(video) ? video.height * video.depth : video.height;
   const cursor = { pos: start };
   const header = readVarint(bytes, cursor, end);
   const isV5 = video.format === FORMAT_V5;
   const isKeyframe = header % 2 === 1;
   const hasMotion = isV5 && Math.floor(header / 2) % 2 === 1;
 
-  if (isKeyframe) out.fill(-1);
+  if (isKeyframe) out.fill(emptyLevel(video));
   else out.set(board);
 
   if (hasMotion) {

@@ -1,6 +1,6 @@
 // main.js をモックの Minecraft 上で動かし、結果を JSON で標準出力へ書く (tests/test_main_js.py から実行)。
 // setup → start → 再生終了まで tick → list → リモコン (コンパス) を開く、の順に操作する。
-import { board, fireScriptEvent, forms, messages, sounds, tick, useItem } from "@minecraft/server";
+import { board, fireScriptEvent, forms, getAnchor, messages, sounds, tick, useItem } from "@minecraft/server";
 
 await import("./main.js");
 const { VIDEOS } = await import("./videos.js");
@@ -21,11 +21,17 @@ fireScriptEvent("badapple:play", "no_such_video");
 useItem("minecraft:compass");
 await Promise.resolve();
 
-// スクリーンは足元の高さ、x はプレイヤーから東へ、z はプレイヤーの北側 (z - height) から
-const z0 = 100 - video.height;
+// 盤面の各マスに置かれたブロック (main.js の cellToWorld と同じ配置規則で読む)
+const anchor = getAnchor("badapple:anchor");
+const volume = video.layout === "volume";
+const cells = video.width * video.height * (volume ? video.depth : 1);
 const finalBoard = [];
-for (let y = 0; y < video.height; y++) {
-  for (let x = 0; x < video.width; x++) finalBoard.push(board.get(`${x},${z0 + y}`) ?? null);
+for (let p = 0; p < cells; p++) {
+  const x = anchor.x + (p % video.width);
+  const row = Math.floor(p / video.width);
+  const y = volume ? anchor.y + (video.height - 1 - (row % video.height)) : anchor.y;
+  const z = volume ? anchor.z + Math.floor(row / video.height) : anchor.z + row;
+  finalBoard.push(board.get(`${x},${y},${z}`) ?? null);
 }
 
-process.stdout.write(JSON.stringify({ ticks, finished: finished(), frameCount: video.frame_count, fps: video.fps, messages, forms, sounds, finalBoard }));
+process.stdout.write(JSON.stringify({ ticks, finished: finished(), frameCount: video.frame_count, fps: video.fps, anchor, messages, forms, sounds, finalBoard }));

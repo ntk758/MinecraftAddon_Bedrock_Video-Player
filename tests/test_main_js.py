@@ -50,17 +50,12 @@ def collect_text(value, keys, literals):
             collect_text(child, keys, literals)
 
 
-@pytest.fixture(scope="module")
-def run_result(tmp_path_factory):
-    tmp = tmp_path_factory.mktemp("main_js")
-    make_scene_frames(tmp / "frames")
-    data = run_convert(tmp / "frames", tmp / "frames_demo.js", "--keyframe-interval", "10")
-
-    work = tmp / "addon"
+def run_addon(work, frames_js):
+    """frames_js (convert.py の出力) を収録したアドオンを、モックの Minecraft 上で再生した結果を返す。"""
     work.mkdir()
     shutil.copy(ROOT / "main.js", work / "main.js")
     shutil.copy(ROOT / "codec.js", work / "codec.js")
-    shutil.copy(tmp / "frames_demo.js", work / "frames_demo.js")
+    shutil.copy(frames_js, work / "frames_demo.js")
     shutil.copy(ROOT / "tests" / "js" / "run_main.mjs", work / "run_main.mjs")
     (work / "videos.js").write_text(
         'import { FRAME_DATA as video_demo } from "./frames_demo.js";\n'
@@ -77,9 +72,17 @@ def run_result(tmp_path_factory):
         shutil.copy(mock_dir / source, target / "index.js")
     (work / "package.json").write_text(json.dumps({"type": "module"}))
 
-    result = subprocess.run(["node", "run_main.mjs"], cwd=work, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    result = subprocess.run(["node", "run_main.mjs"], cwd=work, capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert result.returncode == 0, result.stderr
-    return data, json.loads(result.stdout)
+    return json.loads(result.stdout)
+
+
+@pytest.fixture(scope="module")
+def run_result(tmp_path_factory):
+    tmp = tmp_path_factory.mktemp("main_js")
+    make_scene_frames(tmp / "frames")
+    data = run_convert(tmp / "frames", tmp / "frames_demo.js", "--keyframe-interval", "10")
+    return data, run_addon(tmp / "addon", tmp / "frames_demo.js")
 
 
 def test_playback_runs_at_video_fps(run_result):

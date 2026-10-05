@@ -77,13 +77,26 @@ def gop_palettes(data):
     return [table] * max(1, num_gops)
 
 
+def empty_value(data):
+    """キーフレームの描き始めの状態: 立体は空気、平面スクリーンは未設置 (-1)。"""
+    return data["air_level"] if data.get("layout") == "volume" else -1
+
+
+def board_shape(data):
+    """盤面の形: 平面は (高さ, 幅)、立体は (奥行き, 高さ, 幅)。"""
+    if data.get("layout") == "volume":
+        return data["depth"], data["height"], data["width"]
+    return data["height"], data["width"]
+
+
 def decode_frame(buf, offset, length, board, data, frame_no=None):
     """1 フレームを復元して新しい盤面 (1 次元, パレット番号, 未設置 -1) と、キーフレームかどうかを返す。
 
     board は直前の盤面。codec.js の decodeFrameInto と同じ規則:
     キーフレームは全画素を未設置から描き直し、動きベクトルは board から予測し、最後に差分ランを上書きする。
     """
-    width, height = data["width"], data["height"]
+    width = data["width"]
+    height = data["height"] * data.get("depth", 1) if data.get("layout") == "volume" else data["height"]
     is_v5 = data.get("format") == FORMAT_V5
     pos, end = offset, offset + length
     header, pos = read_varint(buf, pos)
@@ -93,7 +106,7 @@ def decode_frame(buf, offset, length, board, data, frame_no=None):
     is_keyframe = (header & 1) == 1
     has_motion = is_v5 and (header >> 1) & 1 == 1
 
-    out = np.full_like(board, -1) if is_keyframe else board.copy()
+    out = np.full_like(board, empty_value(data)) if is_keyframe else board.copy()
     if has_motion:
         count, pos = read_varint(buf, pos)
         vectors = {}
@@ -116,19 +129,24 @@ def decode_frame(buf, offset, length, board, data, frame_no=None):
 def iter_decoded_frames(data):
     """各フレーム表示後の盤面を (index_board, rgb_board) として順に返す。
 
-    index_board は最後に設置したパレット番号 (未設置は -1)、rgb_board は実際に見えるブロック色。
+    index_board は最後に設置したパレット番号 (未設置は -1、立体の空気は air_level)、rgb_board は実際に見える
+    ブロック色 (空気は黒)。形は平面なら (高さ, 幅)、立体なら (奥行き, 高さ, 幅)。
     ゲーム内と同じく、パレット番号が変わった画素だけをそのフレームの GOP のパレットで塗り直す。
     スキップフレームは前フレームと同じ盤面を返す。
     """
     if data.get("format") not in (FORMAT_V4, FORMAT_V5):
         raise ValueError(f"未対応のフォーマットです: {data.get('format')}")
-    width, height = data["width"], data["height"]
+    shape = board_shape(data)
+    pixels = int(np.prod(shape))
     entries = parse_index(data)
     palettes = gop_palettes(data)
+    if data.get("layout") == "volume":
+        # 空気の番号まで引けるよう、パレット表を 128 色に広げる (空気は黒)
+        palettes = [np.vstack([table, np.zeros((128 - len(table), 3), np.uint8)]) for table in palettes]
     gop_bytes = {}
 
-    index_board = np.full(width * height, -1, dtype=np.int32)
-    rgb_board = np.zeros((width * height, 3), dtype=np.uint8)
+    index_board = np.full(pixels, -1, dtype=np.int32)
+    rgb_board = np.zeros((pixels, 3), dtype=np.uint8)
 
     for frame_no, (gop_id, offset, length, _is_kf) in enumerate(entries):
         if length > 0:
@@ -139,4 +157,4 @@ def iter_decoded_frames(data):
             changed &= new_board >= 0
             rgb_board[changed] = palettes[gop_id][new_board[changed]]
             index_board = new_board
-        yield index_board.reshape(height, width).copy(), rgb_board.reshape(height, width, 3).copy()
+        yield index_board.reshape(shape).copy(), rgb_board.reshape(*shape, 3).copy()

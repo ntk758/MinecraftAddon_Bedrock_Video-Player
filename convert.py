@@ -25,13 +25,18 @@ from mvcodec.color import (
 )
 from gui_i18n import LOCALES, Translator, detect_system_language
 from mvcodec.device import DEVICE_CHOICES, detect_gpu, empty_cache, squared_distances
-from mvcodec.encode import (
-    MAX_PALETTE_COLORS,
-    bytearray_to_utf16_str,
-    encode_frame_v5,
-    encode_varint,
+from mvcodec.encode import MAX_PALETTE_COLORS
+from mvcodec.motion import MV_BLOCK, MV_RANGE
+from mvcodec.stream import StreamEncoder
+from mvcodec.volume import (
+    AIR_LEVEL,
+    lift_frame,
+    load_vox_frames,
+    luminance01,
+    nearest_levels,
+    vox_to_volume,
+    vox_volume_shape,
 )
-from mvcodec.motion import MV_BLOCK, MV_RANGE, apply_motion, estimate_motion, vector_limit
 from mvcodec.evaluate import calculate_ssim_global
 
 WIDTH = 64
@@ -393,6 +398,19 @@ def parse_args(argv=None):
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--input-video", default=None, help="入力動画ファイル (FFmpeg で読み込み)")
     source.add_argument("--frames-dir", default=None, help="入力画像 (PNG等の連番) フォルダ。ファイル名順に読み込む")
+    source.add_argument("--input-vox", default=None,
+                        help="MagicaVoxel の .vox (各モデルが 1 フレーム) または .vox が並んだフォルダ (--mode vox)")
+    parser.add_argument("--mode", default=None, choices=["screen", "relief", "extrude", "vox"],
+                        help="screen: 平面スクリーン / relief: 明るさを奥行きにした立体 / extrude: 明るい部分を押し出した立体 / "
+                             "vox: MagicaVoxel の立体アニメ (既定は入力に合わせて screen か vox)")
+    parser.add_argument("--depth", type=int, default=16, help="立体モードの奥行き (ブロック数)")
+    parser.add_argument("--depth-video", default=None,
+                        help="relief で奥行きに使うグレースケール動画 (明るいほど手前)。省略時は各画素の明るさを使う")
+    parser.add_argument("--extrude-threshold", type=float, default=0.5, help="extrude で押し出す明るさのしきい値 (0〜1)")
+    parser.add_argument("--extrude-invert", action="store_true", help="extrude で暗い部分を押し出す")
+    parser.add_argument("--thickness", type=int, default=None, help="extrude の厚み (ブロック数、既定は奥行き全体)")
+    parser.add_argument("--hollow", action=argparse.BooleanOptionalAction, default=True,
+                        help="外から見えない内部のブロックを置かない (--no-hollow で中まで詰める)")
     parser.add_argument("--output", default=OUTPUT_FILE, help="出力パス")
     parser.add_argument("--width", type=int, default=WIDTH)
     parser.add_argument("--height", type=int, default=HEIGHT)
@@ -429,6 +447,14 @@ def parse_args(argv=None):
         parser.error("--keyframe-interval は 0 以上にしてください")
     if not 1 <= args.mv_range <= 15:
         parser.error("--mv-range は 1〜15 にしてください")
+    if args.mode is None:
+        args.mode = "vox" if args.input_vox else "screen"
+    if (args.mode == "vox") != bool(args.input_vox):
+        parser.error("--mode vox には --input-vox を、--input-vox には --mode vox を指定してください")
+    if not 2 <= args.depth <= 128:
+        parser.error("--depth は 2〜128 にしてください")
+    if args.depth_video and args.mode != "relief":
+        parser.error("--depth-video は --mode relief でだけ使えます")
     return args
 
 
@@ -484,12 +510,90 @@ def _use_utf8_for_pipes():
             stream.reconfigure(encoding="utf-8", errors="replace")
 
 
+def build_frame_data(args, width, height, gop_boundaries, palettes, adaptive, encoder, chunks, index, depth=None):
+    level_blocks = [level_block_specs(pal) for pal in palettes] if adaptive else level_block_specs(palettes[0])
+    data = {
+        "width": width,
+        "height": height,
+        "fps": args.fps,
+        "frame_count": encoder.stats.total_frames,
+        "keyframe_interval": args.keyframe_interval,
+        "format": FORMAT_NAME,
+        "mv_block": MV_BLOCK,
+        "mv_range": encoder.mv_limit,
+        "gop_boundaries": gop_boundaries,
+        "adaptive_palette": adaptive,
+        "level_blocks": level_blocks,
+        "index": index,
+        "chunks": chunks,
+    }
+    if depth is not None:
+        # 立体: 盤面は (奥行き × 高さ) 行 × 幅 列。空気は air_level 番で表す
+        data.update({"layout": "volume", "depth": depth, "air_level": AIR_LEVEL})
+    else:
+        data["layout"] = "screen"
+    return data
+
+
+def write_frame_data(args, frame_data):
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        f"export const FRAME_DATA = {json.dumps(frame_data, ensure_ascii=False)};\n", encoding="utf-8"
+    )
+    return out_path
+
+
+def print_stats(out_path, encoder, num_gops, avg_ssim=0.0):
+    stats = encoder.stats
+    print(f"[MVCodec Benchmark] SSIM: {avg_ssim:.4f}")
+    print(f"[MVCodec Benchmark] FileSizeKB: {out_path.stat().st_size / 1024:.2f}")
+    print(f"[MVCodec Benchmark] TotalFrames: {stats.total_frames}")
+    print(f"[MVCodec Benchmark] SkippedFrames: {stats.skipped_frames}")
+    print(f"[MVCodec Benchmark] KeyFrames: {stats.keyframes}")
+    print(f"[MVCodec Benchmark] MotionFrames: {stats.motion_frames}")
+    print(f"[MVCodec Benchmark] GOPs: {num_gops}")
+
+
+def make_encoder(args, width, rows, gop_boundaries, empty_value):
+    return StreamEncoder(
+        width=width, rows=rows, gop_boundaries=gop_boundaries, keyframe_interval=args.keyframe_interval,
+        adaptive_fps=args.adaptive_fps, scene_threshold=args.scene_threshold, motion=args.motion,
+        mv_range=args.mv_range, empty_value=empty_value,
+    )
+
+
+def convert_vox(args):
+    """MagicaVoxel の立体アニメを変換する (減色はブロック色への最近傍対応だけ)。"""
+    frames, vox_palette = load_vox_frames(args.input_vox)
+    palette = PALETTES["full" if args.palette == "auto" else args.palette]
+    block_rgb = np.array([item["rgb"] for item in palette], dtype=np.float64)
+    color_to_level = np.full(256, AIR_LEVEL, dtype=np.int16)
+    color_to_level[1:] = nearest_levels(vox_palette[:255, :3], block_rgb)  # 色番号 i は palette[i - 1]
+    depth, height, width = vox_volume_shape(frames)
+    total = len(frames)
+    gop_boundaries = list(range(0, total, MAX_GOP_SIZE)) + [total]
+    encoder = make_encoder(args, width, depth * height, gop_boundaries, AIR_LEVEL)
+    gop_ids = iter_gop_ids(gop_boundaries)
+    for i, frame in enumerate(frames):
+        encoder.add(i, next(gop_ids), vox_to_volume(frame, (depth, height, width), color_to_level))
+    chunks, index = encoder.finish()
+    frame_data = build_frame_data(args, width, height, gop_boundaries, [palette], False, encoder, chunks, index, depth)
+    out_path = write_frame_data(args, frame_data)
+    print_stats(out_path, encoder, len(gop_boundaries) - 1)
+    return 0
+
+
 def main(argv=None):
     global _tr
     _use_utf8_for_pipes()
     args = parse_args(argv)
     _tr = Translator(args.lang or detect_system_language())
+    if args.mode == "vox":
+        return convert_vox(args)
+
     width, height = args.width, args.height
+    volume = args.mode in ("relief", "extrude")
     frame_source = make_frame_source(args)
     gpu = select_gpu(args.device, args.dither_method, args.perceptual)
 
@@ -507,7 +611,7 @@ def main(argv=None):
         gop_palettes = adaptive_palettes
     else:
         gop_palettes = [PALETTES[args.palette]] * num_gops
-    if max(len(p) for p in gop_palettes) > MAX_PALETTE_COLORS:
+    if max(len(p) for p in gop_palettes) > MAX_PALETTE_COLORS - (1 if volume else 0):
         raise ValueError(f"パレットは最大 {MAX_PALETTE_COLORS} 色までです")
     gop_palettes_rgb = []
     rgb_cache = {}
@@ -535,104 +639,45 @@ def main(argv=None):
         quantized = quantize_frames_cpu(pass2_frames, gop_palettes, gop_boundaries, width, height,
                                         dither_method, args.perceptual, args.threads)
 
-    gop_starts = set(gop_boundaries[:-1])
-    keyframe_interval = args.keyframe_interval
+    depth_frames = None
+    if args.depth_video:
+        depth_frames = ffmpeg_frame_generator(args.depth_video, width, height, args.fps, args.duration, args.ffmpeg)
 
-    gop_utf16_strings = []
-    gop_binary = bytearray()
-    frame_index_entries = []  # (gop_id, byte_offset_in_gop, byte_length, is_keyframe)
-    prev_frame = None
-    skipped_frames = 0
-    keyframes_count = 0
-    motion_frames = 0
-    mv_limit = vector_limit(width, height, args.mv_range)
+    rows = args.depth * height if volume else height
+    encoder = make_encoder(args, width, rows, gop_boundaries, AIR_LEVEL if volume else -1)
     ssim_pairs = []
     gif_frames = []
-    current_gop = 0
-    gop_start = 0
 
     for i, (frame, gop_id) in enumerate(zip(quantized, iter_gop_ids(gop_boundaries))):
         original = sampled_originals.pop(i, None)
-        flat_frame = np.asarray(frame, dtype=np.int32).reshape(-1)
-
-        if gop_id != current_gop:
-            gop_utf16_strings.append(bytearray_to_utf16_str(gop_binary))
-            gop_binary = bytearray()
-            current_gop = gop_id
-        if i in gop_starts:
-            gop_start = i
-
-        # GOP 先頭は必ずキーフレーム: パレットが変わってもシーク・遅延デコードが GOP 単体で完結する
-        is_keyframe = i in gop_starts or (keyframe_interval > 0 and (i - gop_start) % keyframe_interval == 0)
-
+        screen = np.asarray(frame, dtype=np.int32).reshape(height, width)
         if original is not None:
-            ssim_pairs.append((original, flat_frame.copy(), gop_id))
+            ssim_pairs.append((original, screen.reshape(-1).copy(), gop_id))
         if args.demo_gif:
-            gif_frames.append(gop_palettes_rgb[gop_id].astype(np.uint8)[flat_frame].reshape(height, width, 3))
+            gif_frames.append(gop_palettes_rgb[gop_id].astype(np.uint8)[screen])
 
-        offset_in_gop = len(gop_binary)
-        if not is_keyframe and args.adaptive_fps and np.mean(flat_frame != prev_frame) < args.scene_threshold:
-            skipped_frames += 1
-            frame_index_entries.append((gop_id, offset_in_gop, 0, False))
-            continue
-
-        if is_keyframe:
-            keyframes_count += 1
-            encoded = encode_frame_v5(i, True, flat_frame, np.full_like(flat_frame, -1), width, height)
+        if volume:
+            heights = None
+            if depth_frames is not None:
+                depth_frame = next(depth_frames, None)
+                heights = luminance01(depth_frame) if depth_frame is not None else None
+            encoded_frame = lift_frame(
+                args.mode, screen, gop_palettes_rgb[gop_id], args.depth, heights,
+                threshold=args.extrude_threshold, invert=args.extrude_invert, thickness=args.thickness,
+                make_hollow=args.hollow,
+            )
         else:
-            encoded = encode_frame_v5(i, False, flat_frame, prev_frame, width, height)
-            if args.motion:
-                # 動き補償版も作り、小さくなる場合だけ採用する (悪化はしない)
-                vectors = estimate_motion(prev_frame, flat_frame, width, height, MV_BLOCK, args.mv_range)
-                if vectors:
-                    predicted = apply_motion(prev_frame, vectors, width, height, MV_BLOCK)
-                    with_motion = encode_frame_v5(i, False, flat_frame, predicted, width, height, vectors, mv_limit)
-                    if len(with_motion) < len(encoded):
-                        encoded = with_motion
-                        motion_frames += 1
+            encoded_frame = screen
+        encoder.add(i, gop_id, encoded_frame)
 
-        gop_binary.extend(encoded)
-        frame_index_entries.append((gop_id, offset_in_gop, len(encoded), is_keyframe))
-        prev_frame = flat_frame
-
-    gop_utf16_strings.append(bytearray_to_utf16_str(gop_binary))
-    if len(frame_index_entries) != total_frames:
+    chunks, index = encoder.finish()
+    if encoder.stats.total_frames != total_frames:
         raise RuntimeError(
-            f"1パス目と2パス目でフレーム数が一致しません ({total_frames} != {len(frame_index_entries)})"
+            f"1パス目と2パス目でフレーム数が一致しません ({total_frames} != {encoder.stats.total_frames})"
         )
-
-    index_data = bytearray()
-    for gop_id, offset_val, length_val, is_kf in frame_index_entries:
-        encode_varint(gop_id, index_data)
-        encode_varint((offset_val << 1) | (1 if is_kf else 0), index_data)
-        encode_varint(length_val, index_data)
-
-    if is_adaptive_palette:
-        level_blocks = [level_block_specs(pal) for pal in gop_palettes]
-    else:
-        level_blocks = level_block_specs(gop_palettes[0])
-
-    frame_data = {
-        "width": width,
-        "height": height,
-        "fps": args.fps,
-        "frame_count": total_frames,
-        "keyframe_interval": keyframe_interval,
-        "format": FORMAT_NAME,
-        "mv_block": MV_BLOCK,
-        "mv_range": mv_limit,
-        "gop_boundaries": gop_boundaries,
-        "adaptive_palette": is_adaptive_palette,
-        "level_blocks": level_blocks,
-        "index": bytearray_to_utf16_str(index_data),
-        "chunks": gop_utf16_strings,
-    }
-
-    out_path = Path(args.output)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        f"export const FRAME_DATA = {json.dumps(frame_data, ensure_ascii=False)};\n", encoding="utf-8"
-    )
+    frame_data = build_frame_data(args, width, height, gop_boundaries, gop_palettes, is_adaptive_palette,
+                                  encoder, chunks, index, args.depth if volume else None)
+    out_path = write_frame_data(args, frame_data)
 
     # --- 評価 ---
     avg_ssim = 0.0
@@ -650,13 +695,7 @@ def main(argv=None):
                        duration=int(1000 / args.fps), loop=0)
         print(f"Demo GIF saved to {args.demo_gif}")
 
-    print(f"[MVCodec Benchmark] SSIM: {avg_ssim:.4f}")
-    print(f"[MVCodec Benchmark] FileSizeKB: {out_path.stat().st_size / 1024:.2f}")
-    print(f"[MVCodec Benchmark] TotalFrames: {total_frames}")
-    print(f"[MVCodec Benchmark] SkippedFrames: {skipped_frames}")
-    print(f"[MVCodec Benchmark] KeyFrames: {keyframes_count}")
-    print(f"[MVCodec Benchmark] MotionFrames: {motion_frames}")
-    print(f"[MVCodec Benchmark] GOPs: {num_gops}")
+    print_stats(out_path, encoder, num_gops, avg_ssim)
     return 0
 
 
