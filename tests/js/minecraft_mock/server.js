@@ -4,6 +4,10 @@ export const board = new Map();
 export const messages = [];
 export const sounds = [];
 export const forms = [];
+// API 呼び出しの回数 (setBlockPermutation / fillBlocks) と、置いたブロックの数
+export const stats = { setBlockCalls: 0, fillCalls: 0, blocksPlaced: 0 };
+// false にすると fillBlocks が無い環境をまねる
+export const options = { fillBlocks: true };
 
 const jobs = new Map();
 let nextJobId = 0;
@@ -15,7 +19,25 @@ let itemUseHandler = null;
 export const dimension = {
   id: "overworld",
   setBlockPermutation(location, permutation) {
+    stats.setBlockCalls++;
+    stats.blocksPlaced++;
     board.set(`${location.x},${location.y},${location.z}`, permutation.id);
+  },
+  get fillBlocks() {
+    if (!options.fillBlocks) return undefined;
+    return (volume, permutation) => {
+      stats.fillCalls++;
+      const { from, to } = volume;
+      for (let x = Math.min(from.x, to.x); x <= Math.max(from.x, to.x); x++) {
+        for (let y = Math.min(from.y, to.y); y <= Math.max(from.y, to.y); y++) {
+          for (let z = Math.min(from.z, to.z); z <= Math.max(from.z, to.z); z++) {
+            stats.blocksPlaced++;
+            board.set(`${x},${y},${z}`, permutation.id);
+          }
+        }
+      }
+      return { volume };
+    };
   },
   runCommand() {},
 };
@@ -54,6 +76,13 @@ export const system = {
 };
 
 export const BlockPermutation = { resolve: (id) => ({ id }) };
+
+export class BlockVolume {
+  constructor(from, to) {
+    this.from = { ...from };
+    this.to = { ...to };
+  }
+}
 
 export function getAnchor(key) {
   return dynamicProperties[key];

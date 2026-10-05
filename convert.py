@@ -432,6 +432,8 @@ def parse_args(argv=None):
                         help="動き補償 (パン・スクロールで差分を小さくする)。各フレームで小さくなる場合だけ使う (--no-motion で無効)")
     parser.add_argument("--mv-range", type=int, default=MV_RANGE,
                         help=f"動きベクトルの探索範囲 (ブロック数, 1〜15)。大きいほど速い動きに強いが変換が遅い")
+    parser.add_argument("--tile-size", type=int, default=8, choices=[0, 4, 8, 16],
+                        help="タイル辞書のタイルの大きさ (0 で無効)。繰り返し現れる模様を辞書から貼って差分を小さくする")
     parser.add_argument("--scene-threshold", type=float, default=0.015,
                         help="adaptive-fps でフレームを省略する変化率のしきい値")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
@@ -521,6 +523,8 @@ def build_frame_data(args, width, height, gop_boundaries, palettes, adaptive, en
         "format": FORMAT_NAME,
         "mv_block": MV_BLOCK,
         "mv_range": encoder.mv_limit,
+        "tile_size": args.tile_size,
+        "tile_dict_max": encoder.tiles.max_entries if encoder.tiles is not None else 0,
         "gop_boundaries": gop_boundaries,
         "adaptive_palette": adaptive,
         "level_blocks": level_blocks,
@@ -552,6 +556,8 @@ def print_stats(out_path, encoder, num_gops, avg_ssim=0.0):
     print(f"[MVCodec Benchmark] SkippedFrames: {stats.skipped_frames}")
     print(f"[MVCodec Benchmark] KeyFrames: {stats.keyframes}")
     print(f"[MVCodec Benchmark] MotionFrames: {stats.motion_frames}")
+    print(f"[MVCodec Benchmark] TileFrames: {stats.tile_frames}")
+    print(f"[MVCodec Benchmark] TileRefs: {stats.tile_refs}")
     print(f"[MVCodec Benchmark] GOPs: {num_gops}")
 
 
@@ -559,7 +565,7 @@ def make_encoder(args, width, rows, gop_boundaries, empty_value):
     return StreamEncoder(
         width=width, rows=rows, gop_boundaries=gop_boundaries, keyframe_interval=args.keyframe_interval,
         adaptive_fps=args.adaptive_fps, scene_threshold=args.scene_threshold, motion=args.motion,
-        mv_range=args.mv_range, empty_value=empty_value,
+        mv_range=args.mv_range, empty_value=empty_value, tile_size=args.tile_size,
     )
 
 

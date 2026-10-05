@@ -24,18 +24,22 @@ def pack_run(start_x, y, length, color, width):
     return (delta << 13) | ((length - 1) << 7) | (color & 0x7f)
 
 
-def encode_frame_v5(frame_no, is_keyframe, frame, reference, width, height, vectors=None, search_range=4):
+def encode_frame_v5(frame_no, is_keyframe, frame, reference, width, height, vectors=None, search_range=4,
+                    tile_ops=None):
     """varint_rle_v5 の 1 フレーム分のバイト列。
 
-    ヘッダ: varint(frame_no << 2 | 動きベクトルあり << 1 | キーフレーム)
+    ヘッダ: varint(frame_no << 3 | タイル参照あり << 2 | 動きベクトルあり << 1 | キーフレーム)
     動きベクトルあり: varint(個数), 各ブロックについて varint(前のブロック番号との差 - 1), varint(packed ベクトル)
-    続けて varint(ラン数) と、reference (動きベクトルがあれば予測フレーム) との差分ラン。
+    タイル参照あり: varint(個数), 各タイルについて varint(前のタイル番号との差 - 1), varint(辞書の新しい方からの番号)
+    続けて varint(ラン数) と、reference (動きベクトル・タイル参照を反映した予測) との差分ラン。
     """
     from mvcodec.motion import pack_vector
 
     vectors = vectors or {}
+    tile_ops = tile_ops or []
     encoded = bytearray()
-    encode_varint((frame_no << 2) | ((1 if vectors else 0) << 1) | (1 if is_keyframe else 0), encoded)
+    flags = ((1 if tile_ops else 0) << 2) | ((1 if vectors else 0) << 1) | (1 if is_keyframe else 0)
+    encode_varint((frame_no << 3) | flags, encoded)
     if vectors:
         encode_varint(len(vectors), encoded)
         last = -1
@@ -44,6 +48,13 @@ def encode_frame_v5(frame_no, is_keyframe, frame, reference, width, height, vect
             encode_varint(mb - last - 1, encoded)
             encode_varint(pack_vector(dx, dy, search_range), encoded)
             last = mb
+    if tile_ops:
+        encode_varint(len(tile_ops), encoded)
+        last = -1
+        for tile_index, recency in tile_ops:
+            encode_varint(tile_index - last - 1, encoded)
+            encode_varint(recency, encoded)
+            last = tile_index
     chunks = extract_rle_chunks_fast(frame, reference, width, height)
     encode_varint(len(chunks), encoded)
     for start_x, y, length, color in chunks:

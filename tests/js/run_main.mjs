@@ -1,6 +1,9 @@
 // main.js をモックの Minecraft 上で動かし、結果を JSON で標準出力へ書く (tests/test_main_js.py から実行)。
 // setup → start → 再生終了まで tick → list → リモコン (コンパス) を開く、の順に操作する。
-import { board, fireScriptEvent, forms, getAnchor, messages, sounds, tick, useItem } from "@minecraft/server";
+import { board, fireScriptEvent, forms, getAnchor, messages, options, sounds, stats, tick, useItem } from "@minecraft/server";
+
+// 引数 "nofill" で fillBlocks が無い環境をまねる
+if (process.argv.includes("nofill")) options.fillBlocks = false;
 
 await import("./main.js");
 const { VIDEOS } = await import("./videos.js");
@@ -34,4 +37,4 @@ for (let p = 0; p < cells; p++) {
   finalBoard.push(board.get(`${x},${y},${z}`) ?? null);
 }
 
-process.stdout.write(JSON.stringify({ ticks, finished: finished(), frameCount: video.frame_count, fps: video.fps, anchor, messages, forms, sounds, finalBoard }));
+process.stdout.write(JSON.stringify({ ticks, finished: finished(), frameCount: video.frame_count, fps: video.fps, anchor, stats, messages, forms, sounds, finalBoard }));

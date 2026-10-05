@@ -10,6 +10,7 @@ import numpy as np
 from mvcodec.color import BLOCK_RGB
 from mvcodec.encode import UTF16_BITS_PER_CHAR, UTF16_CHAR_OFFSET
 from mvcodec.motion import apply_motion, unpack_vector
+from mvcodec.tiles import TileDictionary
 
 FORMAT_V4 = "varint_rle_v4"
 FORMAT_V5 = "varint_rle_v5"
@@ -89,7 +90,16 @@ def board_shape(data):
     return data["height"], data["width"]
 
 
-def decode_frame(buf, offset, length, board, data, frame_no=None):
+def new_tile_dictionary(data):
+    """データがタイル辞書を使っていれば、デコーダ側の辞書を作る (使っていなければ None)。"""
+    tile = data.get("tile_size", 0)
+    if not tile or data.get("format") != FORMAT_V5:
+        return None
+    rows = board_shape(data)[0] * (data["height"] if data.get("layout") == "volume" else 1)
+    return TileDictionary(data["width"], rows, tile, data.get("tile_dict_max", 32768), index_contents=False)
+
+
+def decode_frame(buf, offset, length, board, data, frame_no=None, tiles=None):
     """1 フレームを復元して新しい盤面 (1 次元, パレット番号, 未設置 -1) と、キーフレームかどうかを返す。
 
     board は直前の盤面。codec.js の decodeFrameInto と同じ規則:
@@ -100,11 +110,12 @@ def decode_frame(buf, offset, length, board, data, frame_no=None):
     is_v5 = data.get("format") == FORMAT_V5
     pos, end = offset, offset + length
     header, pos = read_varint(buf, pos)
-    shift = 2 if is_v5 else 1
+    shift = 3 if is_v5 else 1
     if frame_no is not None and (header >> shift) != frame_no:
         raise ValueError(f"フレーム番号の不一致: index={frame_no}, data={header >> shift}")
     is_keyframe = (header & 1) == 1
     has_motion = is_v5 and (header >> 1) & 1 == 1
+    has_tiles = is_v5 and (header >> 2) & 1 == 1
 
     out = np.full_like(board, empty_value(data)) if is_keyframe else board.copy()
     if has_motion:
@@ -117,6 +128,16 @@ def decode_frame(buf, offset, length, board, data, frame_no=None):
             mb += gap + 1
             vectors[mb] = unpack_vector(packed, data["mv_range"])
         out = apply_motion(board, vectors, width, height, data["mv_block"])
+    if has_tiles:
+        count, pos = read_varint(buf, pos)
+        ops = []
+        tile_index = -1
+        for _ in range(count):
+            gap, pos = read_varint(buf, pos)
+            recency, pos = read_varint(buf, pos)
+            tile_index += gap + 1
+            ops.append((tile_index, recency))
+        tiles.apply_ops(out, ops)
     _chunk_count, pos = read_varint(buf, pos)
     while pos < end:
         val, pos = read_varint(buf, pos)
@@ -144,6 +165,7 @@ def iter_decoded_frames(data):
         # 空気の番号まで引けるよう、パレット表を 128 色に広げる (空気は黒)
         palettes = [np.vstack([table, np.zeros((128 - len(table), 3), np.uint8)]) for table in palettes]
     gop_bytes = {}
+    tiles = new_tile_dictionary(data)
 
     index_board = np.full(pixels, -1, dtype=np.int32)
     rgb_board = np.zeros((pixels, 3), dtype=np.uint8)
@@ -152,7 +174,9 @@ def iter_decoded_frames(data):
         if length > 0:
             if gop_id not in gop_bytes:
                 gop_bytes[gop_id] = utf16_str_to_bytes(data["chunks"][gop_id])
-            new_board, is_keyframe = decode_frame(gop_bytes[gop_id], offset, length, index_board, data, frame_no)
+            new_board, is_keyframe = decode_frame(gop_bytes[gop_id], offset, length, index_board, data, frame_no, tiles)
+            if tiles is not None:
+                tiles.update(index_board, new_board, is_keyframe)
             changed = np.ones(len(new_board), dtype=bool) if is_keyframe else new_board != index_board
             changed &= new_board >= 0
             rgb_board[changed] = palettes[gop_id][new_board[changed]]

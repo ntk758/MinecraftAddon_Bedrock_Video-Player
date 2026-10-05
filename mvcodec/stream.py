@@ -8,6 +8,7 @@ import numpy as np
 
 from mvcodec.encode import bytearray_to_utf16_str, encode_frame_v5, encode_varint
 from mvcodec.motion import MV_BLOCK, MV_RANGE, apply_motion, estimate_motion, vector_limit
+from mvcodec.tiles import TILE_SIZE, TileDictionary
 
 
 @dataclass
@@ -16,6 +17,8 @@ class StreamStats:
     skipped_frames: int = 0
     keyframes: int = 0
     motion_frames: int = 0
+    tile_frames: int = 0
+    tile_refs: int = 0
 
 
 @dataclass
@@ -30,6 +33,8 @@ class StreamEncoder:
     mv_range: int = MV_RANGE
     # キーフレームを符号化するときの「何も無い」状態 (2D は -1 = 未設置、3D は空気)
     empty_value: int = -1
+    # タイル辞書のタイルの大きさ (0 で無効)
+    tile_size: int = TILE_SIZE
     stats: StreamStats = field(default_factory=StreamStats)
 
     def __post_init__(self):
@@ -41,6 +46,7 @@ class StreamEncoder:
         self._prev = None
         self._current_gop = 0
         self._gop_start = 0
+        self.tiles = TileDictionary(self.width, self.rows, self.tile_size) if self.tile_size else None
 
     def add(self, frame_no, gop_id, frame):
         """1 フレーム (パレット番号の 1 次元配列、rows*width 個) を追加する。"""
@@ -70,21 +76,36 @@ class StreamEncoder:
             encoded = self._encode_delta(frame_no, flat)
         self._gop_binary.extend(encoded)
         self._index_entries.append((gop_id, offset, len(encoded), is_keyframe))
+        if self.tiles is not None:
+            self.tiles.update(self._prev, flat, is_keyframe)
         self._prev = flat
 
     def _encode_delta(self, frame_no, flat):
-        encoded = encode_frame_v5(frame_no, False, flat, self._prev, self.width, self.rows)
+        """前フレームとの差分を、動き補償・タイル参照の有無の組み合わせで作り、一番小さいものを返す (悪化はしない)。"""
+        predictions = [({}, self._prev)]
         if self.motion:
-            # 動き補償版も作り、小さくなる場合だけ採用する (悪化はしない)
             vectors = estimate_motion(self._prev, flat, self.width, self.rows, MV_BLOCK, self.mv_range)
             if vectors:
-                predicted = apply_motion(self._prev, vectors, self.width, self.rows, MV_BLOCK)
-                with_motion = encode_frame_v5(frame_no, False, flat, predicted, self.width, self.rows,
-                                              vectors, self.mv_limit)
-                if len(with_motion) < len(encoded):
-                    self.stats.motion_frames += 1
-                    return with_motion
-        return encoded
+                predictions.append((vectors, apply_motion(self._prev, vectors, self.width, self.rows, MV_BLOCK)))
+
+        best, best_kind = None, (False, False)
+        for vectors, predicted in predictions:
+            variants = [([], predicted)]
+            if self.tiles is not None and len(self.tiles):
+                ops, with_tiles = self.tiles.find_ops(flat, predicted)
+                if ops:
+                    variants.append((ops, with_tiles))
+            for ops, reference in variants:
+                encoded = encode_frame_v5(frame_no, False, flat, reference, self.width, self.rows,
+                                          vectors, self.mv_limit, ops)
+                if best is None or len(encoded) < len(best):
+                    best, best_kind, best_ops = encoded, (bool(vectors), bool(ops)), ops
+        if best_kind[0]:
+            self.stats.motion_frames += 1
+        if best_kind[1]:
+            self.stats.tile_frames += 1
+            self.stats.tile_refs += len(best_ops)
+        return best
 
     def finish(self):
         """(GOP ごとのチャンク文字列のリスト, フレームインデックスの文字列) を返す。"""

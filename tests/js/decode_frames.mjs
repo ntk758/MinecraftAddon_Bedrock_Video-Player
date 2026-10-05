@@ -4,8 +4,17 @@
 //   staleGopFrames: 別 GOP (= 別パレット) のブロックが残ったまま表示されたフレーム番号
 //   seekMismatches: 任意フレームへキーフレームからシークした結果が通常再生と食い違ったフレーム番号
 //   motionFrames: 動きベクトルを使ったフレーム番号
+//   tileFrames: タイル辞書の参照を使ったフレーム番号
 import { readFileSync } from "node:fs";
-import { decodeFrameInto, decodeUTF16BinaryToBytes, findKeyframeAtOrBefore, isVolume, parseFrameIndexV4, readVarint } from "../../codec.js";
+import {
+  createTileDictionary,
+  decodeFrameInto,
+  decodeUTF16BinaryToBytes,
+  findKeyframeAtOrBefore,
+  isVolume,
+  parseFrameIndexV4,
+  readVarint,
+} from "../../codec.js";
 
 const text = readFileSync(process.argv[2], "utf8");
 const data = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
@@ -17,14 +26,19 @@ const gops = data.chunks.map((chunk) => decodeUTF16BinaryToBytes(chunk));
 // main.js と同じ手順: 復元した盤面と表示中の盤面を比べ、変わった画素だけ「置く」。
 // 置いた画素には、そのフレームの GOP 番号を記録しておき、別パレットのブロックが残っていないか調べる。
 function newState() {
-  return { board: new Int16Array(pixels).fill(-1), next: new Int16Array(pixels), gopOf: new Int32Array(pixels).fill(-1) };
+  return {
+    board: new Int16Array(pixels).fill(-1),
+    next: new Int16Array(pixels),
+    gopOf: new Int32Array(pixels).fill(-1),
+    tiles: createTileDictionary(data),
+  };
 }
 
 function applyFrame(state, frameIndex) {
   const entry = entries[frameIndex];
   if (entry.length === 0) return;
   const bytes = gops[entry.gopId];
-  const isKeyframe = decodeFrameInto(bytes, entry.offset, entry.offset + entry.length, state.board, state.next, data);
+  const isKeyframe = decodeFrameInto(bytes, entry.offset, entry.offset + entry.length, state.board, state.next, data, state.tiles);
   // main.js の prepareKeyframe と同じ: 平面は全マス、立体は空気以外のマスを置き直す
   if (isKeyframe) {
     for (let p = 0; p < pixels; p++) {
@@ -66,10 +80,16 @@ for (let target = 0; target < entries.length; target++) {
 }
 
 const motionFrames = entries.flatMap((_e, i) => (hasMotion(i) ? [i] : []));
+const tileFrames = entries.flatMap((entry, i) => {
+  if (entry.length === 0 || data.format !== "varint_rle_v5") return [];
+  const header = readVarint(gops[entry.gopId], { pos: entry.offset });
+  return Math.floor(header / 4) % 2 === 1 ? [i] : [];
+});
 process.stdout.write(JSON.stringify({
   frames,
   keyframes: entries.flatMap((e, i) => (e.isKeyframe ? [i] : [])),
   staleGopFrames,
   seekMismatches,
   motionFrames,
+  tileFrames,
 }));

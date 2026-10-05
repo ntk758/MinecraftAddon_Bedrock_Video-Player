@@ -120,6 +120,82 @@ export function isVolume(video) {
   return video.layout === "volume";
 }
 
+/** 盤面の行数 (立体は奥行き × 高さ)。 */
+export function boardRows(video) {
+  return isVolume(video) ? video.height * video.depth : video.height;
+}
+
+/**
+ * タイル辞書 (mvcodec/tiles.py の TileDictionary と同じ規則)。
+ *  - キーフレーム: 辞書を空にして、そのフレームの全タイルを登録
+ *  - それ以外: 直前の盤面から内容が変わったタイルを行優先の順に登録
+ *  - 端からはみ出すタイルは対象外、tile_dict_max 個に達したら次のキーフレームまで登録しない
+ * 参照は「新しい方から何番目か」(0 が最新)。
+ */
+export class TileDictionary {
+  constructor(video) {
+    this.width = video.width;
+    this.tile = video.tile_size;
+    this.tilesX = Math.floor(video.width / this.tile);
+    this.tilesY = Math.floor(boardRows(video) / this.tile);
+    this.maxEntries = video.tile_dict_max;
+    this.entries = [];
+  }
+
+  tileOrigin(t) {
+    const ty = Math.floor(t / this.tilesX);
+    const tx = t % this.tilesX;
+    return ty * this.tile * this.width + tx * this.tile;
+  }
+
+  add(board, t) {
+    if (this.entries.length >= this.maxEntries) return;
+    const s = this.tile;
+    const origin = this.tileOrigin(t);
+    const content = new Int16Array(s * s);
+    for (let y = 0; y < s; y++) {
+      const row = origin + y * this.width;
+      for (let x = 0; x < s; x++) content[y * s + x] = board[row + x];
+    }
+    this.entries.push(content);
+  }
+
+  differs(prev, next, t) {
+    const s = this.tile;
+    const origin = this.tileOrigin(t);
+    for (let y = 0; y < s; y++) {
+      const row = origin + y * this.width;
+      for (let x = 0; x < s; x++) if (prev[row + x] !== next[row + x]) return true;
+    }
+    return false;
+  }
+
+  /** フレームを復元した後に呼ぶ。prev は直前の盤面。 */
+  update(prev, next, isKeyframe) {
+    const count = this.tilesX * this.tilesY;
+    if (isKeyframe) this.entries.length = 0;
+    for (let t = 0; t < count; t++) {
+      if (isKeyframe || this.differs(prev, next, t)) this.add(next, t);
+    }
+  }
+
+  /** out のタイル t に、辞書の新しい方から recency 番目を貼る。 */
+  apply(out, t, recency) {
+    const content = this.entries[this.entries.length - 1 - recency];
+    const s = this.tile;
+    const origin = this.tileOrigin(t);
+    for (let y = 0; y < s; y++) {
+      const row = origin + y * this.width;
+      for (let x = 0; x < s; x++) out[row + x] = content[y * s + x];
+    }
+  }
+}
+
+/** データがタイル辞書を使っていれば辞書を作る (使っていなければ null)。 */
+export function createTileDictionary(video) {
+  return video.format === FORMAT_V5 && video.tile_size > 0 ? new TileDictionary(video) : null;
+}
+
 /** キーフレームの描き始めの状態: 立体は空気、平面スクリーンは未設置 (-1)。 */
 export function emptyLevel(video) {
   return isVolume(video) ? video.air_level : -1;
@@ -132,17 +208,19 @@ export const FORMAT_V5 = "varint_rle_v5";
  * board は直前の盤面 (書き換えない)。規則は mvcodec/decode.py の decode_frame と同じ:
  *  - キーフレームは全画素を未設置から描き直す
  *  - v5 の動きベクトルは、ブロック内の各画素を board[clamp(y+dy)][clamp(x+dx)] から予測する
- *  - 最後に差分ランを上書きする
+ *  - 続けてタイル辞書の参照を貼り、最後に差分ランを上書きする
+ *  - tiles (createTileDictionary の戻り値) を渡すと、復元後に辞書も更新する
  * out と board は width*height の Int16Array などを使い回す (GC を避ける)。
  */
-export function decodeFrameInto(bytes, start, end, board, out, video) {
+export function decodeFrameInto(bytes, start, end, board, out, video, tiles = null) {
   const width = video.width;
-  const height = isVolume(video) ? video.height * video.depth : video.height;
+  const height = boardRows(video);
   const cursor = { pos: start };
   const header = readVarint(bytes, cursor, end);
   const isV5 = video.format === FORMAT_V5;
   const isKeyframe = header % 2 === 1;
   const hasMotion = isV5 && Math.floor(header / 2) % 2 === 1;
+  const hasTiles = isV5 && Math.floor(header / 4) % 2 === 1;
 
   if (isKeyframe) out.fill(emptyLevel(video));
   else out.set(board);
@@ -172,12 +250,22 @@ export function decodeFrameInto(bytes, start, end, board, out, video) {
     }
   }
 
+  if (hasTiles) {
+    const count = readVarint(bytes, cursor, end);
+    let tileIndex = -1;
+    for (let k = 0; k < count; k++) {
+      tileIndex += readVarint(bytes, cursor, end) + 1;
+      tiles.apply(out, tileIndex, readVarint(bytes, cursor, end));
+    }
+  }
+
   readVarint(bytes, cursor, end); // ラン数
   const run = { position: 0, length: 0, level: 0 };
   while (cursor.pos < end) {
     unpackRun(readVarint(bytes, cursor, end), run);
     out.fill(run.level, run.position, run.position + run.length);
   }
+  if (tiles) tiles.update(board, out, isKeyframe);
   return isKeyframe;
 }
 

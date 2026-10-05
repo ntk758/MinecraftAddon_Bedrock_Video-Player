@@ -3,12 +3,13 @@
  * (v3: Object-Oriented Multi-Screen & Adaptive Palette Support)
  */
 
-import { world, system, BlockPermutation } from "@minecraft/server";
+import { world, system, BlockPermutation, BlockVolume } from "@minecraft/server";
 import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
 import { VIDEOS, VIDEO_LIST } from "./videos.js";
 import {
   FORMAT_V4,
   FORMAT_V5,
+  createTileDictionary,
   decodeFrameInto,
   decodeUTF16BinaryToBytes,
   isVolume,
@@ -40,6 +41,8 @@ const AUDIO_CHUNK_SECONDS = 10;
 const MAX_BLOCKS_PER_TICK = 4000;
 const BLOCKS_PER_YIELD = 500;
 const MAX_YIELDS_PER_TICK = MAX_BLOCKS_PER_TICK / BLOCKS_PER_YIELD;
+// 1 tick の描画にかける時間の上限 (ミリ秒)。ブロック数の上限より先に達したら次の tick へ持ち越す
+const TICK_TIME_BUDGET_MS = 30;
 // 盤面の比較 (変わったブロックを探す走査) をこの画素数ごとに区切って tick を跨ぐ
 const PIXELS_PER_SCAN_YIELD = 32768;
 // 何フレーム先の GOP を先読みするか
@@ -182,6 +185,7 @@ class VideoPlayer {
       const pixels = boardSizeOf(this.videoData);
       this.board = new Int16Array(pixels).fill(-1);
       this.nextBoard = new Int16Array(pixels);
+      this.tiles = createTileDictionary(this.videoData);
       this.decodedBinary = null;
       this.gopCache.clear();
       this.decodedVideoId = this.videoId;
@@ -321,29 +325,96 @@ class VideoPlayer {
   }
 
   /** nextBoard と board を比べ、変わったブロックだけを置く。tick 予算に合わせて yield する。 */
+  /**
+   * nextBoard と board を比べ、変わったブロックだけを置く。tick 予算に合わせて yield する。
+   *
+   * 同じ色の変更ブロックを長方形にまとめ、dimension.fillBlocks 1 回で置く (API 呼び出しを大きく減らす)。
+   * 横に続く同じ色を伸ばし、下の行でも同じ幅が全部同じ色の変更なら下へも伸ばす。
+   * 立体では、ワールド上で隣り合う同じ奥行きの段の中だけで縦に伸ばす。
+   * fillBlocks が使えない環境では 1 個ずつ setBlockPermutation で置く。
+   */
   *placeChangedBlocks(width) {
+    const video = this.videoData;
     const board = this.board;
     const next = this.nextBoard;
-    const loc = this.tempBlockLoc;
     const palette = this.activePalette;
-    const airLevel = isVolume(this.videoData) ? this.videoData.air_level : -2;
+    const airLevel = isVolume(video) ? video.air_level : -2;
+    const rows = next.length / width;
+    // 縦に伸ばしてよい行のまとまり (平面は全行、立体は奥行き 1 段ぶんの高さ)
+    const contiguousRows = isVolume(video) ? video.height : rows;
+    if (this.useFill === undefined) this.useFill = typeof this.dimension.fillBlocks === "function";
+    const from = { x: 0, y: 0, z: 0 };
+    const to = { x: 0, y: 0, z: 0 };
     let operations = 0;
+    let scanned = 0;
     let failures = 0;
-    for (let p = 0; p < next.length; p++) {
-      if (p % PIXELS_PER_SCAN_YIELD === PIXELS_PER_SCAN_YIELD - 1) yield;
-      const level = next[p];
-      if (level === board[p] || level < 0) continue;
-      const permutation = level === airLevel ? this.airPermutation : palette ? palette[level] : null;
-      board[p] = level;
-      if (!permutation) continue;
-      cellToWorld(this.videoData, this.anchor, p, loc);
-      try {
-        this.dimension.setBlockPermutation(loc, permutation);
-      } catch (e) {
-        failures++;
+
+    for (let r = 0; r < rows; r++) {
+      const rowStart = r * width;
+      let x = 0;
+      while (x < width) {
+        const p = rowStart + x;
+        const level = next[p];
+        if (level === board[p] || level < 0) {
+          x++;
+          continue;
+        }
+        let x1 = x;
+        while (x1 + 1 < width && next[p + x1 + 1 - x] === level && board[p + x1 + 1 - x] !== level) x1++;
+        let r1 = r;
+        if (this.useFill) {
+          while (r1 + 1 < rows && (r1 + 1) % contiguousRows !== 0) {
+            const base = (r1 + 1) * width + x;
+            let sameRun = true;
+            for (let k = 0; k <= x1 - x; k++) {
+              if (next[base + k] !== level || board[base + k] === level) {
+                sameRun = false;
+                break;
+              }
+            }
+            if (!sameRun) break;
+            r1++;
+          }
+        }
+        const permutation = level === airLevel ? this.airPermutation : palette ? palette[level] : null;
+        const area = (x1 - x + 1) * (r1 - r + 1);
+
+        if (area > 1 && this.useFill && permutation) {
+          for (let rr = r; rr <= r1; rr++) board.fill(level, rr * width + x, rr * width + x1 + 1);
+          cellToWorld(video, this.anchor, p, from);
+          cellToWorld(video, this.anchor, r1 * width + x1, to);
+          try {
+            this.dimension.fillBlocks(new BlockVolume(from, to), permutation);
+          } catch (e) {
+            failures += area;
+            warnOnce("fill", `fillBlocks failed: ${e}`);
+          }
+          operations += area;
+        } else {
+          // 1 個ずつ置く (途中で yield しても盤面と実際の表示がずれないよう、置くたびに盤面を更新する)
+          for (let q = p; q <= rowStart + x1; q++) {
+            board[q] = level;
+            if (!permutation) continue;
+            try {
+              this.dimension.setBlockPermutation(cellToWorld(video, this.anchor, q, this.tempBlockLoc), permutation);
+            } catch (e) {
+              failures++;
+            }
+            if (++operations >= BLOCKS_PER_YIELD) {
+              operations = 0;
+              yield;
+            }
+          }
+        }
+        if (operations >= BLOCKS_PER_YIELD) {
+          operations = 0;
+          yield;
+        }
+        x = x1 + 1;
       }
-      if (++operations >= BLOCKS_PER_YIELD) {
-        operations = 0;
+      scanned += width;
+      if (scanned >= PIXELS_PER_SCAN_YIELD) {
+        scanned = 0;
         yield;
       }
     }
@@ -375,7 +446,7 @@ class VideoPlayer {
       const gopBytes = this.ensureGopDecoded(entry.gopId);
       if (!gopBytes) return;
       const isKeyframe = decodeFrameInto(
-        gopBytes, entry.offset, entry.offset + entry.length, this.board, this.nextBoard, this.videoData
+        gopBytes, entry.offset, entry.offset + entry.length, this.board, this.nextBoard, this.videoData, this.tiles
       );
       // キーフレームはワールド上の状態に関係なく全ブロックを置き直す (パレット切替・クリア後・シーク時)
       if (isKeyframe) this.prepareKeyframe();
@@ -442,6 +513,7 @@ class VideoPlayer {
       this.frameIterator = this.applyFrameJob(this.currentFrame);
     }
 
+    const tickStart = Date.now();
     for (let yc = 0; yc < MAX_YIELDS_PER_TICK; yc++) {
       const { done } = this.frameIterator.next();
       if (done) {
@@ -450,6 +522,7 @@ class VideoPlayer {
         this.frameIterator = null;
         break;
       }
+      if (Date.now() - tickStart > TICK_TIME_BUDGET_MS) break;
     }
   }
 

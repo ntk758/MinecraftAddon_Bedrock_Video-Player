@@ -50,7 +50,7 @@ def collect_text(value, keys, literals):
             collect_text(child, keys, literals)
 
 
-def run_addon(work, frames_js):
+def run_addon(work, frames_js, *node_args):
     """frames_js (convert.py の出力) を収録したアドオンを、モックの Minecraft 上で再生した結果を返す。"""
     work.mkdir()
     shutil.copy(ROOT / "main.js", work / "main.js")
@@ -72,7 +72,7 @@ def run_addon(work, frames_js):
         shutil.copy(mock_dir / source, target / "index.js")
     (work / "package.json").write_text(json.dumps({"type": "module"}))
 
-    result = subprocess.run(["node", "run_main.mjs"], cwd=work, capture_output=True, text=True, encoding="utf-8", timeout=300)
+    result = subprocess.run(["node", "run_main.mjs", *node_args], cwd=work, capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
@@ -134,3 +134,19 @@ def test_every_translate_key_in_main_js_exists():
     known = {key[len("bvp."):] for key in lang_keys()}
     assert used, "main.js から翻訳キーを抽出できませんでした"
     assert used <= known, f"翻訳ファイルに無いキー: {used - known}"
+
+
+def test_fill_batching_reduces_api_calls(tmp_path, run_result):
+    """fillBlocks で長方形にまとめると API 呼び出しが減り、fillBlocks が無い環境でも同じ表示になる。"""
+    data, out = run_result
+    batched = out["stats"]
+    assert batched["fillCalls"] > 0
+    calls = batched["setBlockCalls"] + batched["fillCalls"]
+
+    frames_js = next(tmp_path.parent.glob("main_js*/frames_demo.js"), None)
+    if frames_js is None:
+        pytest.skip("フィクスチャの出力が見つかりません")
+    fallback = run_addon(tmp_path / "nofill", frames_js, "nofill")
+    assert fallback["stats"]["fillCalls"] == 0
+    assert fallback["finalBoard"] == out["finalBoard"]
+    assert calls < fallback["stats"]["setBlockCalls"] * 0.7
