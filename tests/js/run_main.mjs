@@ -1,9 +1,12 @@
 // main.js をモックの Minecraft 上で動かし、結果を JSON で標準出力へ書く (tests/test_main_js.py から実行)。
 // setup → start → 再生終了まで tick → list → リモコン (コンパス) を開く、の順に操作する。
-import { board, commands, fireScriptEvent, forms, getAnchor, messages, options, sounds, stats, tick, useItem } from "@minecraft/server";
+import { board, commands, fireScriptEvent, forms, getAnchor, messages, options, player, sounds, stats, tick, useItem } from "@minecraft/server";
 
 // 引数 "nofill" で fillBlocks が無い環境をまねる
 if (process.argv.includes("nofill")) options.fillBlocks = false;
+// 引数 "y=<高さ>" でプレイヤーの立つ高さを変える (建築限界での位置調整の確認用)
+const yArg = process.argv.find((arg) => arg.startsWith("y="));
+if (yArg) player.location.y = Number(yArg.slice(2));
 
 await import("./main.js");
 const { VIDEOS } = await import("./videos.js");

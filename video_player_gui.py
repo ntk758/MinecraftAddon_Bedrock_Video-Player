@@ -98,7 +98,7 @@ def get_ffmpeg_path() -> str | None:
 PALETTE_VALUES = ("auto", "full", "expanded", "concrete")
 DITHER_VALUES = ("none", "blue_noise", "ordered", "floyd", "atkinson", "burkes", "sierra")
 DEVICE_VALUES = ("auto", "cuda", "directml", "cpu")
-MODE_VALUES = ("screen", "relief", "extrude")
+MODE_VALUES = ("screen", "relief", "extrude", "inflate")
 DEFAULT_MODE = "screen"
 DEFAULT_DEPTH = 16
 VOX_SUFFIX = ".vox"

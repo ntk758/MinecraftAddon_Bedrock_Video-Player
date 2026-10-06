@@ -30,12 +30,13 @@ def encode_frame_v5(frame_no, is_keyframe, frame, reference, width, height, vect
 
     ヘッダ: varint(frame_no << 3 | タイル参照あり << 2 | 動きベクトルあり << 1 | キーフレーム)
     動きベクトルあり: varint(個数), 各ブロックについて varint(前のブロック番号との差 - 1), varint(packed ベクトル)
+      (立体では 3 成分のブリック単位のベクトル。mvcodec/motion.py の pack_vector_3d)
     タイル参照あり: varint(個数), 各タイルについて varint(前のタイル番号との差 - 1), varint(辞書の新しい方からの番号)
     続けて varint(ラン数) と、reference (動きベクトル・タイル参照を反映した予測) との差分ラン。
     v5 のランの位置は「直前のランの終わりからの距離」(先頭のランは 0 から) で表す。位置の数値が小さくなり、
     特に立体 (位置が 16〜20bit になる) でデータが大きく減る。
     """
-    from mvcodec.motion import pack_vector
+    from mvcodec.motion import pack_vector, pack_vector_3d
 
     vectors = vectors or {}
     tile_ops = tile_ops or []
@@ -46,9 +47,10 @@ def encode_frame_v5(frame_no, is_keyframe, frame, reference, width, height, vect
         encode_varint(len(vectors), encoded)
         last = -1
         for mb in sorted(vectors):
-            dx, dy = vectors[mb]
+            vector = vectors[mb]
             encode_varint(mb - last - 1, encoded)
-            encode_varint(pack_vector(dx, dy, search_range), encoded)
+            encode_varint(pack_vector_3d(*vector, search_range) if len(vector) == 3
+                          else pack_vector(*vector, search_range), encoded)
             last = mb
     if tile_ops:
         encode_varint(len(tile_ops), encoded)

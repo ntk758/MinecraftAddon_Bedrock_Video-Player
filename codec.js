@@ -208,6 +208,7 @@ export const FORMAT_V5 = "varint_rle_v5";
  * board は直前の盤面 (書き換えない)。規則は mvcodec/decode.py の decode_frame と同じ:
  *  - キーフレームは全画素を未設置から描き直す
  *  - v5 の動きベクトルは、ブロック内の各画素を board[clamp(y+dy)][clamp(x+dx)] から予測する
+ *    (立体は mv_block³ のブリックごとに 3 成分のベクトル。decodeMotion3d)
  *  - 続けてタイル辞書の参照を貼り、最後に差分ランを上書きする (v5 のランの位置は直前のランの終わりからの距離)
  *  - tiles (createTileDictionary の戻り値) を渡すと、復元後に辞書も更新する
  * out と board は width*height の Int16Array などを使い回す (GC を避ける)。
@@ -225,7 +226,9 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
   if (isKeyframe) out.fill(emptyLevel(video));
   else out.set(board);
 
-  if (hasMotion) {
+  if (hasMotion && isVolume(video)) {
+    decodeMotion3d(bytes, cursor, end, board, out, video);
+  } else if (hasMotion) {
     const block = video.mv_block;
     const span = 2 * video.mv_range + 1;
     const mbCols = Math.ceil(width / block);
@@ -271,6 +274,47 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
   }
   if (tiles) tiles.update(board, out, isKeyframe);
   return isKeyframe;
+}
+
+/**
+ * 立体の動きベクトル (mvcodec/motion.py の apply_motion_3d と同じ規則)。
+ * mv_block³ のブリックごとに、board[clamp(z+dz)][clamp(y+dy)][clamp(x+dx)] を out にコピーする。
+ * ブリック番号は (bz * ブリックの行数 + by) * ブリックの列数 + bx、
+ * ベクトルは ((dz + r) * span + (dy + r)) * span + (dx + r) (r = mv_range)。
+ */
+function decodeMotion3d(bytes, cursor, end, board, out, video) {
+  const { width, height, depth } = video;
+  const block = video.mv_block;
+  const range = video.mv_range;
+  const span = 2 * range + 1;
+  const bricksX = Math.ceil(width / block);
+  const bricksY = Math.ceil(height / block);
+  const count = readVarint(bytes, cursor, end);
+  let brick = -1;
+  for (let k = 0; k < count; k++) {
+    brick += readVarint(bytes, cursor, end) + 1;
+    const packed = readVarint(bytes, cursor, end);
+    const dx = (packed % span) - range;
+    const dy = (Math.floor(packed / span) % span) - range;
+    const dz = Math.floor(packed / (span * span)) - range;
+    const x0 = (brick % bricksX) * block;
+    const y0 = (Math.floor(brick / bricksX) % bricksY) * block;
+    const z0 = Math.floor(brick / (bricksX * bricksY)) * block;
+    const x1 = Math.min(x0 + block, width);
+    const y1 = Math.min(y0 + block, height);
+    const z1 = Math.min(z0 + block, depth);
+    for (let z = z0; z < z1; z++) {
+      const sz = Math.min(Math.max(z + dz, 0), depth - 1);
+      for (let y = y0; y < y1; y++) {
+        const sy = Math.min(Math.max(y + dy, 0), height - 1);
+        const dst = (z * height + y) * width;
+        const src = (sz * height + sy) * width;
+        for (let x = x0; x < x1; x++) {
+          out[dst + x] = board[src + Math.min(Math.max(x + dx, 0), width - 1)];
+        }
+      }
+    }
+  }
 }
 
 /** フレーム先頭のヘッダ (フレーム番号・ラン数) を読み飛ばす。 */

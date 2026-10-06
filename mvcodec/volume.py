@@ -7,6 +7,7 @@
 入力の種類:
   relief   各画素の明るさ (または別に用意した深度動画) を奥行きにした立体レリーフ。表面と段差の側面だけを作る
   extrude  明るい (または暗い) 部分を前後に押し出した立体シルエット (Bad Apple のような白黒映像向け)
+  inflate  明るい (または暗い) 部分を、縁が丸く中央が厚い風船のようにふくらませた立体
   vox      MagicaVoxel の .vox (複数モデル = 複数フレーム、またはフレームごとの .vox が並んだフォルダ)
 """
 import struct
@@ -15,7 +16,10 @@ from pathlib import Path
 import numpy as np
 
 AIR_LEVEL = 127
-VOLUME_MODES = ("relief", "extrude", "vox")
+VOLUME_MODES = ("relief", "extrude", "inflate", "vox")
+# relief の奥行きのヒステリシス (段数)。連続値が前フレームの段からこれ未満しか動いていなければ段を変えない。
+# 量子化の境目でちらつく画素が減り、置き直すブロックも減る (0 で無効)
+RELIEF_HYSTERESIS = 1.0
 
 
 def luminance01(rgb):
@@ -24,15 +28,29 @@ def luminance01(rgb):
     return (rgb[..., 0] * 0.299 + rgb[..., 1] * 0.587 + rgb[..., 2] * 0.114) / 255.0
 
 
-def relief_volume(indices, heights01, depth):
+def relief_levels(heights01, depth, previous=None, hysteresis=RELIEF_HYSTERESIS):
+    """0〜1 の高さを奥行きの段 (0〜depth-1) にする。
+
+    previous (前フレームの段) があれば、連続値が前の段から hysteresis 段未満しか離れていない画素は前の段のままにする。
+    """
+    continuous = np.clip(np.asarray(heights01, dtype=np.float32), 0.0, 1.0) * (depth - 1)
+    level = np.rint(continuous).astype(np.int32)
+    if previous is not None and hysteresis > 0:
+        keep = np.abs(continuous - previous) < hysteresis
+        level = np.where(keep, previous, level)
+    return level
+
+
+def relief_volume(indices, heights01, depth, level=None):
     """2D のパレット番号と 0〜1 の高さから立体レリーフを作る。
 
-    高さ 1 が一番手前。各画素は奥行き round(h*(depth-1)) の位置に表面のボクセルを置き、
+    高さ 1 が一番手前。各画素は奥行き round(h*(depth-1)) (level を渡せばその段) の位置に表面のボクセルを置き、
     隣の画素の方が低い (奥にある) ときは、その段差を埋める側面も置く (横から見ても穴が空かない)。
     """
     indices = np.asarray(indices)
     h, w = indices.shape
-    level = np.clip(np.rint(np.asarray(heights01, dtype=np.float32) * (depth - 1)), 0, depth - 1).astype(np.int32)
+    if level is None:
+        level = relief_levels(heights01, depth)
     padded = np.pad(level, 1, mode="edge")
     neighbor_min = np.minimum.reduce([padded[:-2, 1:-1], padded[2:, 1:-1], padded[1:-1, :-2], padded[1:-1, 2:]])
     low = np.minimum(level, neighbor_min + 1)
@@ -55,6 +73,44 @@ def extrude_volume(indices, mask, depth, thickness=None):
     return volume
 
 
+def distance_to_edge(mask, limit):
+    """mask の各画素から、mask の外 (4 近傍で一番近い背景) までの距離。limit で打ち切る。
+
+    縁の画素が 1、背景は 0。画像の外は mask の続きとみなす (画面の端で切れた形は端で丸めない)。
+    numpy だけで、4 近傍の収縮を最大 limit 回繰り返して求める。
+    """
+    mask = np.asarray(mask, dtype=bool)
+    dist = np.zeros(mask.shape, dtype=np.int32)
+    current = mask.copy()
+    for step in range(1, limit + 1):
+        if not current.any():
+            break
+        dist[current] = step
+        padded = np.pad(current, 1, mode="edge")
+        current = current & padded[:-2, 1:-1] & padded[2:, 1:-1] & padded[1:-1, :-2] & padded[1:-1, 2:]
+    return dist
+
+
+def inflate_volume(indices, mask, depth):
+    """mask が真の画素を、縁が丸く中央が厚い立体にふくらませる (奥行きの中央に前後対称)。
+
+    縁からの距離 d の画素の厚みの半分は sqrt(d * depth / 2) (depth/2 で頭打ち)。
+    縁から depth/2 画素ほど内側で奥行きいっぱいの厚さになる、丸い縁取りの立体になる。
+    """
+    indices = np.asarray(indices)
+    h, w = indices.shape
+    dist = distance_to_edge(mask, max(1, depth // 2 + 1))
+    half = np.minimum(depth / 2.0, np.sqrt(dist * depth / 2.0))
+    center = (depth - 1) / 2.0
+    k = np.arange(depth, dtype=np.float32)[:, None, None]
+    # 縁の画素でも中央の段は必ず埋まるよう、厚みの半分は 0.5 以上にする
+    radius = np.where(dist > 0, np.maximum(half, 0.5), 0.0)[None]
+    solid = np.abs(k - center) < radius
+    volume = np.full((depth, h, w), AIR_LEVEL, dtype=np.int16)
+    volume[solid] = np.broadcast_to(indices[None], (depth, h, w))[solid]
+    return volume
+
+
 def hollow(volume):
     """外から見えない内部のボクセルを空気にする (置くブロック数を減らす)。
 
@@ -71,23 +127,49 @@ def hollow(volume):
     return out
 
 
-def lift_frame(mode, indices, palette_rgb, depth, heights01=None, threshold=0.5, invert=False,
-               thickness=None, make_hollow=True):
-    """2D のパレット番号フレームを立体にする (relief / extrude)。
+class VolumeLifter:
+    """2D のパレット番号フレームを順に立体にする (relief / extrude / inflate)。
 
-    heights01 が無ければ、各画素のブロック色の明るさを高さ (relief) や押し出す範囲 (extrude) に使う。
+    relief の奥行きのヒステリシスのため、直前のフレームの段を覚えておく。フレームは再生順に渡すこと。
+    heights01 が無ければ、各画素のブロック色の明るさを高さ (relief) や立体にする範囲 (extrude / inflate) に使う。
+    make_hollow は内部のブロックを空気にする。fillBlocks で箱ごとに置く場合は詰まっている方が
+    呼び出しもデータも少ないので既定は False (1 個ずつ置く block 方式なら True の方が置く数が減る)。
     """
-    indices = np.asarray(indices)
-    if heights01 is None:
-        heights01 = luminance01(np.asarray(palette_rgb)[indices])
-    if mode == "relief":
-        volume = relief_volume(indices, heights01, depth)
-    elif mode == "extrude":
-        mask = heights01 < threshold if invert else heights01 >= threshold
-        volume = extrude_volume(indices, mask, depth, thickness)
-    else:
-        raise ValueError(f"未対応の立体モード: {mode}")
-    return hollow(volume) if make_hollow else volume
+
+    def __init__(self, mode, depth, threshold=0.5, invert=False, thickness=None, make_hollow=False,
+                 hysteresis=RELIEF_HYSTERESIS):
+        if mode not in ("relief", "extrude", "inflate"):
+            raise ValueError(f"未対応の立体モード: {mode}")
+        self.mode = mode
+        self.depth = depth
+        self.threshold = threshold
+        self.invert = invert
+        self.thickness = thickness
+        self.make_hollow = make_hollow
+        self.hysteresis = hysteresis
+        self._level = None
+
+    def __call__(self, indices, palette_rgb, heights01=None):
+        indices = np.asarray(indices)
+        if heights01 is None:
+            heights01 = luminance01(np.asarray(palette_rgb)[indices])
+        if self.mode == "relief":
+            self._level = relief_levels(heights01, self.depth, self._level, self.hysteresis)
+            volume = relief_volume(indices, heights01, self.depth, self._level)
+        else:
+            mask = heights01 < self.threshold if self.invert else heights01 >= self.threshold
+            if self.mode == "extrude":
+                volume = extrude_volume(indices, mask, self.depth, self.thickness)
+            else:
+                volume = inflate_volume(indices, mask, self.depth)
+        return hollow(volume) if self.make_hollow else volume
+
+
+def lift_frame(mode, indices, palette_rgb, depth, heights01=None, threshold=0.5, invert=False,
+               thickness=None, make_hollow=False):
+    """1 枚だけを立体にする (前フレームを使わないので relief のヒステリシスは無し)。"""
+    lifter = VolumeLifter(mode, depth, threshold, invert, thickness, make_hollow, hysteresis=0)
+    return lifter(indices, palette_rgb, heights01)
 
 
 # ---------------------------------------------------------------------------

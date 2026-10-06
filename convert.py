@@ -30,7 +30,8 @@ from mvcodec.motion import MV_BLOCK, MV_RANGE
 from mvcodec.stream import StreamEncoder
 from mvcodec.volume import (
     AIR_LEVEL,
-    lift_frame,
+    RELIEF_HYSTERESIS,
+    VolumeLifter,
     load_vox_frames,
     luminance01,
     nearest_levels,
@@ -400,17 +401,22 @@ def parse_args(argv=None):
     source.add_argument("--frames-dir", default=None, help="入力画像 (PNG等の連番) フォルダ。ファイル名順に読み込む")
     source.add_argument("--input-vox", default=None,
                         help="MagicaVoxel の .vox (各モデルが 1 フレーム) または .vox が並んだフォルダ (--mode vox)")
-    parser.add_argument("--mode", default=None, choices=["screen", "relief", "extrude", "vox"],
+    parser.add_argument("--mode", default=None, choices=["screen", "relief", "extrude", "inflate", "vox"],
                         help="screen: 平面スクリーン / relief: 明るさを奥行きにした立体 / extrude: 明るい部分を押し出した立体 / "
+                             "inflate: 明るい部分を丸くふくらませた立体 / "
                              "vox: MagicaVoxel の立体アニメ (既定は入力に合わせて screen か vox)")
     parser.add_argument("--depth", type=int, default=16, help="立体モードの奥行き (ブロック数)")
     parser.add_argument("--depth-video", default=None,
                         help="relief で奥行きに使うグレースケール動画 (明るいほど手前)。省略時は各画素の明るさを使う")
-    parser.add_argument("--extrude-threshold", type=float, default=0.5, help="extrude で押し出す明るさのしきい値 (0〜1)")
-    parser.add_argument("--extrude-invert", action="store_true", help="extrude で暗い部分を押し出す")
+    parser.add_argument("--extrude-threshold", type=float, default=0.5,
+                        help="extrude / inflate で立体にする明るさのしきい値 (0〜1)")
+    parser.add_argument("--extrude-invert", action="store_true", help="extrude / inflate で暗い部分を立体にする")
     parser.add_argument("--thickness", type=int, default=None, help="extrude の厚み (ブロック数、既定は奥行き全体)")
-    parser.add_argument("--hollow", action=argparse.BooleanOptionalAction, default=True,
-                        help="外から見えない内部のブロックを置かない (--no-hollow で中まで詰める)")
+    parser.add_argument("--hollow", action=argparse.BooleanOptionalAction, default=False,
+                        help="外から見えない内部のブロックを置かない。既定の描画 (fillBlocks で箱ごとに置く) では"
+                             "詰まっている方が呼び出しもデータも少ないので無効。block 方式で 1 個ずつ置くなら有効にすると置く数が減る")
+    parser.add_argument("--depth-hysteresis", type=float, default=RELIEF_HYSTERESIS,
+                        help="relief の奥行きのヒステリシス (段数)。明るさが少し揺れただけでは奥行きを変えない (0 で無効)")
     parser.add_argument("--output", default=OUTPUT_FILE, help="出力パス")
     parser.add_argument("--width", type=int, default=WIDTH)
     parser.add_argument("--height", type=int, default=HEIGHT)
@@ -431,7 +437,8 @@ def parse_args(argv=None):
     parser.add_argument("--motion", action=argparse.BooleanOptionalAction, default=True,
                         help="動き補償 (パン・スクロールで差分を小さくする)。各フレームで小さくなる場合だけ使う (--no-motion で無効)")
     parser.add_argument("--mv-range", type=int, default=MV_RANGE,
-                        help=f"動きベクトルの探索範囲 (ブロック数, 1〜15)。大きいほど速い動きに強いが変換が遅い")
+                        help="動きベクトルの探索範囲 (ブロック数, 1〜15)。大きいほど速い動きに強いが変換が遅い "
+                             "(立体は 8x8x8 のブリック単位で ±2 に固定)")
     parser.add_argument("--tile-size", default="auto", choices=["auto", "0", "4", "8", "16"],
                         help="タイル辞書のタイルの大きさ (0 で無効)。繰り返し現れる模様を辞書から貼って差分を小さくする。"
                              "auto は 4 と 8 の両方で符号化して小さい方を使う")
@@ -458,6 +465,8 @@ def parse_args(argv=None):
         parser.error("--depth は 2〜128 にしてください")
     if args.depth_video and args.mode != "relief":
         parser.error("--depth-video は --mode relief でだけ使えます")
+    if args.depth_hysteresis < 0:
+        parser.error("--depth-hysteresis は 0 以上にしてください")
     return args
 
 
@@ -576,7 +585,7 @@ class EncoderSet:
         return min(self.encoders, key=lambda encoder: encoder.payload_size())
 
 
-def make_encoder(args, width, rows, gop_boundaries, empty_value):
+def make_encoder(args, width, rows, gop_boundaries, empty_value, depth=1):
     tile_sizes = [4, 8] if args.tile_size == "auto" else [int(args.tile_size)]
     motion_cache = {} if len(tile_sizes) > 1 else None
     return EncoderSet([
@@ -584,6 +593,7 @@ def make_encoder(args, width, rows, gop_boundaries, empty_value):
             width=width, rows=rows, gop_boundaries=gop_boundaries, keyframe_interval=args.keyframe_interval,
             adaptive_fps=args.adaptive_fps, scene_threshold=args.scene_threshold, motion=args.motion,
             mv_range=args.mv_range, empty_value=empty_value, tile_size=tile_size, motion_cache=motion_cache,
+            depth=depth,
         )
         for tile_size in tile_sizes
     ])
@@ -599,7 +609,7 @@ def convert_vox(args):
     depth, height, width = vox_volume_shape(frames)
     total = len(frames)
     gop_boundaries = list(range(0, total, MAX_GOP_SIZE)) + [total]
-    encoder = make_encoder(args, width, depth * height, gop_boundaries, AIR_LEVEL)
+    encoder = make_encoder(args, width, depth * height, gop_boundaries, AIR_LEVEL, depth)
     gop_ids = iter_gop_ids(gop_boundaries)
     for i, frame in enumerate(frames):
         encoder.add(i, next(gop_ids), vox_to_volume(frame, (depth, height, width), color_to_level))
@@ -620,7 +630,7 @@ def main(argv=None):
         return convert_vox(args)
 
     width, height = args.width, args.height
-    volume = args.mode in ("relief", "extrude")
+    volume = args.mode in ("relief", "extrude", "inflate")
     frame_source = make_frame_source(args)
     gpu = select_gpu(args.device, args.dither_method, args.perceptual)
 
@@ -671,7 +681,11 @@ def main(argv=None):
         depth_frames = ffmpeg_frame_generator(args.depth_video, width, height, args.fps, args.duration, args.ffmpeg)
 
     rows = args.depth * height if volume else height
-    encoder = make_encoder(args, width, rows, gop_boundaries, AIR_LEVEL if volume else -1)
+    lifter = VolumeLifter(args.mode, args.depth, threshold=args.extrude_threshold, invert=args.extrude_invert,
+                          thickness=args.thickness, make_hollow=args.hollow,
+                          hysteresis=args.depth_hysteresis) if volume else None
+    encoder = make_encoder(args, width, rows, gop_boundaries, AIR_LEVEL if volume else -1,
+                           args.depth if volume else 1)
     ssim_pairs = []
     gif_frames = []
 
@@ -688,11 +702,7 @@ def main(argv=None):
             if depth_frames is not None:
                 depth_frame = next(depth_frames, None)
                 heights = luminance01(depth_frame) if depth_frame is not None else None
-            encoded_frame = lift_frame(
-                args.mode, screen, gop_palettes_rgb[gop_id], args.depth, heights,
-                threshold=args.extrude_threshold, invert=args.extrude_invert, thickness=args.thickness,
-                make_hollow=args.hollow,
-            )
+            encoded_frame = lifter(screen, gop_palettes_rgb[gop_id], heights)
         else:
             encoded_frame = screen
         encoder.add(i, gop_id, encoded_frame)

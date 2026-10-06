@@ -140,3 +140,79 @@ def unpack_vector(packed, search_range=MV_RANGE):
     span = 2 * search_range + 1
     dy, dx = divmod(packed, span)
     return dx - search_range, dy - search_range
+
+
+# ---------------------------------------------------------------------------
+# 立体 (3D) の動き補償
+#   立体は MV_BLOCK×MV_BLOCK×MV_BLOCK のブリックに分け、各ブリックで (dx, dy, dz) を ±MV_RANGE_3D から探す。
+#   予測[z][y][x] = 前フレーム[clamp(z + dz)][clamp(y + dy)][clamp(x + dx)]   (z は奥行き、y は高さ方向の行)
+#   ブリック番号は (bz * ブリックの行数 + by) * ブリックの列数 + bx。
+#   ベクトルは ((dz + r) * span + (dy + r)) * span + (dx + r) の 1 個の整数 (r = 2 なら 0〜124 で varint 1 バイト)。
+#   平面のように奥行き方向を行に並べたまま 2D で探すと、奥へ・手前へ動く物体を予測できない。
+# ---------------------------------------------------------------------------
+MV_RANGE_3D = 2
+
+
+def candidate_vectors_3d(search_range=MV_RANGE_3D):
+    """3D の探索候補。同点のときにゼロベクトルを優先するため先頭に置く。"""
+    span = range(-search_range, search_range + 1)
+    return [(0, 0, 0)] + [(dx, dy, dz) for dz in span for dy in span for dx in span if (dx, dy, dz) != (0, 0, 0)]
+
+
+def estimate_motion_3d(prev, cur, width, height, depth, block=MV_BLOCK, search_range=MV_RANGE_3D,
+                       min_gain=MV_MIN_GAIN):
+    """各ブリックの最良の動きベクトルを {ブリック番号: (dx, dy, dz)} で返す (ゼロベクトルは含めない)。
+
+    前フレームを端の値で search_range だけ広げておき、候補ごとにずらした範囲 (コピーしないビュー) と比べる。
+    """
+    prev3d = np.asarray(prev).reshape(depth, height, width)
+    cur3d = np.asarray(cur).reshape(depth, height, width)
+    if not np.any(prev3d != cur3d):
+        return {}
+    r = search_range
+    padded = np.pad(prev3d, r, mode="edge")
+    starts = [np.arange(0, n, block) for n in (depth, height, width)]
+    candidates = candidate_vectors_3d(search_range)
+    costs = np.empty((len(candidates), *(len(s) for s in starts)), dtype=np.int32)
+    for k, (dx, dy, dz) in enumerate(candidates):
+        shifted = padded[r + dz:r + dz + depth, r + dy:r + dy + height, r + dx:r + dx + width]
+        mismatch = (shifted != cur3d).astype(np.int32)
+        for axis, axis_starts in enumerate(starts):
+            mismatch = np.add.reduceat(mismatch, axis_starts, axis=axis)
+        costs[k] = mismatch
+
+    best_k = costs.argmin(axis=0)
+    best_cost = np.take_along_axis(costs, best_k[None], axis=0)[0]
+    use = (best_k != 0) & (best_cost + min_gain <= costs[0])
+    bricks_y, bricks_x = len(starts[1]), len(starts[2])
+    return {int((bz * bricks_y + by) * bricks_x + bx): candidates[int(best_k[bz, by, bx])]
+            for bz, by, bx in zip(*np.nonzero(use))}
+
+
+def apply_motion_3d(prev, vectors, width, height, depth, block=MV_BLOCK):
+    """3D の動きベクトルで前フレームから予測 (1 次元) を作る。"""
+    prev3d = np.asarray(prev).reshape(depth, height, width)
+    pred = prev3d.copy()
+    bricks_x, bricks_y = -(-width // block), -(-height // block)
+    for brick, (dx, dy, dz) in vectors.items():
+        bz, rest = divmod(brick, bricks_y * bricks_x)
+        by, bx = divmod(rest, bricks_x)
+        z0, y0, x0 = bz * block, by * block, bx * block
+        z1, y1, x1 = min(z0 + block, depth), min(y0 + block, height), min(x0 + block, width)
+        zs = np.clip(np.arange(z0, z1) + dz, 0, depth - 1)
+        ys = np.clip(np.arange(y0, y1) + dy, 0, height - 1)
+        xs = np.clip(np.arange(x0, x1) + dx, 0, width - 1)
+        pred[z0:z1, y0:y1, x0:x1] = prev3d[np.ix_(zs, ys, xs)]
+    return pred.reshape(-1)
+
+
+def pack_vector_3d(dx, dy, dz, search_range=MV_RANGE_3D):
+    span = 2 * search_range + 1
+    return ((dz + search_range) * span + (dy + search_range)) * span + (dx + search_range)
+
+
+def unpack_vector_3d(packed, search_range=MV_RANGE_3D):
+    span = 2 * search_range + 1
+    rest, dx = divmod(packed, span)
+    dz, dy = divmod(rest, span)
+    return dx - search_range, dy - search_range, dz - search_range

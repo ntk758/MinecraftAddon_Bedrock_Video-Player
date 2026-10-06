@@ -20,6 +20,7 @@ let itemUseHandler = null;
 
 export const dimension = {
   id: "overworld",
+  heightRange: { min: -64, max: 320 },
   setBlockPermutation(location, permutation) {
     stats.setBlockCalls++;
     stats.blocksPlaced++;
@@ -66,7 +67,8 @@ export const dimension = {
   },
 };
 
-const player = {
+// 立つ位置 (テストで高さの調整を確かめるため書き換えられるようにする)
+export const player = {
   location: { x: 0, y: 64, z: 100 },
   dimension,
   stopMusic() {},

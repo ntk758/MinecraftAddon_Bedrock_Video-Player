@@ -345,13 +345,12 @@ class VideoPlayer {
     }
   }
 
-  /** nextBoard と board を比べ、変わったブロックだけを置く。tick 予算に合わせて yield する。 */
   /**
    * nextBoard と board を比べ、変わったブロックだけを置く。tick 予算に合わせて yield する。
    *
    * 同じ色の変更ブロックを長方形にまとめ、dimension.fillBlocks 1 回で置く (API 呼び出しを大きく減らす)。
    * 横に続く同じ色を伸ばし、下の行でも同じ幅が全部同じ色の変更なら下へも伸ばす。
-   * 立体では、ワールド上で隣り合う同じ奥行きの段の中だけで縦に伸ばす。
+   * 立体では、同じ奥行きの段の中で縦に伸ばした後、奥の段へも伸ばして 1 個の箱にする。
    * fillBlocks が使えない環境では 1 個ずつ setBlockPermutation で置く。
    */
   *placeChangedBlocks(width) {
@@ -409,18 +408,40 @@ class VideoPlayer {
             r1++;
           }
         }
+        // 立体では、同じ長方形が奥の段でも全部同じ色の変更なら奥へも伸ばして 1 個の箱にする
+        let slices = 1;
+        if (useRects && isVolume(video)) {
+          const sliceCells = contiguousRows * width;
+          const faceArea = (x1 - x + 1) * (r1 - r + 1);
+          while (r + slices * contiguousRows < rows && (slices + 1) * faceArea <= MAX_FILL_BLOCKS) {
+            const offset = slices * sliceCells;
+            let sameFace = true;
+            for (let rr = r; rr <= r1 && sameFace; rr++) {
+              const base = rr * width + offset;
+              for (let k = x; k <= x1; k++) {
+                if (next[base + k] !== level || board[base + k] === level) {
+                  sameFace = false;
+                  break;
+                }
+              }
+            }
+            if (!sameFace) break;
+            slices++;
+          }
+        }
         const permutation = level === airLevel ? this.airPermutation : palette ? palette[level] : null;
-        const area = (x1 - x + 1) * (r1 - r + 1);
+        const area = (x1 - x + 1) * (r1 - r + 1) * slices;
 
         if (area > 1 && useRects && permutation) {
-          for (let rr = r; rr <= r1; rr++) board.fill(level, rr * width + x, rr * width + x1 + 1);
+          const lastRow = r1 + (slices - 1) * contiguousRows;
+          this.fillBoxCells(board, width, contiguousRows, x, x1, r, r1, slices, level);
           cellToWorld(video, this.anchor, p, from);
-          cellToWorld(video, this.anchor, r1 * width + x1, to);
+          cellToWorld(video, this.anchor, lastRow * width + x1, to);
           try {
             this.dimension.fillBlocks(new BlockVolume(from, to), permutation);
           } catch (e) {
             failures += area;
-            for (let rr = r; rr <= r1; rr++) board.fill(-1, rr * width + x, rr * width + x1 + 1);
+            this.fillBoxCells(board, width, contiguousRows, x, x1, r, r1, slices, -1);
             warnOnce("fill", `fillBlocks failed: ${e}`);
           }
           operations += area;
@@ -455,6 +476,16 @@ class VideoPlayer {
     }
     if (failures > 0) {
       warnOnce("setBlock", `Failed to place ${failures} block(s). The screen may be outside the loaded area`);
+    }
+  }
+
+  /** 盤面上の箱 (x0..x1 列, r0..r1 行, 奥へ slices 段) を value にする。 */
+  fillBoxCells(board, width, sliceRows, x0, x1, r0, r1, slices, value) {
+    for (let s = 0; s < slices; s++) {
+      for (let rr = r0; rr <= r1; rr++) {
+        const base = (rr + s * sliceRows) * width;
+        board.fill(value, base + x0, base + x1 + 1);
+      }
     }
   }
 
@@ -898,6 +929,13 @@ function ensureTickingArea(dimension, anchor, videoData) {
   return { added, needed: areas.length };
 }
 
+/** 高さ sizeY の範囲が dimension.heightRange (max は含まない) に収まる一番近い y を返す。 */
+function fitToBuildHeight(dimension, y, sizeY) {
+  const range = dimension.heightRange;
+  if (!range) return y;
+  return Math.max(range.min, Math.min(y, range.max - sizeY));
+}
+
 function setup(player) {
   if (!globalSelectedVideoId) {
     notify("no_video_selected");
@@ -912,7 +950,13 @@ function setup(player) {
     y: Math.floor(loc.y),
     z: Math.floor(loc.z) - footprintOf(videoData).sizeZ - (volume ? 2 : 0),
   };
-  
+  // 建築できる高さ (オーバーワールドは Y=-64〜319) からはみ出すと置けないので、収まる高さへずらす
+  const fittedY = fitToBuildHeight(player.dimension, anchor.y, volume ? videoData.height : 1);
+  if (fittedY !== anchor.y) {
+    anchor.y = fittedY;
+    notify("setup_shifted", fittedY);
+  }
+
   // 常時読み込みが一部しか登録できなくても、プレイヤーが近くにいれば再生できるので設置は続ける
   const ticking = ensureTickingArea(player.dimension, anchor, videoData);
   if (ticking.added < ticking.needed) notify("tickingarea_partial", ticking.added, ticking.needed);

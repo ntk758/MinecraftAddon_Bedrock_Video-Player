@@ -20,10 +20,10 @@ from mvcodec.volume import (  # noqa: E402
     AIR_LEVEL,
     extrude_volume,
     hollow,
-    lift_frame,
     load_vox_frames,
     parse_vox,
     relief_volume,
+    VolumeLifter,
     vox_to_volume,
     write_vox,
 )
@@ -116,7 +116,7 @@ def convert_volume(frames_dir, out, mode, *extra):
     return load_frame_data(out)
 
 
-@pytest.fixture(scope="module", params=["extrude", "relief"])
+@pytest.fixture(scope="module", params=["extrude", "relief", "inflate"])
 def video_volume(request, tmp_path_factory):
     tmp = tmp_path_factory.mktemp(f"volume_{request.param}")
     frames = make_blob_frames(tmp / "frames")
@@ -130,8 +130,9 @@ def test_video_volume_roundtrip(video_volume):
     assert data["layout"] == "volume" and data["depth"] == DEPTH and data["air_level"] == AIR_LEVEL
     decoded = list(iter_decoded_frames(data))
     assert len(decoded) == len(frames)
+    lifter = VolumeLifter(mode, DEPTH)  # convert.py と同じ既定値 (relief は奥行きのヒステリシスあり)
     for frame, (volume, _rgb) in zip(frames, decoded):
-        expected = lift_frame(mode, quantize(frame), PALETTE_RGB, DEPTH)
+        expected = lifter(quantize(frame), PALETTE_RGB)
         assert volume.shape == (DEPTH, HEIGHT, WIDTH)
         assert np.array_equal(volume, expected)
 

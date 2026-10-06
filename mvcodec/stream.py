@@ -1,13 +1,23 @@
 """フレーム列を varint_rle_v5 のデータ (GOP ごとのチャンクとフレームインデックス) にまとめる。
 
-2D スクリーンでも 3D 立体でも同じ仕組みを使う。3D は (奥行き×高さ) 行 × 幅 列の 2D 画像として渡す。
+2D スクリーンでも 3D 立体でも同じ仕組みを使う。3D は (奥行き×高さ) 行 × 幅 列の 2D 画像として渡し、
+depth に奥行きを指定する (動き補償だけは 3 次元のブリック単位で探す)。
 """
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from mvcodec.encode import bytearray_to_utf16_str, encode_frame_v5, encode_varint
-from mvcodec.motion import MV_BLOCK, MV_RANGE, apply_motion, estimate_motion, vector_limit
+from mvcodec.motion import (
+    MV_BLOCK,
+    MV_RANGE,
+    MV_RANGE_3D,
+    apply_motion,
+    apply_motion_3d,
+    estimate_motion,
+    estimate_motion_3d,
+    vector_limit,
+)
 from mvcodec.tiles import TILE_SIZE, TileDictionary
 
 
@@ -37,11 +47,13 @@ class StreamEncoder:
     tile_size: int = TILE_SIZE
     # 同じフレーム列を複数の設定で符号化するとき、動き探索の結果を共有する {frame_no: vectors}
     motion_cache: dict = None
+    # 立体の奥行き (1 なら平面)。2 以上なら rows = depth * 高さ で、動き補償を 3D で行う
+    depth: int = 1
     stats: StreamStats = field(default_factory=StreamStats)
 
     def __post_init__(self):
         self.gop_starts = set(self.gop_boundaries[:-1])
-        self.mv_limit = vector_limit(self.width, self.rows, self.mv_range)
+        self.mv_limit = MV_RANGE_3D if self.depth > 1 else vector_limit(self.width, self.rows, self.mv_range)
         self._gop_strings = []
         self._gop_binary = bytearray()
         self._index_entries = []  # (gop_id, byte_offset_in_gop, byte_length, is_keyframe)
@@ -98,11 +110,11 @@ class StreamEncoder:
             if self.motion_cache is not None and frame_no in self.motion_cache:
                 vectors = self.motion_cache[frame_no]
             else:
-                vectors = estimate_motion(self._prev, flat, self.width, self.rows, MV_BLOCK, self.mv_range)
+                vectors = self._estimate_motion(flat)
                 if self.motion_cache is not None:
                     self.motion_cache[frame_no] = vectors
             if vectors:
-                predictions.append((vectors, apply_motion(self._prev, vectors, self.width, self.rows, MV_BLOCK)))
+                predictions.append((vectors, self._apply_motion(vectors)))
 
         best, best_kind = None, (False, False)
         for vectors, predicted in predictions:
@@ -122,6 +134,17 @@ class StreamEncoder:
             self.stats.tile_frames += 1
             self.stats.tile_refs += len(best_ops)
         return best
+
+    def _estimate_motion(self, flat):
+        if self.depth > 1:
+            return estimate_motion_3d(self._prev, flat, self.width, self.rows // self.depth, self.depth,
+                                      MV_BLOCK, self.mv_limit)
+        return estimate_motion(self._prev, flat, self.width, self.rows, MV_BLOCK, self.mv_range)
+
+    def _apply_motion(self, vectors):
+        if self.depth > 1:
+            return apply_motion_3d(self._prev, vectors, self.width, self.rows // self.depth, self.depth, MV_BLOCK)
+        return apply_motion(self._prev, vectors, self.width, self.rows, MV_BLOCK)
 
     def payload_size(self):
         """ここまでのデータの大きさ (UTF-16 文字に詰める前のバイト数の目安)。"""

@@ -9,7 +9,7 @@ import numpy as np
 
 from mvcodec.color import BLOCK_RGB
 from mvcodec.encode import UTF16_BITS_PER_CHAR, UTF16_CHAR_OFFSET
-from mvcodec.motion import apply_motion, unpack_vector
+from mvcodec.motion import apply_motion, apply_motion_3d, unpack_vector, unpack_vector_3d
 from mvcodec.tiles import TileDictionary
 
 FORMAT_V4 = "varint_rle_v4"
@@ -103,10 +103,12 @@ def decode_frame(buf, offset, length, board, data, frame_no=None, tiles=None):
     """1 フレームを復元して新しい盤面 (1 次元, パレット番号, 未設置 -1) と、キーフレームかどうかを返す。
 
     board は直前の盤面。codec.js の decodeFrameInto と同じ規則:
-    キーフレームは全画素を未設置から描き直し、動きベクトルは board から予測し、最後に差分ランを上書きする。
+    キーフレームは全画素を未設置から描き直し、動きベクトルは board から予測し (立体は 3D のブリック単位)、
+    最後に差分ランを上書きする。
     """
     width = data["width"]
-    height = data["height"] * data.get("depth", 1) if data.get("layout") == "volume" else data["height"]
+    volume = data.get("layout") == "volume"
+    height = data["height"] * data["depth"] if volume else data["height"]
     is_v5 = data.get("format") == FORMAT_V5
     pos, end = offset, offset + length
     header, pos = read_varint(buf, pos)
@@ -126,8 +128,11 @@ def decode_frame(buf, offset, length, board, data, frame_no=None, tiles=None):
             gap, pos = read_varint(buf, pos)
             packed, pos = read_varint(buf, pos)
             mb += gap + 1
-            vectors[mb] = unpack_vector(packed, data["mv_range"])
-        out = apply_motion(board, vectors, width, height, data["mv_block"])
+            vectors[mb] = (unpack_vector_3d if volume else unpack_vector)(packed, data["mv_range"])
+        if volume:
+            out = apply_motion_3d(board, vectors, width, data["height"], data["depth"], data["mv_block"])
+        else:
+            out = apply_motion(board, vectors, width, height, data["mv_block"])
     if has_tiles:
         count, pos = read_varint(buf, pos)
         ops = []
