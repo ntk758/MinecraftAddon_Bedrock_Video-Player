@@ -150,3 +150,16 @@ def test_fill_batching_reduces_api_calls(tmp_path, run_result):
     assert fallback["stats"]["fillCalls"] == 0
     assert fallback["finalBoard"] == out["finalBoard"]
     assert calls < fallback["stats"]["setBlockCalls"] * 0.7
+
+
+def test_places_exactly_the_changed_blocks(run_result):
+    """キーフレームでも全ブロックを置き直さず、実際に変わったマスだけを置く (最初のフレームは全マス)。"""
+    data, out = run_result
+    assert not data["adaptive_palette"]
+    previous = None
+    changed = 0
+    for index_board, _rgb in iter_decoded_frames(data):
+        flat = index_board.reshape(-1)
+        changed += flat.size if previous is None else int((flat != previous).sum())
+        previous = flat
+    assert out["stats"]["blocksPlaced"] == changed

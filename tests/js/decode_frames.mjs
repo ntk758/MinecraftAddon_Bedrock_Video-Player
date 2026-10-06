@@ -28,6 +28,8 @@ const gops = data.chunks.map((chunk) => decodeUTF16BinaryToBytes(chunk));
 function newState() {
   return {
     board: new Int16Array(pixels).fill(-1),
+    decoded: new Int16Array(pixels).fill(-1),
+    boardGop: -1,
     next: new Int16Array(pixels),
     gopOf: new Int32Array(pixels).fill(-1),
     tiles: createTileDictionary(data),
@@ -38,13 +40,15 @@ function applyFrame(state, frameIndex) {
   const entry = entries[frameIndex];
   if (entry.length === 0) return;
   const bytes = gops[entry.gopId];
-  const isKeyframe = decodeFrameInto(bytes, entry.offset, entry.offset + entry.length, state.board, state.next, data, state.tiles);
-  // main.js の prepareKeyframe と同じ: 平面は全マス、立体は空気以外のマスを置き直す
-  if (isKeyframe) {
+  decodeFrameInto(bytes, entry.offset, entry.offset + entry.length, state.decoded, state.next, data, state.tiles);
+  state.decoded.set(state.next);
+  // main.js の invalidateForPaletteChange と同じ: 自動パレットで GOP が変わったときだけ、平面は全マス・立体は空気以外を置き直す
+  if (data.adaptive_palette && entry.gopId !== state.boardGop) {
     for (let p = 0; p < pixels; p++) {
       if (!isVolume(data) || state.board[p] !== data.air_level) state.board[p] = -1;
     }
   }
+  state.boardGop = entry.gopId;
   for (let p = 0; p < pixels; p++) {
     if (state.next[p] !== state.board[p] && state.next[p] >= 0) {
       state.board[p] = state.next[p];
@@ -63,12 +67,13 @@ function hasMotion(frameIndex) {
 
 const state = newState();
 const frames = [];
+// GOP ごとにパレットが変わる自動パレットのときだけ意味がある (固定パレットは GOP が変わっても同じブロック)
 const staleGopFrames = [];
 for (let f = 0; f < entries.length; f++) {
   applyFrame(state, f);
   frames.push(Array.from(state.board));
   const gopId = entries[f].gopId;
-  if (state.gopOf.some((g) => g >= 0 && g !== gopId)) staleGopFrames.push(f);
+  if (data.adaptive_palette && state.gopOf.some((g) => g >= 0 && g !== gopId)) staleGopFrames.push(f);
 }
 
 const seekMismatches = [];

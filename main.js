@@ -185,9 +185,13 @@ class VideoPlayer {
     this.cursor = { pos: 0 };
     this.run = { position: 0, length: 0, level: 0 };
 
-    // 現在スクリーンに表示しているパレット番号 (-1 は不明 = 次のフレームで必ず置き直す) と作業用の盤面
+    // board: ワールドに実際に置いてあるパレット番号 (-1 は不明 = 次のフレームで必ず置き直す)
+    // decoded: 直前に復元したフレーム (動き補償・タイル辞書の参照元。エンコーダと常に同じ内容)
+    // nextBoard: 復元した次のフレーム (作業用)
     this.board = null;
+    this.decoded = null;
     this.nextBoard = null;
+    this.boardGopId = -1;
   }
 
   ensureDecodedData() {
@@ -199,6 +203,7 @@ class VideoPlayer {
       this.decodedIndex = parseFrameIndexV4(decodeUTF16BinaryToBytes(this.videoData.index));
       const pixels = boardSizeOf(this.videoData);
       this.board = new Int16Array(pixels).fill(-1);
+      this.decoded = new Int16Array(pixels).fill(-1);
       this.nextBoard = new Int16Array(pixels);
       this.tiles = createTileDictionary(this.videoData);
       this.decodedBinary = null;
@@ -324,10 +329,11 @@ class VideoPlayer {
   }
 
   /**
-   * キーフレームの前に呼ぶ。平面は全マスを置き直す。
+   * パレット番号の意味が変わるとき (自動パレットで GOP が切り替わるとき) に呼ぶ。平面は全マスを置き直す。
    * 立体は空気のマスは空気のままとみなし、ブロックのあるマスだけ置き直す (空気で全体を塗り直さずに済む)。
+   * それ以外のキーフレームでは、表示中の盤面と比べて本当に変わったマスだけを置く。
    */
-  prepareKeyframe() {
+  invalidateForPaletteChange() {
     if (!this.board) return;
     if (!isVolume(this.videoData)) {
       this.board.fill(-1);
@@ -414,6 +420,7 @@ class VideoPlayer {
             this.dimension.fillBlocks(new BlockVolume(from, to), permutation);
           } catch (e) {
             failures += area;
+            for (let rr = r; rr <= r1; rr++) board.fill(-1, rr * width + x, rr * width + x1 + 1);
             warnOnce("fill", `fillBlocks failed: ${e}`);
           }
           operations += area;
@@ -426,6 +433,7 @@ class VideoPlayer {
               this.dimension.setBlockPermutation(cellToWorld(video, this.anchor, q, this.tempBlockLoc), permutation);
             } catch (e) {
               failures++;
+              board[q] = -1;
             }
             if (++operations >= BLOCKS_PER_YIELD) {
               operations = 0;
@@ -468,15 +476,17 @@ class VideoPlayer {
     function* flush(level, group) {
       if (group.cells.length === 0) return;
       const permutation = level === airLevel ? self.airPermutation : palette ? palette[level] : null;
+      let placedLevel = level;
       if (permutation) {
         try {
           self.dimension.fillBlocks(new ListBlockVolume(group.locations), permutation);
         } catch (e) {
           failures += group.cells.length;
+          placedLevel = -1;
           warnOnce("fill-list", `fillBlocks(ListBlockVolume) failed: ${e}`);
         }
       }
-      for (const cell of group.cells) board[cell] = level;
+      for (const cell of group.cells) board[cell] = placedLevel;
       group.cells = [];
       group.locations = [];
       yield;
@@ -523,11 +533,13 @@ class VideoPlayer {
 
       const gopBytes = this.ensureGopDecoded(entry.gopId);
       if (!gopBytes) return;
-      const isKeyframe = decodeFrameInto(
-        gopBytes, entry.offset, entry.offset + entry.length, this.board, this.nextBoard, this.videoData, this.tiles
+      decodeFrameInto(
+        gopBytes, entry.offset, entry.offset + entry.length, this.decoded, this.nextBoard, this.videoData, this.tiles
       );
-      // キーフレームはワールド上の状態に関係なく全ブロックを置き直す (パレット切替・クリア後・シーク時)
-      if (isKeyframe) this.prepareKeyframe();
+      this.decoded.set(this.nextBoard);
+      // 自動パレットで GOP が変わると同じ番号でも別のブロックになるので、表示中の盤面を「不明」にする
+      if (this.videoData.adaptive_palette && entry.gopId !== this.boardGopId) this.invalidateForPaletteChange();
+      this.boardGopId = entry.gopId;
       yield* this.placeChangedBlocks(width);
       return;
     }
@@ -680,8 +692,12 @@ class VideoPlayer {
           yield;
         }
       }
-      // 立体は全マスが空気になったことが分かっているので、次のキーフレームで空気を置き直さずに済む
-      if (volume && self.board) self.board.fill(self.videoData.air_level);
+      // 塗った内容が分かっているので、盤面に記録しておく (次の再生で置き直すマスが最小になる)
+      // 立体は全マスが空気、固定パレットの平面はパレット 0 番。自動パレットの平面は GOP ごとに番号の意味が違うので不明のまま
+      if (self.board) {
+        if (volume) self.board.fill(self.videoData.air_level);
+        else if (!self.videoData.adaptive_palette) self.board.fill(0);
+      }
       self.currentJobId = null;
       notify("clear_done");
     })());
