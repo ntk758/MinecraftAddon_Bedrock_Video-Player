@@ -660,11 +660,17 @@ def main(argv=None):
     # --- Pass 2: 減色 ---
     # 評価 (SSIM) 用に元フレームを間引いて保持する。減色側が先読みしても番号で取り出せるよう dict にする
     sampled_originals = {}
+    # 立体の奥行き (relief) と立体にする範囲 (extrude / inflate) は、減色・ディザ前の元の明るさから決める。
+    # ブロック色の明るさを使うと、ディザの粒が奥行きのノイズになり、境目もギザギザになるため
+    source_heights = {}
+    use_source_heights = volume and not args.depth_video
 
     def tee_originals(frames):
         for i, f in enumerate(frames):
             if i % SSIM_SAMPLE_INTERVAL == 0 and i // SSIM_SAMPLE_INTERVAL < SSIM_MAX_SAMPLES:
                 sampled_originals[i] = f
+            if use_source_heights:
+                source_heights[i] = luminance01(f)
             yield f
 
     dither_method = args.dither_method
@@ -698,7 +704,7 @@ def main(argv=None):
             gif_frames.append(gop_palettes_rgb[gop_id].astype(np.uint8)[screen])
 
         if volume:
-            heights = None
+            heights = source_heights.pop(i, None)
             if depth_frames is not None:
                 depth_frame = next(depth_frames, None)
                 heights = luminance01(depth_frame) if depth_frame is not None else None

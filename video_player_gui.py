@@ -176,21 +176,24 @@ class _NoAudio(Exception):
 
 
 def write_vox_thumbnail(vox_path: Path, png_path: Path, size: int = 256) -> None:
-    """MagicaVoxel の最初のフレームを正面から見た画像をサムネイルにする。"""
+    """MagicaVoxel の最初のフレームを斜め上から見た立体の画像をサムネイルにする。"""
     import numpy as np
     from PIL import Image
 
     from mvcodec.color import PALETTES
-    from mvcodec.volume import AIR_LEVEL, front_view, load_vox_frames, nearest_levels, vox_to_volume, vox_volume_shape
+    from mvcodec.volume import AIR_LEVEL, iso_view, load_vox_frames, nearest_levels, vox_to_volume, vox_volume_shape
 
     frames, vox_palette = load_vox_frames(vox_path)
     block_rgb = np.array([item["rgb"] for item in PALETTES["full"]], dtype=np.float64)
     color_to_level = np.full(256, AIR_LEVEL, dtype=np.int16)
     color_to_level[1:] = nearest_levels(vox_palette[:255, :3], block_rgb)
     shape = vox_volume_shape(frames)
-    image = Image.fromarray(front_view(vox_to_volume(frames[0], shape, color_to_level), block_rgb))
-    scale = max(1, size // max(image.size))
-    image = image.resize((image.width * scale, image.height * scale), Image.Resampling.NEAREST)
+    image = Image.fromarray(iso_view(vox_to_volume(frames[0], shape, color_to_level), block_rgb, background=(0, 0, 0)))
+    if max(image.size) > size:
+        image.thumbnail((size, size), Image.Resampling.LANCZOS)
+    else:
+        scale = size // max(image.size)
+        image = image.resize((image.width * scale, image.height * scale), Image.Resampling.NEAREST)
     canvas = Image.new("RGB", (size, size))
     canvas.paste(image, ((size - image.width) // 2, (size - image.height) // 2))
     canvas.save(png_path)

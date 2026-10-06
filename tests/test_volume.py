@@ -21,6 +21,7 @@ from mvcodec.volume import (  # noqa: E402
     extrude_volume,
     hollow,
     load_vox_frames,
+    luminance01,
     parse_vox,
     relief_volume,
     VolumeLifter,
@@ -132,7 +133,8 @@ def test_video_volume_roundtrip(video_volume):
     assert len(decoded) == len(frames)
     lifter = VolumeLifter(mode, DEPTH)  # convert.py と同じ既定値 (relief は奥行きのヒステリシスあり)
     for frame, (volume, _rgb) in zip(frames, decoded):
-        expected = lifter(quantize(frame), PALETTE_RGB)
+        # 奥行き・立体にする範囲は減色前の元の明るさから決める
+        expected = lifter(quantize(frame), PALETTE_RGB, luminance01(frame))
         assert volume.shape == (DEPTH, HEIGHT, WIDTH)
         assert np.array_equal(volume, expected)
 

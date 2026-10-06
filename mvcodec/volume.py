@@ -131,7 +131,8 @@ class VolumeLifter:
     """2D のパレット番号フレームを順に立体にする (relief / extrude / inflate)。
 
     relief の奥行きのヒステリシスのため、直前のフレームの段を覚えておく。フレームは再生順に渡すこと。
-    heights01 が無ければ、各画素のブロック色の明るさを高さ (relief) や立体にする範囲 (extrude / inflate) に使う。
+    heights01 (0〜1) は高さ (relief) と立体にする範囲 (extrude / inflate) に使う。convert.py は減色前の元の明るさ
+    (または深度動画) を渡す。無ければ各画素のブロック色の明るさを使う。
     make_hollow は内部のブロックを空気にする。fillBlocks で箱ごとに置く場合は詰まっている方が
     呼び出しもデータも少ないので既定は False (1 個ずつ置く block 方式なら True の方が置く数が減る)。
     """
@@ -509,4 +510,78 @@ def front_view(volume, palette_rgb, background=(0, 0, 0)):
     image = np.empty((height, width, 3), np.uint8)
     image[:] = background
     image[hit] = table[levels[hit]]
+    return image
+
+
+def _iso_sprite(unit):
+    """等角投影の立方体 1 個ぶんの画素ごとの面 (0: 無し, 1: 上面, 2: 正面 (南), 3: 側面 (東))。"""
+    from PIL import Image, ImageDraw
+
+    hw, hh, vh = unit, unit // 2, unit
+
+    def project(x, y, z):
+        return (x - z) * hw, (x + z) * hh - y * vh
+
+    faces = {
+        1: [(0, 1, 0), (1, 1, 0), (1, 1, 1), (0, 1, 1)],
+        2: [(0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)],
+        3: [(1, 0, 0), (1, 0, 1), (1, 1, 1), (1, 1, 0)],
+    }
+    points = {face: [project(*corner) for corner in corners] for face, corners in faces.items()}
+    min_x = min(p[0] for pts in points.values() for p in pts)
+    min_y = min(p[1] for pts in points.values() for p in pts)
+    size = (2 * hw + 1, 2 * hh + vh + 1)
+    label = Image.new("L", size, 0)
+    draw = ImageDraw.Draw(label)
+    for face in (2, 3, 1):
+        draw.polygon([(x - min_x, y - min_y) for x, y in points[face]], fill=face)
+    sprite = np.asarray(label)
+    vy, vx = np.nonzero(sprite)
+    return vx + min_x, vy + min_y, sprite[vy, vx], (hw, hh, vh)
+
+
+def iso_view(volume, palette_rgb=None, unit=4, background=(24, 26, 32), rgb=None):
+    """立体を南東の斜め上から見た等角投影の画像 (H, W, 3)。上面・正面 (南)・側面 (東) を明るさで塗り分ける。
+
+    色はパレット番号を palette_rgb で引くか、各ボクセルの色 rgb (奥行き, 高さ, 幅, 3) をそのまま使う。
+
+    ゲームの外で立体の出来を確かめるためのプレビュー用 (scripts/preview_volume.py、GUI のサムネイル)。
+    手前のボクセルほど後から描く z バッファ方式で、numpy だけで計算する。
+    """
+    volume = np.asarray(volume)
+    depth, height, width = volume.shape
+    solid = volume != AIR_LEVEL
+    # 東・上・南の 3 方向のどれかが空いているボクセルだけが見える
+    padded = np.pad(solid, 1, constant_values=False)
+    hidden = (padded[1:-1, 1:-1, 2:] & padded[1:-1, :-2, 1:-1] & padded[2:, 1:-1, 1:-1])
+    d, row, col = np.nonzero(solid & ~hidden)
+    sprite_x, sprite_y, sprite_face, (hw, hh, vh) = _iso_sprite(unit)
+
+    # ワールド座標: 東 X = 列、上 Y = 高さ-1-行、南 Z = 奥行きの番号 (大きいほどプレイヤー側)
+    wx, wy, wz = col, height - 1 - row, d
+    ox = (wx - wz) * hw
+    oy = (wx + wz) * hh - wy * vh
+    shift_x = (depth - 1) * hw + hw
+    shift_y = (height - 1) * vh + vh + 1
+    canvas_w = (width + depth) * hw + 2 * hw + 2
+    canvas_h = (width + depth) * hh + height * vh + vh + 2
+    image = np.empty((canvas_h, canvas_w, 3), np.uint8)
+    image[:] = background
+    if len(d) == 0:
+        return image
+
+    if rgb is not None:
+        voxel_rgb = np.asarray(rgb, dtype=np.float32)[d, row, col]
+    else:
+        table = np.vstack([np.asarray(palette_rgb, dtype=np.float32), np.zeros((128, 3), np.float32)])
+        voxel_rgb = table[volume[d, row, col]]
+    shade = np.array([0.0, 1.0, 0.82, 0.62], np.float32)
+    px = (ox[:, None] + sprite_x[None] + shift_x).ravel()
+    py = (oy[:, None] + sprite_y[None] + shift_y).ravel()
+    nearness = np.repeat(wx + wy + wz, len(sprite_x))
+    faces = np.tile(sprite_face, len(d))
+    colors = np.repeat(voxel_rgb, len(sprite_x), axis=0) * shade[faces][:, None]
+    inside = (px >= 0) & (px < canvas_w) & (py >= 0) & (py < canvas_h)
+    order = np.argsort(nearness[inside], kind="stable")
+    image[py[inside][order], px[inside][order]] = np.clip(colors[inside][order], 0, 255).astype(np.uint8)
     return image

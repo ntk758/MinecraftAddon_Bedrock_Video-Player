@@ -196,3 +196,35 @@ def test_main_js_keeps_volume_within_build_height(tmp_path):
     assert result["anchor"]["y"] == 320 - data["height"]
     assert any("bvp.setup_shifted" in json.dumps(m) for m in result["messages"])
     assert sum(1 for block in result["finalBoard"] if block not in (None, "minecraft:air")) == 6 ** 3
+
+
+# --- プレビュー ---
+
+def test_iso_view_draws_three_shaded_faces():
+    from mvcodec.volume import iso_view
+
+    volume = np.full((3, 3, 3), AIR_LEVEL, np.int16)
+    volume[1, 1, 1] = 0
+    background = (24, 26, 32)
+    image = iso_view(volume, np.array([[200, 100, 50]]), unit=4, background=background)
+    colors = {tuple(c) for c in image.reshape(-1, 3)} - {background}
+    assert len(colors) == 3  # 上面・正面・側面で明るさが違う
+    assert (200, 100, 50) in colors  # 上面は元の色
+    # 手前のボクセルが奥のボクセルを隠す: 南 (手前) に 1 個足すと、元の正面の色は見えなくなる
+    volume[2, 1, 1] = 1
+    image2 = iso_view(volume, np.array([[200, 100, 50], [10, 200, 10]]), unit=4, background=background)
+    front_of_first = tuple(int(v) for v in np.array([200, 100, 50]) * 0.82)
+    assert front_of_first not in {tuple(c) for c in image2.reshape(-1, 3)}
+
+
+def test_preview_script_writes_gif(depth_walk, tmp_path):
+    from PIL import Image
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import preview_volume
+
+    _path, out, data, _plain = depth_walk
+    gif = tmp_path / "preview.gif"
+    assert preview_volume.main([str(out), "--output", str(gif), "--unit", "2"]) == 0
+    with Image.open(gif) as image:
+        assert image.n_frames == data["frame_count"]

@@ -198,7 +198,10 @@ def play(tree, js_path, work, *node_args):
     result = subprocess.run(["node", "run_main.mjs", *node_args], cwd=work, capture_output=True, text=True,
                             encoding="utf-8", timeout=1800)
     if result.returncode != 0:
-        raise RuntimeError(result.stderr[-2000:])
+        # 例: main の版は 100 チャンクを超えるスクリーンで tickingarea の登録に失敗し、設置できない
+        print(f"playback failed ({tree.name}): {result.stderr.strip().splitlines()[0][:200]}", file=sys.stderr)
+        shutil.rmtree(work, ignore_errors=True)
+        return {"failed": True}
     out = json.loads(result.stdout)
     stats = out["stats"]
     frames = max(1, out["frameCount"])
@@ -252,7 +255,9 @@ def run_screen_suite(args, trees, out_dir):
                     for render in renders:
                         node_args = [render] if render else []
                         stats = play(tree, js, out_dir / "play", *node_args)
-                        if stats:
+                        if stats and stats.get("failed"):
+                            row[f"calls_{render or 'default'}"] = "setup failed"
+                        elif stats:
                             row[f"calls_{render or 'default'}"] = round(stats["calls_per_frame"], 1)
                             row[f"blocks_{render or 'default'}"] = round(stats["blocks_per_frame"], 1)
                     rows.append(row)
@@ -278,7 +283,9 @@ def run_volume_suite(args, trees, out_dir):
             row = {"clip": clip, "mode": mode, "config": name, "encode_s": round(seconds, 1), **sizes(js)}
             for render in renders:
                 stats = play(tree, js, out_dir / "play", render)
-                if stats:
+                if stats and stats.get("failed"):
+                    row[f"calls_{render}"] = "setup failed"
+                elif stats:
                     row[f"calls_{render}"] = round(stats["calls_per_frame"], 1)
                     row[f"blocks_{render}"] = round(stats["blocks_per_frame"], 1)
             rows.append(row)
