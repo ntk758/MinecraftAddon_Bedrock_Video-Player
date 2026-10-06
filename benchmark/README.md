@@ -31,3 +31,15 @@ MS-SSIM は未実装のため常に `nan` と表示されます。
 
 ## アーキテクチャ
 本フレームワークはモジュール化されており、新しい評価指標やデータセットを容易に追加できます。
+
+## データ量と描画コストの比較 (`codec_bench.py`)
+
+画質ではなく「データの大きさ」と「ゲーム内で置く回数」を、別の git の版と比べます。合成映像 (パン・アニメ風・白黒シルエット・ffmpeg の testsrc2 / mandelbrot) を自動で作るので、入力の動画は不要です。node (モックの Minecraft で `main.js` を再生) と ffmpeg (testsrc2 / mandelbrot) を使います。
+
+```bash
+python benchmark/codec_bench.py --out bench_out                                  # 平面、main と比較
+python benchmark/codec_bench.py --out bench_out --baseline v5.4.0 --sizes 256x144
+python benchmark/codec_bench.py --out bench_out --suite volume                   # 立体 (relief / extrude / inflate)
+```
+
+`<out>/results_<suite>.md` に、版・設定ごとの出力 .js のバイト数、deflate 後のバイト数、1 フレームあたりの API 呼び出し数 (`calls_render=rect` など) と置いたブロック数が出力されます。

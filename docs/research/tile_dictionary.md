@@ -1,5 +1,7 @@
 # Research: Tile Dictionary Spatial Compression
 
+> **Note (Phase 7.x):** This is the original design study. The implemented scheme differs: it is an *implicit* dictionary that the encoder and decoders build with the same rules (reset at keyframes, changed tiles appended in row-major order, referenced by recency), so no dictionary data is transmitted. See [phase7x.md](phase7x.md) and ARCHITECTURE.md §2 ②''.
+
 ## Executive Summary
 
 This document describes the design and algorithm for a **Tile Dictionary Compression Scheme** tailored for rendering video in Minecraft Bedrock. 
