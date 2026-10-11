@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v6.0.0](https://img.shields.io/badge/Release-v6.0.0-blue.svg)](#-releases)
+[![Release v6.1.0](https://img.shields.io/badge/Release-v6.1.0-blue.svg)](#-releases)
 [![CI](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml/badge.svg)](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
@@ -13,7 +13,7 @@
   <sub>左: 元映像 / 右: 128×72 ブロックに変換した映像 (ゲーム内と同じ規則で復元した画面) — Left: source / Right: converted to blocks</sub>
 </p>
 
-**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.0.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.0.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.0.0-windows-x64.zip` (Python 不要) を使ってください。
+**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.1.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.1.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.1.0-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 
 [日本語](#日本語-japanese) | [English](#english)
@@ -140,10 +140,10 @@ python video_player_gui.py
 | `/scriptevent badapple:play <動画ID>` | 指定した動画を再生 |
 | `/scriptevent badapple:gui` | リモコン画面を開く |
 | `/scriptevent badapple:stop` | 停止してスクリーンを単色で塗りつぶす (立体は空気にして消す) |
-| `/scriptevent badapple:render rect\|list\|block` | 描画方式を切り替える (既定 `rect`。下の「描画方式」を参照) |
-| `/scriptevent badapple:bench` | スクリーンの範囲で 6 通りの置き方の速さを計り、1 ブロックあたりの時間をチャットに表示 |
+| `/scriptevent badapple:render auto\|rect\|list\|block` | 描画方式を切り替える (既定 `auto`。下の「描画方式」を参照) |
+| `/scriptevent badapple:bench` | スクリーンの範囲で置き方ごとの速さを計り、`auto` が使う費用 (1 回あたり・1 ブロックあたり) を求めてワールドに保存 |
 
-**描画方式**: `rect` は同じ色の変化を箱にまとめて `fillBlocks` で置き (既定)、`list` は色ごとの座標リストを `fillBlocks(ListBlockVolume)` で置き、`block` は 1 個ずつ置きます。`list` は呼び出し回数が最も少なく (1 フレーム数回〜数十回)、細かい模様や立体で有利です。どれが速いかは端末によって違うので、`bench` の結果 (µs/ブロック) を見て選んでください。選んだ方式はワールドに保存されます。
+**描画方式**: `rect` は同じ色の変化を箱にまとめて `fillBlocks` で置き、`list` は色ごとの座標リストを `fillBlocks(ListBlockVolume)` で置き、`block` は 1 個ずつ置きます。既定の **`auto`** は、フレームごとに 3 つの方式の時間を見積もって一番速いものを選びます (細かい模様では座標リスト、大きな面や立体では箱になりやすい)。見積もりには「1 回の呼び出しの費用」と「1 ブロックの費用」を使い、初期値は Windows 版の実測値です。お使いの端末で `/scriptevent badapple:bench` を一度実行すると、その端末で測った値に置き換わります (ワールドに保存)。描画方式を固定したいときは `render rect` などで選べます。
 
 #### 7. 3D ホログラム再生
 <p align="center">
@@ -165,7 +165,8 @@ GUI の **表示モード** で立体の作り方を選び、**奥行き (ブロ
 
 - `/scriptevent badapple:setup` を実行すると、立体は **プレイヤーの 2 ブロック北に、左右中央をそろえて足元から上へ** 立ちます。建築できる高さ (オーバーワールドは Y=319 まで) からはみ出す場合は下へずらしてお知らせします。南側 (プレイヤー側) から見るのが正面です。
 - 奥行き・明るさの判定は減色前の元の映像の明るさを使うので、ディザをかけても表面が荒れません。`relief` は明るさが少し揺れただけでは奥行きを変えないので (ヒステリシス)、ちらつきと置き直しが減ります。
-- 立体は `list` 描画方式がとくに有利です (下の計測では 1 フレーム 2〜21 回の呼び出し)。
+- 描画方式は既定の `auto` のままがおすすめです。立体の大きな面は箱で、細かい部分は座標リストで、フレームごとに速い方で置きます。
+- 立体の表示モードを選ぶと、ディザは自動で「なし」になります (ディザの粒が表面の白い点々になるため)。必要なら自分で選び直せます。
 - 変換結果は Minecraft を起動しなくても確認できます:
   ```bash
   python scripts/preview_volume.py out.js --output preview.gif --source-frames frames_dir
@@ -223,7 +224,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 4. Import the `.mcaddon`, enable both the Behavior Pack and the Resource Pack, and turn on cheats (for `/scriptevent`).
 5. Stand where the screen should be and run `/scriptevent badapple:setup` (`badapple` is the command prefix set in the GUI). The screen is built horizontally at your foot level, extending east (+X) and north (−Z); blocks in that area are overwritten.
 6. Use a compass to open the remote control, or use `/scriptevent badapple:start | list | play <id> | gui | stop`.
-7. **3D holograms**: choose a **Display mode** (relief / extrude / inflate) and a **Depth** in the GUI, or add a `.vox` file. `setup` builds the volume 2 blocks north of you, centred, from your feet upward (moved down if it would exceed the build height). Switch placement with `/scriptevent badapple:render rect|list|block` and compare them with `/scriptevent badapple:bench` (`list` uses the fewest calls, especially for 3D). Preview any converted file without Minecraft: `python scripts/preview_volume.py out.js --output preview.gif`.
+7. **3D holograms**: choose a **Display mode** (relief / extrude / inflate) and a **Depth** in the GUI, or add a `.vox` file. `setup` builds the volume 2 blocks north of you, centred, from your feet upward (moved down if it would exceed the build height). The default `auto` render mode picks the fastest placement (boxes, per-colour position lists or one by one) for every frame from a cost model; run `/scriptevent badapple:bench` once to measure your device (saved in the world), or force a mode with `/scriptevent badapple:render rect|list|block`. 3D display modes switch dithering off by default. Preview any converted file without Minecraft: `python scripts/preview_volume.py out.js --output preview.gif`.
 
 A prebuilt Windows EXE (with DirectML) and a ready-to-play sample add-on are on the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest). To build the EXE yourself: `pip install pyinstaller` then `python build_standalone.py`.
 
@@ -392,7 +393,7 @@ A. パック名とコマンド接頭辞が同じなら同じパック (同じ UU
   - [x] まとめ置き描画 (`fillBlocks` の箱・`ListBlockVolume`)、キーフレームで変わったブロックだけを置く、実機ベンチマーク (`bench`)
 - [x] **3D立体ホログラム再生 (3D Hologram playback)** — `relief` (ヒステリシス付き) / `extrude` / `inflate` / MagicaVoxel `.vox` (シーングラフ・アニメーション対応)、3D の箱でまとめて設置、建築限界内への自動調整、等角投影のプレビュー
 - [ ] **Phase 8: ワールド内レンダリングと知覚的な安定化 (In-World Rendering & Perceptual Stability)**
-  - [ ] **8.1 描画方式の自動選択**: `bench` の結果 (µs/ブロック) をワールドに保存し、フレームごとに「呼び出し回数 × 1 回の費用 + ブロック数 × 1 個の費用」が最小の方式 (箱 / 座標リスト / 1 個ずつ) を選ぶ。計測では `list` が 1 フレーム 2〜33 回で、`rect` の 1/10〜1/300
+  - [x] **8.1 描画方式の自動選択**: `bench` で「1 回の呼び出しの費用」と「1 ブロックの費用」を分けて求めてワールドに保存し、描画方式 `auto` (既定) がフレームごとに「呼び出し回数 × 1 回の費用 + ブロック数 × 1 ブロックの費用」が最小の方式 (箱 / 座標リスト / 1 個ずつ) を選ぶ。初期値は実機 (Windows) の測定値: `fillBlocks` 1 回 15 µs + 1 ブロック 0.55 µs、1 個ずつ 2.3 µs、座標リスト 1 ブロック約 1.4 µs
   - [ ] **8.2 ディザの時間的安定化**: 前フレームと同じパレット番号で色差が許容範囲 (ΔE) 内なら変えない (条件付き更新) / ディザ模様を全体の動きに合わせてずらす。Blue Noise では動き補償が効かず、ディザなしのパンの −88% に対して −43% にとどまっているため
   - [ ] **8.3 2.5D パラメトリック立体**: `relief` / `extrude` / `inflate` を「色の平面 + 高さ (厚み) の平面」の 2 枚の 2D 映像として送り、アドオン側で列ごとに立体を組み立てる。2D の動き補償・タイル辞書がそのまま効き、調査ではレリーフで約 −69%
   - [ ] **8.4 エントロピー符号化**: モード・位置・色を別々のストリームにして、GOP ごとの静的ハフマン (Smacker 型) か LZ (LZ4 型) をかける。xz では v5 のデータからさらに 22〜39% 縮むことを確認済み
@@ -418,6 +419,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## 🏷 Releases
 
+- **v6.1.0**: Phase 8.1 描画方式の自動選択。描画方式 `auto` (既定) がフレームごとに箱・座標リスト・1 個ずつのうち一番速い置き方を選ぶ (実機の測定値を使用。`bench` で自分の端末の値を測って保存できる)。立体の変換を約 4 倍高速化し、変換中の進み具合と残り時間をログに表示。GUI で立体の表示モードを選ぶとディザを自動で「なし」に。
 - **v6.0.0**: Phase 7.x 次世代予測圧縮と 3D ホログラム。動き補償 (平面 8×8 / 立体 8×8×8)・暗黙のタイル辞書・ラン位置の間隔符号化で、v5.4.0 よりデータ量 47〜88% 減 (ディザなし)。映像を立体 (relief / extrude / inflate) にしたり MagicaVoxel の立体アニメを再生する 3D ホログラム再生。`fillBlocks` の箱・座標リストでまとめて置く描画 (`render` コマンドで切替) と実機ベンチマーク (`bench`)、キーフレームで変わったブロックだけを置く再生。v5.1.0〜v5.4.0 で作ったアドオンがインポートできなかった不具合 (manifest のバージョン番号) と、256×144 以上のスクリーンを設置できなかった不具合を修正。
 - **v5.4.0**: ゲーム内表示の多言語対応。チャットのメッセージとリモコン画面が、各プレイヤーの Minecraft の言語設定 (10 言語、未対応の言語は英語) で表示されるように。変換器のログも GUI で選んだ言語で表示。`main.js` をモック環境で動かす結合テストを追加。
 - **v5.3.0**: GUI の多言語対応。画面右上の「🌐 言語」で 10 言語 (日本語・English・简体中文・繁體中文・한국어・Español・Português (Brasil)・Français・Deutsch・Русский) に切り替え可能。初回は OS の表示言語を自動選択し、選んだ言語を保存。翻訳は `locales/*.json` で追加・修正できます。

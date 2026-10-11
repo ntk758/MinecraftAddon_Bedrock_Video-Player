@@ -148,6 +148,8 @@
   "convert.device_cpu_dither": "[MVCodec] 轉換裝置: CPU（混色 '{dither}' 僅支援 CPU；自動調色盤使用 {gpu}）",
   "convert.device_gpu": "[MVCodec] 轉換裝置: {gpu}",
   "convert.no_frames": "[MVCodec] 沒有輸入影格。",
+  "convert.analyzing": "[MVCodec] 1/2：正在分析場景（讀取整部影片）…",
+  "convert.progress": "[MVCodec] 2/2：正在轉換 {done}/{total} 幀（{percent}%），每秒 {fps} 幀，約剩 {eta}",
   "convert.palette_cpu_retry": "[MVCodec] 警告: 無法在 GPU 上計算自動調色盤，改用 CPU 重新計算: {error}",
   "settings.mode": "顯示模式",
   "settings.depth": "深度（方塊）",
@@ -162,7 +164,9 @@
   "addon.bench_start": "§e效能測試: 用每種方式將 %1 個方塊重繪 %2 次...",
   "addon.bench_result": "§f%1: §b%2 µs/方塊§f (每輪 %3 次呼叫，共 %4 ms)",
   "addon.bench_failed": "§c%1: 無法使用",
+  "addon.bench_model": "§b估算成本§f：fillBlocks 每次呼叫 %1 µs + 每方塊 %2 µs / 逐一放置 %3 µs / 座標清單 每次呼叫 %4 µs + 每方塊 %5 µs。繪製方式 auto 會使用這些值",
+  "addon.bench_unreliable": "§e測量時間太短（每種方式不足 %1 ms），未儲存成本。請在更大的螢幕上執行",
   "addon.bench_done": "§a效能測試完成。目前的繪製方式: %1",
-  "addon.render_mode_usage": "§e用法: /scriptevent %1render rect|list|block (目前: %2)",
+  "addon.render_mode_usage": "§e用法: /scriptevent %1render auto|rect|list|block (目前: %2)",
   "addon.render_mode_set": "§a繪製方式已設為 %1"
 }

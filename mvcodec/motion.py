@@ -171,20 +171,25 @@ def estimate_motion_3d(prev, cur, width, height, depth, block=MV_BLOCK, search_r
         return {}
     r = search_range
     padded = np.pad(prev3d, r, mode="edge")
-    starts = [np.arange(0, n, block) for n in (depth, height, width)]
+    bricks = [-(-n // block) for n in (depth, height, width)]
     candidates = candidate_vectors_3d(search_range)
-    costs = np.empty((len(candidates), *(len(s) for s in starts)), dtype=np.int32)
+    costs = np.empty((len(candidates), *bricks), dtype=np.int32)
+    # 一致しない画素の印を、ブリックの倍数に広げた領域に書く (はみ出した部分は 0 のまま = 端のブリックは中の画素だけを数える)
+    mismatch = np.zeros([n * block for n in bricks], dtype=bool)
+    view = mismatch[:depth, :height, :width]
+    bd, bh, bw = bricks
     for k, (dx, dy, dz) in enumerate(candidates):
         shifted = padded[r + dz:r + dz + depth, r + dy:r + dy + height, r + dx:r + dx + width]
-        mismatch = (shifted != cur3d).astype(np.int32)
-        for axis, axis_starts in enumerate(starts):
-            mismatch = np.add.reduceat(mismatch, axis_starts, axis=axis)
-        costs[k] = mismatch
+        np.not_equal(shifted, cur3d, out=view)
+        # 奥行き → 高さ → 幅 の順にブリックごとに足す (小さな整数型で足してから最後に int32)
+        sums = mismatch.view(np.uint8).reshape(bd, block, -1).sum(axis=1, dtype=np.int16)
+        sums = sums.reshape(bd, bh, block, -1).sum(axis=2, dtype=np.int16)
+        costs[k] = sums.reshape(bd, bh, bw, block).sum(axis=3, dtype=np.int32)
 
     best_k = costs.argmin(axis=0)
     best_cost = np.take_along_axis(costs, best_k[None], axis=0)[0]
     use = (best_k != 0) & (best_cost + min_gain <= costs[0])
-    bricks_y, bricks_x = len(starts[1]), len(starts[2])
+    bricks_y, bricks_x = bh, bw
     return {int((bz * bricks_y + by) * bricks_x + bx): candidates[int(best_k[bz, by, bx])]
             for bz, by, bx in zip(*np.nonzero(use))}
 

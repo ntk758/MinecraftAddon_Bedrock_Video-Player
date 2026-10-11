@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -520,7 +521,30 @@ def _use_utf8_for_pipes():
     """GUI などからパイプ経由で起動された時、ログの日本語を UTF-8 で書き出す (cp932 で化けるのを防ぐ)。"""
     for stream in (sys.stdout, sys.stderr):
         if stream is not None and hasattr(stream, "reconfigure") and not stream.isatty():
-            stream.reconfigure(encoding="utf-8", errors="replace")
+            # 行ごとに書き出す (GUI のログに進み具合がすぐ出るように。既定ではパイプ先へはまとめて書かれる)
+            stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+
+
+class Progress:
+    """変換の進み具合を、数秒ごとに 1 行ずつログへ出す (長い動画や立体は数十分かかることがあるため)。"""
+
+    def __init__(self, total, interval=3.0):
+        self.total = max(1, total)
+        self.interval = interval
+        self.start = time.perf_counter()
+        self.last = self.start
+
+    def update(self, done):
+        now = time.perf_counter()
+        if done < self.total and now - self.last < self.interval:
+            return
+        self.last = now
+        elapsed = now - self.start
+        fps = done / elapsed if elapsed > 0 else 0.0
+        remaining = (self.total - done) / fps if fps > 0 else 0.0
+        minutes, seconds = divmod(int(remaining + 0.5), 60)
+        print(_tr("convert.progress", done=done, total=self.total, percent=int(100 * done / self.total),
+                  fps=f"{fps:.1f}", eta=f"{minutes}:{seconds:02d}"))
 
 
 def build_frame_data(args, width, height, gop_boundaries, palettes, adaptive, encoder, chunks, index, depth=None):
@@ -621,8 +645,10 @@ def convert_vox(args):
     gop_boundaries = list(range(0, total, MAX_GOP_SIZE)) + [total]
     encoder = make_encoder(args, width, depth * height, gop_boundaries, AIR_LEVEL, depth)
     gop_ids = iter_gop_ids(gop_boundaries)
+    progress = Progress(total)
     for i, frame in enumerate(frames):
         encoder.add(i, next(gop_ids), vox_to_volume(frame, (depth, height, width), color_table(vox_palettes[i])))
+        progress.update(i + 1)
     encoder = encoder.best()
     chunks, index = encoder.finish()
     frame_data = build_frame_data(args, width, height, gop_boundaries, [palette], False, encoder, chunks, index, depth)
@@ -647,6 +673,7 @@ def main(argv=None):
     # --- Pass 1: GOP 分割 (+ 自動パレット) ---
     is_adaptive_palette = args.palette == "auto"
     palette_builder = make_auto_palette_builder(gpu) if is_adaptive_palette else None
+    print(_tr("convert.analyzing"))
     gop_boundaries, adaptive_palettes = analyze_gops(frame_source(), palette_builder)
     total_frames = gop_boundaries[-1]
     if total_frames == 0:
@@ -705,6 +732,7 @@ def main(argv=None):
     ssim_pairs = []
     gif_frames = []
 
+    progress = Progress(total_frames)
     for i, (frame, gop_id) in enumerate(zip(quantized, iter_gop_ids(gop_boundaries))):
         original = sampled_originals.pop(i, None)
         screen = np.asarray(frame, dtype=np.int32).reshape(height, width)
@@ -727,6 +755,7 @@ def main(argv=None):
         else:
             encoded_frame = screen
         encoder.add(i, gop_id, encoded_frame)
+        progress.update(i + 1)
 
     if depth_frames is not None:
         extra = sum(1 for _ in depth_frames)

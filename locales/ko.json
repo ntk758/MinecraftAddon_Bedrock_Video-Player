@@ -148,6 +148,8 @@
   "convert.device_cpu_dither": "[MVCodec] 변환 장치: CPU (디더링 '{dither}' 는 CPU 전용, 자동 팔레트는 {gpu} 사용)",
   "convert.device_gpu": "[MVCodec] 변환 장치: {gpu}",
   "convert.no_frames": "[MVCodec] 입력 프레임이 없습니다.",
+  "convert.analyzing": "[MVCodec] 1/2: 장면 분석 중 (영상을 끝까지 읽습니다)…",
+  "convert.progress": "[MVCodec] 2/2: 변환 중 {done}/{total} 프레임 ({percent}%), 초당 {fps} 프레임, 약 {eta} 남음",
   "convert.palette_cpu_retry": "[MVCodec] 경고: GPU에서 자동 팔레트를 계산할 수 없어 CPU로 다시 계산합니다: {error}",
   "settings.mode": "표시 모드",
   "settings.depth": "깊이 (블록)",
@@ -162,7 +164,9 @@
   "addon.bench_start": "§e벤치마크: 각 방식으로 %1개 블록을 %2번 다시 칠합니다...",
   "addon.bench_result": "§f%1: §b%2 µs/블록§f (회당 %3번 호출, 총 %4 ms)",
   "addon.bench_failed": "§c%1: 사용할 수 없음",
+  "addon.bench_model": "§b추정 비용§f: fillBlocks 호출당 %1 µs + 블록당 %2 µs / 하나씩 %3 µs / 좌표 목록 호출당 %4 µs + 블록당 %5 µs. 렌더 방식 auto가 이 값을 사용합니다",
+  "addon.bench_unreliable": "§e측정 시간이 너무 짧아 (방식당 %1 ms 미만) 비용을 저장하지 않았습니다. 더 큰 화면에서 실행하세요",
   "addon.bench_done": "§a벤치마크 완료. 현재 그리기 방식: %1",
-  "addon.render_mode_usage": "§e사용법: /scriptevent %1render rect|list|block (현재: %2)",
+  "addon.render_mode_usage": "§e사용법: /scriptevent %1render auto|rect|list|block (현재: %2)",
   "addon.render_mode_set": "§a그리기 방식을 %1(으)로 설정했습니다"
 }

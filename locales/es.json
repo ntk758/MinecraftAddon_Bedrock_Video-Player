@@ -148,6 +148,8 @@
   "convert.device_cpu_dither": "[MVCodec] Dispositivo de conversión: CPU (el tramado '{dither}' es solo CPU; la paleta automática usa {gpu})",
   "convert.device_gpu": "[MVCodec] Dispositivo de conversión: {gpu}",
   "convert.no_frames": "[MVCodec] No hay fotogramas de entrada.",
+  "convert.analyzing": "[MVCodec] 1/2: Analizando escenas (leyendo todo el vídeo)…",
+  "convert.progress": "[MVCodec] 2/2: Convirtiendo {done}/{total} fotogramas ({percent} %), {fps} fotogramas/s, quedan unos {eta}",
   "convert.palette_cpu_retry": "[MVCodec] Aviso: no se pudo calcular la paleta automática en la GPU; se repite con la CPU: {error}",
   "settings.mode": "Modo de visualización",
   "settings.depth": "Profundidad (bloques)",
@@ -162,7 +164,9 @@
   "addon.bench_start": "§eBenchmark: repintando %1 bloques %2 veces con cada método...",
   "addon.bench_result": "§f%1: §b%2 µs/bloque§f (%3 llamadas por ronda, %4 ms en total)",
   "addon.bench_failed": "§c%1: no disponible",
+  "addon.bench_model": "§bCostes estimados§f: fillBlocks %1 µs por llamada + %2 µs por bloque / uno a uno %3 µs / lista de posiciones %4 µs por llamada + %5 µs por bloque. El modo de dibujo auto usa estos valores",
+  "addon.bench_unreliable": "§eLos tiempos medidos fueron demasiado cortos (menos de %1 ms por método), así que no se guardaron los costes. Ejecútalo en una pantalla más grande",
   "addon.bench_done": "§aBenchmark terminado. Modo de dibujo actual: %1",
-  "addon.render_mode_usage": "§eUso: /scriptevent %1render rect|list|block (actual: %2)",
+  "addon.render_mode_usage": "§eUso: /scriptevent %1render auto|rect|list|block (actual: %2)",
   "addon.render_mode_set": "§aModo de dibujo cambiado a %1"
 }
