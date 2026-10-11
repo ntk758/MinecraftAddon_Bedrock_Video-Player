@@ -132,7 +132,7 @@ While network transfer and JSON parsing time drop dramatically, array index look
 
 ---
 
-## 6. Implementation Notes (v5.5.0)
+## 6. Implementation Notes (varint_rle_v5, Phase 7.x)
 
 The idea above was implemented as the `varint_rle_v5` format. Differences from the original sketch:
 
@@ -151,4 +151,4 @@ The idea above was implemented as the `varint_rle_v5` format. Differences from t
 | Generated demo (zoom, spiral, plasma) | 128×72 / 10 | 1642 KB | 1040 KB | 36.7% | +9 ms/frame |
 | `testsrc2` (moving shapes) | 256×256 / 5 | 415 KB | 388 KB | 6.4% | +38 ms/frame |
 
-With Blue Noise dithering the reduction drops to roughly 16–24% at 128×72, because the dither pattern is fixed to the screen while the content moves.
+With Blue Noise dithering, motion compensation gives little or no gain with the final encoder (0% for the pan / anime / testsrc2 / mandelbrot clips at 128×72), because the dither pattern is fixed to the screen while the content moves. The table above was measured before deterministic Blue Noise and gap-coded run positions; see phase7x.md for current numbers.

@@ -7,7 +7,7 @@
 
 ## データ量と描画コスト (Phase 7.x)
 
-`benchmark/codec_bench.py` は合成映像を作り、指定した git の版 (既定 `main`) と作業中の版でデータ量 (出力 .js・deflate 後) と、モックの Minecraft で再生したときの API 呼び出し数・置いたブロック数を比べます。
+`benchmark/codec_bench.py` は合成映像を作り、別の git の版 (平面は `--baseline`、既定 `main`。立体は `--volume-baseline`、既定 `96e1f14` = 3D 動き補償を入れる前) と作業中の版でデータ量 (出力 .js・deflate 後) と、モックの Minecraft で再生したときの API 呼び出し数・置いたブロック数を比べます。
 
 ```bash
 python benchmark/codec_bench.py --out bench_out --sizes 128x72 256x144

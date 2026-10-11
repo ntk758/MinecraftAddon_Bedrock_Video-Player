@@ -39,7 +39,7 @@ MS-SSIM は未実装のため常に `nan` と表示されます。
 ```bash
 python benchmark/codec_bench.py --out bench_out                                  # 平面、main と比較
 python benchmark/codec_bench.py --out bench_out --baseline v5.4.0 --sizes 256x144
-python benchmark/codec_bench.py --out bench_out --suite volume                   # 立体 (relief / extrude / inflate)
+python benchmark/codec_bench.py --out bench_out --suite volume                   # 立体 (--volume-baseline の版と比較、既定 96e1f14)
 ```
 
 `<out>/results_<suite>.md` に、版・設定ごとの出力 .js のバイト数、deflate 後のバイト数、1 フレームあたりの API 呼び出し数 (`calls_render=rect` など) と置いたブロック数が出力されます。

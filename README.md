@@ -32,7 +32,7 @@ Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを
 - 🎮 **ゲーム内リモコン** (コンパスを使うと再生・一時停止・シーク・音量・動画切替の画面が開く)
 - 📚 **マルチ動画対応** (1 つのアドオンに複数の動画を収録)
 - 👑 **マイクラ実在ブロック 39 色パレット** (コンクリート・テラコッタ・発光ブロック) と、動画ごとに色を選ぶ自動パレット
-- 🗜 **予測圧縮 (Phase 7.x)**: 変化したブロックだけを送る差分に、**動き補償** (平面は 8×8 ブロック、立体は 8×8×8 ブリック)・**タイル辞書** (一度出た模様を番号で再利用)・ランの位置の間隔符号化を組み合わせ、フレームごとに一番小さい方法を自動で選択。v5.4.0 よりデータ量が **47〜88% 減** ([計測結果](#-ベンチマーク-phase-7x))。シーンごとのキーフレームで高速シーク
+- 🗜 **予測圧縮 (Phase 7.x)**: 変化したブロックだけを送る差分に、**動き補償** (平面は 8×8 ブロック、立体は 8×8×8 ブリック)・**タイル辞書** (一度出た模様を番号で再利用)・ランの位置の間隔符号化を組み合わせ、フレームごとに一番小さい方法を自動で選択。v5.4.0 よりデータ量が **47〜88% 減** (ディザなし。Blue Noise では約 43〜67% 減、[計測結果](#-ベンチマーク-phase-7x))。シーンごとのキーフレームで高速シーク
 - 🧊 **3D ホログラム再生**: 映像を立体 (明るさを奥行きにした **レリーフ**・明るい部分の **押し出し**・丸く **ふくらませた** 立体) にして再生。MagicaVoxel (`.vox`) の立体アニメもそのまま再生
 - 🧱 **まとめ置き描画**: 同じ色の変化を箱 (`fillBlocks`) や色ごとの座標リストにまとめて置き、API 呼び出しを 1 フレーム数百〜千回 → **数回〜数百回** に。キーフレームでも変わったブロックだけを置き直す。実機で置き方の速さを計る `bench` コマンド付き
 - ⚡ **GPU 変換対応**: NVIDIA (CUDA)・AMD (ROCm / DirectML)・Intel (DirectML)。GPU が無くても CPU で変換可能
@@ -127,7 +127,7 @@ python video_player_gui.py
 | リモコンのボタン | 動作 |
 |---|---|
 | ▶ 再生 / 再開・⏸ 一時停止 | 一時停止やシークした位置から再開します |
-| ⏹ 停止 ＆ クリア | 再生を止め、スクリーンを単色 (パレットの先頭のブロック) で塗りつぶします |
+| ⏹ 停止 ＆ クリア | 再生を止め、スクリーンを単色 (パレットの先頭のブロック) で塗りつぶします。立体 (relief / extrude / inflate / vox) は範囲を空気にして消します |
 | ⏭ 次の動画・⏮ 前の動画・📜 動画リスト | 再生する動画を切り替えます |
 | 🔊 音量設定 | 0〜100% |
 | ⏩ シーク | 秒数を指定して移動します (移動後は一時停止) |
@@ -139,7 +139,7 @@ python video_player_gui.py
 | `/scriptevent badapple:list` | 収録動画の一覧 |
 | `/scriptevent badapple:play <動画ID>` | 指定した動画を再生 |
 | `/scriptevent badapple:gui` | リモコン画面を開く |
-| `/scriptevent badapple:stop` | 停止してスクリーンを単色で塗りつぶす |
+| `/scriptevent badapple:stop` | 停止してスクリーンを単色で塗りつぶす (立体は空気にして消す) |
 | `/scriptevent badapple:render rect\|list\|block` | 描画方式を切り替える (既定 `rect`。下の「描画方式」を参照) |
 | `/scriptevent badapple:bench` | スクリーンの範囲で 6 通りの置き方の速さを計り、1 ブロックあたりの時間をチャットに表示 |
 
@@ -161,7 +161,7 @@ GUI の **表示モード** で立体の作り方を選び、**奥行き (ブロ
 | 立体レリーフ (`relief`) | 明るいほど手前に飛び出す浮き彫り。表面と段差の側面だけを置く | 風景・CG・グラデーションの多い映像 |
 | 立体シルエット (`extrude`) | 明るい部分を前後に押し出した板 | Bad Apple のような白黒映像 |
 | 立体ふくらみ (`inflate`) | 明るい部分を、縁が丸く中央が厚い立体にふくらませる | 白黒のシルエット・ロゴ |
-| MagicaVoxel (`vox`) | `.vox` の各モデル (またはアニメーションのキーフレーム) を 1 フレームとして再生 | ボクセルアート |
+| MagicaVoxel (`vox`) | `.vox` のアニメーションの各フレームを 1 フレームとして再生 (シーンにある全オブジェクトは 1 つの立体にまとめる。シーングラフの無い古い `.vox` は各モデルが 1 フレーム) | ボクセルアート |
 
 - `/scriptevent badapple:setup` を実行すると、立体は **プレイヤーの 2 ブロック北に、左右中央をそろえて足元から上へ** 立ちます。建築できる高さ (オーバーワールドは Y=319 まで) からはみ出す場合は下へずらしてお知らせします。南側 (プレイヤー側) から見るのが正面です。
 - 奥行き・明るさの判定は減色前の元の映像の明るさを使うので、ディザをかけても表面が荒れません。`relief` は明るさが少し揺れただけでは奥行きを変えないので (ヒステリシス)、ちらつきと置き直しが減ります。
@@ -177,7 +177,7 @@ GUI の **表示モード** で立体の作り方を選び、**奥行き (ブロ
 python convert.py --input-video in.mp4 --output out.js --width 64 --height 48 --fps 10 --mode relief --depth 16
 # 白黒映像の白い部分を丸くふくらませる (黒い部分なら --extrude-invert)
 python convert.py --input-video badapple.mp4 --output out.js --width 64 --height 48 --mode inflate --depth 12
-# MagicaVoxel の立体アニメ (各モデルが 1 フレーム、または .vox が並んだフォルダ)
+# MagicaVoxel の立体アニメ (アニメーションの各フレームが 1 フレーム。古い形式は各モデルが 1 フレーム。.vox が並んだフォルダも可)
 python convert.py --input-vox anim.vox --output out.js --fps 10
 ```
 
@@ -204,7 +204,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - 🎮 **In-game remote control** (use a compass: play/pause, seek, volume, switch videos)
 - 📚 **Multiple videos per add-on**
 - 👑 **39-color palette of real blocks** (concrete, terracotta, light sources) plus a per-video automatic palette
-- 🗜 **Predictive compression (Phase 7.x)**: on top of sending only changed blocks, each frame picks the smallest of **motion compensation** (8×8 blocks on screens, 8×8×8 bricks in 3D), a **tile dictionary** (patterns seen before are reused by number) and gap-coded run positions — **47–88% less data** than v5.4.0 ([benchmarks](#-ベンチマーク-phase-7x)); per-scene keyframes for fast seeking
+- 🗜 **Predictive compression (Phase 7.x)**: on top of sending only changed blocks, each frame picks the smallest of **motion compensation** (8×8 blocks on screens, 8×8×8 bricks in 3D), a **tile dictionary** (patterns seen before are reused by number) and gap-coded run positions — **47–88% less data** than v5.4.0 without dithering (roughly 43–67% with Blue Noise; [benchmarks](#-ベンチマーク-phase-7x)); per-scene keyframes for fast seeking
 - 🧊 **3D hologram playback**: turn a video into a volume (brightness-as-depth **relief**, **extruded** or rounded **inflated** silhouettes) or play MagicaVoxel (`.vox`) animations directly
 - 🧱 **Batched placement**: same-colour changes are placed as boxes (`fillBlocks`) or per-colour position lists, cutting API calls from hundreds–thousands per frame to **a few–a few hundred**; keyframes only re-place blocks that changed. `/scriptevent <prefix>:bench` measures the placement methods on your device
 - ⚡ **GPU conversion** on NVIDIA (CUDA), AMD (ROCm / DirectML) and Intel (DirectML); CPU works too
@@ -275,7 +275,7 @@ pytest -q
 ```
 - `tests/test_codec_v4.py` は変換結果を Python デコーダと `codec.js` (Node.js が必要) の両方で復元し、一致・シーク・パレット切替を検証します。
 - `tests/test_motion.py` / `test_tiles.py` / `test_volume.py` / `test_volume3d.py` は動き補償・タイル辞書・立体 (3D 動き補償・inflate・ヒステリシス) を、Python と `codec.js` の一致・シークを含めて検証します。
-- `tests/test_main_js.py` / `test_render_modes.py` は `main.js` をモックの Minecraft で動かし、置いたブロックが正しいこと、描画方式による違いが無いこと、変わったブロックだけを置くこと、3D の箱でまとめること、建築限界内に収めることを検証します。
+- `tests/test_main_js.py` / `test_render_modes.py` は `main.js` をモックの Minecraft で動かし、置いたブロックが正しいこと、描画方式による違いが無いこと、変わったブロックだけを置くことを検証します。`tests/test_volume3d.py` は立体を 3D の箱でまとめて置くこと・建築限界内に収めることを、`tests/test_playback_control.py` はシーク中の再開・置けなかったマスのクリア・動画の切り替え・常時読み込みの後片付けを検証します。
 - `tests/test_device.py` は GPU の選択と CPU へのフォールバックを検証します (PyTorch があれば GPU 用の処理も CPU で実行して確認)。
 - GitHub Actions (`.github/workflows/ci.yml`) で push / PR ごとにテストと参考ベンチマークを実行します。
 
@@ -336,9 +336,9 @@ python benchmark/codec_bench.py --out bench_out --suite volume   # 立体
 | testsrc2 | −62% | −58% | 1282 → 188 / **19.4** |
 | mandelbrot | −47% | −57% | 762 → 424 / **23.3** |
 
-- 256×144 でも −54〜88% (`.mcaddon` と同じ deflate 圧縮後は −58〜94%)。v5.4.0 は 100 チャンクを超える範囲の常時読み込みを登録できず、256×144 以上ではスクリーンを設置できませんでした (修正済み)。
+- 256×144 でも −54〜88% (`.mcaddon` と同じ deflate 圧縮後は −58〜94%、Blue Noise の行を含む)。v5.4.0 は 100 チャンクを超える範囲の常時読み込みを登録できず、256×144 以上ではスクリーンを設置できませんでした (修正済み)。
 - 置くブロックの数も減ります (キーフレームで全ブロックを置き直さない): アニメ風 513 → 365 / フレーム。
-- Blue Noise は模様が画面に固定されるため動き補償が効きにくく、主な効果はラン位置の符号化とディザの決定化 (v5.4.0 はスレッド間で乱数を共有していたため、静止部分でもフレームごとに模様が変わっていた) によるものです。
+- Blue Noise は模様が画面に固定されるため動き補償が効きにくく、主な効果はラン位置の符号化とディザの決定化 (v5.4.0 はスレッド間で乱数を共有していたため、静止部分でもフレームごとに模様が変わっていた) によるものです。v5.4.0 の Blue Noise はスレッド間で乱数を共有していて出力が実行ごとに変わる (例: アニメ風 128×72 で 144〜308 KB) ため、Blue Noise の削減率は 1 回の計測による目安です。
 
 **3D ホログラム (64×48×16、60 フレーム) — 3D 対応前 (2D 動き補償・中空・奥行きごとの長方形) との比較**
 
@@ -388,7 +388,7 @@ A. パック名とコマンド接頭辞が同じなら同じパック (同じ UU
 - [x] **Phase 7.x: 次世代予測圧縮 (Next-Gen Prediction)** — `varint_rle_v5`
   - [x] Motion Vector Prediction (動き予測) — 8×8 ブロック、局所 ±4 + 縮小画像での全体探索。立体は 8×8×8 ブリックで (dx, dy, dz) ±2
   - [x] Tile Dictionary (タイル辞書圧縮) — エンコーダとデコーダが同じ規則で作る暗黙の辞書 (送らない)、新しい順の番号で参照、タイルの大きさ 4 / 8 を自動選択
-  - [x] ラン位置の間隔符号化 (−38〜41%)、差分 / 動き / タイル / 両方 からフレームごとに最小を選択
+  - [x] ラン位置の間隔符号化 (平面 128×72 で −27〜43%)、差分 / 動き / タイル / 両方 からフレームごとに最小を選択
   - [x] まとめ置き描画 (`fillBlocks` の箱・`ListBlockVolume`)、キーフレームで変わったブロックだけを置く、実機ベンチマーク (`bench`)
 - [x] **3D立体ホログラム再生 (3D Hologram playback)** — `relief` (ヒステリシス付き) / `extrude` / `inflate` / MagicaVoxel `.vox` (シーングラフ・アニメーション対応)、3D の箱でまとめて設置、建築限界内への自動調整、等角投影のプレビュー
 - [ ] **Phase 8: ワールド内レンダリングと知覚的な安定化 (In-World Rendering & Perceptual Stability)**
