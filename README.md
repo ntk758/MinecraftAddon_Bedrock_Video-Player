@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v5.4.0](https://img.shields.io/badge/Release-v5.4.0-blue.svg)](#-releases)
+[![Release v6.0.0](https://img.shields.io/badge/Release-v6.0.0-blue.svg)](#-releases)
 [![CI](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml/badge.svg)](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
@@ -13,7 +13,7 @@
   <sub>左: 元映像 / 右: 128×72 ブロックに変換した映像 (ゲーム内と同じ規則で復元した画面) — Left: source / Right: converted to blocks</sub>
 </p>
 
-**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v5.4.0.mcaddon` (サンプル映像入り) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v5.4.0-windows-x64.zip` (Python 不要) を使ってください。
+**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.0.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.0.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.0.0-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 
 [日本語](#日本語-japanese) | [English](#english)
@@ -418,6 +418,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## 🏷 Releases
 
+- **v6.0.0**: Phase 7.x 次世代予測圧縮と 3D ホログラム。動き補償 (平面 8×8 / 立体 8×8×8)・暗黙のタイル辞書・ラン位置の間隔符号化で、v5.4.0 よりデータ量 47〜88% 減 (ディザなし)。映像を立体 (relief / extrude / inflate) にしたり MagicaVoxel の立体アニメを再生する 3D ホログラム再生。`fillBlocks` の箱・座標リストでまとめて置く描画 (`render` コマンドで切替) と実機ベンチマーク (`bench`)、キーフレームで変わったブロックだけを置く再生。v5.1.0〜v5.4.0 で作ったアドオンがインポートできなかった不具合 (manifest のバージョン番号) と、256×144 以上のスクリーンを設置できなかった不具合を修正。
 - **v5.4.0**: ゲーム内表示の多言語対応。チャットのメッセージとリモコン画面が、各プレイヤーの Minecraft の言語設定 (10 言語、未対応の言語は英語) で表示されるように。変換器のログも GUI で選んだ言語で表示。`main.js` をモック環境で動かす結合テストを追加。
 - **v5.3.0**: GUI の多言語対応。画面右上の「🌐 言語」で 10 言語 (日本語・English・简体中文・繁體中文・한국어・Español・Português (Brasil)・Français・Deutsch・Русский) に切り替え可能。初回は OS の表示言語を自動選択し、選んだ言語を保存。翻訳は `locales/*.json` で追加・修正できます。
 - **v5.2.0**: AMD GPU 対応。ROCm 版 PyTorch (Linux / Windows) と DirectML (Windows の AMD / Intel GPU) で GPU 変換が可能に。GUI に「変換デバイス」選択を追加し、GPU の動作確認に失敗した場合は自動で CPU 変換へ切り替え。GUI からの変換が引数エラーで失敗していた v5.1.0 の不具合を修正。

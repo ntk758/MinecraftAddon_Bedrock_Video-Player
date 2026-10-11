@@ -3,7 +3,7 @@
 ## 1. プロジェクト概要
 本プロジェクトは、動画ファイル（MP4 / MKV / AVI / WEBM 等）を Minecraft Bedrock Edition（統合版）の Behavior Pack（.mcpack）へ超高速かつ最小容量で変換し、ゲーム内のブロック盤面上でスムーズに動動画再生するアドオン＆変換ツール群です。
 
-- **最新バージョン**: `v5.4.0` (ゲーム内表示の多言語対応)
+- **最新バージョン**: `v6.0.0` (次世代予測圧縮と 3D ホログラム再生)
 - **対象環境**: Minecraft Bedrock Edition 最新版 (安定版 Script API `@minecraft/server` 1.19.0 / `@minecraft/server-ui` 1.2.0。ベータ API 不要)
 - **変換GUI環境**: Python 3.12+ (PyTorch: CUDA / ROCm / DirectML, Pillow, NumPy, Tkinter, FFmpeg) または **独立スタンドアロン EXE (`BlockVideoPlayer.exe`)**
 
@@ -11,7 +11,7 @@
 
 ## 2. 現在の達成状況と到達点
 
-### 🧊 Phase 7.x: 次世代予測圧縮と 3D ホログラム (開発中: `feat/roadmap-phase7x`)
+### 🧊 Phase 7.x: 次世代予測圧縮と 3D ホログラム (v6.0.0)
 - **予測圧縮 (`varint_rle_v5`)**: 動き補償 (平面 8×8 + 全体探索 / 立体 8×8×8 ブリック)、暗黙のタイル辞書、ラン位置の間隔符号化を、フレームごとに一番小さいものを選んで使う。v5.4.0 比でデータ 47〜88% 減 (合成映像 128×72、ディザなし)。
 - **3D ホログラム**: `relief` (元の明るさ + ヒステリシス) / `extrude` / `inflate` / MagicaVoxel `.vox` (シーングラフ・アニメーション、向きの修正)。GUI の表示モードと 10 言語の表示に対応。
 - **まとめ置き描画**: `rect` (箱、立体は奥行きにも伸ばす) / `list` (`ListBlockVolume`) / `block` を `/scriptevent <接頭辞>:render` で切替。`bench` で実機の費用を計測。呼び出しは v5.4.0 の 1/1.7〜1/7 (`rect`)、1 フレーム 2〜33 回 (`list`)。
