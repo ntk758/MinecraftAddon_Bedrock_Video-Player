@@ -123,6 +123,15 @@ def test_addon_strings_are_valid_lang_values(language):
         assert lang_placeholders(text) == lang_placeholders(BASE[key]), f"{language}:{key} の %n が英語版と違います"
 
 
+def test_addon_lang_files_for_one_language():
+    """言語を固定すると、その言語の文章を en_US.lang 1 つだけに入れる (どのゲーム言語でもその言語で表示される)。"""
+    files = gui_i18n.addon_lang_files("ja")
+    assert set(files) == {"texts/en_US.lang", "texts/languages.json"}
+    assert json.loads(files["texts/languages.json"]) == ["en_US"]
+    assert files["texts/en_US.lang"] == gui_i18n.addon_lang_files()["texts/ja_JP.lang"]
+    assert len(files["texts/en_US.lang"]) < sum(len(c) for c in gui_i18n.addon_lang_files().values())
+
+
 def test_addon_lang_files_cover_all_languages():
     files = gui_i18n.addon_lang_files()
     listed = json.loads(files["texts/languages.json"])
