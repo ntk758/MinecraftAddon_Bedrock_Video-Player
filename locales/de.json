@@ -148,6 +148,8 @@
   "convert.device_cpu_dither": "[MVCodec] Konvertierungsgerät: CPU (Dithering '{dither}' nur auf der CPU; die automatische Palette nutzt {gpu})",
   "convert.device_gpu": "[MVCodec] Konvertierungsgerät: {gpu}",
   "convert.no_frames": "[MVCodec] Keine Eingabebilder.",
+  "convert.analyzing": "[MVCodec] 1/2: Szenen werden analysiert (das ganze Video wird gelesen)…",
+  "convert.progress": "[MVCodec] 2/2: Konvertiere {done}/{total} Bilder ({percent} %), {fps} Bilder/s, noch etwa {eta}",
   "convert.palette_cpu_retry": "[MVCodec] Warnung: die automatische Palette konnte nicht auf der GPU berechnet werden; neuer Versuch auf der CPU: {error}",
   "settings.mode": "Anzeigemodus",
   "settings.depth": "Tiefe (Blöcke)",

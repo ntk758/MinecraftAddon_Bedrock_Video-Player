@@ -86,35 +86,30 @@ def bytearray_to_utf16_str(byte_arr):
 
 
 def extract_rle_chunks_fast(frame, prev_frame, width, height):
-    diff_mask = (frame != prev_frame).reshape(height, width)
-    frame_2d = frame.reshape(height, width)
-    chunks = []
-    for y in range(height):
-        row_mask = diff_mask[y]
-        if not row_mask.any():
-            continue
-        row_colors = frame_2d[y]
-        # Find boundaries of changed regions
-        padded = np.concatenate([[False], row_mask, [False]])
-        edges = np.diff(padded.astype(np.int8))
-        starts = np.where(edges == 1)[0]
-        ends = np.where(edges == -1)[0]
-        # Within each changed region, split by color changes
-        for s, e in zip(starts, ends):
-            seg_colors = row_colors[s:e]
-            # Find color change points within segment
-            if len(seg_colors) == 1:
-                chunks.append((int(s), y, 1, int(seg_colors[0])))
-                continue
-            color_changes = np.where(np.diff(seg_colors) != 0)[0] + 1
-            split_points = np.concatenate([[0], color_changes, [len(seg_colors)]])
-            for i in range(len(split_points) - 1):
-                run_start = s + split_points[i]
-                run_len = split_points[i+1] - split_points[i]
-                color = int(seg_colors[split_points[i]])
-                while run_len > RUN_LENGTH_MAX:
-                    chunks.append((int(run_start), y, RUN_LENGTH_MAX, color))
-                    run_start += RUN_LENGTH_MAX
-                    run_len -= RUN_LENGTH_MAX
-                chunks.append((int(run_start), y, int(run_len), color))
-    return chunks
+    """prev_frame と違う画素を、同じ行・同じ色で続く区間 (最大 RUN_LENGTH_MAX) ごとの (x, y, 長さ, 色) にする。
+
+    位置の順 (行優先、左から右) に並ぶ。フレーム全体をまとめて numpy で計算する (立体では行が数千になるため)。
+    """
+    frame = np.asarray(frame).reshape(-1)
+    changed = np.flatnonzero(frame != np.asarray(prev_frame).reshape(-1))
+    if len(changed) == 0:
+        return []
+    colors = frame[changed]
+    # 直前の変化画素と続いていない・行の先頭・色が変わる ところでランを区切る
+    new_run = np.ones(len(changed), dtype=bool)
+    new_run[1:] = (np.diff(changed) != 1) | (changed[1:] % width == 0) | (colors[1:] != colors[:-1])
+    starts = np.flatnonzero(new_run)
+    lengths = np.diff(np.append(starts, len(changed)))
+    positions = changed[starts]
+    run_colors = colors[starts]
+    # RUN_LENGTH_MAX を超えるランは先頭から RUN_LENGTH_MAX ずつに分ける
+    pieces = (lengths + RUN_LENGTH_MAX - 1) // RUN_LENGTH_MAX
+    if pieces.max() > 1:
+        run_index = np.repeat(np.arange(len(starts)), pieces)
+        piece_no = np.arange(len(run_index)) - np.repeat(np.cumsum(pieces) - pieces, pieces)
+        offsets = piece_no * RUN_LENGTH_MAX
+        positions = positions[run_index] + offsets
+        lengths = np.minimum(lengths[run_index] - offsets, RUN_LENGTH_MAX)
+        run_colors = run_colors[run_index]
+    ys, xs = np.divmod(positions, width)
+    return list(zip(xs.tolist(), ys.tolist(), lengths.tolist(), run_colors.tolist()))

@@ -42,6 +42,24 @@ class TileDictionary:
         s = self.tile
         return board2d[ty * s:(ty + 1) * s, tx * s:(tx + 1) * s]
 
+    def tiles_of(self, board2d):
+        """盤面の全タイルを (タイル数, tile*tile) の配列にする (行優先のタイル番号順、端からはみ出す部分は除く)。"""
+        s = self.tile
+        cropped = board2d[:self.tiles_y * s, :self.tiles_x * s]
+        tiles = cropped.reshape(self.tiles_y, s, self.tiles_x, s).transpose(0, 2, 1, 3)
+        return np.ascontiguousarray(tiles.reshape(self.tiles_y * self.tiles_x, s * s), dtype=np.int16)
+
+    def _add_many(self, tiles, indices):
+        """tiles の indices 番目を順に登録する (上限に達したら残りは捨てる)。"""
+        room = self.max_entries - len(self.entries)
+        indices = indices[:max(0, room)]
+        s = self.tile
+        for t in indices:
+            content = tiles[t].reshape(s, s)
+            if self.index_contents:
+                self.latest[content.tobytes()] = len(self.entries)
+            self.entries.append(content)
+
     def _add(self, content):
         if len(self.entries) >= self.max_entries:
             return
@@ -52,17 +70,14 @@ class TileDictionary:
 
     def update(self, prev, new, is_keyframe):
         """フレームを表示した後に呼ぶ。prev は直前の盤面 (キーフレームでは使わない)。"""
-        new2d = np.asarray(new).reshape(self.rows, self.width)
+        new_tiles = self.tiles_of(np.asarray(new).reshape(self.rows, self.width))
         if is_keyframe:
             self.reset()
-            for t in range(self.tiles_x * self.tiles_y):
-                self._add(self.tile_view(new2d, t))
+            self._add_many(new_tiles, np.arange(len(new_tiles)))
             return
-        prev2d = np.asarray(prev).reshape(self.rows, self.width)
-        for t in range(self.tiles_x * self.tiles_y):
-            tile = self.tile_view(new2d, t)
-            if not np.array_equal(tile, self.tile_view(prev2d, t)):
-                self._add(tile)
+        prev_tiles = self.tiles_of(np.asarray(prev).reshape(self.rows, self.width))
+        changed = np.flatnonzero((new_tiles != prev_tiles).any(axis=1))
+        self._add_many(new_tiles, changed)
 
     def recency_of(self, content):
         """同じ内容の一番新しい登録の「新しい方から何番目か」。無ければ None。"""
@@ -76,17 +91,16 @@ class TileDictionary:
         """予測に貼ると得になるタイル参照 [(タイル番号, recency)] を探し、貼った後の予測を返す。"""
         target2d = np.asarray(target).reshape(self.rows, self.width)
         pred2d = np.asarray(predicted).reshape(self.rows, self.width).copy()
+        target_tiles = self.tiles_of(target2d)
+        mismatch = (target_tiles != self.tiles_of(pred2d)).sum(axis=1)
         ops = []
-        for t in range(self.tiles_x * self.tiles_y):
-            tile = self.tile_view(target2d, t)
-            ptile = self.tile_view(pred2d, t)
-            if int((tile != ptile).sum()) < MIN_MISMATCH:
+        count = len(self.entries)
+        for t in np.flatnonzero(mismatch >= MIN_MISMATCH):
+            index = self.latest.get(target_tiles[t].tobytes())
+            if index is None:
                 continue
-            recency = self.recency_of(tile)
-            if recency is None:
-                continue
-            ops.append((t, recency))
-            ptile[...] = tile
+            ops.append((int(t), count - 1 - index))
+            self.tile_view(pred2d, int(t))[...] = target_tiles[t].reshape(self.tile, self.tile)
         return ops, pred2d.reshape(-1)
 
     def apply_ops(self, out, ops):

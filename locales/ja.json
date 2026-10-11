@@ -148,6 +148,8 @@
   "convert.device_cpu_dither": "[MVCodec] 減色デバイス: CPU (ディザ '{dither}' は CPU 専用。自動パレットは {gpu} を使用)",
   "convert.device_gpu": "[MVCodec] 減色デバイス: {gpu}",
   "convert.no_frames": "[MVCodec] 入力フレームがありません。",
+  "convert.analyzing": "[MVCodec] 1/2: シーンを解析中 (動画を最後まで読みます)…",
+  "convert.progress": "[MVCodec] 2/2: 変換中 {done}/{total} フレーム ({percent}%)、{fps} フレーム/秒、残り約 {eta}",
   "convert.palette_cpu_retry": "[MVCodec] 警告: 自動パレットを GPU で計算できないため CPU で再計算します: {error}",
   "settings.mode": "表示モード",
   "settings.depth": "奥行き (ブロック)",

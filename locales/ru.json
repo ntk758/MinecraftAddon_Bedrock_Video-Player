@@ -148,6 +148,8 @@
   "convert.device_cpu_dither": "[MVCodec] Устройство конвертации: CPU (дизеринг '{dither}' только на CPU; автопалитра использует {gpu})",
   "convert.device_gpu": "[MVCodec] Устройство конвертации: {gpu}",
   "convert.no_frames": "[MVCodec] Нет входных кадров.",
+  "convert.analyzing": "[MVCodec] 1/2: анализ сцен (читается всё видео)…",
+  "convert.progress": "[MVCodec] 2/2: преобразование {done}/{total} кадров ({percent}%), {fps} кадров/с, осталось около {eta}",
   "convert.palette_cpu_retry": "[MVCodec] Предупреждение: не удалось вычислить автопалитру на GPU; повторный расчёт на CPU: {error}",
   "settings.mode": "Режим отображения",
   "settings.depth": "Глубина (блоки)",

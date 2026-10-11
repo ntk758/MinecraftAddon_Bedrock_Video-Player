@@ -148,6 +148,8 @@
   "convert.device_cpu_dither": "[MVCodec] 转换设备: CPU（抖动 '{dither}' 仅支持 CPU；自动调色板使用 {gpu}）",
   "convert.device_gpu": "[MVCodec] 转换设备: {gpu}",
   "convert.no_frames": "[MVCodec] 没有输入帧。",
+  "convert.analyzing": "[MVCodec] 1/2：正在分析场景（读取整个视频）…",
+  "convert.progress": "[MVCodec] 2/2：正在转换 {done}/{total} 帧（{percent}%），每秒 {fps} 帧，约剩 {eta}",
   "convert.palette_cpu_retry": "[MVCodec] 警告: 无法在 GPU 上计算自动调色板，改用 CPU 重新计算: {error}",
   "settings.mode": "显示模式",
   "settings.depth": "深度（方块）",
