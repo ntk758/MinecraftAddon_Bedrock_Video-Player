@@ -42,7 +42,7 @@ def make_pan_frames(frames_dir):
 def convert_frames(frames_dir, out, *extra):
     argv = ["--frames-dir", str(frames_dir), "--output", str(out), "--width", str(WIDTH), "--height", str(HEIGHT),
             "--fps", "10", "--device", "cpu", "--palette", "full", "--no-adaptive-fps", "--keyframe-interval", "0",
-            "--threads", "2", *extra]
+            "--threads", "2", "--temporal-hysteresis", "0", *extra]
     assert convert.main(argv) == 0
     return load_frame_data(out)
 

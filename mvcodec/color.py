@@ -195,13 +195,17 @@ def apply_custom_dither(img, palette_rgb, dither_method):
 
     return out_indices
 
-def process_single_frame_img(img, pal_img, width, height, num_colors, dither_method, apply_perceptual=True, palette_rgb=None):
+def process_single_frame_img(img, pal_img, width, height, num_colors, dither_method, apply_perceptual=True, palette_rgb=None,
+                             dither_offset=(0, 0)):
+    """1 フレームをパレット番号 (H, W) にする。dither_offset は Blue Noise / Ordered の模様をずらす量
+    (mvcodec/dither_motion.py: 映像の全体の動きに合わせて模様を動かし、パンでのちらつきとデータ量を抑える)。"""
+    from mvcodec.dither_motion import dither_pattern
+
     if img.size != (width, height):
         img = img.resize((width, height), Image.Resampling.LANCZOS)
         
     if dither_method == 'blue_noise':
-        bn = generate_blue_noise_approx_numpy(width, height)
-        bn = (bn - 0.5) * 64.0
+        bn = dither_pattern("blue_noise", width, height, dither_offset) * 64.0
         bn_tiled = np.stack([bn]*3, axis=-1)
         if apply_perceptual:
             mask = get_edge_mask_cpu(img)
@@ -211,16 +215,11 @@ def process_single_frame_img(img, pal_img, width, height, num_colors, dither_met
         q = img.quantize(palette=pal_img, dither=Image.Dither.NONE)
         return np.array(q, dtype=np.int32) % num_colors
     elif dither_method == 'ordered':
+        bayer_tiled = np.expand_dims(dither_pattern("ordered", width, height, dither_offset) * 32.0, axis=-1)
         if apply_perceptual:
-            bayer_matrix = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]], dtype=np.float32)
-            bayer_matrix = (bayer_matrix / 16.0 - 0.5) * 32.0
-            bayer_tiled = np.tile(bayer_matrix, (height // 4 + 1, width // 4 + 1))[:height, :width]
-            bayer_tiled = np.expand_dims(bayer_tiled, axis=-1)
-            mask = get_edge_mask_cpu(img)
-            img_arr = np.array(img, dtype=np.float32) + (bayer_tiled * mask)
-            img = Image.fromarray(np.clip(img_arr, 0, 255).astype(np.uint8))
-        else:
-            img = apply_ordered_dither_bias(img, palette_rgb)
+            bayer_tiled = bayer_tiled * get_edge_mask_cpu(img)
+        img_arr = np.array(img, dtype=np.float32) + bayer_tiled
+        img = Image.fromarray(np.clip(img_arr, 0, 255).astype(np.uint8))
         q = img.quantize(palette=pal_img, dither=Image.Dither.NONE)
         return np.array(q, dtype=np.int32) % num_colors
     elif dither_method in ('atkinson', 'burkes', 'sierra'):
