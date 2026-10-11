@@ -102,15 +102,19 @@ MODE_VALUES = ("screen", "relief", "extrude", "inflate")
 DEFAULT_MODE = "screen"
 DEFAULT_DEPTH = 16
 VOX_SUFFIX = ".vox"
-# 画質プリセット: キー -> (幅, 高さ, 再生間隔 tick)
+# 画質プリセット: キー -> (幅, 高さ, fps)
 QUALITY_PRESETS: dict[str, tuple[int, int, int]] = {
-    "light": (64, 64, 1),
-    "standard": (96, 96, 2),
-    "high": (128, 128, 2),
-    "detail": (128, 128, 4),
-    "ultra": (256, 256, 4),
-    "extreme": (512, 512, 10),
+    "light": (64, 64, 20),
+    "standard": (96, 96, 10),
+    "high": (128, 128, 10),
+    "detail": (128, 128, 5),
+    "ultra": (256, 256, 5),
+    "extreme": (512, 512, 2),
 }
+# fps スライダーの範囲 (Minecraft は 1 秒 20 tick なので 20 fps が上限)
+MIN_FPS, MAX_FPS = 1, 20
+# ゲーム内の表示言語: all = 各プレイヤーのゲーム言語 (10 言語) / fixed = この画面の言語に固定 (言語ファイル 1 個)
+ADDON_LANG_VALUES = ("all", "fixed")
 DEFAULT_PRESET = "high"
 DEFAULT_PALETTE = "expanded"
 DEFAULT_DITHER = "blue_noise"
@@ -156,7 +160,7 @@ def resolve_device(device_text: str) -> str:
 
 
 def build_converter_args(
-    video: Path, output: Path, ffmpeg: str, width: int, height: int, interval: int,
+    video: Path, output: Path, ffmpeg: str, width: int, height: int, fps: float,
     palette: str, dither_method: str, keyframe_interval: int, device: str,
     perceptual: bool, duration: float | None, language: str = "en",
     mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH,
@@ -171,7 +175,7 @@ def build_converter_args(
     args = [
         *source,
         "--ffmpeg", ffmpeg,
-        "--fps", str(20 / interval),
+        "--fps", str(float(fps)),
         "--output", str(output), "--width", str(width), "--height", str(height),
         "--palette", palette,
         "--dither-method", dither_method,
@@ -266,7 +270,8 @@ class PackBuilderApp(tk.Tk):
         self.namespace_var = tk.StringVar(value="badapple")
         self.width_var = tk.IntVar(value=64)
         self.height_var = tk.IntVar(value=64)
-        self.interval_var = tk.IntVar(value=1)
+        self.fps_var = tk.IntVar(value=10)
+        self.addon_lang_var = tk.StringVar()
         self.duration_var = tk.StringVar(value="")
         self.keyframe_interval_var = tk.IntVar(value=30)
         self.perceptual_var = tk.BooleanVar(value=True)
@@ -308,12 +313,19 @@ class PackBuilderApp(tk.Tk):
         if new_dither != dither:
             self.dither_var.set(self.tr(f"dither.{new_dither}"))
 
+    def _addon_language(self) -> str | None:
+        """ゲーム内の表示言語を固定するなら GUI の言語コード、各プレイヤーの言語なら None。"""
+        choice = option_labels(self.tr, "addon_lang", ADDON_LANG_VALUES).get(self.addon_lang_var.get(), "all")
+        self._addon_lang_choice = choice
+        return self.tr.language if choice == "fixed" else None
+
     def _set_option_labels(self, palette: str, dither: str, device: str, mode: str = DEFAULT_MODE) -> None:
         self.palette_var.set(self.tr(f"palette.{palette}"))
         self.dither_var.set(self.tr(f"dither.{dither}"))
         self.device_var.set(self.tr(f"device.{device}"))
         self.mode_var.set(self.tr(f"mode.{mode}"))
         self._last_mode = mode
+        self.addon_lang_var.set(self.tr(f"addon_lang.{getattr(self, '_addon_lang_choice', 'all')}"))
         self.quality_var.set(self.tr(f"preset.{self.preset_key}"))
         self.language_var.set(dict(available_languages())[self.tr.language])
 
@@ -406,6 +418,15 @@ class PackBuilderApp(tk.Tk):
         self.command_hint = ttk.Label(pack_settings, text="", foreground="#555555")
         self.command_hint.grid(row=2, column=0, columnspan=2, padx=10, pady=(0, 6), sticky="w")
         self._update_command_hint()
+        # ゲーム内のメッセージ・リモコン画面の言語
+        ttk.Label(pack_settings, text=tr("pack.addon_language")).grid(row=3, column=0, padx=(10, 4), pady=(0, 6), sticky="w")
+        addon_lang_box = ttk.Combobox(
+            pack_settings, textvariable=self.addon_lang_var, state="readonly", width=46,
+            values=tuple(option_labels(tr, "addon_lang", ADDON_LANG_VALUES)),
+        )
+        addon_lang_box.grid(row=3, column=1, padx=(0, 10), pady=(0, 6), sticky="w")
+        # 選んだ値を覚えておく (表示言語を切り替えて画面を作り直しても選択を保つ)
+        addon_lang_box.bind("<<ComboboxSelected>>", lambda _event: self._addon_language())
 
         # --- 変換・再生設定 ---
         settings = ttk.LabelFrame(self, text=tr("settings.frame"))
@@ -413,12 +434,22 @@ class PackBuilderApp(tk.Tk):
         for index, (key, variable, maximum) in enumerate((
             ("settings.width", self.width_var, 512),
             ("settings.height", self.height_var, 512),
-            ("settings.interval", self.interval_var, 20),
         )):
             ttk.Label(settings, text=tr(key)).grid(row=0, column=index * 2, padx=(10, 4), pady=6)
             ttk.Spinbox(settings, from_=1, to=maximum, textvariable=variable, width=7).grid(
                 row=0, column=index * 2 + 1, padx=(0, 10), pady=6
             )
+        # fps: 1〜20 のスライダー (整数に丸める) と、選んだ値の表示
+        ttk.Label(settings, text=tr("settings.fps")).grid(row=0, column=4, padx=(10, 4), pady=6)
+        fps_box = ttk.Frame(settings)
+        fps_box.grid(row=0, column=5, padx=(0, 10), pady=6, sticky="w")
+        self.fps_label = ttk.Label(fps_box, width=7)
+        ttk.Scale(
+            fps_box, from_=MIN_FPS, to=MAX_FPS, orient="horizontal", length=110, variable=self.fps_var,
+            command=lambda _value: self._on_fps_changed(),
+        ).grid(row=0, column=0)
+        self.fps_label.grid(row=0, column=1, padx=(4, 0))
+        self._on_fps_changed()
         ttk.Label(settings, text=tr("settings.keyframe")).grid(row=0, column=6, padx=(10, 4), pady=6)
         ttk.Spinbox(settings, from_=0, to=300, textvariable=self.keyframe_interval_var, width=7).grid(row=0, column=7, padx=(0, 10), pady=6)
 
@@ -563,10 +594,23 @@ class PackBuilderApp(tk.Tk):
 
     def _apply_quality_preset(self) -> None:
         self.preset_key = self._preset_labels().get(self.quality_var.get(), self.preset_key)
-        width, height, interval = QUALITY_PRESETS[self.preset_key]
+        width, height, fps = QUALITY_PRESETS[self.preset_key]
         self.width_var.set(width)
         self.height_var.set(height)
-        self.interval_var.set(interval)
+        self.fps_var.set(fps)
+        self._on_fps_changed()
+
+    def _on_fps_changed(self) -> None:
+        """スライダーの値を 1〜20 の整数に丸めて表示する。"""
+        try:
+            fps = int(round(float(self.fps_var.get())))
+        except (tk.TclError, ValueError):
+            fps = 10
+        fps = max(MIN_FPS, min(MAX_FPS, fps))
+        if self.fps_var.get() != fps:
+            self.fps_var.set(fps)
+        if hasattr(self, "fps_label"):
+            self.fps_label.configure(text=self.tr("settings.fps_value", fps=fps))
 
     def _select_output(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -609,9 +653,9 @@ class PackBuilderApp(tk.Tk):
         height = self.height_var.get()
 
         try:
-            interval = self.interval_var.get()
+            fps = max(MIN_FPS, min(MAX_FPS, int(round(float(self.fps_var.get())))))
             duration = float(self.duration_var.get()) if self.duration_var.get().strip() else None
-            if min(width, height, interval) < 1 or (duration is not None and duration <= 0):
+            if min(width, height) < 1 or (duration is not None and duration <= 0):
                 raise ValueError
         except (tk.TclError, ValueError):
             messagebox.showerror(self.tr("error.settings_title"), self.tr("error.settings"))
@@ -639,8 +683,8 @@ class PackBuilderApp(tk.Tk):
         self.progress.start(12)
         threading.Thread(
             target=self._build_pack,
-            args=(video_entries, output, pack_name, namespace, width, height, interval, duration, palette, dither_method,
-                  device, mode, depth),
+            args=(video_entries, output, pack_name, namespace, width, height, fps, duration, palette, dither_method,
+                  device, mode, depth, self._addon_language()),
             daemon=True,
         ).start()
 
@@ -658,8 +702,8 @@ class PackBuilderApp(tk.Tk):
 
     def _build_pack(
         self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
-        width: int, height: int, interval: int, duration: float | None, palette: str, dither_method: str,
-        device: str, mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH,
+        width: int, height: int, fps: float, duration: float | None, palette: str, dither_method: str,
+        device: str, mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH, addon_language: str | None = None,
     ) -> None:
         try:
             ffmpeg = get_ffmpeg_path()
@@ -753,7 +797,7 @@ class PackBuilderApp(tk.Tk):
                     converter_args = [
                         *converter_command(),
                         *build_converter_args(
-                            video, generated_data, ffmpeg, width, height, interval, palette, dither_method,
+                            video, generated_data, ffmpeg, width, height, fps, palette, dither_method,
                             self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
                             self.tr.language, mode, depth,
                         ),
@@ -792,8 +836,8 @@ class PackBuilderApp(tk.Tk):
                         encoding="utf-8"
                     )
 
-                # ゲーム内表示の翻訳 (各プレイヤーのゲーム言語で表示される)
-                for relative_path, content in addon_lang_files().items():
+                # ゲーム内表示の翻訳 (既定は各プレイヤーのゲーム言語。固定なら GUI の言語だけ)
+                for relative_path, content in addon_lang_files(addon_language).items():
                     lang_file = rp_root / relative_path
                     lang_file.parent.mkdir(parents=True, exist_ok=True)
                     lang_file.write_text(content, encoding="utf-8")

@@ -135,21 +135,33 @@ MINECRAFT_LOCALES = {
 }
 
 
-def addon_lang_files() -> dict[str, str]:
+def _lang_file_content(language: str) -> str:
+    lines = [
+        f"{LANG_KEY_PREFIX}{key[len(ADDON_KEY_PREFIX):]}={text}"
+        for key, text in LOCALES[language].items()
+        if key.startswith(ADDON_KEY_PREFIX)
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def addon_lang_files(only_language: str | None = None) -> dict[str, str]:
     """{"texts/en_US.lang": 内容, ..., "texts/languages.json": 内容} を返す。
 
     Minecraft は翻訳の無い言語では en_US を使うため、en_US は必ず含める。
+    only_language を指定すると、その言語の文章を en_US.lang 1 つだけに入れる。どのゲーム言語のプレイヤーにも
+    en_US が使われるので、全員がその言語で表示され、パックも少し小さくなる。
     """
+    if only_language is not None:
+        language = only_language if only_language in LOCALES else FALLBACK_LANGUAGE
+        return {
+            "texts/en_US.lang": _lang_file_content(language),
+            "texts/languages.json": json.dumps(["en_US"], indent=2) + "\n",
+        }
     files = {}
     for language, mc_codes in MINECRAFT_LOCALES.items():
         if language not in LOCALES:
             continue
-        lines = [
-            f"{LANG_KEY_PREFIX}{key[len(ADDON_KEY_PREFIX):]}={text}"
-            for key, text in LOCALES[language].items()
-            if key.startswith(ADDON_KEY_PREFIX)
-        ]
-        content = "\n".join(lines) + "\n"
+        content = _lang_file_content(language)
         for code in mc_codes:
             files[f"texts/{code}.lang"] = content
     codes = sorted(path[len("texts/"):-len(".lang")] for path in files)
