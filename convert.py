@@ -32,7 +32,7 @@ from mvcodec.volume import (
     AIR_LEVEL,
     RELIEF_HYSTERESIS,
     VolumeLifter,
-    load_vox_frames,
+    load_vox_frames_with_palettes,
     luminance01,
     nearest_levels,
     vox_to_volume,
@@ -400,7 +400,8 @@ def parse_args(argv=None):
     source.add_argument("--input-video", default=None, help="入力動画ファイル (FFmpeg で読み込み)")
     source.add_argument("--frames-dir", default=None, help="入力画像 (PNG等の連番) フォルダ。ファイル名順に読み込む")
     source.add_argument("--input-vox", default=None,
-                        help="MagicaVoxel の .vox (各モデルが 1 フレーム) または .vox が並んだフォルダ (--mode vox)")
+                        help="MagicaVoxel の .vox (アニメーションの各フレームが 1 フレーム、シーンのオブジェクトはまとめて 1 つの立体。"
+                             "シーングラフの無い古い形式は各モデルが 1 フレーム) または .vox が並んだフォルダ (--mode vox)")
     parser.add_argument("--mode", default=None, choices=["screen", "relief", "extrude", "inflate", "vox"],
                         help="screen: 平面スクリーン / relief: 明るさを奥行きにした立体 / extrude: 明るい部分を押し出した立体 / "
                              "inflate: 明るい部分を丸くふくらませた立体 / "
@@ -601,18 +602,27 @@ def make_encoder(args, width, rows, gop_boundaries, empty_value, depth=1):
 
 def convert_vox(args):
     """MagicaVoxel の立体アニメを変換する (減色はブロック色への最近傍対応だけ)。"""
-    frames, vox_palette = load_vox_frames(args.input_vox)
+    frames, vox_palettes = load_vox_frames_with_palettes(args.input_vox)
     palette = PALETTES["full" if args.palette == "auto" else args.palette]
     block_rgb = np.array([item["rgb"] for item in palette], dtype=np.float64)
-    color_to_level = np.full(256, AIR_LEVEL, dtype=np.int16)
-    color_to_level[1:] = nearest_levels(vox_palette[:255, :3], block_rgb)  # 色番号 i は palette[i - 1]
+    tables = {}
+
+    def color_table(vox_palette):
+        """vox の色番号 → ブロックのパレット番号 (ファイルごとにパレットが違うことがあるので、パレットごとに作る)。"""
+        key = vox_palette.tobytes()
+        if key not in tables:
+            table = np.full(256, AIR_LEVEL, dtype=np.int16)
+            table[1:] = nearest_levels(vox_palette[:255, :3], block_rgb)  # 色番号 i は palette[i - 1]
+            tables[key] = table
+        return tables[key]
+
     depth, height, width = vox_volume_shape(frames)
     total = len(frames)
     gop_boundaries = list(range(0, total, MAX_GOP_SIZE)) + [total]
     encoder = make_encoder(args, width, depth * height, gop_boundaries, AIR_LEVEL, depth)
     gop_ids = iter_gop_ids(gop_boundaries)
     for i, frame in enumerate(frames):
-        encoder.add(i, next(gop_ids), vox_to_volume(frame, (depth, height, width), color_to_level))
+        encoder.add(i, next(gop_ids), vox_to_volume(frame, (depth, height, width), color_table(vox_palettes[i])))
     encoder = encoder.best()
     chunks, index = encoder.finish()
     frame_data = build_frame_data(args, width, height, gop_boundaries, [palette], False, encoder, chunks, index, depth)
@@ -707,12 +717,21 @@ def main(argv=None):
             heights = source_heights.pop(i, None)
             if depth_frames is not None:
                 depth_frame = next(depth_frames, None)
-                heights = luminance01(depth_frame) if depth_frame is not None else None
+                if depth_frame is None:
+                    raise ValueError(
+                        f"--depth-video のフレームが足りません: {i} フレームしかありませんが、入力は {total_frames} フレームです "
+                        f"(どちらも {args.fps} fps で読み込みます)。同じ長さの深度動画を指定してください"
+                    )
+                heights = luminance01(depth_frame)
             encoded_frame = lifter(screen, gop_palettes_rgb[gop_id], heights)
         else:
             encoded_frame = screen
         encoder.add(i, gop_id, encoded_frame)
 
+    if depth_frames is not None:
+        extra = sum(1 for _ in depth_frames)
+        if extra:
+            print(f"warning: --depth-video has {extra} more frame(s) than the input; they were ignored", file=sys.stderr)
     encoder = encoder.best()
     chunks, index = encoder.finish()
     if encoder.stats.total_frames != total_frames:

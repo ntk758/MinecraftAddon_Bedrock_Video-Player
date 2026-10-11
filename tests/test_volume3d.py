@@ -228,3 +228,39 @@ def test_preview_script_writes_gif(depth_walk, tmp_path):
     assert preview_volume.main([str(out), "--output", str(gif), "--unit", "2"]) == 0
     with Image.open(gif) as image:
         assert image.n_frames == data["frame_count"]
+
+
+# --- 入力の扱い ---
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg が必要")
+def test_short_depth_video_is_an_error(tmp_path):
+    """深度動画が入力より短いとき、途中から黙ってブロック色の明るさに切り替えず、エラーにする。"""
+    from PIL import Image
+
+    frames_dir = tmp_path / "frames"
+    frames_dir.mkdir()
+    for i in range(12):
+        Image.fromarray(np.full((8, 8, 3), 40 * (i % 6), np.uint8)).save(frames_dir / f"frame_{i:04d}.png")
+    depth = tmp_path / "depth.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=gray:size=8x8:rate=10", "-frames:v", "5",
+                    "-pix_fmt", "yuv420p", str(depth)], check=True)
+    argv = ["--frames-dir", str(frames_dir), "--output", str(tmp_path / "out.js"), "--width", "8", "--height", "8",
+            "--fps", "10", "--device", "cpu", "--mode", "relief", "--depth", "4", "--depth-video", str(depth)]
+    with pytest.raises(ValueError, match="depth-video"):
+        convert.main(argv)
+
+
+def test_vox_folder_uses_each_files_palette(tmp_path):
+    """フレームごとの .vox のフォルダでは、各ファイルが自分のパレットで色を決める (同じ色番号でも別の色)。"""
+    folder = tmp_path / "anim"
+    folder.mkdir()
+    cube = np.array([[x, y, z, 1] for x in range(2) for y in range(2) for z in range(2)], np.uint8)
+    for i, rgb in enumerate([(240, 240, 240), (230, 40, 40)]):
+        palette = np.zeros((256, 4), np.uint8)
+        palette[0] = (*rgb, 255)
+        (folder / f"frame_{i}.vox").write_bytes(write_vox([((2, 2, 2), cube)], palette))
+    data = convert_vox(folder, tmp_path / "anim.js")
+    blocks = [spec["block"] for spec in data["level_blocks"]]
+    first, second = [v for v, _ in iter_decoded_frames(data)]
+    assert "white" in blocks[first[first != AIR_LEVEL][0]]
+    assert "red" in blocks[second[second != AIR_LEVEL][0]]

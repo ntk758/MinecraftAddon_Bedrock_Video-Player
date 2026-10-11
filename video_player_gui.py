@@ -732,23 +732,28 @@ class PackBuilderApp(tk.Tk):
                     ]
                     self._run(converter_args)
 
-                    frame_count = 0
+                    # 大きさは変換結果から取る (.vox は GUI の幅・高さではなくモデルの大きさになる)
+                    dims = {}
                     try:
                         js_text = generated_data.read_text(encoding="utf-8")
                         import re as _re
-                        fc_match = _re.search(r'"frame_count":\s*(\d+)', js_text)
-                        if fc_match:
-                            frame_count = int(fc_match.group(1))
+                        for key in ("frame_count", "width", "height", "depth"):
+                            match = _re.search(rf'"{key}":\s*(\d+)', js_text)
+                            if match:
+                                dims[key] = int(match.group(1))
                     except Exception:
                         pass
 
-                    video_index_entries.append({
+                    entry = {
                         "id": video_id,
                         "title": video.stem,
-                        "frame_count": frame_count,
-                        "width": width,
-                        "height": height,
-                    })
+                        "frame_count": dims.get("frame_count", 0),
+                        "width": dims.get("width", width),
+                        "height": dims.get("height", height),
+                    }
+                    if "depth" in dims:
+                        entry["depth"] = dims["depth"]
+                    video_index_entries.append(entry)
 
                 # sound_definitions.json の生成
                 if sound_definitions:

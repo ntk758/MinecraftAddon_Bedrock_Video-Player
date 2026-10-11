@@ -29,6 +29,10 @@ const FRAME_INTERVAL_TICKS = 1;
 const EVENT_PREFIX = `${EVENT_NAMESPACE}:`;
 const ANCHOR_KEY = `${EVENT_NAMESPACE}:anchor`;
 const ANCHOR_DIMENSION_KEY = `${EVENT_NAMESPACE}:dimension`;
+// setup を実行したプレイヤーの足元。動画を切り替えたとき、新しい動画の形 (平面・立体) に合わせて置く位置を決め直す
+const ORIGIN_KEY = `${EVENT_NAMESPACE}:origin`;
+// 登録した tickingarea の名前の一覧 (JSON)。次の setup・動画の切り替えで、別の位置の分も含めて外す
+const TICKING_NAMES_KEY = `${EVENT_NAMESPACE}:ticking_areas`;
 const MESSAGE_PREFIX = `§b[${EVENT_NAMESPACE}]`;
 const START_LOAD_DELAY_TICKS = 5;
 const TICKING_AREA_NAME = "badapple_area";
@@ -130,6 +134,11 @@ function cellToWorld(videoData, anchor, p, loc) {
   return loc;
 }
 
+// 動画一覧に出す大きさ (立体は 幅x高さx奥行き)
+function videoSizeLabel(v) {
+  return v.depth ? `${v.width}x${v.height}x${v.depth}` : `${v.width}x${v.height}`;
+}
+
 function boardSizeOf(videoData) {
   return videoData.width * videoData.height * (isVolume(videoData) ? videoData.depth : 1);
 }
@@ -188,9 +197,12 @@ class VideoPlayer {
     // board: ワールドに実際に置いてあるパレット番号 (-1 は不明 = 次のフレームで必ず置き直す)
     // decoded: 直前に復元したフレーム (動き補償・タイル辞書の参照元。エンコーダと常に同じ内容)
     // nextBoard: 復元した次のフレーム (作業用)
+    // decodedFrame: decoded が何番のフレームまで復元した状態か (-1 = まだ何も無い)。
+    //   一時停止・シークの中断・ベンチマークなどで順番が飛んでも、applyFrameJob が直近のキーフレームから復元し直す
     this.board = null;
     this.decoded = null;
     this.nextBoard = null;
+    this.decodedFrame = -1;
     this.boardGopId = -1;
   }
 
@@ -206,6 +218,7 @@ class VideoPlayer {
       this.decoded = new Int16Array(pixels).fill(-1);
       this.nextBoard = new Int16Array(pixels);
       this.tiles = createTileDictionary(this.videoData);
+      this.decodedFrame = -1;
       this.decodedBinary = null;
       this.gopCache.clear();
       this.decodedVideoId = this.videoId;
@@ -557,17 +570,26 @@ class VideoPlayer {
         const nextGopId = this.decodedIndex[lookaheadFrame].gopId;
         if (nextGopId > entry.gopId) this.prefetchGop(nextGopId);
       }
-      if (entry.length === 0) return;
+      // decoded を frameIndex の状態にする。直前のフレームの続きでなければ (シークの中断・ベンチマーク・
+      // 描画途中での一時停止の後など)、直近のキーフレームから置かずに復元し直す
+      let resynced = false;
+      if (this.decodedFrame !== frameIndex) {
+        if (this.decodedFrame !== frameIndex - 1) {
+          resynced = true;
+          const start = findKeyframeAtOrBefore(this.decodedIndex, frameIndex);
+          for (let f = start; f < frameIndex; f++) {
+            if (!this.decodeOnly(f)) return;
+            yield;
+          }
+        }
+        if (!this.decodeOnly(frameIndex)) return;
+      }
+      // 省略フレームは盤面が変わらないので、順番どおりに来たときは何も置かない
+      if (entry.length === 0 && !resynced) return;
 
       this.currentGopId = entry.gopId;
       this.activePalette = this.videoData.adaptive_palette ? this.paletteCache[this.currentGopId] : this.paletteCache;
-
-      const gopBytes = this.ensureGopDecoded(entry.gopId);
-      if (!gopBytes) return;
-      decodeFrameInto(
-        gopBytes, entry.offset, entry.offset + entry.length, this.decoded, this.nextBoard, this.videoData, this.tiles
-      );
-      this.decoded.set(this.nextBoard);
+      this.nextBoard.set(this.decoded);
       // 自動パレットで GOP が変わると同じ番号でも別のブロックになるので、表示中の盤面を「不明」にする
       if (this.videoData.adaptive_palette && entry.gopId !== this.boardGopId) this.invalidateForPaletteChange();
       this.boardGopId = entry.gopId;
@@ -591,6 +613,21 @@ class VideoPlayer {
     if (diffData.charCodeAt(diffData.startsWith("K:") ? 2 : 0) < 0x1000) return;
     const bytes = decodeUTF16BinaryToBytes(diffData);
     yield* this.applyBinarySlice(width, bytes, 0, bytes.length);
+  }
+
+  /** frameIndex を decoded へ復元するだけで、ブロックは置かない (decoded は frameIndex - 1 の状態であること)。 */
+  decodeOnly(frameIndex) {
+    const entry = this.decodedIndex[frameIndex];
+    if (entry.length > 0) {
+      const gopBytes = this.ensureGopDecoded(entry.gopId);
+      if (!gopBytes) return false;
+      decodeFrameInto(
+        gopBytes, entry.offset, entry.offset + entry.length, this.decoded, this.nextBoard, this.videoData, this.tiles
+      );
+      this.decoded.set(this.nextBoard);
+    }
+    this.decodedFrame = frameIndex;
+    return true;
   }
 
   syncAudioForFrame(frameIndex) {
@@ -710,24 +747,25 @@ class VideoPlayer {
     const cells = boardSizeOf(this.videoData);
     this.currentJobId = system.runJob((function* () {
       const loc = { x: 0, y: 0, z: 0 };
+      // 塗った内容が分かっているマスは盤面に記録する (次の再生で置き直すマスが最小になる)。
+      // 立体は空気、固定パレットの平面はパレット 0 番。自動パレットの平面は GOP ごとに番号の意味が違うので不明のまま。
+      // 置けなかったマスは不明 (-1) のままにして、次の再生で必ず置き直す
+      const clearedLevel = volume ? self.videoData.air_level : self.videoData.adaptive_palette ? -1 : 0;
       let operations = 0;
       for (let p = 0; p < cells; p++) {
         cellToWorld(self.videoData, self.anchor, p, loc);
+        let placed = true;
         try {
           self.dimension.setBlockPermutation(loc, clearPermutation);
         } catch (e) {
+          placed = false;
           warnOnce("clear", `Failed to place blocks while clearing the screen: ${e}`);
         }
+        if (self.board) self.board[p] = placed ? clearedLevel : -1;
         if (++operations >= BLOCKS_PER_YIELD) {
           operations = 0;
           yield;
         }
-      }
-      // 塗った内容が分かっているので、盤面に記録しておく (次の再生で置き直すマスが最小になる)
-      // 立体は全マスが空気、固定パレットの平面はパレット 0 番。自動パレットの平面は GOP ごとに番号の意味が違うので不明のまま
-      if (self.board) {
-        if (volume) self.board.fill(self.videoData.air_level);
-        else if (!self.videoData.adaptive_palette) self.board.fill(0);
       }
       self.currentJobId = null;
       notify("clear_done");
@@ -755,8 +793,13 @@ class VideoPlayer {
 
     const self = this;
     this.currentJobId = system.runJob((function* () {
-      for (let f = startFrame; f <= targetFrame; f++) {
-        yield* self.applyFrameJob(f);
+      if (self.decodedIndex && self.board) {
+        // v4 / v5: 途中のフレームは置かずに復元だけして、目的のフレームだけを置く
+        yield* self.applyFrameJob(targetFrame);
+      } else {
+        for (let f = startFrame; f <= targetFrame; f++) {
+          yield* self.applyFrameJob(f);
+        }
       }
       // targetFrame まで描画済みなので、再開時は次のフレームから
       self.currentFrame = targetFrame + 1;
@@ -889,8 +932,23 @@ function getAnchorKeyStr(anchor) {
  * 1 区画は 100 チャンクまでなので 10x10 チャンクずつに分け、最大 MAX_TICKING_AREAS 区画まで登録する。
  * 戻り値: { added, needed }  needed > added なら一部しか常時読み込みされない (プレイヤーが近くにいれば再生はできる)
  */
+function removeRegisteredTickingAreas(dimension) {
+  let names = [];
+  try {
+    names = JSON.parse(world.getDynamicProperty(TICKING_NAMES_KEY) ?? "[]");
+  } catch (e) { /* 壊れた値は無視する */ }
+  for (const name of Array.isArray(names) ? names : []) {
+    try {
+      dimension.runCommand(`tickingarea remove ${name}`);
+    } catch (e) { /* 既に無い */ }
+  }
+  world.setDynamicProperty(TICKING_NAMES_KEY, "[]");
+}
+
 function ensureTickingArea(dimension, anchor, videoData) {
   if (!videoData) return { added: 0, needed: 0 };
+  // 以前の setup (別の位置・別の大きさ) で登録した区画を外す。外さないと 1 ワールド 10 区画の上限を使い切ってしまう
+  removeRegisteredTickingAreas(dimension);
   const prefix = `${TICKING_AREA_NAME}_${anchor.x}_${anchor.y}_${anchor.z}`;
   for (let i = 0; i < 16; i++) {
     try {
@@ -918,15 +976,36 @@ function ensureTickingArea(dimension, anchor, videoData) {
     }
   }
   let added = 0;
+  const names = [];
   for (const [index, [fromX, fromZ, toX, toZ]] of areas.slice(0, MAX_TICKING_AREAS).entries()) {
+    const name = `${prefix}_${index}`;
     try {
-      dimension.runCommand(`tickingarea add ${fromX} ${anchor.y} ${fromZ} ${toX} ${anchor.y} ${toZ} ${prefix}_${index}`);
+      dimension.runCommand(`tickingarea add ${fromX} ${anchor.y} ${fromZ} ${toX} ${anchor.y} ${toZ} ${name}`);
+      names.push(name);
       added++;
     } catch (e) {
       console.warn(`[${EVENT_NAMESPACE}] tickingarea add failed: ${e}`);
     }
   }
+  world.setDynamicProperty(TICKING_NAMES_KEY, JSON.stringify(names));
   return { added, needed: areas.length };
+}
+
+/**
+ * プレイヤーの足元 origin から、動画を置く位置 (盤面の 0 番のマスの座標) を決める。
+ * 平面は足元から北東へ広がる。立体はプレイヤーの 2 ブロック北に、左右中央をそろえて立て、建築できる高さに収める。
+ */
+function anchorForVideo(videoData, origin, dimension) {
+  const volume = isVolume(videoData);
+  const anchor = {
+    x: origin.x - (volume ? Math.floor(videoData.width / 2) : 0),
+    y: origin.y,
+    z: origin.z - footprintOf(videoData).sizeZ - (volume ? 2 : 0),
+  };
+  const fittedY = fitToBuildHeight(dimension, anchor.y, volume ? videoData.height : 1);
+  const shifted = fittedY !== anchor.y;
+  anchor.y = fittedY;
+  return { anchor, shifted };
 }
 
 /** 高さ sizeY の範囲が dimension.heightRange (max は含まない) に収まる一番近い y を返す。 */
@@ -943,19 +1022,11 @@ function setup(player) {
   }
   const videoData = VIDEOS[globalSelectedVideoId];
   const loc = player.location;
-  // 平面は足元から北東へ広がる。立体はプレイヤーの 2 ブロック北に、左右中央をそろえて立てる
-  const volume = isVolume(videoData);
-  const anchor = {
-    x: Math.floor(loc.x) - (volume ? Math.floor(videoData.width / 2) : 0),
-    y: Math.floor(loc.y),
-    z: Math.floor(loc.z) - footprintOf(videoData).sizeZ - (volume ? 2 : 0),
-  };
+  const origin = { x: Math.floor(loc.x), y: Math.floor(loc.y), z: Math.floor(loc.z) };
   // 建築できる高さ (オーバーワールドは Y=-64〜319) からはみ出すと置けないので、収まる高さへずらす
-  const fittedY = fitToBuildHeight(player.dimension, anchor.y, volume ? videoData.height : 1);
-  if (fittedY !== anchor.y) {
-    anchor.y = fittedY;
-    notify("setup_shifted", fittedY);
-  }
+  const { anchor, shifted } = anchorForVideo(videoData, origin, player.dimension);
+  if (shifted) notify("setup_shifted", anchor.y);
+  world.setDynamicProperty(ORIGIN_KEY, origin);
 
   // 常時読み込みが一部しか登録できなくても、プレイヤーが近くにいれば再生できるので設置は続ける
   const ticking = ensureTickingArea(player.dimension, anchor, videoData);
@@ -995,8 +1066,22 @@ function startPlayback(dimension) {
   if (!vp || (globalSelectedVideoId && vp.videoId !== globalSelectedVideoId)) {
     if (!globalSelectedVideoId) return;
     if (vp) vp.stopPlayback();
-    vp = new VideoPlayer(anchorLoc, getPlaybackDimension(dimension), globalSelectedVideoId);
-    activePlayers.set(keyStr, vp);
+    const playbackDimension = getPlaybackDimension(dimension);
+    let anchor = anchorLoc;
+    const origin = world.getDynamicProperty(ORIGIN_KEY);
+    const videoData = VIDEOS[globalSelectedVideoId];
+    if (origin && videoData) {
+      // 平面と立体では置く位置・高さ・常時読み込みの範囲が違うので、setup の足元から決め直す
+      const fitted = anchorForVideo(videoData, origin, playbackDimension);
+      anchor = fitted.anchor;
+      if (fitted.shifted) notify("setup_shifted", anchor.y);
+      const ticking = ensureTickingArea(playbackDimension, anchor, videoData);
+      if (ticking.added < ticking.needed) notify("tickingarea_partial", ticking.added, ticking.needed);
+      activePlayers.delete(keyStr);
+      world.setDynamicProperty(ANCHOR_KEY, anchor);
+    }
+    vp = new VideoPlayer(anchor, playbackDimension, globalSelectedVideoId);
+    activePlayers.set(getAnchorKeyStr(anchor), vp);
     startMainLoop();
   }
 
@@ -1155,7 +1240,7 @@ function showVideoSelectGUI(player) {
   for (const v of VIDEO_LIST) {
     const rawtext = [{ text: v.title }];
     if (v.id === cvId) rawtext.push({ text: " " }, tr("selected_tag"));
-    rawtext.push({ text: "\n" }, tr("library.item", v.frame_count, `${v.width}x${v.height}`));
+    rawtext.push({ text: "\n" }, tr("library.item", v.frame_count, videoSizeLabel(v)));
     form.button({ rawtext });
   }
 
@@ -1213,7 +1298,7 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
       } else {
         notify("video_list");
         for (const v of VIDEO_LIST) {
-          const rawtext = [{ text: "  " }, tr("video_list_item", v.id, v.title, v.frame_count, `${v.width}x${v.height}`)];
+          const rawtext = [{ text: "  " }, tr("video_list_item", v.id, v.title, v.frame_count, videoSizeLabel(v))];
           if (v.id === globalSelectedVideoId) rawtext.push({ text: " " }, tr("selected_tag"));
           world.sendMessage({ rawtext });
         }

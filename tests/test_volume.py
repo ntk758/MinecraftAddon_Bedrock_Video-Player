@@ -231,7 +231,7 @@ def test_moving_vox_frames_are_not_skipped(tmp_path):
 
 
 def test_vox_mapping_is_a_rotation_not_a_mirror():
-    """vox (x, y, z) → Minecraft (東, 上, 南) の対応が鏡像 (行列式 -1) になっていないこと。"""
+    """vox の x → 東、y → 北、z → 上 の対応が鏡像 (行列式 -1) になっていないこと。"""
     shape = (4, 4, 4)
     color_to_level = np.arange(256, dtype=np.int16)
     def world_of(x, y, z):

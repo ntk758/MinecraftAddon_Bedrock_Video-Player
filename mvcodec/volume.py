@@ -444,21 +444,29 @@ def write_vox(models, palette=None, scene=None):
     return b"VOX " + struct.pack("<i", 150) + chunk("MAIN", children=body)
 
 
-def load_vox_frames(path):
-    """.vox ファイル (アニメーションまたは各モデルが 1 フレーム) か、フレームごとの .vox が並んだフォルダを読み込む。
+def load_vox_frames_with_palettes(path):
+    """.vox ファイルか、フレームごとの .vox が並んだフォルダを読み込み、フレームごとのパレットも返す。
 
-    戻り値: (frames, palette)  frames は [(size_xyz, voxels)]、palette は最初のファイルのもの。
+    シーングラフのある .vox はアニメーションの各フレームが 1 フレーム (シーンのオブジェクトは 1 つの立体にまとめる)、
+    シーングラフの無い古い形式は各モデルが 1 フレーム。フォルダはファイル名順で、ファイルごとに自分のパレットを使う。
+    戻り値: (frames, palettes)  frames は [(size_xyz, voxels)]、palettes[i] は frames[i] のパレット。
     """
     path = Path(path)
     files = sorted(path.glob("*.vox")) if path.is_dir() else [path]
     if not files:
         raise ValueError(f".vox ファイルが見つかりません: {path}")
-    frames, palette = [], None
+    frames, palettes = [], []
     for file in files:
         file_frames, file_palette = parse_vox(file.read_bytes())
-        palette = file_palette if palette is None else palette
         frames.extend(file_frames)
-    return frames, palette
+        palettes.extend([file_palette] * len(file_frames))
+    return frames, palettes
+
+
+def load_vox_frames(path):
+    """load_vox_frames_with_palettes と同じだが、パレットは最初のフレームのものだけを返す (プレビュー用)。"""
+    frames, palettes = load_vox_frames_with_palettes(path)
+    return frames, palettes[0]
 
 
 def vox_volume_shape(frames):

@@ -1,5 +1,6 @@
-// @minecraft/server-ui の最小モック。開いたフォームの内容を @minecraft/server モックの forms に記録する。
-import { forms } from "@minecraft/server";
+// @minecraft/server-ui の最小モック。開いたフォームの内容を @minecraft/server モックの forms に記録し、
+// uiResponses に積んだ応答 (ボタンの選択・入力値) を順に返す。
+import { forms, uiResponses } from "@minecraft/server";
 
 class RecordingForm {
   constructor(kind) {
@@ -28,7 +29,7 @@ class RecordingForm {
 
   show() {
     forms.push(this.record);
-    return Promise.resolve({ canceled: true });
+    return Promise.resolve(uiResponses.shift() ?? { canceled: true });
   }
 }
 

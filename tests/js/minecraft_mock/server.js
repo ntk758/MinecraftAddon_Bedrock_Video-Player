@@ -6,8 +6,15 @@ export const sounds = [];
 export const forms = [];
 // API 呼び出しの回数 (setBlockPermutation / fillBlocks) と、置いたブロックの数
 export const stats = { setBlockCalls: 0, fillCalls: 0, blocksPlaced: 0, commandFills: 0, structurePlaces: 0 };
-// false にすると fillBlocks が無い環境をまねる
-export const options = { fillBlocks: true };
+// fillBlocks: false にすると fillBlocks が無い環境をまねる
+// failZ: 数値にすると z がその値以上のマスへの設置が失敗する (読み込まれていないチャンクをまねる)
+export const options = { fillBlocks: true, failZ: undefined };
+// フォームを開いたときの応答 (server-ui モックが先頭から順に返す。空なら「閉じた」)
+export const uiResponses = [];
+
+function checkLoaded(location) {
+  if (options.failZ !== undefined && location.z >= options.failZ) throw new Error("UnloadedChunksError");
+}
 // runCommand に渡されたコマンド (tickingarea の確認用)
 export const commands = [];
 
@@ -22,6 +29,7 @@ export const dimension = {
   id: "overworld",
   heightRange: { min: -64, max: 320 },
   setBlockPermutation(location, permutation) {
+    checkLoaded(location);
     stats.setBlockCalls++;
     stats.blocksPlaced++;
     board.set(`${location.x},${location.y},${location.z}`, permutation.id);
@@ -30,6 +38,7 @@ export const dimension = {
     if (!options.fillBlocks) return undefined;
     return (volume, permutation) => {
       stats.fillCalls++;
+      for (const loc of volume.locations ?? [volume.from, volume.to]) checkLoaded(loc);
       if (volume.locations) {
         for (const loc of volume.locations) {
           stats.blocksPlaced++;
