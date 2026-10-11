@@ -26,6 +26,9 @@ from mvcodec.color import (
 )
 from gui_i18n import LOCALES, Translator, detect_system_language
 from mvcodec.device import DEVICE_CHOICES, detect_gpu, empty_cache, squared_distances
+from mvcodec.dither_motion import DitherAligner
+# 条件付き更新のしきい値 (RGB の距離)。前のブロックの色がこれ以内しか悪くならなければ変えない
+TEMPORAL_HYSTERESIS = 24.0
 from mvcodec.encode import MAX_PALETTE_COLORS
 from mvcodec.motion import MV_BLOCK, MV_RANGE
 from mvcodec.stream import StreamEncoder
@@ -231,14 +234,15 @@ def iter_gop_ids(gop_boundaries):
 
 
 def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
-                        dither_method="none", apply_perceptual=True, gpu=None):
+                        dither_method="none", apply_perceptual=True, gpu=None, dither_follow_motion=False):
     """GPU (CUDA / ROCm / DirectML) で OkLab 色空間マッチング + RDO + 時間方向ディザを行い、フレームごとに (H, W) のパレット番号を返す。
 
     パレットが切り替わる GOP 境界では前フレーム参照 (RDO / 時間方向ディザ) をリセットする。
     gpu が None の場合は PyTorch の CPU 実行になる (テスト用)。
     """
     import torch
-    from mvcodec.color import generate_blue_noise_approx_numpy, get_edge_mask_gpu
+    from mvcodec.color import get_edge_mask_gpu
+    from mvcodec.dither_motion import DitherAligner, dither_pattern
 
     device = gpu.torch_device if gpu is not None else torch.device("cpu")
 
@@ -246,20 +250,14 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
         t = torch.tensor(pal_data, dtype=torch.float32, device=device)
         return t, rgb_to_oklab_torch(t)
 
-    dither_tensor = None
-    if dither_method == "ordered":
-        bayer = np.array([
-            [0, 8, 2, 10],
-            [12, 4, 14, 6],
-            [3, 11, 1, 9],
-            [15, 7, 13, 5]
-        ], dtype=np.float32)
-        bayer = ((bayer / 16.0) - 0.5) * 32.0
-        bayer_tiled = np.tile(bayer, (height // 4 + 1, width // 4 + 1))[:height, :width]
-        dither_tensor = torch.tensor(np.stack([bayer_tiled] * 3, axis=-1), dtype=torch.float32, device=device)
-    elif dither_method == "blue_noise":
-        bn = (generate_blue_noise_approx_numpy(width, height) - 0.5) * 64.0
-        dither_tensor = torch.tensor(np.stack([bn] * 3, axis=-1), dtype=torch.float32, device=device)
+    dither_scale = {"ordered": 32.0, "blue_noise": 64.0}.get(dither_method)
+    # ディザ模様と前フレーム由来の状態を、映像の全体の動きに合わせてずらす (mvcodec/dither_motion.py)
+    aligner = DitherAligner(enabled=dither_follow_motion and dither_scale is not None)
+    offset = (0, 0)
+
+    def dither_tensor_at(position):
+        pattern = dither_pattern(dither_method, width, height, position) * dither_scale
+        return torch.tensor(np.stack([pattern] * 3, axis=-1), dtype=torch.float32, device=device)
 
     def analyze_scene(diff_ratio):
         # フレーム変化率に基づいて (RDO閾値, ME閾値, 更新予算, 時間方向ディザ重み) を決定
@@ -288,13 +286,25 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
             prev_idx_tensor = None
             prev_orig_img_tensor = None
 
+        new_offset = aligner.update(img_arr)
+        dx, dy = new_offset[0] - offset[0], new_offset[1] - offset[1]
+        offset = new_offset
+        if (dx or dy) and prev_idx_tensor is not None:
+            # 中身が (dx, dy) ずれたので、前フレーム由来の状態も同じだけずらす: 今[y][x] ← 前[y + dy][x + dx]
+            roll = lambda t: torch.roll(t, shifts=(-dy, -dx), dims=(0, 1))  # noqa: E731
+            error_buffer = roll(error_buffer)
+            importance_buffer = roll(importance_buffer)
+            prev_idx_tensor = roll(prev_idx_tensor)
+            prev_orig_img_tensor = roll(prev_orig_img_tensor)
+
         orig_img_tensor = torch.tensor(img_arr, dtype=torch.float32, device=device)
         img_tensor = orig_img_tensor.clone()
 
         # Temporal Dithering (前フレームからの誤差を加算)
         img_tensor += error_buffer
 
-        if dither_tensor is not None:
+        if dither_scale is not None:
+            dither_tensor = dither_tensor_at(offset)
             bias = dither_tensor * get_edge_mask_gpu(img_tensor) if apply_perceptual else dither_tensor
             img_tensor += bias
             img_tensor = torch.clamp(img_tensor, 0, 255)
@@ -360,9 +370,26 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
             empty_cache(gpu)
 
 
+def keep_previous_blocks(indices, previous, source_rgb, palette_rgb, threshold):
+    """条件付き更新: 前のフレームのパレット番号の色が、新しく選んだ色より (RGB の距離で) threshold 以内しか
+    悪くならない画素は、前の番号のままにする。誤差は今のフレームの元の色と比べるので、ずれが積み重なることはない。"""
+    if previous is None or threshold <= 0 or previous.shape != indices.shape:
+        return indices
+    source = np.asarray(source_rgb, dtype=np.float32).reshape(*indices.shape, 3)
+    palette = np.asarray(palette_rgb, dtype=np.float32)
+    new_error = ((palette[indices] - source) ** 2).sum(-1)
+    old_error = ((palette[previous] - source) ** 2).sum(-1)
+    return np.where(old_error <= new_error + threshold * threshold, previous, indices)
+
+
 def quantize_frames_cpu(frames, gop_palettes, gop_boundaries, width, height,
-                        dither_method, apply_perceptual, threads):
-    """CPU スレッドプールで減色し、フレームごとに (H, W) のパレット番号を返す。"""
+                        dither_method, apply_perceptual, threads, dither_follow_motion=False,
+                        temporal_hysteresis=0.0):
+    """CPU スレッドプールで減色し、フレームごとに (H, W) のパレット番号を返す。
+
+    temporal_hysteresis > 0 なら、前のフレームから色がほとんど変わらない画素は前の番号のままにする
+    (keep_previous_blocks)。GOP が変わる (パレットが変わる) ときは前のフレームを使わない。
+    """
     # GOP 間で同じパレットオブジェクトは Pillow パレット画像も共有する
     prepared = {}
     for pal in gop_palettes:
@@ -371,22 +398,38 @@ def quantize_frames_cpu(frames, gop_palettes, gop_boundaries, width, height,
             prepared[id(pal)] = (create_palette_image(pal), rgb, len(pal))
 
     def task(job):
-        img_arr, pal = job
+        img_arr, pal, offset = job
         pal_img, pal_rgb, num_colors = prepared[id(pal)]
         img = Image.fromarray(img_arr)
         return process_single_frame_img(img, pal_img, width, height, num_colors,
-                                        dither_method, apply_perceptual, pal_rgb)
+                                        dither_method, apply_perceptual, pal_rgb, offset)
 
-    jobs = ((frame, gop_palettes[gop_id]) for frame, gop_id in zip(frames, iter_gop_ids(gop_boundaries)))
+    state = {"previous": None, "palette": None}
+
+    def finish(batch, results):
+        """スレッドで減色した結果に、順番どおり条件付き更新をかける。"""
+        for (img_arr, pal, _offset), indices in zip(batch, results):
+            if pal is not state["palette"]:
+                state["previous"], state["palette"] = None, pal
+            if temporal_hysteresis > 0 and np.asarray(img_arr).shape[:2] == indices.shape:
+                indices = keep_previous_blocks(indices, state["previous"], img_arr, prepared[id(pal)][1],
+                                               temporal_hysteresis)
+            state["previous"] = indices
+            yield indices
+
+    # ディザ模様のずらし量は順番に決める必要があるので、スレッドに渡す前に計算する
+    aligner = DitherAligner(enabled=dither_follow_motion and dither_method in ("blue_noise", "ordered"))
+    jobs = ((frame, gop_palettes[gop_id], aligner.update(frame))
+            for frame, gop_id in zip(frames, iter_gop_ids(gop_boundaries)))
     with ThreadPoolExecutor(max_workers=max(1, threads)) as executor:
         batch = []
         for job in jobs:
             batch.append(job)
             if len(batch) >= CPU_BATCH_SIZE:
-                yield from executor.map(task, batch)
+                yield from finish(batch, executor.map(task, batch))
                 batch = []
         if batch:
-            yield from executor.map(task, batch)
+            yield from finish(batch, executor.map(task, batch))
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +469,13 @@ def parse_args(argv=None):
     parser.add_argument("--duration", type=float, default=None)
     parser.add_argument("--palette", default="full", choices=[*PALETTES.keys(), "auto"])
     parser.add_argument("--dither-method", default="none", choices=["none", "floyd", "ordered", "blue_noise", "atkinson", "burkes", "sierra"])
+    parser.add_argument("--temporal-hysteresis", type=float, default=TEMPORAL_HYSTERESIS,
+                        help="前のフレームと同じブロックの色が、新しく選んだ色より RGB の距離でこの値以内しか悪くならないなら"
+                             "変えない (条件付き更新)。置き直すブロックとデータが減る。0 で無効。CPU で減色するときに使う "
+                             "(GPU の減色には同様の仕組み (RDO) が入っている)")
+    parser.add_argument("--dither-follow-motion", action=argparse.BooleanOptionalAction, default=False,
+                        help="Blue Noise / Ordered のディザ模様を映像の全体の動き (パン) に合わせてずらす。"
+                             "パンのデータは大きく減るが、模様が毎フレーム動くので置き直すブロックは増える (既定は無効)")
     parser.add_argument("--perceptual", action=argparse.BooleanOptionalAction, default=True,
                         help="エッジ部のみディザをかける知覚的処理 (--no-perceptual で無効)")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 4)
@@ -467,6 +517,8 @@ def parse_args(argv=None):
         parser.error("--depth は 2〜128 にしてください")
     if args.depth_video and args.mode != "relief":
         parser.error("--depth-video は --mode relief でだけ使えます")
+    if args.temporal_hysteresis < 0:
+        parser.error("--temporal-hysteresis は 0 以上にしてください")
     if args.depth_hysteresis < 0:
         parser.error("--depth-hysteresis は 0 以上にしてください")
     return args
@@ -714,10 +766,12 @@ def main(argv=None):
     pass2_frames = tee_originals(frame_source())
     if gpu is not None and dither_method in GPU_DITHER_METHODS:
         quantized = quantize_frames_gpu(pass2_frames, gop_palettes_rgb, gop_boundaries, width, height,
-                                        dither_method, apply_perceptual=args.perceptual, gpu=gpu)
+                                        dither_method, apply_perceptual=args.perceptual, gpu=gpu,
+                                        dither_follow_motion=args.dither_follow_motion)
     else:
         quantized = quantize_frames_cpu(pass2_frames, gop_palettes, gop_boundaries, width, height,
-                                        dither_method, args.perceptual, args.threads)
+                                        dither_method, args.perceptual, args.threads, args.dither_follow_motion,
+                                        args.temporal_hysteresis)
 
     depth_frames = None
     if args.depth_video:
