@@ -51,9 +51,20 @@ const TICK_TIME_BUDGET_MS = 30;
 const MAX_FILL_BLOCKS = 32768;
 // list 方式で 1 回の fillBlocks(ListBlockVolume) に入れる座標の数
 const LIST_BATCH = 4096;
-// 描画方式: rect = 同じ色の長方形を fillBlocks / list = 色ごとの座標リストを fillBlocks / block = 1 個ずつ
-const RENDER_MODES = ["rect", "list", "block"];
+// 描画方式: auto = フレームごとに下の 3 つから一番速いと見積もった方式 / rect = 同じ色の箱を fillBlocks /
+// list = 色ごとの座標リストを fillBlocks / block = 1 個ずつ
+const RENDER_MODES = ["auto", "rect", "list", "block"];
 const RENDER_MODE_KEY = `${EVENT_NAMESPACE}:render_mode`;
+// 置き方の費用のモデル (マイクロ秒)。/scriptevent <接頭辞>:bench で測った値をワールドに保存し、auto が使う。
+//   rect  = fillCall × 箱の数 + fillBlock × 箱のブロック数 + setBlock × 1 個だけのマス
+//   list  = listCall × 呼び出し数 (≒ 色の数) + listBlock × ブロック数
+//   block = setBlock × ブロック数
+// 既定値は Windows 版 Minecraft で測った値 (2026-10: fillBlocks 1 回 15 µs + 1 ブロック 0.55 µs、1 個ずつ 2.3 µs、
+// 座標リスト 1 ブロック約 1.4 µs)。端末によって違うので、bench で測り直すとその値を使う
+const COST_MODEL_KEY = `${EVENT_NAMESPACE}:cost_model`;
+const DEFAULT_COST_MODEL = { setBlock: 2.3, fillCall: 15, fillBlock: 0.55, listCall: 15, listBlock: 1.42 };
+// bench の結果を保存するのに必要な、1 方式あたりの合計時間 (ミリ秒)。短すぎると Date.now の 1 ms 単位の誤差が大きい
+const BENCH_MIN_TOTAL_MS = 5;
 // tickingarea の上限: 1 区画 100 チャンク (10x10 に分割)、ワールド全体で 10 区画 (他のパック用に残す)
 const TICKING_AREA_CHUNKS_PER_SIDE = 10;
 const MAX_TICKING_AREAS = 8;
@@ -70,7 +81,21 @@ let mainIntervalId = null;
 
 function currentRenderMode() {
   const saved = world.getDynamicProperty(RENDER_MODE_KEY);
-  return RENDER_MODES.includes(saved) ? saved : "rect";
+  return RENDER_MODES.includes(saved) ? saved : "auto";
+}
+
+let costModelCache = null;
+/** 保存された費用のモデル (無ければ・壊れていれば既定値)。 */
+function currentCostModel() {
+  if (costModelCache) return costModelCache;
+  costModelCache = DEFAULT_COST_MODEL;
+  try {
+    const saved = JSON.parse(world.getDynamicProperty(COST_MODEL_KEY) ?? "null");
+    if (saved && Object.keys(DEFAULT_COST_MODEL).every((key) => Number.isFinite(saved[key]) && saved[key] >= 0)) {
+      costModelCache = saved;
+    }
+  } catch (e) { /* 壊れた値は既定値を使う */ }
+  return costModelCache;
 }
 const activePlayers = new Map(); // key: "x,y,z"
 
@@ -368,7 +393,9 @@ class VideoPlayer {
    */
   *placeChangedBlocks(width) {
     if (this.useFill === undefined) this.useFill = typeof this.dimension.fillBlocks === "function";
-    const mode = this.useFill ? currentRenderMode() : "block";
+    let mode = this.useFill ? currentRenderMode() : "block";
+    if (mode === "auto") mode = yield* this.chooseRenderMode(width);
+    if (mode === "none") return;
     if (mode === "list") {
       yield* this.placeChangedBlocksAsLists(width);
       return;
@@ -402,46 +429,7 @@ class VideoPlayer {
           x++;
           continue;
         }
-        let x1 = x;
-        while (x1 + 1 < width && next[p + x1 + 1 - x] === level && board[p + x1 + 1 - x] !== level) x1++;
-        if (useRects && x1 - x + 1 > MAX_FILL_BLOCKS) x1 = x + MAX_FILL_BLOCKS - 1;
-        let r1 = r;
-        if (useRects) {
-          // 1 回の fillBlocks が MAX_FILL_BLOCKS を超えない範囲で下へ伸ばす
-          while (r1 + 1 < rows && (r1 + 1) % contiguousRows !== 0 && (r1 + 2 - r) * (x1 - x + 1) <= MAX_FILL_BLOCKS) {
-            const base = (r1 + 1) * width + x;
-            let sameRun = true;
-            for (let k = 0; k <= x1 - x; k++) {
-              if (next[base + k] !== level || board[base + k] === level) {
-                sameRun = false;
-                break;
-              }
-            }
-            if (!sameRun) break;
-            r1++;
-          }
-        }
-        // 立体では、同じ長方形が奥の段でも全部同じ色の変更なら奥へも伸ばして 1 個の箱にする
-        let slices = 1;
-        if (useRects && isVolume(video)) {
-          const sliceCells = contiguousRows * width;
-          const faceArea = (x1 - x + 1) * (r1 - r + 1);
-          while (r + slices * contiguousRows < rows && (slices + 1) * faceArea <= MAX_FILL_BLOCKS) {
-            const offset = slices * sliceCells;
-            let sameFace = true;
-            for (let rr = r; rr <= r1 && sameFace; rr++) {
-              const base = rr * width + offset;
-              for (let k = x; k <= x1; k++) {
-                if (next[base + k] !== level || board[base + k] === level) {
-                  sameFace = false;
-                  break;
-                }
-              }
-            }
-            if (!sameFace) break;
-            slices++;
-          }
-        }
+        const { x1, r1, slices } = this.growBox(width, rows, contiguousRows, r, x, level, useRects, null);
         const permutation = level === airLevel ? this.airPermutation : palette ? palette[level] : null;
         const area = (x1 - x + 1) * (r1 - r + 1) * slices;
 
@@ -490,6 +478,122 @@ class VideoPlayer {
     if (failures > 0) {
       warnOnce("setBlock", `Failed to place ${failures} block(s). The screen may be outside the loaded area`);
     }
+  }
+
+  /**
+   * (r 行, x 列) から始まる、色 level の「変わったマス」だけでできた箱を探す (rect 方式と auto の見積もりで共通)。
+   * 横に伸ばし、useRects なら下 (同じ奥行きの段の中) へ、立体なら奥の段へも伸ばす。1 回の fillBlocks は MAX_FILL_BLOCKS まで。
+   * claimed (Uint8Array) を渡すと、そこで 1 のマスは使用済みとして避ける。戻り値のオブジェクトは使い回す。
+   */
+  growBox(width, rows, contiguousRows, r, x, level, useRects, claimed) {
+    const next = this.nextBoard;
+    const board = this.board;
+    const free = (q) => next[q] === level && board[q] !== level && !(claimed && claimed[q]);
+    const p = r * width + x;
+    let x1 = x;
+    while (x1 + 1 < width && free(p + x1 + 1 - x)) x1++;
+    if (useRects && x1 - x + 1 > MAX_FILL_BLOCKS) x1 = x + MAX_FILL_BLOCKS - 1;
+    let r1 = r;
+    if (useRects) {
+      while (r1 + 1 < rows && (r1 + 1) % contiguousRows !== 0 && (r1 + 2 - r) * (x1 - x + 1) <= MAX_FILL_BLOCKS) {
+        const base = (r1 + 1) * width;
+        let sameRun = true;
+        for (let k = x; k <= x1; k++) {
+          if (!free(base + k)) {
+            sameRun = false;
+            break;
+          }
+        }
+        if (!sameRun) break;
+        r1++;
+      }
+    }
+    // 立体では、同じ長方形が奥の段でも全部同じ色の変更なら奥へも伸ばして 1 個の箱にする
+    let slices = 1;
+    if (useRects && isVolume(this.videoData)) {
+      const sliceCells = contiguousRows * width;
+      const faceArea = (x1 - x + 1) * (r1 - r + 1);
+      while (r + slices * contiguousRows < rows && (slices + 1) * faceArea <= MAX_FILL_BLOCKS) {
+        const offset = slices * sliceCells;
+        let sameFace = true;
+        for (let rr = r; rr <= r1 && sameFace; rr++) {
+          const base = rr * width + offset;
+          for (let k = x; k <= x1; k++) {
+            if (!free(base + k)) {
+              sameFace = false;
+              break;
+            }
+          }
+        }
+        if (!sameFace) break;
+        slices++;
+      }
+    }
+    const box = this.box ?? (this.box = { x1: 0, r1: 0, slices: 1 });
+    box.x1 = x1;
+    box.r1 = r1;
+    box.slices = slices;
+    return box;
+  }
+
+  /**
+   * auto 方式: このフレームで変わったマスを rect / list / block で置いたときの時間を、費用のモデルで見積もり、
+   * 一番速い方式を返す (変わったマスが無ければ "none")。rect の箱の数は実際と同じ探し方で数える。
+   */
+  *chooseRenderMode(width) {
+    const video = this.videoData;
+    const board = this.board;
+    const next = this.nextBoard;
+    const rows = next.length / width;
+    const contiguousRows = isVolume(video) ? video.height : rows;
+    if (!this.claimed || this.claimed.length !== next.length) this.claimed = new Uint8Array(next.length);
+    const claimed = this.claimed;
+    claimed.fill(0);
+    let changed = 0;
+    let boxes = 0;
+    let boxBlocks = 0;
+    let singles = 0;
+    const levels = new Set();
+    let scanned = 0;
+    for (let r = 0; r < rows; r++) {
+      let x = 0;
+      while (x < width) {
+        const p = r * width + x;
+        const level = next[p];
+        if (claimed[p] || level === board[p] || level < 0) {
+          x++;
+          continue;
+        }
+        const { x1, r1, slices } = this.growBox(width, rows, contiguousRows, r, x, level, true, claimed);
+        this.fillBoxCells(claimed, width, contiguousRows, x, x1, r, r1, slices, 1);
+        const area = (x1 - x + 1) * (r1 - r + 1) * slices;
+        changed += area;
+        levels.add(level);
+        if (area > 1) {
+          boxes++;
+          boxBlocks += area;
+        } else {
+          singles++;
+        }
+        x = x1 + 1;
+      }
+      scanned += width;
+      if (scanned >= PIXELS_PER_SCAN_YIELD) {
+        scanned = 0;
+        yield;
+      }
+    }
+    if (changed === 0) return "none";
+    const cost = currentCostModel();
+    const estimates = {
+      rect: cost.fillCall * boxes + cost.fillBlock * boxBlocks + cost.setBlock * singles,
+      list: cost.listCall * (levels.size + Math.floor(changed / LIST_BATCH)) + cost.listBlock * changed,
+      block: cost.setBlock * changed,
+    };
+    let best = "rect";
+    for (const mode of ["list", "block"]) if (estimates[mode] < estimates[best]) best = mode;
+    this.lastRenderChoice = best;
+    return best;
   }
 
   /** 盤面上の箱 (x0..x1 列, r0..r1 行, 奥へ slices 段) を value にする。 */
@@ -835,7 +939,10 @@ function runBenchmark(player) {
   const colors = [BlockPermutation.resolve("minecraft:white_concrete"), BlockPermutation.resolve("minecraft:black_concrete")];
   const cells = [];
   for (let z = 0; z < side; z++) for (let x = 0; x < side; x++) cells.push({ x: base.x + x, y: base.y, z: base.z + z });
-  const rounds = 6;
+  // Date.now は 1 ms 単位なので、小さな範囲では回数を増やして合計時間を長くする
+  const rounds = Math.min(60, Math.max(6, Math.ceil(20000 / cells.length)));
+  const rowCells = [];
+  for (let z = 0; z < side; z++) rowCells.push(cells.slice(z * side, (z + 1) * side));
 
   const methods = [
     ["setBlockPermutation", (perm) => {
@@ -855,6 +962,10 @@ function runBenchmark(player) {
     ["fillBlocks(list)", (perm) => {
       dimension.fillBlocks(new ListBlockVolume(cells), perm);
       return 1;
+    }],
+    ["fillBlocks(list rows)", (perm) => {
+      for (const row of rowCells) dimension.fillBlocks(new ListBlockVolume(row), perm);
+      return side;
     }],
     ["structure.place", (perm, round) => {
       const id = `${EVENT_NAMESPACE}:bench_${round % 2}`;
@@ -885,6 +996,7 @@ function runBenchmark(player) {
       warnOnce("bench-structure", `Could not prepare benchmark structures: ${e}`);
     }
     yield;
+    const totals = {};
     for (const [name, method] of methods) {
       let elapsed = 0;
       let calls = 0;
@@ -904,14 +1016,48 @@ function runBenchmark(player) {
       if (failed) {
         notify("bench_failed", name);
       } else {
+        totals[name] = elapsed;
         const microsPerBlock = Math.round((elapsed * 1000) / (rounds * side * side) * 100) / 100;
         notify("bench_result", name, microsPerBlock, Math.round(calls / rounds), elapsed);
       }
       yield;
     }
     vp.invalidateBoard();
+    const model = fitCostModel(totals, rounds, side);
+    if (model) {
+      world.setDynamicProperty(COST_MODEL_KEY, JSON.stringify(model));
+      costModelCache = null;
+      notify("bench_model", model.fillCall, model.fillBlock, model.setBlock, model.listCall, model.listBlock);
+    } else {
+      notify("bench_unreliable", BENCH_MIN_TOTAL_MS);
+    }
     notify("bench_done", currentRenderMode());
   })());
+}
+
+/**
+ * bench の合計時間 (ミリ秒) から費用のモデル (マイクロ秒) を求める。測れなかった・短すぎる場合は null (既定値のまま)。
+ * 全面 1 回と 1 行ずつ (side 回) の差から 1 回あたりの費用を、残りから 1 ブロックあたりの費用を求める。
+ */
+function fitCostModel(totals, rounds, side) {
+  const needed = ["setBlockPermutation", "fillBlocks(row)", "fillBlocks(area)", "fillBlocks(list)", "fillBlocks(list rows)"];
+  if (!needed.every((name) => totals[name] >= BENCH_MIN_TOTAL_MS)) return null;
+  const cells = side * side;
+  const perRound = (name) => (totals[name] * 1000) / rounds;
+  const split = (many, one) => {
+    const call = Math.max(0, (perRound(many) - perRound(one)) / Math.max(1, side - 1));
+    return [call, Math.max(0, (perRound(one) - call) / cells)];
+  };
+  const [fillCall, fillBlock] = split("fillBlocks(row)", "fillBlocks(area)");
+  const [listCall, listBlock] = split("fillBlocks(list rows)", "fillBlocks(list)");
+  const round2 = (v) => Math.round(v * 100) / 100;
+  return {
+    setBlock: round2(perRound("setBlockPermutation") / cells),
+    fillCall: round2(fillCall),
+    fillBlock: round2(fillBlock),
+    listCall: round2(listCall),
+    listBlock: round2(listBlock),
+  };
 }
 
 function setRenderMode(mode) {

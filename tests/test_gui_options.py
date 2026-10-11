@@ -14,6 +14,7 @@ from video_player_gui import (
     build_converter_args,
     build_manifest_version,
     resolve_device,
+    dither_after_mode_change,
     resolve_dither,
     resolve_palette,
     stable_pack_uuid,
@@ -127,6 +128,19 @@ def test_converter_args_are_accepted_by_convert():
             assert args.fps == 10.0
             assert args.perceptual is perceptual
             assert args.duration == duration
+
+
+def test_volume_modes_switch_dither_off_and_back():
+    # 既定の Blue Noise のまま立体にすると「なし」、平面に戻すと Blue Noise に戻る
+    dither, auto = dither_after_mode_change("screen", "inflate", "blue_noise", False)
+    assert (dither, auto) == ("none", True)
+    assert dither_after_mode_change("inflate", "relief", dither, auto) == ("none", True)
+    assert dither_after_mode_change("relief", "screen", "none", True) == ("blue_noise", False)
+    # 利用者が選んだディザは変えない
+    assert dither_after_mode_change("screen", "relief", "floyd", False) == ("floyd", False)
+    assert dither_after_mode_change("relief", "screen", "none", False) == ("none", False)
+    # 立体のまま利用者がディザを選び直したら、平面に戻しても変えない
+    assert dither_after_mode_change("relief", "screen", "ordered", True) == ("ordered", False)
 
 
 def test_converter_args_for_3d_modes():

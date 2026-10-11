@@ -162,7 +162,9 @@
   "addon.bench_start": "§eベンチマーク: %1 ブロックを各方式で %2 回塗り替えます...",
   "addon.bench_result": "§f%1: §b%2 µs/ブロック§f (1 回あたり %3 呼び出し、合計 %4 ms)",
   "addon.bench_failed": "§c%1: 使用できません",
+  "addon.bench_model": "§b推定した費用§f: fillBlocks 1 回 %1 µs + 1 ブロック %2 µs / 1 個ずつ %3 µs / 座標リスト 1 回 %4 µs + 1 ブロック %5 µs。描画方式 auto がこの値を使います",
+  "addon.bench_unreliable": "§e計測時間が短すぎる (各方式 %1 ms 未満) ため、費用は保存しませんでした。もっと大きなスクリーンで実行してください",
   "addon.bench_done": "§aベンチマーク完了。現在の描画方式: %1",
-  "addon.render_mode_usage": "§e使い方: /scriptevent %1render rect|list|block (現在: %2)",
+  "addon.render_mode_usage": "§e使い方: /scriptevent %1render auto|rect|list|block (現在: %2)",
   "addon.render_mode_set": "§a描画方式を %1 にしました"
 }

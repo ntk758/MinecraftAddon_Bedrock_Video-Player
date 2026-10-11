@@ -162,7 +162,9 @@
   "addon.bench_start": "§eBenchmark: repintando %1 blocos %2 vezes com cada método...",
   "addon.bench_result": "§f%1: §b%2 µs/bloco§f (%3 chamadas por rodada, %4 ms no total)",
   "addon.bench_failed": "§c%1: indisponível",
+  "addon.bench_model": "§bCustos estimados§f: fillBlocks %1 µs por chamada + %2 µs por bloco / um a um %3 µs / lista de posições %4 µs por chamada + %5 µs por bloco. O modo de desenho auto usa esses valores",
+  "addon.bench_unreliable": "§eOs tempos medidos foram curtos demais (menos de %1 ms por método), então os custos não foram salvos. Execute em uma tela maior",
   "addon.bench_done": "§aBenchmark concluído. Modo de desenho atual: %1",
-  "addon.render_mode_usage": "§eUso: /scriptevent %1render rect|list|block (atual: %2)",
+  "addon.render_mode_usage": "§eUso: /scriptevent %1render auto|rect|list|block (atual: %2)",
   "addon.render_mode_set": "§aModo de desenho alterado para %1"
 }

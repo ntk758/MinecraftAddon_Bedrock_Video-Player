@@ -135,11 +135,12 @@ export const FRAME_DATA = {
    - `decoded` はエンコーダの参照と同じ「直前のフレーム」で、動き補償・タイル辞書の予測はこれを使う。`board` は **実際にワールドに置かれているブロック** (不明は -1)。
    - `decodeFrameInto` で次の盤面を作ってから、`board` と値が違うブロックだけを置きます。キーフレームでも全ブロックを置き直さず、実際に変わったブロックだけを置きます (自動パレットで GOP が変わったときだけ、表示中の盤面を「不明」にして置き直す)。
    - 置くのに失敗したマスは -1 (不明) にして、次のフレームで置き直します。
-5. **描画方式 (`/scriptevent <接頭辞>:render rect|list|block`)**:
-   - `rect` (既定): 同じ色の変更ブロックを、横 → 縦 → (立体では) 奥行きの順に伸ばした箱にまとめ、`dimension.fillBlocks(new BlockVolume(from, to))` 1 回で置く (1 回 32768 ブロックまで)。
+5. **描画方式 (`/scriptevent <接頭辞>:render auto|rect|list|block`)**:
+   - `auto` (既定): 置く前に、rect と同じ探し方で箱の数・1 個だけのマス・変わったブロック数・色の数を数え (`chooseRenderMode`)、費用のモデル (`fillCall` × 箱 + `fillBlock` × 箱のブロック + `setBlock` × 1 個だけのマス / `listCall` × 色 + `listBlock` × ブロック / `setBlock` × ブロック) で一番速い方式を選ぶ。モデルは `bench` で測った値 (ワールドの `<接頭辞>:cost_model`) か、無ければ実機 (Windows) の測定値 (fillBlocks 1 回 15 µs + 1 ブロック 0.55 µs、1 個ずつ 2.3 µs、座標リスト 1 回 15 µs + 1 ブロック 1.42 µs)。
+   - `rect`: 同じ色の変更ブロックを、横 → 縦 → (立体では) 奥行きの順に伸ばした箱にまとめ、`dimension.fillBlocks(new BlockVolume(from, to))` 1 回で置く (1 回 32768 ブロックまで)。
    - `list`: 変わったマスを色ごとの座標リストにまとめ、`fillBlocks(new ListBlockVolume(座標))` で置く (4096 個ずつ)。呼び出し回数はおよそ「変わった色の数」。
    - `block`: 1 個ずつ `setBlockPermutation`。
-   - `/scriptevent <接頭辞>:bench` はスクリーンの範囲 (最大 64×64) で 6 通りの置き方 (`setBlockPermutation` / 1 行ずつの `fillBlocks` / 全面 1 回の `fillBlocks` / `ListBlockVolume` / `structureManager.place` / `fill` コマンド) を実機で計り、1 ブロックあたりのマイクロ秒をチャットに出す。端末によって速い方式が違うため、結果を見て描画方式を選ぶ。
+   - `/scriptevent <接頭辞>:bench` はスクリーンの範囲 (最大 64×64) で置き方 (`setBlockPermutation` / 1 行ずつと全面 1 回の `fillBlocks` / 全体 1 回と 1 行ずつの `ListBlockVolume` / `structureManager.place` / `fill` コマンド) を実機で計り、1 ブロックあたりのマイクロ秒をチャットに出す。回数は合計時間が十分長くなるよう範囲の大きさに合わせて増やす (6〜60 回)。全面 1 回と 1 行ずつの差から 1 回あたりの費用を、残りから 1 ブロックあたりの費用を求めて `auto` 用に保存する (どれかの合計が 5 ms 未満なら誤差が大きいので保存しない)。
 6. **単一座標オブジェクトの再利用 (`tempBlockLoc`)**:
    - ガベージコレクション (GC) によるフレーム落ちを防ぐため、1 個ずつ置くときは `{ x: 0, y: 0, z: 0 }` を使い回す。
 7. **常時読み込み範囲と設置位置**:

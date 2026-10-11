@@ -162,7 +162,9 @@
   "addon.bench_start": "§e基准测试: 用每种方法将 %1 个方块重绘 %2 次...",
   "addon.bench_result": "§f%1: §b%2 µs/方块§f (每轮 %3 次调用，共 %4 ms)",
   "addon.bench_failed": "§c%1: 不可用",
+  "addon.bench_model": "§b估算成本§f：fillBlocks 每次调用 %1 µs + 每方块 %2 µs / 逐个放置 %3 µs / 坐标列表 每次调用 %4 µs + 每方块 %5 µs。绘制方式 auto 会使用这些值",
+  "addon.bench_unreliable": "§e测量时间太短（每种方式不足 %1 ms），未保存成本。请在更大的屏幕上运行",
   "addon.bench_done": "§a基准测试完成。当前绘制方式: %1",
-  "addon.render_mode_usage": "§e用法: /scriptevent %1render rect|list|block (当前: %2)",
+  "addon.render_mode_usage": "§e用法: /scriptevent %1render auto|rect|list|block (当前: %2)",
   "addon.render_mode_set": "§a绘制方式已设为 %1"
 }

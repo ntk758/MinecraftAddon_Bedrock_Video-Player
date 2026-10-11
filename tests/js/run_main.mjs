@@ -4,6 +4,9 @@ import { board, commands, fireScriptEvent, forms, getAnchor, messages, options, 
 
 // 引数 "nofill" で fillBlocks が無い環境をまねる
 if (process.argv.includes("nofill")) options.fillBlocks = false;
+// 引数 "costs=<JSON>" で、置き方ごとの費用 (マイクロ秒) をまねる (ベンチマークと auto 方式の確認用)
+const costsArg = process.argv.find((arg) => arg.startsWith("costs="));
+if (costsArg) options.costs = JSON.parse(costsArg.slice("costs=".length));
 // 引数 "y=<高さ>" でプレイヤーの立つ高さを変える (建築限界での位置調整の確認用)
 const yArg = process.argv.find((arg) => arg.startsWith("y="));
 if (yArg) player.location.y = Number(yArg.slice(2));
@@ -53,4 +56,5 @@ for (let p = 0; p < cells; p++) {
   finalBoard.push(board.get(`${x},${y},${z}`) ?? null);
 }
 
-process.stdout.write(JSON.stringify({ ticks, finished: finished(), frameCount: video.frame_count, fps: video.fps, anchor, stats, commands, benchMessages, messages, forms, sounds, finalBoard }));
+const costModel = getAnchor("badapple:cost_model") ?? null;
+process.stdout.write(JSON.stringify({ ticks, finished: finished(), frameCount: video.frame_count, fps: video.fps, anchor, stats, commands, benchMessages, messages, forms, sounds, finalBoard, costModel }));

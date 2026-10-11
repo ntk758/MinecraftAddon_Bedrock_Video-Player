@@ -162,7 +162,9 @@
   "addon.bench_start": "§eBenchmark: %1 Blöcke werden mit jeder Methode %2-mal neu gesetzt...",
   "addon.bench_result": "§f%1: §b%2 µs/Block§f (%3 Aufrufe pro Runde, insgesamt %4 ms)",
   "addon.bench_failed": "§c%1: nicht verfügbar",
+  "addon.bench_model": "§bGeschätzte Kosten§f: fillBlocks %1 µs pro Aufruf + %2 µs pro Block / einzeln %3 µs / Positionsliste %4 µs pro Aufruf + %5 µs pro Block. Der Render-Modus auto verwendet diese Werte",
+  "addon.bench_unreliable": "§eDie gemessenen Zeiten waren zu kurz (unter %1 ms pro Methode), daher wurden die Kosten nicht gespeichert. Führe es auf einem größeren Bildschirm aus",
   "addon.bench_done": "§aBenchmark abgeschlossen. Aktueller Zeichenmodus: %1",
-  "addon.render_mode_usage": "§eVerwendung: /scriptevent %1render rect|list|block (aktuell: %2)",
+  "addon.render_mode_usage": "§eVerwendung: /scriptevent %1render auto|rect|list|block (aktuell: %2)",
   "addon.render_mode_set": "§aZeichenmodus auf %1 gesetzt"
 }

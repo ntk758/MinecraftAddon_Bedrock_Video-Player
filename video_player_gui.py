@@ -114,6 +114,21 @@ QUALITY_PRESETS: dict[str, tuple[int, int, int]] = {
 DEFAULT_PRESET = "high"
 DEFAULT_PALETTE = "expanded"
 DEFAULT_DITHER = "blue_noise"
+# 立体の表示モードで使うディザ。立体は形 (奥行き) が主役で、ディザの粒は表面の白い点々のノイズになるので使わない
+VOLUME_DITHER = "none"
+
+
+def dither_after_mode_change(old_mode: str, new_mode: str, dither: str, auto_set: bool) -> tuple[str, bool]:
+    """表示モードを切り替えたときのディザと「自動で変えたか」の印を返す。
+
+    平面 → 立体で、ディザが既定 (Blue Noise) のままなら「なし」にする。立体 → 平面で、自動で「なし」にしたままなら
+    既定に戻す。利用者が自分で選んだディザは変えない。
+    """
+    if old_mode == "screen" and new_mode != "screen" and dither == DEFAULT_DITHER:
+        return VOLUME_DITHER, True
+    if old_mode != "screen" and new_mode == "screen" and auto_set and dither == VOLUME_DITHER:
+        return DEFAULT_DITHER, False
+    return dither, auto_set and new_mode != "screen"
 DEFAULT_DEVICE = "auto"
 
 
@@ -283,11 +298,22 @@ class PackBuilderApp(tk.Tk):
         mode = option_labels(self.tr, "mode", MODE_VALUES).get(self.mode_var.get(), DEFAULT_MODE)
         return palette, dither, device, mode
 
+    def _on_mode_selected(self) -> None:
+        """表示モードを選び直したとき、立体ならディザを「なし」にする (dither_after_mode_change)。"""
+        palette, dither, device, mode = self._selected_values()
+        old_mode = getattr(self, "_last_mode", DEFAULT_MODE)
+        new_dither, self._dither_auto_set = dither_after_mode_change(
+            old_mode, mode, dither, getattr(self, "_dither_auto_set", False))
+        self._last_mode = mode
+        if new_dither != dither:
+            self.dither_var.set(self.tr(f"dither.{new_dither}"))
+
     def _set_option_labels(self, palette: str, dither: str, device: str, mode: str = DEFAULT_MODE) -> None:
         self.palette_var.set(self.tr(f"palette.{palette}"))
         self.dither_var.set(self.tr(f"dither.{dither}"))
         self.device_var.set(self.tr(f"device.{device}"))
         self.mode_var.set(self.tr(f"mode.{mode}"))
+        self._last_mode = mode
         self.quality_var.set(self.tr(f"preset.{self.preset_key}"))
         self.language_var.set(dict(available_languages())[self.tr.language])
 
@@ -432,10 +458,12 @@ class PackBuilderApp(tk.Tk):
 
         # 表示モード (平面 / 立体) と立体の奥行き
         ttk.Label(settings, text=tr("settings.mode")).grid(row=4, column=0, padx=(10, 4), pady=(0, 6))
-        ttk.Combobox(
+        mode_box = ttk.Combobox(
             settings, textvariable=self.mode_var, state="readonly", width=34,
             values=tuple(option_labels(tr, "mode", MODE_VALUES)),
-        ).grid(row=4, column=1, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
+        )
+        mode_box.grid(row=4, column=1, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
+        mode_box.bind("<<ComboboxSelected>>", lambda _event: self._on_mode_selected())
         ttk.Label(settings, text=tr("settings.depth")).grid(row=4, column=4, padx=(10, 4), pady=(0, 6))
         ttk.Spinbox(settings, from_=2, to=64, textvariable=self.depth_var, width=7).grid(
             row=4, column=5, padx=(0, 10), pady=(0, 6), sticky="w"

@@ -1,4 +1,4 @@
-"""描画方式 (rect / list / block)・tickingarea の分割・ゲーム内ベンチマークのテスト (Node.js が必要)。"""
+"""描画方式 (auto / rect / list / block)・tickingarea の分割・ゲーム内ベンチマークのテスト (Node.js が必要)。"""
 import json
 import re
 import shutil
@@ -32,12 +32,13 @@ def frames_js(tmp_path_factory):
 @pytest.fixture(scope="module")
 def runs(frames_js, tmp_path_factory):
     tmp = tmp_path_factory.mktemp("render_runs")
-    return {mode: run_addon(tmp / mode, frames_js, f"render={mode}") for mode in ("rect", "list", "block")}
+    return {mode: run_addon(tmp / mode, frames_js, f"render={mode}") for mode in ("auto", "rect", "list", "block")}
 
 
 def test_all_render_modes_draw_the_same_screen(runs):
-    assert runs["rect"]["finalBoard"] == runs["block"]["finalBoard"] == runs["list"]["finalBoard"]
+    assert runs["rect"]["finalBoard"] == runs["block"]["finalBoard"] == runs["list"]["finalBoard"] == runs["auto"]["finalBoard"]
     assert all(r["finished"] for r in runs.values())
+    assert runs["auto"]["stats"]["blocksPlaced"] == runs["rect"]["stats"]["blocksPlaced"]
 
 
 def test_render_modes_call_counts(runs):
@@ -77,6 +78,53 @@ def test_benchmark_command_reports_every_method(frames_js, tmp_path):
     assert "bvp.bench_start" in text and "bvp.bench_done" in text
     reported = re.findall(r'"translate": "bvp.bench_result", "with": \{"rawtext": \[\{"text": "([^"]+)"', text)
     assert reported == ["setBlockPermutation", "fillBlocks(row)", "fillBlocks(area)", "fillBlocks(list)",
-                        "structure.place", "runCommand(fill)"]
+                        "fillBlocks(list rows)", "structure.place", "runCommand(fill)"]
     keys = set(re.findall(r'"translate": "(bvp\.[a-z_.]+)"', text))
     assert keys <= lang_keys()
+    # モックはほとんど時間がかからないので、短すぎる計測は保存しない
+    assert "bvp.bench_unreliable" in text and result["costModel"] is None
+
+
+# 実機をまねた費用 (マイクロ秒)。1 回の呼び出しが重く、1 ブロックは軽い fillBlocks と、軽い setBlockPermutation
+EMULATED = {"setBlock": 20, "fillCall": 120, "fillBlock": 4, "listCall": 100, "listBlock": 12}
+
+
+def test_benchmark_estimates_and_saves_the_cost_model(frames_js, tmp_path):
+    """bench は 1 回の費用と 1 ブロックの費用を分けて求め、ワールドに保存する (auto 方式が使う)。"""
+    result = run_addon(tmp_path / "addon", frames_js, "bench", "costs=" + json.dumps(EMULATED))
+    assert "bvp.bench_model" in json.dumps(result["benchMessages"])
+    model = json.loads(result["costModel"])
+    for key, expected in EMULATED.items():
+        # 待ち時間は下限なので少し大きめに出る。Date.now の誤差も含めて 0.7〜1.8 倍に収まれば良い
+        assert 0.7 * expected <= model[key] <= 1.8 * expected, (key, model[key], expected)
+
+
+def test_auto_mode_picks_lists_for_scattered_changes_and_boxes_for_solids(runs, tmp_path):
+    """auto は、散らばった細かい変化では座標リストを、まとまった変化では箱を選ぶ (既定の費用のモデル)。"""
+    from test_volume3d import convert_vox, write_cube_vox
+
+    # 散らばった点が毎フレーム入れ替わる映像: 1 個ずつのマスばかりなので、色ごとの座標リストが一番速い
+    frames_dir = tmp_path / "dots"
+    frames_dir.mkdir()
+    rng = np.random.default_rng(5)
+    colors = np.array([[255, 255, 255], [20, 20, 20], [200, 30, 30], [30, 30, 200]], np.uint8)
+    for t in range(8):
+        frame = np.zeros((48, 64, 3), np.uint8) + 128
+        ys, xs = rng.integers(0, 48, 300), rng.integers(0, 64, 300)
+        frame[ys, xs] = colors[rng.integers(0, 4, 300)]
+        Image.fromarray(frame).save(frames_dir / f"f{t}.png")
+    dots_js = tmp_path / "dots.js"
+    assert convert.main(["--frames-dir", str(frames_dir), "--output", str(dots_js), "--width", "64", "--height", "48",
+                         "--fps", "10", "--device", "cpu", "--no-adaptive-fps", "--no-motion", "--tile-size", "0"]) == 0
+    dots = run_addon(tmp_path / "dots_addon", dots_js, "render=auto")["stats"]
+    assert dots["listFillCalls"] > 0 and dots["setBlockCalls"] == 0
+
+    # 動く小さな四角 (変化は縦 4 マスの列 2 本) では、箱 2 個の方が座標リストより速い
+    scene = runs["auto"]["stats"]
+    assert scene["fillCalls"] > scene["listFillCalls"]
+
+    # 詰まった立体は 1 個の箱 (fillBlocks 1 回) で置く
+    write_cube_vox(tmp_path / "cube.vox", size=8)
+    convert_vox(tmp_path / "cube.vox", tmp_path / "cube.js")
+    cube = run_addon(tmp_path / "cube", tmp_path / "cube.js", "render=auto")["stats"]
+    assert cube["fillCalls"] == 1 and cube["listFillCalls"] == 0 and cube["blocksPlaced"] == 8 ** 3

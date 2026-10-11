@@ -8,9 +8,19 @@ export const forms = [];
 export const stats = { setBlockCalls: 0, fillCalls: 0, blocksPlaced: 0, commandFills: 0, structurePlaces: 0 };
 // fillBlocks: false にすると fillBlocks が無い環境をまねる
 // failZ: 数値にすると z がその値以上のマスへの設置が失敗する (読み込まれていないチャンクをまねる)
-export const options = { fillBlocks: true, failZ: undefined };
+// costs: { setBlock, fillCall, fillBlock, listCall, listBlock } (マイクロ秒) を入れると、その時間だけ待って実機の費用をまねる
+export const options = { fillBlocks: true, failZ: undefined, costs: null };
 // フォームを開いたときの応答 (server-ui モックが先頭から順に返す。空なら「閉じた」)
 export const uiResponses = [];
+
+function spin(micros) {
+  if (!micros) return;
+  const end = performance.now() + micros / 1000;
+  while (performance.now() < end) { /* 待つ */ }
+}
+
+// fillBlocks の呼び出しのうち、座標リスト (ListBlockVolume) を使ったもの
+stats.listFillCalls = 0;
 
 function checkLoaded(location) {
   if (options.failZ !== undefined && location.z >= options.failZ) throw new Error("UnloadedChunksError");
@@ -30,6 +40,7 @@ export const dimension = {
   heightRange: { min: -64, max: 320 },
   setBlockPermutation(location, permutation) {
     checkLoaded(location);
+    spin(options.costs?.setBlock);
     stats.setBlockCalls++;
     stats.blocksPlaced++;
     board.set(`${location.x},${location.y},${location.z}`, permutation.id);
@@ -40,6 +51,8 @@ export const dimension = {
       stats.fillCalls++;
       for (const loc of volume.locations ?? [volume.from, volume.to]) checkLoaded(loc);
       if (volume.locations) {
+        stats.listFillCalls++;
+        spin((options.costs?.listCall ?? 0) + (options.costs?.listBlock ?? 0) * volume.locations.length);
         for (const loc of volume.locations) {
           stats.blocksPlaced++;
           board.set(`${loc.x},${loc.y},${loc.z}`, permutation.id);
@@ -47,6 +60,8 @@ export const dimension = {
         return { volume };
       }
       const { from, to } = volume;
+      const area = (Math.abs(to.x - from.x) + 1) * (Math.abs(to.y - from.y) + 1) * (Math.abs(to.z - from.z) + 1);
+      spin((options.costs?.fillCall ?? 0) + (options.costs?.fillBlock ?? 0) * area);
       for (let x = Math.min(from.x, to.x); x <= Math.max(from.x, to.x); x++) {
         for (let y = Math.min(from.y, to.y); y <= Math.max(from.y, to.y); y++) {
           for (let z = Math.min(from.z, to.z); z <= Math.max(from.z, to.z); z++) {
