@@ -173,5 +173,21 @@
   "addon.bench_done": "§aBenchmark terminado. Modo de dibujo actual: %1",
   "addon.render_mode_usage": "§eUso: /scriptevent %1render auto|rect|list|block (actual: %2)",
   "addon.render_mode_set": "§aModo de dibujo cambiado a %1",
-  "convert.volume_voxels": "[MVCodec] Este volumen no se puede enviar como planos 2,5D (--hollow, o extrude / inflate con profundidad 128), así que se envía como vóxeles (más datos)"
+  "convert.volume_voxels": "[MVCodec] Este volumen no se puede enviar como planos 2,5D (--hollow, o extrude / inflate con profundidad 128), así que se envía como vóxeles (más datos)",
+  "settings.fit_aspect": "Ajustar a la relación de aspecto",
+  "settings.fit_aspect_done": "El vídeo es de {src_w}×{src_h}, así que el ancho × alto se ajustó a {width}×{height} (sin franjas negras).",
+  "warn.fit_aspect_no_video": "Añade primero un vídeo (se usa la relación de aspecto del vídeo seleccionado).",
+  "error.probe_title": "Tamaño del vídeo",
+  "error.probe": "No se pudo leer el tamaño del vídeo: {path}",
+  "settings.load": "Carga estimada: hasta {blocks} bloques/s cuando cambia toda la imagen, unos {ms} ms por tick (50 ms) — {level}. En la mayoría de los vídeos solo cambia el 10–30 %.",
+  "load.light": "ligera",
+  "load.medium": "moderada",
+  "load.heavy": "alta (reduce el ancho, el alto o los fps)",
+  "error.size_range": "El ancho y el alto deben estar entre 1 y {max_size}.",
+  "error.fps_range": "Los fps deben estar entre {min_fps} y {max_fps}.",
+  "error.duration": "La duración a convertir (segundos) debe ser mayor que 0.",
+  "error.depth_range": "La profundidad debe estar entre 2 y {max_depth}.",
+  "error.volume_height": "Un volumen 3D puede tener como máximo {max_height} bloques de alto (altura de construcción).",
+  "warn.heavy_title": "Configuración pesada",
+  "warn.heavy": "Con esta configuración, en las escenas en que cambia toda la imagen se colocan bloques durante unos {ms} ms por tick (50 ms). El juego puede ir lento o el vídeo puede retrasarse. ¿Crear de todos modos?"
 }

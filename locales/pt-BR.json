@@ -173,5 +173,21 @@
   "addon.bench_done": "§aBenchmark concluído. Modo de desenho atual: %1",
   "addon.render_mode_usage": "§eUso: /scriptevent %1render auto|rect|list|block (atual: %2)",
   "addon.render_mode_set": "§aModo de desenho alterado para %1",
-  "convert.volume_voxels": "[MVCodec] Este volume não pode ser enviado como planos 2,5D (--hollow, ou extrude / inflate com profundidade 128), então é enviado como voxels (mais dados)"
+  "convert.volume_voxels": "[MVCodec] Este volume não pode ser enviado como planos 2,5D (--hollow, ou extrude / inflate com profundidade 128), então é enviado como voxels (mais dados)",
+  "settings.fit_aspect": "Ajustar à proporção do vídeo",
+  "settings.fit_aspect_done": "O vídeo tem {src_w}×{src_h}, então largura × altura foi definida como {width}×{height} (sem faixas pretas).",
+  "warn.fit_aspect_no_video": "Adicione um vídeo primeiro (é usada a proporção do vídeo selecionado).",
+  "error.probe_title": "Tamanho do vídeo",
+  "error.probe": "Não foi possível ler o tamanho do vídeo: {path}",
+  "settings.load": "Carga estimada: até {blocks} blocos/s quando a imagem inteira muda, cerca de {ms} ms por tick (50 ms) — {level}. Na maioria dos vídeos só 10–30% muda.",
+  "load.light": "leve",
+  "load.medium": "moderada",
+  "load.heavy": "pesada (reduza a largura, a altura ou o fps)",
+  "error.size_range": "A largura e a altura devem estar entre 1 e {max_size}.",
+  "error.fps_range": "O fps deve estar entre {min_fps} e {max_fps}.",
+  "error.duration": "A duração a converter (segundos) deve ser maior que 0.",
+  "error.depth_range": "A profundidade deve estar entre 2 e {max_depth}.",
+  "error.volume_height": "Um volume 3D pode ter no máximo {max_height} blocos de altura (altura de construção).",
+  "warn.heavy_title": "Configuração pesada",
+  "warn.heavy": "Com esta configuração, em cenas em que a imagem inteira muda, blocos são colocados por cerca de {ms} ms por tick (50 ms). O jogo pode ficar lento ou o vídeo pode atrasar. Criar mesmo assim?"
 }

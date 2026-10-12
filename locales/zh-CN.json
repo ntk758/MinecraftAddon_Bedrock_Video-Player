@@ -173,5 +173,21 @@
   "addon.bench_done": "§a基准测试完成。当前绘制方式: %1",
   "addon.render_mode_usage": "§e用法: /scriptevent %1render auto|rect|list|block (当前: %2)",
   "addon.render_mode_set": "§a绘制方式已设为 %1",
-  "convert.volume_voxels": "[MVCodec] 此立体无法用 2.5D 平面表示（--hollow，或深度 128 的 extrude / inflate），将按体素发送（数据更大）"
+  "convert.volume_voxels": "[MVCodec] 此立体无法用 2.5D 平面表示（--hollow，或深度 128 的 extrude / inflate），将按体素发送（数据更大）",
+  "settings.fit_aspect": "匹配视频宽高比",
+  "settings.fit_aspect_done": "视频为 {src_w}×{src_h}，已将宽×高设为 {width}×{height}（无黑边）。",
+  "warn.fit_aspect_no_video": "请先添加视频（使用列表中所选视频的宽高比）。",
+  "error.probe_title": "视频尺寸",
+  "error.probe": "无法读取视频尺寸：{path}",
+  "settings.load": "播放负载估计：整个画面变化时最多 {blocks} 方块/秒，每 tick（50 毫秒）约 {ms} 毫秒 — {level}。大多数视频实际只变化 10–30%。",
+  "load.light": "轻",
+  "load.medium": "中等",
+  "load.heavy": "重（降低宽、高或 fps 可减轻）",
+  "error.size_range": "宽和高必须在 1–{max_size} 之间。",
+  "error.fps_range": "fps 必须在 {min_fps}–{max_fps} 之间。",
+  "error.duration": "要转换的时长（秒）必须大于 0。",
+  "error.depth_range": "深度必须在 2–{max_depth} 之间。",
+  "error.volume_height": "立体最高为 {max_height} 个方块（建筑高度）。",
+  "warn.heavy_title": "负载较重的设置",
+  "warn.heavy": "按此设置，在整个画面变化的场景中，每 tick（50 毫秒）约有 {ms} 毫秒用于放置方块。游戏可能卡顿或视频落后。仍要创建吗？"
 }

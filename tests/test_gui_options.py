@@ -176,3 +176,68 @@ if __name__ == "__main__":
     test_palette_options()
     test_readme_no_invalid_colors()
     print("All GUI option tests passed successfully!")
+
+
+# --- 縦横比の提案・設定の検査・負荷の目安 (Issue #2) ---
+
+def test_suggest_size_keeps_the_aspect_ratio():
+    from video_player_gui import suggest_size
+
+    assert suggest_size(1920, 1080, 128) == (128, 72)
+    assert suggest_size(1080, 1920, 128) == (72, 128)
+    assert suggest_size(640, 480, 96) == (96, 72)
+    assert suggest_size(1000, 1000, 64) == (64, 64)
+    assert suggest_size(4000, 10, 512) == (512, 1)  # 極端に横長でも 1 ブロック以上
+    assert suggest_size(1920, 1080, 9999) == (512, 288)  # 最大 512
+
+
+def test_probe_video_size_reads_ffmpeg_output(tmp_path):
+    import shutil
+    import subprocess
+
+    import pytest
+    from video_player_gui import probe_video_size
+
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        pytest.skip("ffmpeg が必要")
+    video = tmp_path / "wide.mp4"
+    subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=5:duration=1",
+                    "-pix_fmt", "yuv420p", str(video)], check=True)
+    assert probe_video_size(video, ffmpeg) == (320, 180)
+    assert probe_video_size(tmp_path / "missing.mp4", ffmpeg) is None
+
+
+def test_validate_settings_reports_each_problem():
+    from video_player_gui import validate_settings
+
+    assert validate_settings(128, 72, 10) == []
+    assert validate_settings(0, 72, 10) == ["error.size_range"]
+    assert validate_settings(600, 72, 10) == ["error.size_range"]
+    assert validate_settings(128, 72, 25) == ["error.fps_range"]
+    assert validate_settings(128, 72, 10, duration=0) == ["error.duration"]
+    assert validate_settings(128, 72, 10, mode="relief", depth=1) == ["error.depth_range"]
+    assert validate_settings(128, 400, 10, mode="extrude", depth=8) == ["error.volume_height"]
+    assert validate_settings(128, 400, 10) == []  # 平面スクリーンは高さの制限なし (地面に寝かせる)
+
+
+def test_estimate_load_levels():
+    from video_player_gui import QUALITY_PRESETS, estimate_load
+
+    assert estimate_load(64, 64, 20)["level"] == "light"
+    assert estimate_load(*QUALITY_PRESETS["high"])["level"] == "medium"
+    assert estimate_load(*QUALITY_PRESETS["extreme"])["level"] == "heavy"
+    flat = estimate_load(64, 48, 10)
+    volume = estimate_load(64, 48, 10, mode="relief", depth=16)
+    assert volume["cells"] == 3 * flat["cells"]
+
+
+def test_new_gui_texts_exist_in_every_language():
+    import json
+
+    keys = ["settings.fit_aspect", "settings.fit_aspect_done", "warn.fit_aspect_no_video", "error.probe",
+            "settings.load", "load.light", "load.medium", "load.heavy", "error.size_range", "error.fps_range",
+            "error.duration", "error.depth_range", "error.volume_height", "warn.heavy_title", "warn.heavy"]
+    for path in Path(__file__).resolve().parent.parent.joinpath("locales").glob("*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert all(data.get(key) for key in keys), path.name
