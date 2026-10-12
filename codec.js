@@ -115,14 +115,86 @@ export function unpackRun(val, out) {
 
 export const FORMAT_V4 = "varint_rle_v4";
 
-/** 立体 (3D ホログラム) のデータか。盤面は (奥行き × 高さ) 行 × 幅 列で、空気は air_level 番。 */
-export function isVolume(video) {
-  return video.layout === "volume";
+export const LAYOUT_HEIGHTFIELD = "heightfield";
+
+/** 2.5D の立体 (色の平面 + 値の平面で送り、expandPlanes で立体に組み立てる。mvcodec/planes.py) か。 */
+export function isHeightfield(video) {
+  return video.layout === LAYOUT_HEIGHTFIELD;
 }
 
-/** 盤面の行数 (立体は奥行き × 高さ)。 */
+/**
+ * 立体 (3D ホログラム) として表示するデータか (2.5D を含む)。
+ * 表示する盤面は (奥行き × 高さ) 行 × 幅 列で、空気は air_level 番。
+ */
+export function isVolume(video) {
+  return video.layout === "volume" || isHeightfield(video);
+}
+
+/** 符号化された 2D 画像の行数 (立体は奥行き × 高さ、2.5D は色と値の 2 枚で 2 × 高さ)。 */
 export function boardRows(video) {
+  if (isHeightfield(video)) return 2 * video.height;
   return isVolume(video) ? video.height * video.depth : video.height;
+}
+
+/** 復元する 2D 画像のマスの数 (decodeFrameInto の board / out の大きさ)。 */
+export function streamSizeOf(video) {
+  return video.width * boardRows(video);
+}
+
+/**
+ * 2.5D の平面 (上 height 行が色、下 height 行が値) を、立体の盤面 volume ((奥行き × 高さ) 行 × 幅 列) に組み立てる。
+ * mvcodec/planes.py の planes_to_volume と同じ規則:
+ *  - solid_rule "relief": 値は表面の段。埋まる区間は [min(段, 上下左右の段の最小 + 1), 段] (画像の外は自分と同じ段)
+ *  - solid_rule "span":   値は埋まる段数 n。区間は [(D-n)>>1, (D-n)>>1 + n - 1]
+ * previous (前回組み立てたときの平面) を渡すと、自分か上下左右 (relief のみ) の値・色が変わった列だけを作り直し、
+ * previous を planes に更新する。previous が null なら全部の列を作る。作り直した列の数を返す。
+ */
+export function expandPlanes(planes, previous, volume, video) {
+  const { width, height, depth } = video;
+  const air = video.air_level;
+  const relief = video.solid_rule === "relief";
+  const plane = width * height;
+  let rebuilt = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = y * width + x;
+      if (previous) {
+        let dirty = planes[p] !== previous[p] || planes[plane + p] !== previous[plane + p];
+        if (!dirty && relief) {
+          // 隣の段が変わると、この列の側面 (段差を埋める部分) が変わる
+          const v = plane + p;
+          dirty = (x > 0 && planes[v - 1] !== previous[v - 1])
+            || (x + 1 < width && planes[v + 1] !== previous[v + 1])
+            || (y > 0 && planes[v - width] !== previous[v - width])
+            || (y + 1 < height && planes[v + width] !== previous[v + width]);
+        }
+        if (!dirty) continue;
+      }
+      const colour = planes[p];
+      const value = planes[plane + p];
+      let low;
+      let high;
+      if (relief) {
+        const v = plane + p;
+        let neighbourMin = value;
+        if (x > 0 && planes[v - 1] < neighbourMin) neighbourMin = planes[v - 1];
+        if (x + 1 < width && planes[v + 1] < neighbourMin) neighbourMin = planes[v + 1];
+        if (y > 0 && planes[v - width] < neighbourMin) neighbourMin = planes[v - width];
+        if (y + 1 < height && planes[v + width] < neighbourMin) neighbourMin = planes[v + width];
+        high = value;
+        low = Math.min(value, neighbourMin + 1);
+      } else {
+        low = (depth - value) >> 1;
+        high = low + value - 1;
+      }
+      for (let k = 0; k < depth; k++) {
+        volume[(k * height + y) * width + x] = k >= low && k <= high ? colour : air;
+      }
+      rebuilt++;
+    }
+  }
+  if (previous) previous.set(planes);
+  return rebuilt;
 }
 
 /**
@@ -196,9 +268,9 @@ export function createTileDictionary(video) {
   return video.format === FORMAT_V5 && video.tile_size > 0 ? new TileDictionary(video) : null;
 }
 
-/** キーフレームの描き始めの状態: 立体は空気、平面スクリーンは未設置 (-1)。 */
+/** キーフレームの描き始めの状態: 立体は空気、平面スクリーンと 2.5D の平面は未設置 (-1)。 */
 export function emptyLevel(video) {
-  return isVolume(video) ? video.air_level : -1;
+  return video.layout === "volume" ? video.air_level : -1;
 }
 export const FORMAT_V5 = "varint_rle_v5";
 
@@ -226,7 +298,7 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
   if (isKeyframe) out.fill(emptyLevel(video));
   else out.set(board);
 
-  if (hasMotion && isVolume(video)) {
+  if (hasMotion && video.layout === "volume") {
     decodeMotion3d(bytes, cursor, end, board, out, video);
   } else if (hasMotion) {
     const block = video.mv_block;

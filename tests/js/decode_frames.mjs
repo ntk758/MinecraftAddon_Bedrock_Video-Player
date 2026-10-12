@@ -10,10 +10,13 @@ import {
   createTileDictionary,
   decodeFrameInto,
   decodeUTF16BinaryToBytes,
+  expandPlanes,
   findKeyframeAtOrBefore,
+  isHeightfield,
   isVolume,
   parseFrameIndexV4,
   readVarint,
+  streamSizeOf,
 } from "../../codec.js";
 
 const text = readFileSync(process.argv[2], "utf8");
@@ -28,7 +31,10 @@ const gops = data.chunks.map((chunk) => decodeUTF16BinaryToBytes(chunk));
 function newState() {
   return {
     board: new Int16Array(pixels).fill(-1),
-    decoded: new Int16Array(pixels).fill(-1),
+    decoded: new Int16Array(streamSizeOf(data)).fill(-1),
+    scratch: new Int16Array(streamSizeOf(data)),
+    // 2.5D: 前回組み立てたときの平面 (main.js と同じく、変わった列だけ作り直す)
+    expanded: isHeightfield(data) ? new Int16Array(streamSizeOf(data)).fill(-32768) : null,
     boardGop: -1,
     next: new Int16Array(pixels),
     gopOf: new Int32Array(pixels).fill(-1),
@@ -40,8 +46,10 @@ function applyFrame(state, frameIndex) {
   const entry = entries[frameIndex];
   if (entry.length === 0) return;
   const bytes = gops[entry.gopId];
-  decodeFrameInto(bytes, entry.offset, entry.offset + entry.length, state.decoded, state.next, data, state.tiles);
-  state.decoded.set(state.next);
+  decodeFrameInto(bytes, entry.offset, entry.offset + entry.length, state.decoded, state.scratch, data, state.tiles);
+  state.decoded.set(state.scratch);
+  if (state.expanded) expandPlanes(state.decoded, state.expanded, state.next, data);
+  else state.next.set(state.decoded);
   // main.js の invalidateForPaletteChange と同じ: 自動パレットで GOP が変わったときだけ、平面は全マス・立体は空気以外を置き直す
   if (data.adaptive_palette && entry.gopId !== state.boardGop) {
     for (let p = 0; p < pixels; p++) {

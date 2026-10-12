@@ -23,7 +23,7 @@ from mvcodec.volume import iso_view  # noqa: E402
 
 def render_frames(data, unit=4, max_frames=None, step=1):
     """復元した各フレームの絵 (numpy の RGB 画像) を順に返す。"""
-    volume = data.get("layout") == "volume"
+    volume = data.get("layout") in ("volume", "heightfield")
     for i, (_index, rgb) in enumerate(iter_decoded_frames(data)):
         if max_frames is not None and i >= max_frames:
             break

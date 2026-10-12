@@ -81,6 +81,16 @@ varint(ラン数), varint(val) × ラン数        … 予測 (動き補償 → 
   - `vox`: MagicaVoxel の .vox。シーングラフ (nTRN/nGRP/nSHP/LAYR) とアニメーションのキーフレームを ogt_vox と同じ規則で評価し、vox の x を東、y を北 (y が大きいほど奥)、z を上へ、回転 (鏡像にならない) で対応させる
 - `--hollow` は外から見えない内部を空気にします。既定の描画 (箱でまとめて fillBlocks) では詰まっている方が呼び出しもデータも少ないため、既定は無効です。
 
+### ⑥ 2.5D パラメトリック立体 (Phase 8.3、`layout: "heightfield"`)
+- relief / extrude / inflate の立体は、どの列 (奥行き方向のボクセルの並び) も「1 色で、連続した 1 区間だけが埋まっている」ので、列ごとの色と値の 2 枚の平面で表せます (`mvcodec/planes.py`)。
+- 符号化するのは 2 枚を縦に重ねた (2H) 行 × W 列の 2D 画像 (上 H 行が色、下 H 行が値) で、平面スクリーンとまったく同じ規則 (2D の動き補償・タイル辞書・差分ラン、キーフレームの基準は未設置 -1) です。
+- 値の意味は `solid_rule` で決まります:
+  - `"relief"`: 表面の段 (0〜D-1)。埋まる区間は `[min(段, 上下左右の段の最小 + 1), 段]` (画像の外は自分と同じ段)。`volume.relief_volume` の側面の規則と同じ
+  - `"span"` (extrude / inflate): 埋まる段数 n (0〜D)。区間は奥行きの中央にそろえた `[(D-n)>>1, (D-n)>>1 + n - 1]`
+- アドオンは平面を復元した後、`codec.js` の `expandPlanes` で、前回組み立てたときから色か値が変わった列 (relief は上下左右の値が変わった列も) だけを立体の盤面に書き直します。描画 (変わったマスを箱・リストで置く) は立体 (`volume`) と共通です。
+- フレームを省略するかの判定は、組み立てた立体で測った変化率を使うので (`planes.volume_change_ratio`)、`voxels` で送った場合と同じフレームが省略されます。
+- `--hollow` (列が 1 区間にならない)、span で奥行き 128 (段数が 7bit に収まらない)、`vox` は従来の `volume` で送ります。
+
 ---
 
 ## 3. モジュール間データ構造
@@ -112,14 +122,15 @@ export const FRAME_DATA = {
   "gop_boundaries": [0, 120, 300, ...],
   "adaptive_palette": false,       // true なら level_blocks は GOP ごとの配列
   "level_blocks": [{ "block": "minecraft:white_concrete" }, ...],
-  "layout": "screen",              // "screen" (平面) または "volume" (立体)
+  "layout": "screen",              // "screen" (平面)、"volume" (立体)、"heightfield" (2.5D の立体)
   // 立体のときだけ: "depth": 16, "air_level": 127
+  // 2.5D のときだけ: "solid_rule": "relief" または "span"
   "index": "...",                  // フレームごとの [gop_id, offset<<1|keyframe, length] (VarInt, 15bit文字列)
   "chunks": ["...", "..."]         // GOP ごとのフレームバイナリ (15bit文字列)
 };
 ```
 
-デコーダは `codec.js` (ゲーム内・Node 共通) と `mvcodec/decode.py` (ベンチマーク・テスト用) の 2 実装があり、`tests/test_codec_v4.py` / `test_motion.py` / `test_tiles.py` / `test_volume.py` / `test_volume3d.py` で結果の一致を検証しています。
+デコーダは `codec.js` (ゲーム内・Node 共通) と `mvcodec/decode.py` (ベンチマーク・テスト用) の 2 実装があり、`tests/test_codec_v4.py` / `test_motion.py` / `test_tiles.py` / `test_volume.py` / `test_volume3d.py` / `test_planes.py` で結果の一致を検証しています。
 
 ---
 
@@ -174,6 +185,7 @@ export const FRAME_DATA = {
 | ラン位置の間隔符号化 | 直前のランの終わりからの距離 | `mvcodec/encode.py`、`codec.js` |
 | 方式の選択 | 差分 / 動き / タイル / 両方 の最小をフレームごとに選ぶ | `mvcodec/stream.py` |
 | 立体の生成 | relief (ヒステリシス付き) / extrude / inflate / vox | `mvcodec/volume.py` |
+| 2.5D の立体 | 色の平面 + 値の平面で送り、変わった列だけ組み立て直す | `mvcodec/planes.py`、`codec.js` (`expandPlanes`) |
 | 描画 | 3D の箱 (rect)・色ごとの座標リスト (list)・実機ベンチマーク | `main.js` |
 | プレビュー | 等角投影の GIF (ゲームと同じ規則で復元) | `scripts/preview_volume.py`、`mvcodec/volume.py` (`iso_view`) |
 | ベンチマーク | 合成映像で別の版とデータ量・API 呼び出し数を比較 | `benchmark/codec_bench.py` |

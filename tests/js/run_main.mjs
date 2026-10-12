@@ -24,10 +24,13 @@ fireScriptEvent("badapple:start");
 
 let ticks = 0;
 const finished = () => messages.some((m) => JSON.stringify(m).includes("bvp.playback_finished"));
+// 再生中のスクリプトの処理時間 (モックの API はほぼ 0 なので、復元・立体の組み立て・差分の走査の時間)
+const playStart = performance.now();
 while (!finished() && ticks < 20000) {
   tick();
   ticks++;
 }
+const playMs = performance.now() - playStart;
 
 fireScriptEvent("badapple:list");
 fireScriptEvent("badapple:play", "no_such_video");
@@ -45,7 +48,7 @@ if (process.argv.includes("bench")) {
 
 // 盤面の各マスに置かれたブロック (main.js の cellToWorld と同じ配置規則で読む)
 const anchor = getAnchor("badapple:anchor");
-const volume = video.layout === "volume";
+const volume = video.layout === "volume" || video.layout === "heightfield";
 const cells = video.width * video.height * (volume ? video.depth : 1);
 const finalBoard = [];
 for (let p = 0; p < cells; p++) {
@@ -57,4 +60,4 @@ for (let p = 0; p < cells; p++) {
 }
 
 const costModel = getAnchor("badapple:cost_model") ?? null;
-process.stdout.write(JSON.stringify({ ticks, finished: finished(), frameCount: video.frame_count, fps: video.fps, anchor, stats, commands, benchMessages, messages, forms, sounds, finalBoard, costModel }));
+process.stdout.write(JSON.stringify({ ticks, playMs, finished: finished(), frameCount: video.frame_count, fps: video.fps, anchor, stats, commands, benchMessages, messages, forms, sounds, finalBoard, costModel }));

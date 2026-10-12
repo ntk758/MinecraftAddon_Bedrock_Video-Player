@@ -32,6 +32,7 @@ TEMPORAL_HYSTERESIS = 24.0
 from mvcodec.encode import MAX_PALETTE_COLORS
 from mvcodec.motion import MV_BLOCK, MV_RANGE
 from mvcodec.stream import StreamEncoder
+from mvcodec.planes import LAYOUT as PLANES_LAYOUT, planes_supported, solid_rule_for, volume_change_ratio, volume_to_planes
 from mvcodec.volume import (
     AIR_LEVEL,
     RELIEF_HYSTERESIS,
@@ -460,6 +461,10 @@ def parse_args(argv=None):
     parser.add_argument("--hollow", action=argparse.BooleanOptionalAction, default=False,
                         help="外から見えない内部のブロックを置かない。既定の描画 (fillBlocks で箱ごとに置く) では"
                              "詰まっている方が呼び出しもデータも少ないので無効。block 方式で 1 個ずつ置くなら有効にすると置く数が減る")
+    parser.add_argument("--volume-encoding", default="auto", choices=["auto", "planes", "voxels"],
+                        help="relief / extrude / inflate の送り方。planes: 色の平面と高さ (厚み) の平面の 2 枚の 2D 映像で送り、"
+                             "アドオンで立体に組み立てる (データが小さい) / voxels: 立体のボクセルをそのまま送る / "
+                             "auto: 送れるなら planes (--hollow のときは voxels)")
     parser.add_argument("--depth-hysteresis", type=float, default=RELIEF_HYSTERESIS,
                         help="relief の奥行きのヒステリシス (段数)。明るさが少し揺れただけでは奥行きを変えない (0 で無効)")
     parser.add_argument("--output", default=OUTPUT_FILE, help="出力パス")
@@ -521,6 +526,9 @@ def parse_args(argv=None):
         parser.error("--temporal-hysteresis は 0 以上にしてください")
     if args.depth_hysteresis < 0:
         parser.error("--depth-hysteresis は 0 以上にしてください")
+    if args.volume_encoding == "planes" and not planes_supported(args.mode, args.depth, args.hollow):
+        parser.error("--volume-encoding planes は relief / extrude / inflate で、--hollow なし、"
+                     "--depth 127 以下 (relief は 128 以下) のときだけ使えます")
     return args
 
 
@@ -599,7 +607,8 @@ class Progress:
                   fps=f"{fps:.1f}", eta=f"{minutes}:{seconds:02d}"))
 
 
-def build_frame_data(args, width, height, gop_boundaries, palettes, adaptive, encoder, chunks, index, depth=None):
+def build_frame_data(args, width, height, gop_boundaries, palettes, adaptive, encoder, chunks, index, depth=None,
+                     solid_rule=None):
     level_blocks = [level_block_specs(pal) for pal in palettes] if adaptive else level_block_specs(palettes[0])
     data = {
         "width": width,
@@ -618,7 +627,10 @@ def build_frame_data(args, width, height, gop_boundaries, palettes, adaptive, en
         "index": index,
         "chunks": chunks,
     }
-    if depth is not None:
+    if depth is not None and solid_rule is not None:
+        # 2.5D: 符号化したのは (2 × 高さ) 行 × 幅 列の平面 (上が色、下が値)。アドオンが立体に組み立てる
+        data.update({"layout": PLANES_LAYOUT, "depth": depth, "air_level": AIR_LEVEL, "solid_rule": solid_rule})
+    elif depth is not None:
         # 立体: 盤面は (奥行き × 高さ) 行 × 幅 列。空気は air_level 番で表す
         data.update({"layout": "volume", "depth": depth, "air_level": AIR_LEVEL})
     else:
@@ -662,7 +674,7 @@ class EncoderSet:
         return min(self.encoders, key=lambda encoder: encoder.payload_size())
 
 
-def make_encoder(args, width, rows, gop_boundaries, empty_value, depth=1):
+def make_encoder(args, width, rows, gop_boundaries, empty_value, depth=1, change_ratio_fn=None):
     tile_sizes = [4, 8] if args.tile_size == "auto" else [int(args.tile_size)]
     motion_cache = {} if len(tile_sizes) > 1 else None
     return EncoderSet([
@@ -670,7 +682,7 @@ def make_encoder(args, width, rows, gop_boundaries, empty_value, depth=1):
             width=width, rows=rows, gop_boundaries=gop_boundaries, keyframe_interval=args.keyframe_interval,
             adaptive_fps=args.adaptive_fps, scene_threshold=args.scene_threshold, motion=args.motion,
             mv_range=args.mv_range, empty_value=empty_value, tile_size=tile_size, motion_cache=motion_cache,
-            depth=depth,
+            depth=depth, change_ratio_fn=change_ratio_fn,
         )
         for tile_size in tile_sizes
     ])
@@ -777,12 +789,20 @@ def main(argv=None):
     if args.depth_video:
         depth_frames = ffmpeg_frame_generator(args.depth_video, width, height, args.fps, args.duration, args.ffmpeg)
 
-    rows = args.depth * height if volume else height
+    use_planes = volume and args.volume_encoding != "voxels" and planes_supported(args.mode, args.depth, args.hollow)
+    solid_rule = solid_rule_for(args.mode) if use_planes else None
     lifter = VolumeLifter(args.mode, args.depth, threshold=args.extrude_threshold, invert=args.extrude_invert,
                           thickness=args.thickness, make_hollow=args.hollow,
                           hysteresis=args.depth_hysteresis) if volume else None
-    encoder = make_encoder(args, width, rows, gop_boundaries, AIR_LEVEL if volume else -1,
-                           args.depth if volume else 1)
+    if use_planes:
+        # 2.5D: 色の平面と値の平面を縦に重ねた 2D 映像として、平面スクリーンと同じ符号化をする
+        encoder = make_encoder(args, width, 2 * height, gop_boundaries, -1,
+                               change_ratio_fn=volume_change_ratio(width, height, args.depth, solid_rule))
+    elif volume:
+        encoder = make_encoder(args, width, args.depth * height, gop_boundaries, AIR_LEVEL, args.depth)
+    else:
+        encoder = make_encoder(args, width, height, gop_boundaries, -1)
+    previous_planes = None
     ssim_pairs = []
     gif_frames = []
 
@@ -806,6 +826,8 @@ def main(argv=None):
                     )
                 heights = luminance01(depth_frame)
             encoded_frame = lifter(screen, gop_palettes_rgb[gop_id], heights)
+            if use_planes:
+                encoded_frame = previous_planes = volume_to_planes(encoded_frame, solid_rule, previous_planes)
         else:
             encoded_frame = screen
         encoder.add(i, gop_id, encoded_frame)
@@ -822,7 +844,7 @@ def main(argv=None):
             f"1パス目と2パス目でフレーム数が一致しません ({total_frames} != {encoder.stats.total_frames})"
         )
     frame_data = build_frame_data(args, width, height, gop_boundaries, gop_palettes, is_adaptive_palette,
-                                  encoder, chunks, index, args.depth if volume else None)
+                                  encoder, chunks, index, args.depth if volume else None, solid_rule)
     out_path = write_frame_data(args, frame_data)
 
     # --- 評価 ---

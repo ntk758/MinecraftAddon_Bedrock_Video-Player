@@ -19,7 +19,7 @@ const snaps = [];
 function snap(label, videoId) {
   const video = VIDEOS[videoId];
   const anchor = getAnchor("badapple:anchor");
-  const volume = video.layout === "volume";
+  const volume = video.layout === "volume" || video.layout === "heightfield";
   const cells = video.width * video.height * (volume ? video.depth : 1);
   const cellsOut = [];
   for (let p = 0; p < cells; p++) {

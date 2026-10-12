@@ -209,6 +209,7 @@ def play(tree, js_path, work, *node_args):
     return {
         "calls_per_frame": (stats["setBlockCalls"] + stats["fillCalls"]) / frames,
         "blocks_per_frame": stats["blocksPlaced"] / frames,
+        "script_ms_per_frame": out.get("playMs", 0) / frames,
     }
 
 
@@ -225,10 +226,12 @@ SCREEN_CONFIGS = [
 ]
 
 VOLUME_CONFIGS = [
+    # --volume-baseline を指定したときだけ使う (3D 動き補償の前の版)
     ("before (2D MV, hollow, slices)", "volume_baseline", ["--hollow"], ["render=rect"]),
-    ("now (3D MV, solid, 3D boxes)", "worktree", [], ["render=rect", "render=list"]),
-    ("now --no-motion", "worktree", ["--no-motion"], []),
-    ("now --hollow", "worktree", ["--hollow"], ["render=rect"]),
+    ("voxels (3D MV, solid, 3D boxes)", "worktree", ["--volume-encoding", "voxels"], ["render=rect", "render=list"]),
+    ("voxels --hollow", "worktree", ["--hollow"], ["render=rect"]),
+    ("planes (2.5D)", "worktree", ["--volume-encoding", "planes"], ["render=rect", "render=list"]),
+    ("planes --no-motion", "worktree", ["--volume-encoding", "planes", "--no-motion"], []),
 ]
 
 
@@ -274,8 +277,8 @@ def run_volume_suite(args, trees, out_dir):
         if not frames_dir.exists():
             save_frames(make_clip(clip, w, h, args.frames), frames_dir)
         for name, tree_key, extra, renders in VOLUME_CONFIGS:
-            if mode == "inflate" and tree_key == "volume_baseline":
-                continue  # inflate は前の版に無い
+            if tree_key not in trees or (mode == "inflate" and tree_key == "volume_baseline"):
+                continue  # 前の版を指定していない / inflate は前の版に無い
             tree = trees[tree_key]
             js = out_dir / "js" / f"vol_{clip}_{mode}_{slug(name)}.js"
             js.parent.mkdir(parents=True, exist_ok=True)
@@ -288,6 +291,7 @@ def run_volume_suite(args, trees, out_dir):
                 elif stats:
                     row[f"calls_{render}"] = round(stats["calls_per_frame"], 1)
                     row[f"blocks_{render}"] = round(stats["blocks_per_frame"], 1)
+                    row[f"script_ms_{render}"] = round(stats["script_ms_per_frame"], 2)
             rows.append(row)
             print(json.dumps(row, ensure_ascii=False), flush=True)
     return rows
@@ -308,7 +312,8 @@ def main(argv=None):
     parser.add_argument("--out", default="bench_out")
     parser.add_argument("--suite", choices=["screen", "volume"], default="screen")
     parser.add_argument("--baseline", default="main", help="平面スクリーンで比べる git の版")
-    parser.add_argument("--volume-baseline", default="96e1f14", help="立体で比べる git の版 (3D 動き補償の前)")
+    parser.add_argument("--volume-baseline", default=None,
+                        help="立体で一緒に比べる git の版 (例: 96e1f14 = 3D 動き補償の前)。省略時は作業中の版の送り方どうしを比べる")
     parser.add_argument("--clips", nargs="+", default=["pan", "anime", "silhouette", "testsrc2", "mandelbrot"])
     parser.add_argument("--sizes", nargs="+", default=["128x72"])
     parser.add_argument("--dithers", nargs="+", default=["none", "blue_noise"])
@@ -324,7 +329,8 @@ def main(argv=None):
         trees["baseline"] = export_tree(args.baseline, out_dir / "trees" / args.baseline)
         rows = run_screen_suite(args, trees, out_dir)
     else:
-        trees["volume_baseline"] = export_tree(args.volume_baseline, out_dir / "trees" / args.volume_baseline)
+        if args.volume_baseline:
+            trees["volume_baseline"] = export_tree(args.volume_baseline, out_dir / "trees" / args.volume_baseline)
         rows = run_volume_suite(args, trees, out_dir)
     (out_dir / f"results_{args.suite}.json").write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
     write_markdown(rows, out_dir / f"results_{args.suite}.md")
