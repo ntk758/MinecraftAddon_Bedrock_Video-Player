@@ -54,8 +54,8 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 ### 可変パレットの精度向上 (Per-Video Custom K-Means Block Mapping)
 - **概要**: 現在の自動パレット (`--palette auto`) は RGB 空間の簡易 K-Means で 39 色の候補から選んでいる。OkLab 空間でのクラスタリングや、ブロック候補 DB の拡充 (重力で落ちないブロックに限る) で色差 $\Delta E$ をさらに下げる。
 
-### MS-SSIM 指標の実装
-- **概要**: `benchmark/metrics/ms_ssim.py` は未実装 (常に NaN)。マルチスケール SSIM を実装してベンチマークに加える。
+### ✅ MS-SSIM 指標の実装 (実装済み)
+- **概要**: `benchmark/metrics/ms_ssim.py` に明るさの MS-SSIM (Wang 2003、5 段・小さい画像は段数を減らす) を実装。1 段では scikit-image の SSIM と一致することをテストで確認。
 
 ---
 
