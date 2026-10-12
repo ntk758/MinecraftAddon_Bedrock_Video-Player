@@ -71,3 +71,25 @@ def test_global_shift_follows_a_pan_and_ignores_still_frames():
     aligner.update(prev)
     assert aligner.update(cur) == (3, 1)
     assert DitherAligner(enabled=False).update(cur) == (0, 0)
+
+
+def test_auto_palette_color_space_and_size_limit():
+    """自動パレットは色数の上限を守り、OkLab でも同じ入力から同じパレットを返す (Issue #3)。"""
+    import numpy as np
+    import pytest
+
+    pytest.importorskip("torch")
+    from mvcodec.auto_palette import generate_auto_palette
+    from mvcodec.color import ALL_BLOCKS
+
+    rng = np.random.default_rng(0)
+    frames = [rng.integers(0, 256, size=(24, 32, 3), dtype=np.uint8) for _ in range(3)]
+    for space in ("rgb", "oklab"):
+        first = generate_auto_palette(iter(frames), ALL_BLOCKS, max_colors=12, sample_stride=1, color_space=space)
+        again = generate_auto_palette(iter(frames), ALL_BLOCKS, max_colors=12, sample_stride=1, color_space=space)
+        assert len(first) == 12 and first == again
+    # 赤一色の映像なら、どちらの色空間でも赤いブロックが選ばれる
+    red = [np.full((8, 8, 3), (200, 30, 30), np.uint8)]
+    for space in ("rgb", "oklab"):
+        picked = generate_auto_palette(iter(red), ALL_BLOCKS, max_colors=2, sample_stride=1, color_space=space)
+        assert "red" in picked[0]["block"]

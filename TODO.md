@@ -52,7 +52,8 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 - **概要**: 権利上公開できる実映像のデータセットで、データ量・呼び出し回数・ゲーム内の tick 時間 (MSPT)・ちらつき (時間方向の変化率) を CI で継続計測する。合成映像は辞書の再利用を多く (または少なく) 見積もるおそれがある。
 
 ### 可変パレットの精度向上 (Per-Video Custom K-Means Block Mapping)
-- **概要**: 現在の自動パレット (`--palette auto`) は RGB 空間の簡易 K-Means で 39 色の候補から選んでいる。OkLab 空間でのクラスタリングや、ブロック候補 DB の拡充 (重力で落ちないブロックに限る) で色差 $\Delta E$ をさらに下げる。
+- **検証済み (Issue #3)**: OkLab でのクラスタリングを `--palette-space oklab` として実装し比較した ([docs/research/palette_space.md](docs/research/palette_space.md))。候補が 39 色しか無いため既定 (上限 64 色) では全ブロックが選ばれて差が出ず、16 色に絞ると映像によって良し悪しが分かれたので、既定は RGB のまま。
+- **次の課題**: ブロック候補 DB の拡充 (重力で落ちない色付きブロック) で、色を選ぶ余地を作る。色数の上限 (`--palette-colors`) の映像に合わせた自動決定。
 
 ### ✅ MS-SSIM 指標の実装 (実装済み)
 - **概要**: `benchmark/metrics/ms_ssim.py` に明るさの MS-SSIM (Wang 2003、5 段・小さい画像は段数を減らす) を実装。1 段では scikit-image の SSIM と一致することをテストで確認。
