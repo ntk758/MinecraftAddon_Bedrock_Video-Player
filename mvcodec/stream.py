@@ -49,6 +49,9 @@ class StreamEncoder:
     motion_cache: dict = None
     # 立体の奥行き (1 なら平面)。2 以上なら rows = depth * 高さ で、動き補償を 3D で行う
     depth: int = 1
+    # フレームを省略するかの判定に使う変化率 (前の盤面, 新しい盤面) -> 0〜1。None なら _change_ratio の既定。
+    # 2.5D の平面は、組み立てた立体で測った方が立体 (voxels) と同じ判定になる (mvcodec/planes.py の volume_change_ratio)
+    change_ratio_fn: object = None
     stats: StreamStats = field(default_factory=StreamStats)
 
     def __post_init__(self):
@@ -97,6 +100,8 @@ class StreamEncoder:
     def _change_ratio(self, flat):
         """前フレームから変わった割合。立体 (空気が基準) では、空気以外のマスに対する割合にする
         (ほとんどが空気の立体では全体に対する割合が小さく出て、動いているのに省略されてしまうため)。"""
+        if self.change_ratio_fn is not None:
+            return self.change_ratio_fn(self._prev, flat)
         changed = int(np.count_nonzero(flat != self._prev))
         if self.empty_value >= 0:
             solid = int(np.count_nonzero((flat != self.empty_value) | (self._prev != self.empty_value)))

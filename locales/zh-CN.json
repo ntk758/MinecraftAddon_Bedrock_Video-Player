@@ -172,5 +172,6 @@
   "addon.bench_unreliable": "§e测量时间太短（每种方式不足 %1 ms），未保存成本。请在更大的屏幕上运行",
   "addon.bench_done": "§a基准测试完成。当前绘制方式: %1",
   "addon.render_mode_usage": "§e用法: /scriptevent %1render auto|rect|list|block (当前: %2)",
-  "addon.render_mode_set": "§a绘制方式已设为 %1"
+  "addon.render_mode_set": "§a绘制方式已设为 %1",
+  "convert.volume_voxels": "[MVCodec] 此立体无法用 2.5D 平面表示（--hollow，或深度 128 的 extrude / inflate），将按体素发送（数据更大）"
 }

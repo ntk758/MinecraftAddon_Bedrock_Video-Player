@@ -10,6 +10,7 @@ import numpy as np
 from mvcodec.color import BLOCK_RGB
 from mvcodec.encode import UTF16_BITS_PER_CHAR, UTF16_CHAR_OFFSET
 from mvcodec.motion import apply_motion, apply_motion_3d, unpack_vector, unpack_vector_3d
+from mvcodec.planes import LAYOUT as HEIGHTFIELD, planes_to_volume
 from mvcodec.tiles import TileDictionary
 
 FORMAT_V4 = "varint_rle_v4"
@@ -78,16 +79,30 @@ def gop_palettes(data):
     return [table] * max(1, num_gops)
 
 
+def is_heightfield(data):
+    """2.5D の立体 (色の平面 + 値の平面で送る。mvcodec/planes.py) か。"""
+    return data.get("layout") == HEIGHTFIELD
+
+
 def empty_value(data):
-    """キーフレームの描き始めの状態: 立体は空気、平面スクリーンは未設置 (-1)。"""
+    """キーフレームの描き始めの状態: 立体は空気、平面スクリーンと 2.5D の平面は未設置 (-1)。"""
     return data["air_level"] if data.get("layout") == "volume" else -1
 
 
 def board_shape(data):
-    """盤面の形: 平面は (高さ, 幅)、立体は (奥行き, 高さ, 幅)。"""
-    if data.get("layout") == "volume":
+    """表示する盤面の形: 平面は (高さ, 幅)、立体 (2.5D を含む) は (奥行き, 高さ, 幅)。"""
+    if data.get("layout") in ("volume", HEIGHTFIELD):
         return data["depth"], data["height"], data["width"]
     return data["height"], data["width"]
+
+
+def stream_rows(data):
+    """符号化された 2D 画像の行数: 立体は (奥行き × 高さ)、2.5D は (2 × 高さ)、平面は高さ。"""
+    if data.get("layout") == "volume":
+        return data["depth"] * data["height"]
+    if is_heightfield(data):
+        return 2 * data["height"]
+    return data["height"]
 
 
 def new_tile_dictionary(data):
@@ -95,8 +110,7 @@ def new_tile_dictionary(data):
     tile = data.get("tile_size", 0)
     if not tile or data.get("format") != FORMAT_V5:
         return None
-    rows = board_shape(data)[0] * (data["height"] if data.get("layout") == "volume" else 1)
-    return TileDictionary(data["width"], rows, tile, data.get("tile_dict_max", 32768), index_contents=False)
+    return TileDictionary(data["width"], stream_rows(data), tile, data.get("tile_dict_max", 32768), index_contents=False)
 
 
 def decode_frame(buf, offset, length, board, data, frame_no=None, tiles=None):
@@ -108,7 +122,7 @@ def decode_frame(buf, offset, length, board, data, frame_no=None, tiles=None):
     """
     width = data["width"]
     volume = data.get("layout") == "volume"
-    height = data["height"] * data["depth"] if volume else data["height"]
+    height = stream_rows(data)
     is_v5 = data.get("format") == FORMAT_V5
     pos, end = offset, offset + length
     header, pos = read_varint(buf, pos)
@@ -169,22 +183,31 @@ def iter_decoded_frames(data):
     pixels = int(np.prod(shape))
     entries = parse_index(data)
     palettes = gop_palettes(data)
-    if data.get("layout") == "volume":
+    if data.get("layout") in ("volume", HEIGHTFIELD):
         # 空気の番号まで引けるよう、パレット表を 128 色に広げる (空気は黒)
         palettes = [np.vstack([table, np.zeros((128 - len(table), 3), np.uint8)]) for table in palettes]
     gop_bytes = {}
     tiles = new_tile_dictionary(data)
+    heightfield = is_heightfield(data)
 
     index_board = np.full(pixels, -1, dtype=np.int32)
     rgb_board = np.zeros((pixels, 3), dtype=np.uint8)
+    # 2.5D は復元するのが平面 (2H 行) で、表示する盤面はそれを組み立てた立体
+    stream = np.full(stream_rows(data) * data["width"], -1, dtype=np.int32) if heightfield else index_board
 
     for frame_no, (gop_id, offset, length, _is_kf) in enumerate(entries):
         if length > 0:
             if gop_id not in gop_bytes:
                 gop_bytes[gop_id] = utf16_str_to_bytes(data["chunks"][gop_id])
-            new_board, is_keyframe = decode_frame(gop_bytes[gop_id], offset, length, index_board, data, frame_no, tiles)
+            new_stream, is_keyframe = decode_frame(gop_bytes[gop_id], offset, length, stream, data, frame_no, tiles)
             if tiles is not None:
-                tiles.update(index_board, new_board, is_keyframe)
+                tiles.update(stream, new_stream, is_keyframe)
+            stream = new_stream
+            if heightfield:
+                planes = new_stream.reshape(2 * data["height"], data["width"])
+                new_board = planes_to_volume(planes, data["depth"], data["solid_rule"]).reshape(-1).astype(np.int32)
+            else:
+                new_board = new_stream
             changed = np.ones(len(new_board), dtype=bool) if is_keyframe else new_board != index_board
             changed &= new_board >= 0
             rgb_board[changed] = palettes[gop_id][new_board[changed]]

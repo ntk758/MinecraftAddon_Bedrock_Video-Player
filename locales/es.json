@@ -172,5 +172,6 @@
   "addon.bench_unreliable": "§eLos tiempos medidos fueron demasiado cortos (menos de %1 ms por método), así que no se guardaron los costes. Ejecútalo en una pantalla más grande",
   "addon.bench_done": "§aBenchmark terminado. Modo de dibujo actual: %1",
   "addon.render_mode_usage": "§eUso: /scriptevent %1render auto|rect|list|block (actual: %2)",
-  "addon.render_mode_set": "§aModo de dibujo cambiado a %1"
+  "addon.render_mode_set": "§aModo de dibujo cambiado a %1",
+  "convert.volume_voxels": "[MVCodec] Este volumen no se puede enviar como planos 2,5D (--hollow, o extrude / inflate con profundidad 128), así que se envía como vóxeles (más datos)"
 }

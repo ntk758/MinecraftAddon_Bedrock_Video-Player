@@ -206,7 +206,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - 📚 **Multiple videos per add-on**
 - 👑 **39-color palette of real blocks** (concrete, terracotta, light sources) plus a per-video automatic palette
 - 🗜 **Predictive compression (Phase 7.x)**: on top of sending only changed blocks, each frame picks the smallest of **motion compensation** (8×8 blocks on screens, 8×8×8 bricks in 3D), a **tile dictionary** (patterns seen before are reused by number) and gap-coded run positions — **47–88% less data** than v5.4.0 without dithering (roughly 43–67% with Blue Noise; [benchmarks](#-ベンチマーク-phase-7x)); per-scene keyframes for fast seeking
-- 🧊 **3D hologram playback**: turn a video into a volume (brightness-as-depth **relief**, **extruded** or rounded **inflated** silhouettes) or play MagicaVoxel (`.vox`) animations directly
+- 🧊 **3D hologram playback**: turn a video into a volume (brightness-as-depth **relief**, **extruded** or rounded **inflated** silhouettes) or play MagicaVoxel (`.vox`) animations directly. Relief / extrude / inflate are sent as two 2D planes (colour + height/thickness) and rebuilt in-game, cutting 3D data by 54–85%
 - 🧱 **Batched placement**: same-colour changes are placed as boxes (`fillBlocks`) or per-colour position lists, cutting API calls from hundreds–thousands per frame to **a few–a few hundred**; keyframes only re-place blocks that changed. `/scriptevent <prefix>:bench` measures the placement methods on your device
 - ⚡ **GPU conversion** on NVIDIA (CUDA), AMD (ROCm / DirectML) and Intel (DirectML); CPU works too
 - 🌐 **10 languages**: Japanese, English, Simplified/Traditional Chinese, Korean, Spanish, Portuguese (Brazil), French, German, Russian — in the GUI (selector at the top right) and in game (chat messages and the remote follow each player's Minecraft language)
@@ -308,7 +308,8 @@ python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 
 | `--depth-hysteresis` | `relief` で奥行きを変えない揺れの幅 (段数、既定 1、0 で無効) |
 | `--extrude-threshold` / `--extrude-invert` | `extrude` / `inflate` で立体にする明るさのしきい値 / 暗い部分を立体にする |
 | `--thickness` | `extrude` の厚み (既定は奥行き全体) |
-| `--hollow` | 外から見えない内部を置かない (既定は無効。`block` 描画方式で置く数を減らしたいとき用) |
+| `--hollow` | 外から見えない内部を置かない (既定は無効。`block` 描画方式で置く数を減らしたいとき用。有効にすると 2.5D の送り方は使えない) |
+| `--volume-encoding` | `relief` / `extrude` / `inflate` の送り方。`planes` は色の平面と高さ (厚み) の平面の 2 枚で送りアドオンで立体に組み立てる (データが小さい)、`voxels` は立体をそのまま送る。既定の `auto` は送れるなら `planes` |
 | `--temporal-hysteresis` | 条件付き更新のしきい値 (RGB の距離、既定 24、0 で無効)。前のフレームのブロックの色が、新しく選んだ色よりこの値以内しか悪くならなければ変えない (CPU で減色するとき。GPU の減色には同様の仕組みが入っている) |
 | `--dither-follow-motion` | ディザ模様を映像の全体の動き (パン) に合わせてずらす (既定は無効。パンのデータは大きく減るが、置き直すブロックは増える) |
 | `--ffmpeg` | ffmpeg のパス |
@@ -351,6 +352,17 @@ python benchmark/codec_bench.py --out bench_out --suite volume   # 立体
 | シルエット / `inflate` (新規) | 156 KB (動き補償なしなら 250 KB) | 743 | 2.3 |
 | mandelbrot / `relief` | 195 → 167 KB (−15%) | 801 → 397 (−50%) | 21 |
 | testsrc2 / `relief` | 25 → 26 KB | 47 → 22 (−54%) | 3.5 |
+
+**2.5D パラメトリック立体 (Phase 8.3)** — 同じ映像を立体のボクセルのまま送った場合 (`--volume-encoding voxels`) との比較。省略するフレーム・置くブロック・呼び出しはまったく同じで、データだけが減ります (deflate 圧縮後):
+
+| 映像 / モード | ボクセル | 2.5D | 削減 |
+|---|---|---|---|
+| シルエット / `extrude` | 54.8 KB | 8.5 KB | **−85%** |
+| シルエット / `inflate` | 77.0 KB | 17.9 KB | **−77%** |
+| mandelbrot / `relief` | 92.5 KB | 42.5 KB | −54% |
+| testsrc2 / `relief` | 10.7 KB | 4.7 KB | −56% |
+
+- アドオン側で立体に組み立てる処理は、変わった列 (relief は隣の段が変わった列も) だけなので、モックでの 1 フレームの処理時間は同じか少し短くなりました (rect で 0.8〜1.9 ms → 0.8〜1.5 ms)。
 
 - 3D 動き補償: 12×12×12 の模様付きの箱が 1 マスずつ動く .vox では、差分フレーム 1 枚あたり **奥へ 108 → 23 B (−79%)**、**横 / 上下 180 → 23 B (−87%)** (2D の動き補償は奥行き方向の動きを予測できない)。
 - `relief` の奥行きのヒステリシス (既定 1 段) は mandelbrot で データ −11%・呼び出し −19%、Blue Noise のパンで データ −34%。ディザなしのパンだけはデータが増えますが (23 → 41 KB)、置くブロックは −27%・呼び出しは −45% です。
@@ -397,7 +409,7 @@ A. パック名とコマンド接頭辞が同じなら同じパック (同じ UU
 - [ ] **Phase 8: ワールド内レンダリングと知覚的な安定化 (In-World Rendering & Perceptual Stability)**
   - [x] **8.1 描画方式の自動選択**: `bench` で「1 回の呼び出しの費用」と「1 ブロックの費用」を分けて求めてワールドに保存し、描画方式 `auto` (既定) がフレームごとに「呼び出し回数 × 1 回の費用 + ブロック数 × 1 ブロックの費用」が最小の方式 (箱 / 座標リスト / 1 個ずつ) を選ぶ。初期値は実機 (Windows) の測定値: `fillBlocks` 1 回 15 µs + 1 ブロック 0.55 µs、1 個ずつ 2.3 µs、座標リスト 1 ブロック約 1.4 µs
   - [x] **8.2 ディザの時間的安定化**: 前のフレームのブロックの色が新しく選んだ色とほとんど変わらなければ変えない **条件付き更新** (`--temporal-hysteresis`、既定 24)。Blue Noise では v6.2.0 よりデータ −7〜48%・置くブロック −7〜51% (パン 949 → 470 / フレーム)、画質の低下はわずか。ディザ模様を全体の動きに合わせてずらす方式 (`--dither-follow-motion`) も実装したが、データは減っても置くブロックが 4.5 倍になるので既定では無効
-  - [ ] **8.3 2.5D パラメトリック立体**: `relief` / `extrude` / `inflate` を「色の平面 + 高さ (厚み) の平面」の 2 枚の 2D 映像として送り、アドオン側で列ごとに立体を組み立てる。2D の動き補償・タイル辞書がそのまま効き、調査ではレリーフで約 −69%
+  - [x] **8.3 2.5D パラメトリック立体**: `relief` / `extrude` / `inflate` を「色の平面 + 高さ (厚み) の平面」の 2 枚の 2D 映像として送り、アドオン側で変わった列だけを立体に組み立て直す (`--volume-encoding`、既定で有効)。2D の動き補償・タイル辞書がそのまま効き、置くブロック・呼び出しは同じままデータが **−54〜85%** (deflate 圧縮後)
   - [ ] **8.4 エントロピー符号化**: モード・位置・色を別々のストリームにして、GOP ごとの静的ハフマン (Smacker 型) か LZ (LZ4 型) をかける。xz では v5 のデータからさらに 22〜39% 縮むことを確認済み
   - [ ] **8.5 ブロックモードのレート歪み最適化**: 8×8 ごとに SKIP / 動き / 単色 / 2 色マスク / 辞書 / ラン を、データ量 + 呼び出しの費用 + 色差 で選ぶ (Smacker・RoQ 型)。タイルの 8 通りの回転・反転も参照できるようにする (調査では −3〜9%)
   - [ ] **8.6 構造物とクローンによる描画**: よく使うタイルを `StructureManager` の構造物にして 1 回で置く、Script API 2.x の `cloneBlocks` (2.10.0 以降) で動きベクトルのブロックを 1 回でコピーする (API の移行と機能の有無の確認が必要)

@@ -172,5 +172,6 @@
   "addon.bench_unreliable": "§eDie gemessenen Zeiten waren zu kurz (unter %1 ms pro Methode), daher wurden die Kosten nicht gespeichert. Führe es auf einem größeren Bildschirm aus",
   "addon.bench_done": "§aBenchmark abgeschlossen. Aktueller Zeichenmodus: %1",
   "addon.render_mode_usage": "§eVerwendung: /scriptevent %1render auto|rect|list|block (aktuell: %2)",
-  "addon.render_mode_set": "§aZeichenmodus auf %1 gesetzt"
+  "addon.render_mode_set": "§aZeichenmodus auf %1 gesetzt",
+  "convert.volume_voxels": "[MVCodec] Dieses 3D-Objekt kann nicht als 2,5D-Ebenen gesendet werden (--hollow oder extrude / inflate mit Tiefe 128) und wird als Voxel gesendet (mehr Daten)"
 }

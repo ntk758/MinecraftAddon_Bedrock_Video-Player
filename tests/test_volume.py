@@ -117,18 +117,21 @@ def convert_volume(frames_dir, out, mode, *extra):
     return load_frame_data(out)
 
 
-@pytest.fixture(scope="module", params=["extrude", "relief", "inflate"])
+# (モード, 送り方)。planes は 2.5D (色 + 値の平面)、voxels は立体のボクセルそのまま
+@pytest.fixture(scope="module", params=[(m, e) for m in ("extrude", "relief", "inflate") for e in ("planes", "voxels")],
+                ids=lambda p: f"{p[0]}-{p[1]}")
 def video_volume(request, tmp_path_factory):
-    tmp = tmp_path_factory.mktemp(f"volume_{request.param}")
+    mode, encoding = request.param
+    tmp = tmp_path_factory.mktemp(f"volume_{mode}_{encoding}")
     frames = make_blob_frames(tmp / "frames")
     out = tmp / "frames_demo.js"
-    data = convert_volume(tmp / "frames", out, request.param)
-    return request.param, frames, out, data, tmp
+    data = convert_volume(tmp / "frames", out, mode, "--volume-encoding", encoding)
+    return mode, frames, out, data, tmp
 
 
 def test_video_volume_roundtrip(video_volume):
     mode, frames, _out, data, _tmp = video_volume
-    assert data["layout"] == "volume" and data["depth"] == DEPTH and data["air_level"] == AIR_LEVEL
+    assert data["layout"] in ("volume", "heightfield") and data["depth"] == DEPTH and data["air_level"] == AIR_LEVEL
     decoded = list(iter_decoded_frames(data))
     assert len(decoded) == len(frames)
     lifter = VolumeLifter(mode, DEPTH)  # convert.py と同じ既定値 (relief は奥行きのヒステリシスあり)

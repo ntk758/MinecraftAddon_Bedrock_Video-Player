@@ -172,5 +172,6 @@
   "addon.bench_unreliable": "§eИзмеренное время слишком мало (меньше %1 мс на метод), поэтому затраты не сохранены. Запустите на экране побольше",
   "addon.bench_done": "§aБенчмарк завершён. Текущий способ отрисовки: %1",
   "addon.render_mode_usage": "§eИспользование: /scriptevent %1render auto|rect|list|block (сейчас: %2)",
-  "addon.render_mode_set": "§aСпособ отрисовки: %1"
+  "addon.render_mode_set": "§aСпособ отрисовки: %1",
+  "convert.volume_voxels": "[MVCodec] Этот объём нельзя передать плоскостями 2,5D (--hollow или extrude / inflate с глубиной 128), поэтому он передаётся вокселями (данных больше)"
 }

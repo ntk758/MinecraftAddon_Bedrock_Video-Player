@@ -14,11 +14,14 @@ import {
   decodeUTF16BinaryToBytes,
   isVolume,
   decodeUTF16BinaryToBytesJob,
+  expandPlanes,
   findKeyframeAtOrBefore,
+  isHeightfield,
   parseFrameIndexV3,
   parseFrameIndexV4,
   readVarint,
   skipFrameHeader,
+  streamSizeOf,
   unpackRun,
 } from "./codec.js";
 
@@ -221,12 +224,16 @@ class VideoPlayer {
 
     // board: ワールドに実際に置いてあるパレット番号 (-1 は不明 = 次のフレームで必ず置き直す)
     // decoded: 直前に復元したフレーム (動き補償・タイル辞書の参照元。エンコーダと常に同じ内容)
-    // nextBoard: 復元した次のフレーム (作業用)
+    // nextBoard: 次に表示する盤面 (作業用)
+    // 2.5D の立体では decoded は色と値の平面で、nextBoard はそれを組み立てた立体 (expandPlanes)。
+    //   decodeScratch は平面の復元の作業用、expandedPlanes は nextBoard を組み立てたときの平面 (変わった列だけ作り直す)
     // decodedFrame: decoded が何番のフレームまで復元した状態か (-1 = まだ何も無い)。
     //   一時停止・シークの中断・ベンチマークなどで順番が飛んでも、applyFrameJob が直近のキーフレームから復元し直す
     this.board = null;
     this.decoded = null;
     this.nextBoard = null;
+    this.decodeScratch = null;
+    this.expandedPlanes = null;
     this.decodedFrame = -1;
     this.boardGopId = -1;
   }
@@ -239,9 +246,18 @@ class VideoPlayer {
     if ((format === FORMAT_V4 || format === FORMAT_V5) && this.videoData.chunks && this.videoData.index) {
       this.decodedIndex = parseFrameIndexV4(decodeUTF16BinaryToBytes(this.videoData.index));
       const pixels = boardSizeOf(this.videoData);
+      const streamPixels = streamSizeOf(this.videoData);
       this.board = new Int16Array(pixels).fill(-1);
-      this.decoded = new Int16Array(pixels).fill(-1);
+      this.decoded = new Int16Array(streamPixels).fill(-1);
       this.nextBoard = new Int16Array(pixels);
+      if (isHeightfield(this.videoData)) {
+        this.decodeScratch = new Int16Array(streamPixels);
+        // 平面の値には現れない値で埋めて、最初の組み立てで全部の列を作らせる
+        this.expandedPlanes = new Int16Array(streamPixels).fill(-32768);
+      } else {
+        this.decodeScratch = this.nextBoard;
+        this.expandedPlanes = null;
+      }
       this.tiles = createTileDictionary(this.videoData);
       this.decodedFrame = -1;
       this.decodedBinary = null;
@@ -693,7 +709,8 @@ class VideoPlayer {
 
       this.currentGopId = entry.gopId;
       this.activePalette = this.videoData.adaptive_palette ? this.paletteCache[this.currentGopId] : this.paletteCache;
-      this.nextBoard.set(this.decoded);
+      if (this.expandedPlanes) expandPlanes(this.decoded, this.expandedPlanes, this.nextBoard, this.videoData);
+      else this.nextBoard.set(this.decoded);
       // 自動パレットで GOP が変わると同じ番号でも別のブロックになるので、表示中の盤面を「不明」にする
       if (this.videoData.adaptive_palette && entry.gopId !== this.boardGopId) this.invalidateForPaletteChange();
       this.boardGopId = entry.gopId;
@@ -726,9 +743,9 @@ class VideoPlayer {
       const gopBytes = this.ensureGopDecoded(entry.gopId);
       if (!gopBytes) return false;
       decodeFrameInto(
-        gopBytes, entry.offset, entry.offset + entry.length, this.decoded, this.nextBoard, this.videoData, this.tiles
+        gopBytes, entry.offset, entry.offset + entry.length, this.decoded, this.decodeScratch, this.videoData, this.tiles
       );
-      this.decoded.set(this.nextBoard);
+      this.decoded.set(this.decodeScratch);
     }
     this.decodedFrame = frameIndex;
     return true;
