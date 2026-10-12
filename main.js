@@ -694,6 +694,7 @@ class VideoPlayer {
     let failures = 0;
     const self = this;
 
+    let placedSinceYield = 0;
     function* flush(level, group) {
       if (group.cells.length === 0) return;
       const permutation = level === airLevel ? self.airPermutation : palette ? palette[level] : null;
@@ -708,9 +709,16 @@ class VideoPlayer {
         }
       }
       for (const cell of group.cells) board[cell] = placedLevel;
+      // 色ごとではなく、置いたブロックが BLOCKS_PER_YIELD 個たまるごとに区切る。1 tick に区切れる回数には上限
+      // (MAX_YIELDS_PER_TICK) があるので、色ごとに区切ると色の多いフレーム (自動パレットで 40〜60 色) が
+      // 何 tick にもまたがり、映像が遅れて音声が途切れていた (実機の録画: 128×128・10 fps で実効約 3 fps)
+      placedSinceYield += group.cells.length;
       group.cells = [];
       group.locations = [];
-      yield;
+      if (placedSinceYield >= BLOCKS_PER_YIELD) {
+        placedSinceYield = 0;
+        yield;
+      }
     }
 
     // 立体では空気にするマスを最後に回す (rect 方式と同じく、描画の途中で穴が見えないように)
