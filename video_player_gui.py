@@ -95,12 +95,15 @@ def get_ffmpeg_path() -> str | None:
 
 
 _VIDEO_SIZE_PATTERN = re.compile(r"Stream #.*?Video:.*?[ ,](\d{2,5})x(\d{2,5})[ ,\[]")
+# スマートフォンの縦動画などは、保存された大きさと別に回転の情報を持つ (ffmpeg は変換時に回転して読む)
+_ROTATION_PATTERN = re.compile(r"rotation of (-?\d+(?:\.\d+)?) degrees|rotate\s*:\s*(-?\d+)")
 
 
 def probe_video_size(path: str | Path, ffmpeg: str | None = None) -> tuple[int, int] | None:
     """動画の幅と高さ (画素) を ffmpeg の情報表示から読む。読めなければ None。
 
     ffprobe は EXE 版に同梱していないので、ffmpeg -i の標準エラー出力の映像ストリームの行を使う。
+    90° / 270° の回転の情報があれば、変換時の向き (ffmpeg が自動で回転した後) の幅と高さを返す。
     """
     ffmpeg = ffmpeg or get_ffmpeg_path()
     if not ffmpeg:
@@ -114,7 +117,17 @@ def probe_video_size(path: str | Path, ffmpeg: str | None = None) -> tuple[int, 
     if not match:
         return None
     width, height = int(match.group(1)), int(match.group(2))
-    return (width, height) if width > 0 and height > 0 else None
+    if width <= 0 or height <= 0:
+        return None
+    # 回転の情報は映像ストリームの行の後 (次のストリームの前) にある
+    rest = result.stderr[match.end():]
+    next_stream = rest.find("Stream #")
+    rotation = _ROTATION_PATTERN.search(rest if next_stream < 0 else rest[:next_stream])
+    if rotation:
+        degrees = round(float(rotation.group(1) or rotation.group(2))) % 180
+        if degrees == 90:
+            width, height = height, width
+    return width, height
 
 
 def suggest_size(source_width: int, source_height: int, long_side: int, limit: int | None = None) -> tuple[int, int]:
@@ -788,7 +801,8 @@ class PackBuilderApp(tk.Tk):
             width = int(self.width_var.get())
             height = int(self.height_var.get())
             fps = int(round(float(self.fps_var.get())))
-            depth = int(self.depth_var.get())
+            # 奥行きは立体のときだけ使う (平面では欄が空でも作れる)
+            depth = int(self.depth_var.get()) if mode in VOLUME_MODES else DEFAULT_DEPTH
             duration = float(self.duration_var.get()) if self.duration_var.get().strip() else None
         except (tk.TclError, ValueError):
             messagebox.showerror(self.tr("error.settings_title"), self.tr("error.settings"))

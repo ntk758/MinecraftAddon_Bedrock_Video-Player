@@ -161,3 +161,20 @@ def test_stats_command_before_playback_explains_how_to_use(tmp_path):
     run_convert(frames, tmp_path / "scene.js")
     out = drive(tmp_path / "addon", {"demo": tmp_path / "scene.js"}, [{"event": "badapple:stats"}])
     assert "bvp.stats_none" in json.dumps(out)
+
+
+def test_stats_clock_stops_when_playback_ends(tmp_path):
+    """再生が終わった後で時間をおいて stats を見ても、再生時間・fps は変わらない。"""
+    from test_playback_control import drive
+
+    frames = tmp_path / "frames"
+    make_scene_frames(frames)
+    run_convert(frames, tmp_path / "scene.js")
+    out = drive(tmp_path / "addon", {"demo": tmp_path / "scene.js"},
+                [{"event": "badapple:setup"}, {"event": "badapple:start"}, {"until": "bvp.playback_finished"},
+                 {"event": "badapple:stats"}, {"sleepMs": 1500}, {"tick": 40}, {"event": "badapple:stats"}])
+    messages = [json.loads(m) if isinstance(m, str) else m for m in out["messages"]]
+    reports = [[arg["text"] for arg in part["with"]["rawtext"]]
+               for m in messages for part in m["rawtext"] if part.get("translate") == "bvp.stats_play"]
+    assert len(reports) == 2
+    assert reports[0] == reports[1]

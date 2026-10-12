@@ -190,7 +190,7 @@
   "error.volume_height": "立体最高为 {max_height} 个方块（建筑高度）。",
   "warn.heavy_title": "负载较重的设置",
   "warn.heavy": "按此设置，在整个画面变化的场景中，每 tick（50 毫秒）约有 {ms} 毫秒用于放置方块。游戏可能卡顿或视频落后。仍要创建吗？",
-  "addon.stats_play": "§b播放测量§f：%2 秒内显示 %1 帧 = 实际 %3 fps（目标 %4 fps），服务器 %5 TPS，与实际时间的偏差 %6 秒（正数表示画面落后于声音）",
+  "addon.stats_play": "§b播放测量§f：%2 秒内显示 %1 帧 = 实际 %3 fps（目标 %4 fps），服务器 %5 TPS，画面延迟 %6 秒（自开始累计；正数表示画面落后于实际时间。声音每 10 秒从画面位置重新播放）",
   "addon.stats_load": "§b负载§f：晚于计划开始绘制的帧 %1（最多 %2 tick），每帧脚本时间 平均 %3 ms / 最大 %4 ms",
   "addon.stats_none": "§e尚未测量。请先播放视频，然后执行 §f/scriptevent %1stats"
 }

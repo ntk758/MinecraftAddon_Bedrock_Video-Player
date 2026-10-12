@@ -190,7 +190,7 @@
   "error.volume_height": "Un volumen 3D puede tener como máximo {max_height} bloques de alto (altura de construcción).",
   "warn.heavy_title": "Configuración pesada",
   "warn.heavy": "Con esta configuración, en las escenas en que cambia toda la imagen se colocan bloques durante unos {ms} ms por tick (50 ms). El juego puede ir lento o el vídeo puede retrasarse. ¿Crear de todos modos?",
-  "addon.stats_play": "§bMedición de reproducción§f: %1 fotogramas en %2 s = %3 fps (objetivo %4 fps), servidor %5 TPS, desfase respecto al tiempo real %6 s (positivo = el vídeo va detrás del audio)",
+  "addon.stats_play": "§bMedición de reproducción§f: %1 fotogramas en %2 s = %3 fps (objetivo %4 fps), servidor %5 TPS, retraso del vídeo %6 s (total desde el inicio; positivo = el vídeo va por detrás del tiempo real. El audio se reinicia en la posición del vídeo cada 10 s)",
   "addon.stats_load": "§bCarga§f: fotogramas iniciados con retraso %1 (máx. %2 ticks), tiempo de script por fotograma prom. %3 ms / máx. %4 ms",
   "addon.stats_none": "§eAún no hay mediciones. Reproduce un vídeo y luego ejecuta §f/scriptevent %1stats"
 }

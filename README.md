@@ -34,8 +34,8 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
    Run `/scriptevent badapple:setup` then `/scriptevent badapple:start`. Use a compass to open the remote control.
 
 **B. 自分の動画を変換する (Windows) / Convert your own video (Windows)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.3.0-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python・FFmpeg は不要)。
-   Unzip `BlockVideoPlayer-v6.3.0-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python or FFmpeg needed).
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.3.0-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
+   Unzip `BlockVideoPlayer-v6.3.0-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
 2. 「動画を追加」→「動画の縦横比に合わせる」→「.mcaddon を作成」。画面の **再生負荷の目安** が「重い」なら幅・高さ・fps を下げます。
    Add a video → *Match video aspect ratio* → *Create .mcaddon*. If the **playback load estimate** says *heavy*, lower the size or fps.
 3. できた `.mcaddon` を A の 2〜3 と同じように使います。うまくいかないときは [既知の問題](docs/KNOWN_ISSUES.md) を見てください。
@@ -47,9 +47,9 @@ Python で動かす方法・GPU の設定は [インストールと使い方](#-
 
 | | 状態 / Status |
 |---|---|
-| Minecraft 統合版 Windows 10/11 (1.21.80 以降) | ✅ 実機で確認 / tested on a real device |
-| Android・iOS・Xbox・PlayStation・Switch・BDS・Realms | ⚠️ 未確認 (安定版 API だけなので動く想定) / not tested yet (stable APIs only) |
-| 変換ツール: Windows 11 EXE / Python 3.12 | ✅ 確認 (CPU・AMD DirectML) / tested (CPU, AMD DirectML) |
+| Minecraft 統合版 Windows 11 | ✅ 作者の PC 1 台で確認 (アドオン v6.0.0、Minecraft の版は未記録) / tested on one PC |
+| Windows 10・Android・iOS・Xbox・PlayStation・Switch・BDS・Realms | ⚠️ 未確認 (安定版 API だけなので動く想定。必要な版は 1.21.80 以降) / not tested yet (stable APIs only; needs 1.21.80+) |
+| 変換ツール: Windows 11 EXE / Python 3.12 | ✅ 作者の PC で確認 (CPU・AMD DirectML) / tested on one PC (CPU, AMD DirectML) |
 | 変換ツール: Linux (CLI) | 🧪 CI で毎回テスト / tested in CI |
 | Java 版 / Java Edition | ❌ 非対応 / not supported |
 
@@ -81,7 +81,7 @@ Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを
 - 👑 **マイクラ実在ブロック 39 色パレット** (コンクリート・テラコッタ・発光ブロック) と、シーンごとに色を選ぶ自動パレット (色数を絞る `--palette-colors`、OkLab で選ぶ `--palette-space oklab` も可)
 - 🗜 **予測圧縮 (Phase 7.x)**: 変化したブロックだけを送る差分に、**動き補償** (平面は 8×8 ブロック、立体は 8×8×8 ブリック)・**タイル辞書** (一度出た模様を番号で再利用)・ランの位置の間隔符号化を組み合わせ、フレームごとに一番小さい方法を自動で選択。v5.4.0 よりデータ量が **47〜88% 減** (ディザなし。Blue Noise では約 43〜67% 減、[計測結果](#-ベンチマーク-phase-7x))。シーンごとのキーフレームで高速シーク
 - 🧊 **3D ホログラム再生**: 映像を立体 (明るさを奥行きにした **レリーフ**・明るい部分の **押し出し**・丸く **ふくらませた** 立体) にして再生。MagicaVoxel (`.vox`) の立体アニメもそのまま再生。レリーフ・押し出し・ふくらみは「色 + 高さ (厚み)」の 2 枚の 2D 映像で送ってゲーム内で組み立てるので、立体のデータが 54〜85% 小さい
-- 🧱 **まとめ置き描画**: 同じ色の変化を箱 (`fillBlocks`) や色ごとの座標リストにまとめて置き、API 呼び出しを 1 フレーム数百〜千回 → **数回〜数百回** に。キーフレームでも変わったブロックだけを置き直す。実機で置き方の速さを計る `bench` と、再生の実効 fps・遅れ・音声とのずれを表示する `stats` コマンド付き ([性能](docs/PERFORMANCE.md))
+- 🧱 **まとめ置き描画**: 同じ色の変化を箱 (`fillBlocks`) や色ごとの座標リストにまとめて置き、API 呼び出しを 1 フレーム数百〜千回 → **数回〜数百回** に。キーフレームでも変わったブロックだけを置き直す。実機で置き方の速さを計る `bench` と、再生の実効 fps・遅れたフレーム・映像の遅れを表示する `stats` コマンド付き ([性能](docs/PERFORMANCE.md))
 - 🎯 **かんたん設定**: 動画の縦横比に合わせた幅・高さをボタン 1 つで設定 (黒帯なし)、作る前に再生負荷の目安を表示、設定の誤りは項目ごとに説明
 - ⚡ **GPU 変換対応**: NVIDIA (CUDA)・AMD (ROCm / DirectML)・Intel (DirectML)。GPU が無くても CPU で変換可能
 - 🌐 **10 言語対応**: 日本語・English・简体中文・繁體中文・한국어・Español・Português (Brasil)・Français・Deutsch・Русский。GUI は画面右上で切り替え、ゲーム内のメッセージとリモコン画面は各プレイヤーの Minecraft の言語設定で表示
@@ -190,7 +190,7 @@ python video_player_gui.py
 | `/scriptevent badapple:stop` | 停止してスクリーンを単色で塗りつぶす (立体は空気にして消す) |
 | `/scriptevent badapple:render auto\|rect\|list\|block` | 描画方式を切り替える (既定 `auto`。下の「描画方式」を参照) |
 | `/scriptevent badapple:bench` | スクリーンの範囲で置き方ごとの速さを計り、`auto` が使う費用 (1 回あたり・1 ブロックあたり) を求めてワールドに保存 |
-| `/scriptevent badapple:stats` | 直前の再生 (再生中でも可) の計測結果を表示: 実効 fps・サーバーの TPS・実時間とのずれ (音声とのずれの目安)・予定より遅れたフレーム・1 フレームのスクリプト時間 ([性能の測り方](docs/PERFORMANCE.md)) |
+| `/scriptevent badapple:stats` | 直前の再生 (再生中でも可) の計測結果を表示: 実効 fps・サーバーの TPS・映像の遅れ (実時間との差)・予定より遅れたフレーム・1 フレームのスクリプト時間 ([性能の測り方](docs/PERFORMANCE.md)) |
 
 **描画方式**: `rect` は同じ色の変化を箱にまとめて `fillBlocks` で置き、`list` は色ごとの座標リストを `fillBlocks(ListBlockVolume)` で置き、`block` は 1 個ずつ置きます。既定の **`auto`** は、フレームごとに 3 つの方式の時間を見積もって一番速いものを選びます (細かい模様では座標リスト、大きな面や立体では箱になりやすい)。見積もりには「1 回の呼び出しの費用」と「1 ブロックの費用」を使い、初期値は Windows 版の実測値です。お使いの端末で `/scriptevent badapple:bench` を一度実行すると、その端末で測った値に置き換わります (ワールドに保存)。描画方式を固定したいときは `render rect` などで選べます。
 
@@ -256,7 +256,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - 👑 **39-color palette of real blocks** (concrete, terracotta, light sources) plus a per-scene automatic palette (`--palette-colors`, `--palette-space oklab`)
 - 🗜 **Predictive compression (Phase 7.x)**: on top of sending only changed blocks, each frame picks the smallest of **motion compensation** (8×8 blocks on screens, 8×8×8 bricks in 3D), a **tile dictionary** (patterns seen before are reused by number) and gap-coded run positions — **47–88% less data** than v5.4.0 without dithering (roughly 43–67% with Blue Noise; [benchmarks](#-ベンチマーク-phase-7x)); per-scene keyframes for fast seeking
 - 🧊 **3D hologram playback**: turn a video into a volume (brightness-as-depth **relief**, **extruded** or rounded **inflated** silhouettes) or play MagicaVoxel (`.vox`) animations directly. Relief / extrude / inflate are sent as two 2D planes (colour + height/thickness) and rebuilt in-game, cutting 3D data by 54–85%
-- 🧱 **Batched placement**: same-colour changes are placed as boxes (`fillBlocks`) or per-colour position lists, cutting API calls from hundreds–thousands per frame to **a few–a few hundred**; keyframes only re-place blocks that changed. `/scriptevent <prefix>:bench` measures the placement methods on your device and `:stats` reports playback fps, lag and audio drift ([performance](docs/PERFORMANCE.md))
+- 🧱 **Batched placement**: same-colour changes are placed as boxes (`fillBlocks`) or per-colour position lists, cutting API calls from hundreds–thousands per frame to **a few–a few hundred**; keyframes only re-place blocks that changed. `/scriptevent <prefix>:bench` measures the placement methods on your device and `:stats` reports playback fps, late frames and how far the video lags behind real time ([performance](docs/PERFORMANCE.md))
 - 🎯 **Easy setup**: one click sets a width × height matching the video's aspect ratio (no black bars); the GUI shows a playback load estimate and explains invalid settings field by field
 - ⚡ **GPU conversion** on NVIDIA (CUDA), AMD (ROCm / DirectML) and Intel (DirectML); CPU works too
 - 🌐 **10 languages**: Japanese, English, Simplified/Traditional Chinese, Korean, Spanish, Portuguese (Brazil), French, German, Russian — in the GUI (selector at the top right) and in game (chat messages and the remote follow each player's Minecraft language)
@@ -276,7 +276,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 6. Use a compass to open the remote control, or use `/scriptevent badapple:start | list | play <id> | gui | stop`.
 7. **3D holograms**: choose a **Display mode** (relief / extrude / inflate) and a **Depth** in the GUI, or add a `.vox` file. `setup` builds the volume 2 blocks north of you, centred, from your feet upward (moved down if it would exceed the build height). The default `auto` render mode picks the fastest placement (boxes, per-colour position lists or one by one) for every frame from a cost model; run `/scriptevent badapple:bench` once to measure your device (saved in the world), or force a mode with `/scriptevent badapple:render rect|list|block`. 3D display modes switch dithering off by default. Preview any converted file without Minecraft: `python scripts/preview_volume.py out.js --output preview.gif`.
 
-8. **Measuring performance**: the GUI shows a **playback load estimate** for the chosen size / fps, and *Match video aspect ratio* removes black bars (e.g. 1920×1080 → 128×72). After playing, `/scriptevent badapple:stats` prints the effective fps, server TPS, drift from real time (≈ audio offset), late frames and script time per frame. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for how conversion speed and in-game performance are measured.
+8. **Measuring performance**: the GUI shows a **playback load estimate** for the chosen size / fps, and *Match video aspect ratio* removes black bars (e.g. 1920×1080 → 128×72). After playing, `/scriptevent badapple:stats` prints the effective fps, server TPS, how far the video has fallen behind real time, late frames and script time per frame. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for how conversion speed and in-game performance are measured.
 
 ### ❓ FAQ (English)
 - **Java Edition?** No, Bedrock only.
@@ -447,7 +447,7 @@ A. 処理ログの `[MVCodec]` の行を確認してください。PyTorch (ま�
 A. `ffmpeg -version` がターミナルで動くか確認してください。動かない場合は `ffmpeg.exe` をツール (または EXE) と同じフォルダに置いてください。
 
 **Q. 再生が重い・カクつきます。**
-A. 解像度を下げる (軽量・標準プリセット) か、fps を下げてください。1 tick あたりのブロック設置数には上限があり、超えた分は次の tick に持ち越されます。GUI の「再生負荷の目安」で作る前に目安が分かり、再生後に `/scriptevent badapple:stats` で実際の fps・遅れ・音声とのずれを確かめられます ([性能の測り方と目安](docs/PERFORMANCE.md))。
+A. 解像度を下げる (軽量・標準プリセット) か、fps を下げてください。1 tick あたりのブロック設置数には上限があり、超えた分は次の tick に持ち越されます。GUI の「再生負荷の目安」で作る前に目安が分かり、再生後に `/scriptevent badapple:stats` で実際の fps・遅れたフレーム・映像の遅れを確かめられます ([性能の測り方と目安](docs/PERFORMANCE.md))。
 
 **Q. 作り直したアドオンを入れたら同じパックが 2 つ並びます / 更新されません。**
 A. パック名とコマンド接頭辞が同じなら同じパック (同じ UUID) として作られ、バージョンはビルドごとに上がります。名前か接頭辞を変えると別のパックとして扱われます。

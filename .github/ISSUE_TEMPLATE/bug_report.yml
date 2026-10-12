@@ -30,7 +30,7 @@ body:
     attributes:
       label: Minecraft の版と端末 / Minecraft version and device
       description: 設定 → 一般 の下に表示される版 / shown at the bottom of Settings → General
-      placeholder: 1.21.xx / Windows 11 (Android, iOS, Xbox, PlayStation, Switch, BDS, Realms)
+      placeholder: 26.xx / Windows 11 (Android, iOS, Xbox, PlayStation, Switch, BDS, Realms)
   - type: input
     id: pc
     attributes:

@@ -9,7 +9,8 @@
 
 | 環境 | 状態 | メモ |
 |---|---|---|
-| Windows 10 / 11 版 (統合版) | ✅ | 作者の PC で再生・3D・`bench` を確認 (v6.0.0)。確認したときの Minecraft の版は未記録 |
+| Windows 11 版 (統合版) | ✅ | 作者の PC 1 台で再生・3D・`bench` を確認 (アドオン v6.0.0)。確認したときの Minecraft の版は未記録 |
+| Windows 10 版 (統合版) | ⚠️ | 未確認 (Windows 11 と同じアプリなので動く想定) |
 | Android / iOS | ⚠️ | 同じ安定版 API なので動く想定。端末の性能が低いと高画質設定は重い (軽量・標準プリセット推奨) |
 | Xbox / PlayStation / Nintendo Switch | ⚠️ | アドオンの導入方法 (Realms・マーケットプレイス以外の読み込み) が限られる |
 | Bedrock Dedicated Server (BDS) | ⚠️ | 未確認。`/scriptevent` と tickingarea を使う |
@@ -20,8 +21,8 @@
 
 | 環境 | 状態 | メモ |
 |---|---|---|
-| Windows 11 + EXE (`BlockVideoPlayer-*-windows-x64.zip`) | ✅ | Python 不要。作者の PC (AMD RX 9070 XT、DirectML) と CPU 変換で確認 |
-| Windows 10 / 11 + Python 3.12 | ✅ | GUI・CLI。NVIDIA (CUDA) は未確認 ⚠️、AMD / Intel は DirectML |
+| Windows 11 + EXE (`BlockVideoPlayer-*-windows-x64.zip`) | ✅ | Python 不要 (FFmpeg は別に必要)。作者の PC (AMD RX 9070 XT、DirectML) と CPU 変換で確認 |
+| Windows 11 + Python 3.12 | ✅ | 作者の PC で GUI・CLI を確認 (CPU と AMD の DirectML)。NVIDIA (CUDA)・Intel・Windows 10 は未確認 ⚠️ |
 | Windows + Python 3.13 | ✅ (CPU のみ) | DirectML は 3.12 まで |
 | Linux (Ubuntu) + Python 3.12 | 🧪 | CI で CLI と全テストを毎回実行 (CPU)。GUI は Tkinter があれば動く想定 |
 | macOS | ⚠️ | CLI は動く想定 (GPU は使わない) |

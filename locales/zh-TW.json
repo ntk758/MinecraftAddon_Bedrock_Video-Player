@@ -190,7 +190,7 @@
   "error.volume_height": "立體最高為 {max_height} 個方塊（建築高度）。",
   "warn.heavy_title": "負載較重的設定",
   "warn.heavy": "依此設定，在整個畫面變化的場景中，每 tick（50 毫秒）約有 {ms} 毫秒用於放置方塊。遊戲可能卡頓或影片落後。仍要建立嗎？",
-  "addon.stats_play": "§b播放測量§f：%2 秒內顯示 %1 幀 = 實際 %3 fps（目標 %4 fps），伺服器 %5 TPS，與實際時間的偏差 %6 秒（正數表示畫面落後於聲音）",
+  "addon.stats_play": "§b播放測量§f：%2 秒內顯示 %1 幀 = 實際 %3 fps（目標 %4 fps），伺服器 %5 TPS，畫面延遲 %6 秒（自開始累計；正數表示畫面落後於實際時間。聲音每 10 秒從畫面位置重新播放）",
   "addon.stats_load": "§b負載§f：晚於預定開始繪製的幀 %1（最多 %2 tick），每幀腳本時間 平均 %3 ms / 最大 %4 ms",
   "addon.stats_none": "§e尚未測量。請先播放影片，然後執行 §f/scriptevent %1stats"
 }

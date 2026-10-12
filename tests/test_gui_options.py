@@ -241,3 +241,26 @@ def test_new_gui_texts_exist_in_every_language():
     for path in Path(__file__).resolve().parent.parent.joinpath("locales").glob("*.json"):
         data = json.loads(path.read_text(encoding="utf-8"))
         assert all(data.get(key) for key in keys), path.name
+
+
+def test_probe_video_size_applies_rotation(tmp_path):
+    """縦に撮ったスマートフォンの動画 (回転の情報付き) は、回転した後の向きの大きさを返す。"""
+    import shutil
+    import subprocess
+
+    import pytest
+    from video_player_gui import probe_video_size, suggest_size
+
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        pytest.skip("ffmpeg が必要")
+    plain = tmp_path / "plain.mp4"
+    rotated = tmp_path / "rotated.mp4"
+    subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=5:duration=1",
+                    "-pix_fmt", "yuv420p", str(plain)], check=True)
+    result = subprocess.run([ffmpeg, "-v", "error", "-y", "-display_rotation", "90", "-i", str(plain), "-c", "copy",
+                             str(rotated)])
+    if result.returncode != 0:
+        pytest.skip("この ffmpeg は -display_rotation に対応していない")
+    assert probe_video_size(rotated, ffmpeg) == (180, 320)
+    assert suggest_size(180, 320, 128) == (72, 128)

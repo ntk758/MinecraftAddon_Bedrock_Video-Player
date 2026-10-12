@@ -190,7 +190,7 @@
   "error.volume_height": "A 3D volume can be at most {max_height} blocks tall (the build height).",
   "warn.heavy_title": "Heavy settings",
   "warn.heavy": "With these settings, scenes where the whole picture changes place blocks for about {ms} ms per tick (50 ms). The game may lag or the video may fall behind. Build anyway?",
-  "addon.stats_play": "§bPlayback stats§f: %1 frames in %2 s = %3 fps (target %4 fps), server %5 TPS, drift from real time %6 s (positive = video behind the audio)",
+  "addon.stats_play": "§bPlayback stats§f: %1 frames in %2 s = %3 fps (target %4 fps), server %5 TPS, video lag %6 s (total since start; positive = video behind real time. Audio restarts at the video position every 10 s)",
   "addon.stats_load": "§bLoad§f: frames started late %1 (max %2 ticks), script time per frame avg %3 ms / max %4 ms",
   "addon.stats_none": "§eNothing measured yet. Play a video, then run §f/scriptevent %1stats"
 }

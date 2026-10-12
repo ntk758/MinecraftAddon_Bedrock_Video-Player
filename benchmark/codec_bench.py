@@ -128,7 +128,7 @@ def make_clip(name, w, h, n):
     if name == "mandelbrot":
         return clip_ffmpeg("mandelbrot", w, h, n)
     if name == "gradients":
-        # 色が多く、なめらかに変わる映像 (自動パレット・色空間の比較用)。実行ごとに模様が変わるので、比べるときは保存したフレームを使う
+        # 色が多く、なめらかに変わる映像 (自動パレット・色空間の比較用)。seed を指定しても実行ごとに模様が変わる (この環境の ffmpeg 9.0 で確認) ので、比べるときは保存したフレームを使う
         return clip_ffmpeg("gradients=speed=0.02:nb_colors=4:seed=7", w, h, n)
     raise ValueError(name)
 

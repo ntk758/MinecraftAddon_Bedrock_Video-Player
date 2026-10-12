@@ -6,7 +6,7 @@
 
 - **2.5D パラメトリック立体 (Phase 8.3)**: `relief` / `extrude` / `inflate` を色の平面と高さ (厚み) の平面の 2 枚の 2D 映像で送り、アドオンで変わった列だけ立体に組み立て直す (`--volume-encoding`、既定で有効)。置くブロック・呼び出しは同じで、立体のデータが 54〜85% 減 (deflate 後)。
 - **GUI**: 「動画の縦横比に合わせる」ボタン (16:9 の動画で 128×128 → 128×72、Issue #2)、再生負荷の目安の表示、設定の誤りを項目ごとに表示、重い設定の確認。
-- **ゲーム内の計測**: `/scriptevent <接頭辞>:stats` で実効 fps・TPS・実時間 (音声) とのずれ・遅れたフレーム・1 フレームのスクリプト時間を表示。
+- **ゲーム内の計測**: `/scriptevent <接頭辞>:stats` で実効 fps・TPS・映像の遅れ・遅れたフレーム・1 フレームのスクリプト時間を表示。
 - **自動パレット**: `--palette-space oklab|rgb` と `--palette-colors` を追加し、色空間と色数の効果を比較 (Issue #3、既定は RGB のまま。docs/research/palette_space.md)。
 - **ベンチマーク**: MS-SSIM を実装 (Issue #1)。変換速度・最大メモリ・VRAM を実行環境と一緒に記録する `benchmark/convert_perf.py`。
 - **ドキュメント**: クイックスタート、対応環境、SHA-256 の確かめ方、性能の測り方 (docs/PERFORMANCE.md)、テストの範囲と記録 (docs/TESTING.md)、既知の問題、リリース手順、Issue テンプレート。

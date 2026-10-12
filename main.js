@@ -252,15 +252,29 @@ class VideoPlayer {
       frameLate: 0,
       wallStart: null,
       tickStart: 0,
+      // 一時停止・終了で時計を止める (止めた後に stats を見ても時間が伸びない)
+      wallEnd: null,
+      tickEnd: 0,
+      // 一時停止の前に描きかけだったフレームは、遅れも時間も正しく測れないので数えない
+      skipPartialFrame: this.frameIterator !== null,
       startFrame: this.currentFrame,
     };
+  }
+
+  /** 計測の時計を止める (再生の終了・一時停止・停止のとき)。 */
+  stopPlayStatsClock() {
+    const st = this.playStats;
+    if (st && st.wallStart !== null && st.wallEnd === null) {
+      st.wallEnd = Date.now();
+      st.tickEnd = this.elapsedTicks;
+    }
   }
 
   /** 計測結果 (再生していなければ null)。driftSeconds が正なら映像が実時間 (= 音声) より遅れている。 */
   playStatsSummary() {
     const st = this.playStats;
     if (!st || st.wallStart === null || st.frames === 0) return null;
-    const seconds = Math.max(0.001, (Date.now() - st.wallStart) / 1000);
+    const seconds = Math.max(0.001, ((st.wallEnd ?? Date.now()) - st.wallStart) / 1000);
     const videoSeconds = frameToSeconds(this.videoData, this.currentFrame) - frameToSeconds(this.videoData, st.startFrame);
     return {
       frames: st.frames,
@@ -271,7 +285,7 @@ class VideoPlayer {
       maxLateTicks: st.maxLateTicks,
       avgFrameMs: st.scriptMs / st.frames,
       maxFrameMs: st.maxFrameMs,
-      tps: (this.elapsedTicks - st.tickStart) / seconds,
+      tps: ((st.wallEnd !== null ? st.tickEnd : this.elapsedTicks) - st.tickStart) / seconds,
       driftSeconds: seconds - videoSeconds,
     };
   }
@@ -858,6 +872,12 @@ class VideoPlayer {
   recordFrameStats(lastTickMs) {
     const st = this.playStats;
     if (!st) return;
+    if (st.skipPartialFrame) {
+      st.skipPartialFrame = false;
+      st.startFrame = this.currentFrame + 1;
+      st.wallStart = null;
+      return;
+    }
     const frameMs = st.frameMs + lastTickMs;
     st.frames++;
     st.scriptMs += frameMs;
@@ -874,6 +894,7 @@ class VideoPlayer {
   }
 
   stopPlayback() {
+    this.stopPlayStatsClock();
     this.running = false;
     this.currentAudioChunk = -1;
     this.cancelJob();
