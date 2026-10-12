@@ -2,3 +2,4 @@
 -r requirements.txt
 scikit-image>=0.22
 # --deep (LPIPS) を使う場合のみ: torch, lpips
+psutil>=5.9

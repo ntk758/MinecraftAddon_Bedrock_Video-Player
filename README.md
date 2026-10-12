@@ -11,12 +11,59 @@
   <img src="docs/images/demo.gif" alt="左: 元映像 / 右: 128×72 ブロックに変換した映像 (Left: source video, right: converted to 128×72 Minecraft blocks)" width="800">
   <br>
   <sub>左: 元映像 / 右: 128×72 ブロックに変換した映像 (ゲーム内と同じ規則で復元した画面) — Left: source / Right: converted to blocks</sub>
+  <br><br>
+  <img src="docs/images/hologram_inflate.gif" alt="3D ホログラム: シルエットを丸くふくらませた立体 (3D hologram, inflate)" height="200">
+  <img src="docs/images/hologram_relief.gif" alt="3D ホログラム: 明るさを奥行きにした立体レリーフ (3D hologram, relief)" height="200">
+  <br>
+  <sub>3D ホログラム (inflate / relief)。変換したデータをゲーム内と同じ規則で組み立て、斜め上から描いた絵 — 3D holograms rebuilt with the in-game rules</sub>
 </p>
 
 **▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.3.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.3.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.3.0-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 
-[日本語](#日本語-japanese) | [English](#english)
+[日本語](#日本語-japanese) | [English](#english) | [変更履歴 / Changelog](CHANGELOG.md)
+
+## 🚀 クイックスタート / Quick start
+
+**A. サンプルを試す (変換は不要・約 3 分) / Try the sample (no conversion)**
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.3.0.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.3.0.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
+   Download a sample `.mcaddon` from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) and double-click it to import it into Minecraft Bedrock.
+2. 新しいワールドを作り、**チートを有効**、**ビヘイビアーパックとリソースパックの両方** を有効にします (スーパーフラットがおすすめ)。
+   Create a world with **cheats on** and **both** the Behavior Pack and the Resource Pack enabled (a superflat world works best).
+3. 平らな場所でチャットに `/scriptevent badapple:setup` → `/scriptevent badapple:start`。コンパスを使うとリモコンが開きます。
+   Run `/scriptevent badapple:setup` then `/scriptevent badapple:start`. Use a compass to open the remote control.
+
+**B. 自分の動画を変換する (Windows) / Convert your own video (Windows)**
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.3.0-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python・FFmpeg は不要)。
+   Unzip `BlockVideoPlayer-v6.3.0-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python or FFmpeg needed).
+2. 「動画を追加」→「動画の縦横比に合わせる」→「.mcaddon を作成」。画面の **再生負荷の目安** が「重い」なら幅・高さ・fps を下げます。
+   Add a video → *Match video aspect ratio* → *Create .mcaddon*. If the **playback load estimate** says *heavy*, lower the size or fps.
+3. できた `.mcaddon` を A の 2〜3 と同じように使います。うまくいかないときは [既知の問題](docs/KNOWN_ISSUES.md) を見てください。
+   Use the result like steps A-2 and A-3. See [known issues](docs/KNOWN_ISSUES.md) if something goes wrong.
+
+Python で動かす方法・GPU の設定は [インストールと使い方](#-インストールと使い方-installation--usage) にあります / To run from Python, see [Usage](#-usage).
+
+### 対応環境 / Supported environments
+
+| | 状態 / Status |
+|---|---|
+| Minecraft 統合版 Windows 10/11 (1.21.80 以降) | ✅ 実機で確認 / tested on a real device |
+| Android・iOS・Xbox・PlayStation・Switch・BDS・Realms | ⚠️ 未確認 (安定版 API だけなので動く想定) / not tested yet (stable APIs only) |
+| 変換ツール: Windows 11 EXE / Python 3.12 | ✅ 確認 (CPU・AMD DirectML) / tested (CPU, AMD DirectML) |
+| 変換ツール: Linux (CLI) | 🧪 CI で毎回テスト / tested in CI |
+| Java 版 / Java Edition | ❌ 非対応 / not supported |
+
+詳しくは [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)、テストの範囲は [docs/TESTING.md](docs/TESTING.md) / Details: [compatibility](docs/COMPATIBILITY.md), [test scope](docs/TESTING.md).
+
+### ダウンロードの確認 (SHA-256) / Verify your download
+リリースページでは各ファイルの横に SHA-256 が表示されます (`SHA256SUMS.txt` が付いている版はそのファイルにも)。手元のファイルの値と一致すれば、壊れても書き換えられてもいません。
+Each file on the release page shows its SHA-256; it must match the value you compute:
+```powershell
+Get-FileHash .\BlockVideoPlayer-v6.3.0-windows-x64.zip -Algorithm SHA256
+```
+```bash
+sha256sum BlockVideoPlayer-v6.3.0-windows-x64.zip
+```
 
 ## 日本語 (Japanese)
 
@@ -31,10 +78,11 @@ Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを
 - 🎵 **音声の同期再生** (10 秒単位の OGG に分割し、再生位置に合わせて切り替え)
 - 🎮 **ゲーム内リモコン** (コンパスを使うと再生・一時停止・シーク・音量・動画切替の画面が開く)
 - 📚 **マルチ動画対応** (1 つのアドオンに複数の動画を収録)
-- 👑 **マイクラ実在ブロック 39 色パレット** (コンクリート・テラコッタ・発光ブロック) と、動画ごとに色を選ぶ自動パレット
+- 👑 **マイクラ実在ブロック 39 色パレット** (コンクリート・テラコッタ・発光ブロック) と、シーンごとに色を選ぶ自動パレット (色数を絞る `--palette-colors`、OkLab で選ぶ `--palette-space oklab` も可)
 - 🗜 **予測圧縮 (Phase 7.x)**: 変化したブロックだけを送る差分に、**動き補償** (平面は 8×8 ブロック、立体は 8×8×8 ブリック)・**タイル辞書** (一度出た模様を番号で再利用)・ランの位置の間隔符号化を組み合わせ、フレームごとに一番小さい方法を自動で選択。v5.4.0 よりデータ量が **47〜88% 減** (ディザなし。Blue Noise では約 43〜67% 減、[計測結果](#-ベンチマーク-phase-7x))。シーンごとのキーフレームで高速シーク
-- 🧊 **3D ホログラム再生**: 映像を立体 (明るさを奥行きにした **レリーフ**・明るい部分の **押し出し**・丸く **ふくらませた** 立体) にして再生。MagicaVoxel (`.vox`) の立体アニメもそのまま再生
-- 🧱 **まとめ置き描画**: 同じ色の変化を箱 (`fillBlocks`) や色ごとの座標リストにまとめて置き、API 呼び出しを 1 フレーム数百〜千回 → **数回〜数百回** に。キーフレームでも変わったブロックだけを置き直す。実機で置き方の速さを計る `bench` コマンド付き
+- 🧊 **3D ホログラム再生**: 映像を立体 (明るさを奥行きにした **レリーフ**・明るい部分の **押し出し**・丸く **ふくらませた** 立体) にして再生。MagicaVoxel (`.vox`) の立体アニメもそのまま再生。レリーフ・押し出し・ふくらみは「色 + 高さ (厚み)」の 2 枚の 2D 映像で送ってゲーム内で組み立てるので、立体のデータが 54〜85% 小さい
+- 🧱 **まとめ置き描画**: 同じ色の変化を箱 (`fillBlocks`) や色ごとの座標リストにまとめて置き、API 呼び出しを 1 フレーム数百〜千回 → **数回〜数百回** に。キーフレームでも変わったブロックだけを置き直す。実機で置き方の速さを計る `bench` と、再生の実効 fps・遅れ・音声とのずれを表示する `stats` コマンド付き ([性能](docs/PERFORMANCE.md))
+- 🎯 **かんたん設定**: 動画の縦横比に合わせた幅・高さをボタン 1 つで設定 (黒帯なし)、作る前に再生負荷の目安を表示、設定の誤りは項目ごとに説明
 - ⚡ **GPU 変換対応**: NVIDIA (CUDA)・AMD (ROCm / DirectML)・Intel (DirectML)。GPU が無くても CPU で変換可能
 - 🌐 **10 言語対応**: 日本語・English・简体中文・繁體中文・한국어・Español・Português (Brasil)・Français・Deutsch・Русский。GUI は画面右上で切り替え、ゲーム内のメッセージとリモコン画面は各プレイヤーの Minecraft の言語設定で表示
 
@@ -205,10 +253,11 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - 🎵 **Synchronized audio** (10-second OGG chunks switched by playback position)
 - 🎮 **In-game remote control** (use a compass: play/pause, seek, volume, switch videos)
 - 📚 **Multiple videos per add-on**
-- 👑 **39-color palette of real blocks** (concrete, terracotta, light sources) plus a per-video automatic palette
+- 👑 **39-color palette of real blocks** (concrete, terracotta, light sources) plus a per-scene automatic palette (`--palette-colors`, `--palette-space oklab`)
 - 🗜 **Predictive compression (Phase 7.x)**: on top of sending only changed blocks, each frame picks the smallest of **motion compensation** (8×8 blocks on screens, 8×8×8 bricks in 3D), a **tile dictionary** (patterns seen before are reused by number) and gap-coded run positions — **47–88% less data** than v5.4.0 without dithering (roughly 43–67% with Blue Noise; [benchmarks](#-ベンチマーク-phase-7x)); per-scene keyframes for fast seeking
 - 🧊 **3D hologram playback**: turn a video into a volume (brightness-as-depth **relief**, **extruded** or rounded **inflated** silhouettes) or play MagicaVoxel (`.vox`) animations directly. Relief / extrude / inflate are sent as two 2D planes (colour + height/thickness) and rebuilt in-game, cutting 3D data by 54–85%
-- 🧱 **Batched placement**: same-colour changes are placed as boxes (`fillBlocks`) or per-colour position lists, cutting API calls from hundreds–thousands per frame to **a few–a few hundred**; keyframes only re-place blocks that changed. `/scriptevent <prefix>:bench` measures the placement methods on your device
+- 🧱 **Batched placement**: same-colour changes are placed as boxes (`fillBlocks`) or per-colour position lists, cutting API calls from hundreds–thousands per frame to **a few–a few hundred**; keyframes only re-place blocks that changed. `/scriptevent <prefix>:bench` measures the placement methods on your device and `:stats` reports playback fps, lag and audio drift ([performance](docs/PERFORMANCE.md))
+- 🎯 **Easy setup**: one click sets a width × height matching the video's aspect ratio (no black bars); the GUI shows a playback load estimate and explains invalid settings field by field
 - ⚡ **GPU conversion** on NVIDIA (CUDA), AMD (ROCm / DirectML) and Intel (DirectML); CPU works too
 - 🌐 **10 languages**: Japanese, English, Simplified/Traditional Chinese, Korean, Spanish, Portuguese (Brazil), French, German, Russian — in the GUI (selector at the top right) and in game (chat messages and the remote follow each player's Minecraft language)
 
@@ -226,6 +275,14 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 5. Stand where the screen should be and run `/scriptevent badapple:setup` (`badapple` is the command prefix set in the GUI). The screen is built horizontally at your foot level, extending east (+X) and north (−Z); blocks in that area are overwritten.
 6. Use a compass to open the remote control, or use `/scriptevent badapple:start | list | play <id> | gui | stop`.
 7. **3D holograms**: choose a **Display mode** (relief / extrude / inflate) and a **Depth** in the GUI, or add a `.vox` file. `setup` builds the volume 2 blocks north of you, centred, from your feet upward (moved down if it would exceed the build height). The default `auto` render mode picks the fastest placement (boxes, per-colour position lists or one by one) for every frame from a cost model; run `/scriptevent badapple:bench` once to measure your device (saved in the world), or force a mode with `/scriptevent badapple:render rect|list|block`. 3D display modes switch dithering off by default. Preview any converted file without Minecraft: `python scripts/preview_volume.py out.js --output preview.gif`.
+
+8. **Measuring performance**: the GUI shows a **playback load estimate** for the chosen size / fps, and *Match video aspect ratio* removes black bars (e.g. 1920×1080 → 128×72). After playing, `/scriptevent badapple:stats` prints the effective fps, server TPS, drift from real time (≈ audio offset), late frames and script time per frame. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for how conversion speed and in-game performance are measured.
+
+### ❓ FAQ (English)
+- **Java Edition?** No, Bedrock only.
+- **Phones / consoles?** Expected to work (stable APIs only) but **not tested yet** — start with the Light or Standard preset and please report results in an issue.
+- **Lag or video behind the audio?** Lower the size or fps; check `/scriptevent <prefix>:stats`. More in [known issues](docs/KNOWN_ISSUES.md).
+- **GPU not used?** Check the `Conversion device:` log line; DirectML needs Python 3.12; CPU-only dithers run on the CPU.
 
 A prebuilt Windows EXE (with DirectML) and a ready-to-play sample add-on are on the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest). To build the EXE yourself: `pip install pyinstaller` then `python build_standalone.py`.
 
@@ -271,6 +328,10 @@ A prebuilt Windows EXE (with DirectML) and a ready-to-play sample add-on are on 
 - **Minecraft Script API**: `fillBlocks` (`BlockVolume` / `ListBlockVolume`) と `setBlockPermutation` によるブロック描画、`@minecraft/server-ui` のリモコン画面
 
 ## 🧪 開発者向け (Development)
+
+- テストの範囲 (自動テストと実機テストの区別) とリリースごとの確認の記録: [docs/TESTING.md](docs/TESTING.md)
+- リリースの手順 (チェックサムを含む): [docs/RELEASING.md](docs/RELEASING.md)
+- 性能の測り方 (変換速度とゲーム内の再生性能): [docs/PERFORMANCE.md](docs/PERFORMANCE.md)
 ```bash
 pip install -r requirements-dev.txt
 pytest -q
@@ -296,6 +357,7 @@ python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 
 | `--input-video` / `--frames-dir` | 入力動画、または画像連番フォルダ |
 | `--width` `--height` `--fps` `--duration` | 解像度・fps (最大 20)・変換する秒数 |
 | `--palette` | `concrete` / `expanded` / `full` / `auto` |
+| `--palette-colors` / `--palette-space` | `auto` で選ぶ色数の上限 (既定 64 = 候補の 39 色すべて) / 色を選ぶ色空間 `rgb` (既定) か `oklab` ([比較](docs/research/palette_space.md)) |
 | `--dither-method` | `none` / `blue_noise` / `ordered` / `floyd` / `atkinson` / `burkes` / `sierra` |
 | `--device` | `auto` / `cuda` / `rocm` / `directml` / `cpu` |
 | `--keyframe-interval` | キーフレーム間隔 (0 でシーン先頭のみ) |
@@ -376,7 +438,7 @@ python benchmark/codec_bench.py --out bench_out --suite volume   # 立体
 A. いいえ、統合版 (Bedrock Edition) 専用です。
 
 **Q. スマホやスイッチでも動きますか？ (Will it run on mobile/consoles?)**
-A. `.mcaddon` 自体はどの端末の統合版でも動作するはずですが、高画質設定は非常に重いため PC 版を推奨します。
+A. 安定版の API だけを使っているので動く想定ですが、**まだ確かめていません** ([対応環境](docs/COMPATIBILITY.md))。軽量・標準プリセットから試してください。動いた・動かなかったを Issue で教えてもらえると助かります。
 
 **Q. GPU があるのに CPU で変換されます。**
 A. 処理ログの `[MVCodec]` の行を確認してください。PyTorch (または torch-directml) が入っていない場合や、GPU のテスト変換に失敗した場合は CPU になります。DirectML は Python 3.13 に対応していないため、Python 3.12 の環境に `requirements-directml.txt` を入れてください。Floyd-Steinberg などの CPU 専用ディザを選んでいる場合も CPU で処理されます。
@@ -385,7 +447,7 @@ A. 処理ログの `[MVCodec]` の行を確認してください。PyTorch (ま�
 A. `ffmpeg -version` がターミナルで動くか確認してください。動かない場合は `ffmpeg.exe` をツール (または EXE) と同じフォルダに置いてください。
 
 **Q. 再生が重い・カクつきます。**
-A. 解像度を下げる (軽量・標準プリセット) か、fps を下げてください。1 tick あたりのブロック設置数には上限があり、超えた分は次の tick に持ち越されます。
+A. 解像度を下げる (軽量・標準プリセット) か、fps を下げてください。1 tick あたりのブロック設置数には上限があり、超えた分は次の tick に持ち越されます。GUI の「再生負荷の目安」で作る前に目安が分かり、再生後に `/scriptevent badapple:stats` で実際の fps・遅れ・音声とのずれを確かめられます ([性能の測り方と目安](docs/PERFORMANCE.md))。
 
 **Q. 作り直したアドオンを入れたら同じパックが 2 つ並びます / 更新されません。**
 A. パック名とコマンド接頭辞が同じなら同じパック (同じ UUID) として作られ、バージョンはビルドごとに上がります。名前か接頭辞を変えると別のパックとして扱われます。
@@ -424,8 +486,11 @@ A. パック名とコマンド接頭辞が同じなら同じパック (同じ UU
 - Video processing powered by **FFmpeg**.
 
 ## 🤝 コントリビュート (Contributing)
-Issue や Pull Request はいつでも歓迎します！
-Feel free to open an Issue or submit a Pull Request!
+Issue や Pull Request はいつでも歓迎します！ 不具合・要望は [Issue のテンプレート](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/issues/new/choose) から送ると、必要な情報 (アドオンの版・Minecraft の版・端末) を書き漏らしません。
+Feel free to open an Issue or submit a Pull Request! The [issue templates](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/issues/new/choose) ask for the versions and device we need.
+
+- **いただいた声の扱い**: Issue・CurseForge のコメント・ダウンロード数は 2 週間に 1 回ほど確認し (`python scripts/traffic_report.py`)、不具合は [既知の問題](docs/KNOWN_ISSUES.md) へ、要望は [TODO.md](TODO.md) の優先度に反映します。実機での動作報告は [対応環境](docs/COMPATIBILITY.md) の表に追記します。
+- **How feedback is used**: issues, CurseForge comments and download counts are reviewed about every two weeks; bugs go to the known-issues page, requests into TODO.md priorities, and device reports into the compatibility table.
 
 ## 📜 ライセンス (License)
 This project is licensed under the [MIT License](LICENSE).
@@ -433,6 +498,9 @@ This project is licensed under the [MIT License](LICENSE).
 ---
 
 ## 🏷 Releases
+
+すべての版の変更点は [CHANGELOG.md](CHANGELOG.md) にあります / Full history: [CHANGELOG.md](CHANGELOG.md).
+
 
 - **v6.3.0**: Phase 8.2 ディザの時間的安定化。前のフレームのブロックの色が新しく選んだ色とほとんど変わらなければ置き直さない条件付き更新 (`--temporal-hysteresis`) で、Blue Noise ではデータ 7〜48%・置くブロック 7〜51% 減。ディザ模様を映像の動きに合わせてずらすオプション (`--dither-follow-motion`) も追加。
 - **v6.2.0**: GUI の再生間隔 (tick) を FPS のスライダー (1〜20 fps) に変更。ゲーム内の言語を「各プレイヤーのゲーム言語 (10 言語)」か「GUI の言語に固定 (全員がその言語で表示、パックが約 20 KB 軽くなる)」から選べるように。

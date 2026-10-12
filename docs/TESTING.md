@@ -1,0 +1,59 @@
+# テストの範囲と記録 / Test scope and records
+
+このプロジェクトのテストは「自動テスト (pytest + Node、CI で毎回実行)」と「実機テスト (Minecraft で人が確かめる)」の 2 つです。
+自動テストは Minecraft の API を **モック** (`tests/js/minecraft_mock`) で置き換えて動かすので、実機でしか分からないこと
+(実際の速さ・描画・音・端末ごとの違い) は実機テストで確かめます。
+
+## 1. 自動テスト (Automated)
+
+`pytest -q` (約 20 秒) で全部を実行します。GitHub Actions ([ci.yml](../.github/workflows/ci.yml)) が `main` への push と
+プルリクエストごとに、Ubuntu・Python 3.12・Node.js 20・CPU 版 PyTorch で実行します (README の CI バッジ)。
+
+| 対象 | 何を確かめるか | テスト |
+|---|---|---|
+| 符号化・復元 | Python の参照デコーダと `codec.js` が全フレームで同じ盤面を作る。シークの結果が通常再生と同じ | `test_codec_v4.py`, `test_rle_roundtrip.py`, `test_motion.py`, `test_tiles.py` |
+| 立体 | relief / extrude / inflate / vox、3D 動き補償、2.5D の平面 (変わった列だけの組み立てが全体の組み立てと同じ) | `test_volume.py`, `test_volume3d.py`, `test_planes.py` |
+| アドオン (`main.js`) | モックの Minecraft で再生し、最後の画面のブロックが正しい。描画方式 (auto / rect / list / block) で結果が同じ。変わったブロックだけ置く。シーク・一時停止・再開・動画の切り替え・クリア・常時読み込み・建築限界・`bench`・`stats` | `test_main_js.py`, `test_render_modes.py`, `test_playback_control.py` |
+| 減色 | ディザ・条件付き更新・自動パレット (色空間・色数)・GPU 経路 (CPU 版 PyTorch で同じコードを実行) | `test_temporal.py`, `test_device.py` |
+| GUI | 変換の引数、プリセット、縦横比の提案、設定の検査、負荷の目安、パックの UUID / バージョン | `test_gui_options.py` |
+| 翻訳 | 10 言語でキーと `{}` の置き換えがそろっている。アドオンが使う翻訳キーがすべてある | `test_i18n.py`, `test_main_js.py` |
+| 画質指標 | MS-SSIM (1 段では scikit-image の SSIM と一致) | `test_ms_ssim.py` |
+
+**自動テストで分からないこと** (実機テストで確かめる):
+- Minecraft の本物の API の振る舞い (モックは仕様書と実機で確かめた動きをまねているだけ)
+- 再生の速さ・重さ (モックの API はほとんど時間がかからない。`bench` / `stats` を実機で使う)
+- 音の再生と映像との同期
+- GPU (CUDA / ROCm / DirectML) の実機での減色 (CI は CPU 版 PyTorch で同じコードを動かすだけ)
+- Windows 用 EXE の起動と変換 (リリース時に手で確かめる)
+- スマートフォン・ゲーム機・専用サーバーでの動作
+
+## 2. 実機テスト (Manual, in Minecraft)
+
+リリースの前に、少なくとも 1 つの端末で次を確かめます。結果は下の「4. リリースごとの記録」に書きます。
+
+1. サンプルの `.mcaddon` をダブルクリックでインポートできる (エラーが出ない)
+2. 新しいワールド (チート有効、ビヘイビアーパックとリソースパックの両方を有効) で `/scriptevent badapple:setup` → スクリーンができる
+3. `/scriptevent badapple:start` で映像と音が再生され、最後まで進む
+4. コンパスのリモコン: 一時停止 → 再開、シーク、音量、動画の切り替え、停止とクリア
+5. 3D サンプルで立体が正しい向きで立つ (南側から見て正面)
+6. `/scriptevent badapple:bench` が結果を表示する (費用が保存される)
+7. 再生後に `/scriptevent badapple:stats` が計測結果を表示する (結果を [PERFORMANCE.md](PERFORMANCE.md) の表に記録する)
+8. ゲームの言語を英語以外に変えて、チャットとリモコンの文字が翻訳されている
+9. Windows 用 EXE: 解凍して起動 → 動画を追加 → 作成 → できた `.mcaddon` を 1〜3 と同じ手順で確かめる
+
+## 3. 端末ごとの対応状況
+
+[COMPATIBILITY.md](COMPATIBILITY.md) を参照してください。
+
+## 4. リリースごとの記録 (Release test log)
+
+| 版 | 日付 | 自動テスト | モックでの再生 | EXE | 実機 (端末 / Minecraft の版) | 備考 |
+|---|---|---|---|---|---|---|
+| 次の版 (Phase 8.3) | — | 190 件成功 (Windows, Python 3.12) | 2.5D の relief / extrude / inflate、自動パレット、シーク | 未作成 | **未確認** | |
+| v6.3.0 | 2026-10-12 | 153 件成功 + CI 成功 | サンプル・3D サンプル・ショーケースを最後まで再生し、最終画面が一致 | 起動・Blue Noise 変換を確認 | **未確認** (このリリースでの実機の記録なし) | |
+| v6.2.0 | 2026-10 | 成功 + CI 成功 | サンプルを最後まで再生 | 起動を確認 | 未確認 | |
+| v6.1.0 | 2026-10 | 成功 + CI 成功 | サンプルを最後まで再生 | 起動を確認 | 未確認 | |
+| v6.0.0 | 2026-10 | 成功 + CI 成功 | サンプル・3D サンプル | 起動を確認 | ✅ Windows 版 (作者の PC、AMD RX 9070 XT): 3D サンプルの再生、`bench` の計測 (2026-10-11)。Minecraft の版は未記録 | `bench` の結果は PERFORMANCE.md |
+
+実機で確かめたら、この表の「実機」の欄に **端末・OS・Minecraft の版 (設定 → 一般 の下に表示)・確かめた項目の番号** を書いてください
+(例: `Windows 11 / 1.21.xx / 1–9 OK`)。

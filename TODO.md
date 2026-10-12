@@ -5,6 +5,11 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 
 ---
 
+## 🔁 定期的な運用 (Operations)
+- **2 週間に 1 回**: `python scripts/traffic_report.py` で閲覧数・参照元・ダウンロード数を確認 (GitHub は直近 14 日分しか残らない)。CurseForge の作者ページでダウンロード数とコメントを確認。
+- **リリースごと**: [docs/TESTING.md](docs/TESTING.md) の「リリースごとの記録」に自動テスト・モック・EXE・実機の結果を書く。手順は [docs/RELEASING.md](docs/RELEASING.md)。
+- **実機の計測を集める**: Windows 以外の端末での動作と、`/scriptevent <接頭辞>:stats` の結果を [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) と [docs/PERFORMANCE.md](docs/PERFORMANCE.md) に追記する (まだ Windows の `bench` しか無い)。
+
 ## 🔴 優先度: 高 (Phase 8: In-World Rendering & Perceptual Stability)
 
 ### ✅ 8.1 描画方式の自動選択 (実装済み)
