@@ -262,5 +262,9 @@ def test_vox_folder_uses_each_files_palette(tmp_path):
     data = convert_vox(folder, tmp_path / "anim.js")
     blocks = [spec["block"] for spec in data["level_blocks"]]
     first, second = [v for v, _ in iter_decoded_frames(data)]
-    assert "white" in blocks[first[first != AIR_LEVEL][0]]
-    assert "red" in blocks[second[second != AIR_LEVEL][0]]
+    from mvcodec.color import BLOCK_RGB
+
+    white = BLOCK_RGB[blocks[first[first != AIR_LEVEL][0]]]
+    red = BLOCK_RGB[blocks[second[second != AIR_LEVEL][0]]]
+    assert min(white) > 200, white  # 白っぽいブロック
+    assert red[0] > red[1] + 60 and red[0] > red[2] + 60, red  # 赤いブロック

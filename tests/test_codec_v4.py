@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 import convert  # noqa: E402
 import mvcodec.auto_palette as auto_palette  # noqa: E402
-from mvcodec.color import ALL_BLOCKS, PALETTES, create_palette_image, process_single_frame_img  # noqa: E402
+from mvcodec.color import AUTO_PALETTE_CANDIDATES, PALETTES, create_palette_image, process_single_frame_img  # noqa: E402
 from mvcodec.decode import iter_decoded_frames, load_frame_data, parse_index, utf16_str_to_bytes  # noqa: E402
 from mvcodec.encode import bytearray_to_utf16_str  # noqa: E402
 
@@ -138,7 +138,7 @@ def test_adaptive_palette_switch_keeps_colors_correct(tmp_path, monkeypatch):
     for f, (frame, (_idx, rgb)) in enumerate(zip(frames, iter_decoded_frames(data))):
         gop = np.searchsorted(data["gop_boundaries"], f, side="right") - 1
         shift = calls[gop]
-        palette = ALL_BLOCKS[shift:] + ALL_BLOCKS[:shift]
+        palette = AUTO_PALETTE_CANDIDATES[shift:] + AUTO_PALETTE_CANDIDATES[:shift]
         expected_rgb = np.array([item["rgb"] for item in palette], dtype=np.uint8)[expected_indices(frame, palette)]
         if entries[f][2] == 0:
             continue  # adaptive-fps で省略されたフレームは前の表示を維持する

@@ -18,7 +18,7 @@ import numpy as np
 from PIL import Image
 
 from mvcodec.color import (
-    ALL_BLOCKS,
+    AUTO_PALETTE_CANDIDATES,
     PALETTES,
     create_palette_image,
     process_single_frame_img,
@@ -215,7 +215,7 @@ def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MA
         thumb_hash = hashlib.md5(np.ascontiguousarray(first_frame[::8, ::8]).tobytes()).hexdigest()
         if thumb_hash not in cache:
             cache[thumb_hash] = generate_auto_palette(
-                samples, ALL_BLOCKS, max_colors=max_colors, device=gpu.torch_device if gpu else None, sample_stride=1,
+                samples, AUTO_PALETTE_CANDIDATES, max_colors=max_colors, device=gpu.torch_device if gpu else None, sample_stride=1,
                 warn=lambda error: print(_tr("convert.palette_cpu_retry", error=error)), color_space=color_space,
             )
         return cache[thumb_hash]
@@ -477,7 +477,7 @@ def parse_args(argv=None):
                         help="--palette auto で代表色を求め、ブロックを選ぶ色空間。oklab は人の目に近い色の差で選ぶ "
                              "(候補より少ない --palette-colors のときだけ結果が変わる。docs/research/palette_space.md)")
     parser.add_argument("--palette-colors", type=int, default=AUTO_PALETTE_MAX_COLORS,
-                        help=f"--palette auto で GOP ごとに選ぶブロックの色数の上限 (候補は {len(ALL_BLOCKS)} 色。"
+                        help=f"--palette auto で GOP ごとに選ぶブロックの色数の上限 (候補は {len(AUTO_PALETTE_CANDIDATES)} 色。"
                              "減らすとディザの粒・ちらつき・データが減るが、色の再現は粗くなる)")
     parser.add_argument("--dither-method", default="none", choices=["none", "floyd", "ordered", "blue_noise", "atkinson", "burkes", "sierra"])
     parser.add_argument("--temporal-hysteresis", type=float, default=TEMPORAL_HYSTERESIS,
@@ -699,7 +699,8 @@ def make_encoder(args, width, rows, gop_boundaries, empty_value, depth=1, change
 def convert_vox(args):
     """MagicaVoxel の立体アニメを変換する (減色はブロック色への最近傍対応だけ)。"""
     frames, vox_palettes = load_vox_frames_with_palettes(args.input_vox)
-    palette = PALETTES["full" if args.palette == "auto" else args.palette]
+    # .vox はモデルの色にそのまま一番近いブロックを選ぶので、自動のときは全ブロックから選ぶ
+    palette = PALETTES["all" if args.palette == "auto" else args.palette]
     block_rgb = np.array([item["rgb"] for item in palette], dtype=np.float64)
     tables = {}
 

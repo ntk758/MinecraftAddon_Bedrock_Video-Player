@@ -2,6 +2,8 @@ import functools
 import numpy as np
 from PIL import Image, ImageFilter
 
+from mvcodec.block_colors import BLOCK_COLORS
+
 CONCRETE_PALETTE = [
     {"name": "white",      "block": "minecraft:white_concrete",      "rgb": (255, 255, 255)},
     {"name": "orange",     "block": "minecraft:orange_concrete",     "rgb": (216, 127, 51)},
@@ -74,16 +76,33 @@ WOOL_PALETTE = [
 
 
 
+# 上の色は古い版で使っていた目安の値 (Java 版の地図の色に近く、実際の見た目と違う: 白いコンクリートが (255, 255, 255) など)。
+# 実際のテクスチャの平均色 (mvcodec/block_colors.py、Mojang の bedrock-samples から生成) で置き換える
+MEASURED_RGB = {item["block"]: tuple(item["rgb"]) for item in BLOCK_COLORS}
+for _item in CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE + WOOL_PALETTE:
+    _item["rgb"] = MEASURED_RGB.get(_item["block"], _item["rgb"])
+
 ALL_BLOCKS = CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE
+
+# 重力で落ちず・時間で変化しない・面ごとの見た目の差が小さいブロックすべて (色がほぼ同じものは 1 つに絞り済み)
+EVERY_BLOCK_PALETTE = [
+    {"name": item["block"].split(":", 1)[1], "block": item["block"], "rgb": tuple(item["rgb"]), "group": item["group"]}
+    for item in BLOCK_COLORS
+]
 
 PALETTES = {
     "concrete": CONCRETE_PALETTE,
     "expanded": CONCRETE_PALETTE + TERRACOTTA_PALETTE,
     "full": ALL_BLOCKS,
+    "all": EVERY_BLOCK_PALETTE,
 }
 
+# 自動パレットが色を選ぶ候補。光るブロックは入れない (置き替えるたびに明るさの計算が起き、夜はスクリーンの明るさがまだらになる。
+# 負荷はまだ実機で測っていない)。「全ブロック」パレットと 39 色以下のパレットには入っている
+AUTO_PALETTE_CANDIDATES = [item for item in EVERY_BLOCK_PALETTE if item["group"] != "light"]
+
 # ブロックID -> RGB (デコーダ・評価用)
-BLOCK_RGB = {item["block"]: tuple(item["rgb"]) for item in ALL_BLOCKS + WOOL_PALETTE}
+BLOCK_RGB = {item["block"]: tuple(item["rgb"]) for item in ALL_BLOCKS + WOOL_PALETTE + EVERY_BLOCK_PALETTE}
 
 def create_palette_image(palette):
     pal_img = Image.new("P", (1, 1))
