@@ -142,6 +142,7 @@ python video_player_gui.py
 | `/scriptevent badapple:stop` | 停止してスクリーンを単色で塗りつぶす (立体は空気にして消す) |
 | `/scriptevent badapple:render auto\|rect\|list\|block` | 描画方式を切り替える (既定 `auto`。下の「描画方式」を参照) |
 | `/scriptevent badapple:bench` | スクリーンの範囲で置き方ごとの速さを計り、`auto` が使う費用 (1 回あたり・1 ブロックあたり) を求めてワールドに保存 |
+| `/scriptevent badapple:stats` | 直前の再生 (再生中でも可) の計測結果を表示: 実効 fps・サーバーの TPS・実時間とのずれ (音声とのずれの目安)・予定より遅れたフレーム・1 フレームのスクリプト時間 ([性能の測り方](docs/PERFORMANCE.md)) |
 
 **描画方式**: `rect` は同じ色の変化を箱にまとめて `fillBlocks` で置き、`list` は色ごとの座標リストを `fillBlocks(ListBlockVolume)` で置き、`block` は 1 個ずつ置きます。既定の **`auto`** は、フレームごとに 3 つの方式の時間を見積もって一番速いものを選びます (細かい模様では座標リスト、大きな面や立体では箱になりやすい)。見積もりには「1 回の呼び出しの費用」と「1 ブロックの費用」を使い、初期値は Windows 版の実測値です。お使いの端末で `/scriptevent badapple:bench` を一度実行すると、その端末で測った値に置き換わります (ワールドに保存)。描画方式を固定したいときは `render rect` などで選べます。
 

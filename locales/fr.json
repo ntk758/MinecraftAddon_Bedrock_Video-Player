@@ -189,5 +189,8 @@
   "error.depth_range": "La profondeur doit être comprise entre 2 et {max_depth}.",
   "error.volume_height": "Un volume 3D peut mesurer au plus {max_height} blocs de haut (hauteur de construction).",
   "warn.heavy_title": "Réglages lourds",
-  "warn.heavy": "Avec ces réglages, dans les scènes où toute l'image change, des blocs sont posés pendant environ {ms} ms par tick (50 ms). Le jeu peut ralentir ou la vidéo prendre du retard. Créer quand même ?"
+  "warn.heavy": "Avec ces réglages, dans les scènes où toute l'image change, des blocs sont posés pendant environ {ms} ms par tick (50 ms). Le jeu peut ralentir ou la vidéo prendre du retard. Créer quand même ?",
+  "addon.stats_play": "§bMesure de lecture§f : %1 images en %2 s = %3 fps (cible %4 fps), serveur %5 TPS, décalage par rapport au temps réel %6 s (positif = la vidéo est en retard sur le son)",
+  "addon.stats_load": "§bCharge§f : images commencées en retard %1 (max %2 ticks), temps de script par image moy. %3 ms / max %4 ms",
+  "addon.stats_none": "§eRien n'a encore été mesuré. Lancez une vidéo puis exécutez §f/scriptevent %1stats"
 }
