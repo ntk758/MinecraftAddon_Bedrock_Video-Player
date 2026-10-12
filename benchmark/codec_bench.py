@@ -224,19 +224,21 @@ def play(tree, js_path, work, *node_args):
 
 SCREEN_CONFIGS = [
     # (名前, 版, 追加の引数, 再生する描画方式)
-    ("v4 (main)", "baseline", [], [None]),
-    ("v5 delta only", "worktree", ["--no-motion", "--tile-size", "0"], []),
-    ("v5 + motion", "worktree", ["--tile-size", "0"], []),
-    ("v5 + motion + tiles", "worktree", [], ["render=rect", "render=list", "render=block"]),
+    ("baseline", "baseline", [], [None]),
+    ("v5 delta only", "worktree", ["--no-motion", "--tile-size", "0", "--no-entropy"], []),
+    ("v5 + motion", "worktree", ["--tile-size", "0", "--no-entropy"], []),
+    ("v5 + motion + tiles", "worktree", ["--no-entropy"], []),
+    ("v6 (+ entropy)", "worktree", [], ["render=rect", "render=list", "render=block"]),
 ]
 
 VOLUME_CONFIGS = [
     # --volume-baseline を指定したときだけ使う (3D 動き補償の前の版)
     ("before (2D MV, hollow, slices)", "volume_baseline", ["--hollow"], ["render=rect"]),
-    ("voxels (3D MV, solid, 3D boxes)", "worktree", ["--volume-encoding", "voxels"], ["render=rect", "render=list"]),
-    ("voxels --hollow", "worktree", ["--hollow"], ["render=rect"]),
-    ("planes (2.5D)", "worktree", ["--volume-encoding", "planes"], ["render=rect", "render=list"]),
-    ("planes --no-motion", "worktree", ["--volume-encoding", "planes", "--no-motion"], []),
+    ("voxels (3D MV, solid, 3D boxes)", "worktree", ["--volume-encoding", "voxels", "--no-entropy"], ["render=rect", "render=list"]),
+    ("voxels --hollow", "worktree", ["--hollow", "--no-entropy"], ["render=rect"]),
+    ("planes (2.5D)", "worktree", ["--volume-encoding", "planes", "--no-entropy"], ["render=rect", "render=list"]),
+    ("planes --no-motion", "worktree", ["--volume-encoding", "planes", "--no-motion", "--no-entropy"], []),
+    ("planes + entropy (v6)", "worktree", ["--volume-encoding", "planes"], ["render=rect"]),
 ]
 
 

@@ -89,7 +89,7 @@ def pan_outputs(tmp_path_factory):
 
 def test_motion_output_is_exact(pan_outputs):
     frames, _path, data, _plain = pan_outputs
-    assert data["format"] == "varint_rle_v5"
+    assert data["format"] in ("varint_rle_v5", "varint_rle_v6")
     for frame, (index_board, _rgb) in zip(frames, iter_decoded_frames(data)):
         assert np.array_equal(index_board, expected_indices(frame))
 

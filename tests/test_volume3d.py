@@ -90,8 +90,9 @@ def convert_vox(path, out, *extra):
 def depth_walk(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("depth_walk")
     path = make_depth_walk(tmp)
-    with_motion = convert_vox(path, tmp / "motion.js")
-    without_motion = convert_vox(path, tmp / "plain.js", "--no-motion")
+    # 動き補償の効果だけを比べるので、エントロピー符号化 (v6) は使わない
+    with_motion = convert_vox(path, tmp / "motion.js", "--no-entropy")
+    without_motion = convert_vox(path, tmp / "plain.js", "--no-motion", "--no-entropy")
     return path, tmp / "motion.js", with_motion, without_motion
 
 

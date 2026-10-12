@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from mvcodec.encode import bytearray_to_utf16_str, encode_frame_v5, encode_varint
+from mvcodec.entropy import pack_gop
 from mvcodec.motion import (
     MV_BLOCK,
     MV_RANGE,
@@ -52,6 +53,8 @@ class StreamEncoder:
     # フレームを省略するかの判定に使う変化率 (前の盤面, 新しい盤面) -> 0〜1。None なら _change_ratio の既定。
     # 2.5D の平面は、組み立てた立体で測った方が立体 (voxels) と同じ判定になる (mvcodec/planes.py の volume_change_ratio)
     change_ratio_fn: object = None
+    # GOP ごとのエントロピー符号化 (varint_rle_v6、mvcodec/entropy.py)。フレームの位置 (index) は v5 のバイト列のまま
+    entropy: bool = False
     stats: StreamStats = field(default_factory=StreamStats)
 
     def __post_init__(self):
@@ -59,6 +62,7 @@ class StreamEncoder:
         self.mv_limit = MV_RANGE_3D if self.depth > 1 else vector_limit(self.width, self.rows, self.mv_range)
         self._gop_strings = []
         self._gop_binary = bytearray()
+        self._gop_frames = []  # 今の GOP の (offset, length) (長さ 0 の省略フレームは含めない)
         self._index_entries = []  # (gop_id, byte_offset_in_gop, byte_length, is_keyframe)
         self._prev = None
         self._current_gop = 0
@@ -69,8 +73,7 @@ class StreamEncoder:
         """1 フレーム (パレット番号の 1 次元配列、rows*width 個) を追加する。"""
         flat = np.asarray(frame, dtype=np.int32).reshape(-1)
         if gop_id != self._current_gop:
-            self._gop_strings.append(bytearray_to_utf16_str(self._gop_binary))
-            self._gop_binary = bytearray()
+            self._close_gop()
             self._current_gop = gop_id
         if frame_no in self.gop_starts:
             self._gop_start = frame_no
@@ -92,6 +95,7 @@ class StreamEncoder:
         else:
             encoded = self._encode_delta(frame_no, flat)
         self._gop_binary.extend(encoded)
+        self._gop_frames.append((offset, len(encoded)))
         self._index_entries.append((gop_id, offset, len(encoded), is_keyframe))
         if self.tiles is not None:
             self.tiles.update(self._prev, flat, is_keyframe)
@@ -155,9 +159,22 @@ class StreamEncoder:
         """ここまでのデータの大きさ (UTF-16 文字に詰める前のバイト数の目安)。"""
         return sum(len(s) for s in self._gop_strings) * 2 + len(self._gop_binary)
 
+    def _close_gop(self):
+        data = pack_gop(self._gop_binary, self._gop_frames) if self.entropy else self._gop_binary
+        self._gop_strings.append(bytearray_to_utf16_str(data))
+        self._gop_binary = bytearray()
+        self._gop_frames = []
+
+    def close_open_gop(self):
+        """作りかけの GOP を閉じる (EncoderSet.best が、入れ物に入れた後の大きさで比べるため)。この後は add しないこと。"""
+        if self._gop_binary or self._gop_frames:
+            self._close_gop()
+            self._closed_last = True
+
     def finish(self):
         """(GOP ごとのチャンク文字列のリスト, フレームインデックスの文字列) を返す。"""
-        self._gop_strings.append(bytearray_to_utf16_str(self._gop_binary))
+        if not getattr(self, "_closed_last", False):
+            self._close_gop()
         index_data = bytearray()
         for gop_id, offset, length, is_keyframe in self._index_entries:
             encode_varint(gop_id, index_data)

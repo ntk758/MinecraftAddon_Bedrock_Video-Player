@@ -265,7 +265,7 @@ export class TileDictionary {
 
 /** データがタイル辞書を使っていれば辞書を作る (使っていなければ null)。 */
 export function createTileDictionary(video) {
-  return video.format === FORMAT_V5 && video.tile_size > 0 ? new TileDictionary(video) : null;
+  return isV5Family(video) && video.tile_size > 0 ? new TileDictionary(video) : null;
 }
 
 /** キーフレームの描き始めの状態: 立体は空気、平面スクリーンと 2.5D の平面は未設置 (-1)。 */
@@ -273,6 +273,219 @@ export function emptyLevel(video) {
   return video.layout === "volume" ? video.air_level : -1;
 }
 export const FORMAT_V5 = "varint_rle_v5";
+
+export const FORMAT_V6 = "varint_rle_v6";
+
+/** v5 のフレーム形式か (v6 は GOP ごとの入れ物を開けば v5 と同じ)。 */
+export function isV5Family(video) {
+  return video.format === FORMAT_V5 || video.format === FORMAT_V6;
+}
+
+// --- v6: GOP ごとのエントロピー符号化 (mvcodec/entropy.py と同じ規則) ---
+const STREAM_COUNT = 8;
+const S_HEADER = 0;
+const S_MV_GAP = 1;
+const S_MV_VEC = 2;
+const S_TILE_GAP = 3;
+const S_TILE_REF = 4;
+const S_RUN_GAP = 5;
+const S_RUN_LEN = 6;
+const S_RUN_LEVEL = 7;
+// 入れ物を開くとき、出力 (v5 のバイト列) をこのバイト数作るごとに yield する
+const OUTPUT_BYTES_PER_YIELD = 32768;
+
+/**
+ * 1 個のストリーム (正準ハフマン符号) を記号の Uint8Array に戻す。cursor.pos を次のストリームの先頭へ進める。
+ * 符号長の表から「先頭 maxLength ビット → 記号と符号長」の早見表を作り、1 記号ずつ引く。
+ */
+function* decodeHuffmanStreamJob(buf, cursor, symbolsPerYield) {
+  const count = readVarint(buf, cursor);
+  const out = new Uint8Array(count);
+  if (count === 0) return out;
+  const alphabet = readVarint(buf, cursor);
+  const lengths = new Uint8Array(alphabet);
+  for (let i = 0; i < alphabet; i++) {
+    const b = buf[cursor.pos + (i >> 1)];
+    lengths[i] = i % 2 === 0 ? b >> 4 : b & 0x0f;
+  }
+  cursor.pos += (alphabet + 1) >> 1;
+  const size = readVarint(buf, cursor);
+  const start = cursor.pos;
+  const end = start + size;
+  cursor.pos = end;
+
+  let maxLength = 0;
+  for (let i = 0; i < alphabet; i++) if (lengths[i] > maxLength) maxLength = lengths[i];
+  // 早見表: 記号 | 符号長 << 8。正準符号は 符号長の短い順、同じ長さなら記号の小さい順に連番
+  const table = new Uint16Array(1 << maxLength);
+  let code = 0;
+  let previous = 0;
+  for (let length = 1; length <= maxLength; length++) {
+    for (let symbol = 0; symbol < alphabet; symbol++) {
+      if (lengths[symbol] !== length) continue;
+      code <<= length - previous;
+      previous = length;
+      const first = code << (maxLength - length);
+      table.fill(symbol | (length << 8), first, first + (1 << (maxLength - length)));
+      code++;
+    }
+  }
+
+  let bitBuffer = 0;
+  let bitCount = 0;
+  let p = start;
+  const mask = (1 << maxLength) - 1;
+  // ビットは上位から読む。bitBuffer の下位 bitCount ビットが未使用 (最大 27 ビット)
+  const safeEnd = end - 3;
+  let i = 0;
+  while (i < count) {
+    const stop = Math.min(count, i + symbolsPerYield);
+    for (; i < stop; i++) {
+      if (bitCount < maxLength) {
+        if (p < safeEnd) {
+          bitBuffer = ((bitBuffer << 16) | (buf[p] << 8) | buf[p + 1]) & 0x7ffffff;
+          p += 2;
+          bitCount += 16;
+        } else {
+          while (bitCount < maxLength) {
+            bitBuffer = ((bitBuffer << 8) | (p < end ? buf[p] : 0)) & 0xffffff;
+            p++;
+            bitCount += 8;
+          }
+        }
+      }
+      const e = table[(bitBuffer >>> (bitCount - maxLength)) & mask];
+      out[i] = e & 0xff;
+      bitCount -= e >> 8;
+    }
+    if (i < count) yield;
+  }
+  return out;
+}
+
+/**
+ * v6 の GOP の入れ物を開いて、v5 のバイト列に戻す (mvcodec/entropy.py の unpack_gop と同じ)。
+ * system.runJob に渡せるよう、symbolsPerYield 個の記号ごと・64 フレームごとに yield する。
+ * QuickJS (ゲーム内のスクリプト) では関数呼び出しが重いので、1 バイトごとの処理は関数にせずに書いている。
+ */
+export function* unpackGopJob(container, symbolsPerYield = 8192) {
+  if (container.length === 0) return container;
+  if (container[0] === 0) return container.subarray(1); // 生のまま入れた GOP
+  if (container[0] !== 1) throw new Error(`Unknown GOP container mode ${container[0]}`);
+  const cursor = { pos: 1 };
+  const frameCount = readVarint(container, cursor);
+  const total = readVarint(container, cursor);
+  const streams = [];
+  for (let s = 0; s < STREAM_COUNT; s++) streams.push(yield* decodeHuffmanStreamJob(container, cursor, symbolsPerYield));
+
+  const out = new Uint8Array(total);
+  let o = 0;
+  const header = streams[S_HEADER];
+  const runGap = streams[S_RUN_GAP];
+  const runLength = streams[S_RUN_LEN];
+  const runLevel = streams[S_RUN_LEVEL];
+  let h = 0;
+  let g = 0;
+  let r = 0;
+  const pairPos = [0, 0, 0, 0, 0];
+  // 出力 OUTPUT_BYTES_PER_YIELD バイトごとに yield する (フレームの数で区切ると、64 フレーム以下の GOP が
+  // 1 回で全部組み立てられ、1 tick の時間の予算を何倍も超えた)
+  let nextYield = OUTPUT_BYTES_PER_YIELD;
+  for (let f = 0; f < frameCount; f++) {
+    // ヘッダ (varint) を書き写しながら値を読む
+    let value = 0;
+    let scale = 1;
+    let b;
+    do {
+      b = header[h++];
+      out[o++] = b;
+      value += (b & 0x7f) * scale;
+      scale *= 128;
+    } while (b >= 0x80);
+    const flags = value;
+    // 動きベクトル (ビット 1)・タイル (ビット 2): 数 (ヘッダのストリーム) と、間隔・値の組を書き写す
+    for (let part = 0; part < 2; part++) {
+      if (Math.floor(flags / (part === 0 ? 2 : 4)) % 2 !== 1) continue;
+      let count = 0;
+      scale = 1;
+      do {
+        b = header[h++];
+        out[o++] = b;
+        count += (b & 0x7f) * scale;
+        scale *= 128;
+      } while (b >= 0x80);
+      const gapStream = streams[part === 0 ? S_MV_GAP : S_TILE_GAP];
+      const valueStream = streams[part === 0 ? S_MV_VEC : S_TILE_REF];
+      const gi = part === 0 ? S_MV_GAP : S_TILE_GAP;
+      const vi = part === 0 ? S_MV_VEC : S_TILE_REF;
+      let gp = pairPos[gi];
+      let vp = pairPos[vi];
+      for (let k = 0; k < count; k++) {
+        do {
+          b = gapStream[gp++];
+          out[o++] = b;
+        } while (b >= 0x80);
+        do {
+          b = valueStream[vp++];
+          out[o++] = b;
+        } while (b >= 0x80);
+      }
+      pairPos[gi] = gp;
+      pairPos[vi] = vp;
+    }
+    // ラン: 数を書き写し、間隔 (varint)・長さ・色から v5 のランの値を作って varint で書く
+    let runs = 0;
+    scale = 1;
+    do {
+      b = header[h++];
+      out[o++] = b;
+      runs += (b & 0x7f) * scale;
+      scale *= 128;
+    } while (b >= 0x80);
+    for (let k = 0; k < runs; k++) {
+      let gap = 0;
+      scale = 1;
+      do {
+        b = runGap[g++];
+        gap += (b & 0x7f) * scale;
+        scale *= 128;
+      } while (b >= 0x80);
+      let v = gap * RUN_POSITION_DIVISOR + runLength[r] * 128 + runLevel[r];
+      r++;
+      if (v < 0x80000000) {
+        while (v >= 0x80) {
+          out[o++] = (v & 0x7f) | 0x80;
+          v >>>= 7;
+        }
+      } else {
+        // 2^31 以上 (とても大きな画面のランの位置) はビット演算が使えないので割り算で
+        while (v >= 0x80) {
+          out[o++] = (v % 128) | 0x80;
+          v = Math.floor(v / 128);
+        }
+      }
+      out[o++] = v;
+      if (o >= nextYield) {
+        nextYield = o + OUTPUT_BYTES_PER_YIELD;
+        yield;
+      }
+    }
+    if (o >= nextYield) {
+      nextYield = o + OUTPUT_BYTES_PER_YIELD;
+      yield;
+    }
+  }
+  if (o !== total) throw new Error(`GOP container size mismatch: ${o} != ${total}`);
+  return out;
+}
+
+/** unpackGopJob を最後まで一度に実行する。 */
+export function unpackGop(container) {
+  const job = unpackGopJob(container, Infinity);
+  let result = job.next();
+  while (!result.done) result = job.next();
+  return result.value;
+}
 
 /**
  * 1 フレームを復元し、表示後の盤面 (パレット番号、未設置は -1) を out に書く。キーフレームなら true を返す。
@@ -290,7 +503,7 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
   const height = boardRows(video);
   const cursor = { pos: start };
   const header = readVarint(bytes, cursor, end);
-  const isV5 = video.format === FORMAT_V5;
+  const isV5 = isV5Family(video);
   const isKeyframe = header % 2 === 1;
   const hasMotion = isV5 && Math.floor(header / 2) % 2 === 1;
   const hasTiles = isV5 && Math.floor(header / 4) % 2 === 1;

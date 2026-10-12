@@ -50,6 +50,8 @@ HEIGHT = 64
 OUTPUT_DIR = "BP/scripts"
 OUTPUT_FILE = f"{OUTPUT_DIR}/frames_data.js"
 FORMAT_NAME = "varint_rle_v5"
+# GOP ごとにエントロピー符号化したもの (mvcodec/entropy.py)。フレームの中身は v5 と同じ
+FORMAT_NAME_ENTROPY = "varint_rle_v6"
 MIN_GOP_SIZE = 20
 MAX_GOP_SIZE = 300
 SCENE_CUT_THRESHOLD = 30.0
@@ -505,6 +507,9 @@ def parse_args(argv=None):
     parser.add_argument("--tile-size", default="auto", choices=["auto", "0", "4", "8", "16"],
                         help="タイル辞書のタイルの大きさ (0 で無効)。繰り返し現れる模様を辞書から貼って差分を小さくする。"
                              "auto は 4 と 8 の両方で符号化して小さい方を使う")
+    parser.add_argument("--entropy", action=argparse.BooleanOptionalAction, default=True,
+                        help="GOP ごとにハフマン符号で圧縮する (varint_rle_v6)。.js が約 3〜5 割、.mcaddon が約 3 割小さくなる。"
+                             "v6.5 以前のアドオンでは再生できない (--no-entropy で v5 のまま)")
     parser.add_argument("--scene-threshold", type=float, default=0.015,
                         help="adaptive-fps でフレームを省略する変化率のしきい値")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
@@ -624,7 +629,7 @@ def build_frame_data(args, width, height, gop_boundaries, palettes, adaptive, en
         "fps": args.fps,
         "frame_count": encoder.stats.total_frames,
         "keyframe_interval": args.keyframe_interval,
-        "format": FORMAT_NAME,
+        "format": FORMAT_NAME_ENTROPY if encoder.entropy else FORMAT_NAME,
         "mv_block": MV_BLOCK,
         "mv_range": encoder.mv_limit,
         "tile_size": encoder.tile_size,
@@ -679,6 +684,9 @@ class EncoderSet:
             encoder.add(frame_no, gop_id, frame)
 
     def best(self):
+        """一番小さいエンコーダ。最後の GOP も閉じて (入れ物に入れて) から比べる (closing=finish の前に呼ぶ)。"""
+        for encoder in self.encoders:
+            encoder.close_open_gop()
         return min(self.encoders, key=lambda encoder: encoder.payload_size())
 
 
@@ -690,7 +698,7 @@ def make_encoder(args, width, rows, gop_boundaries, empty_value, depth=1, change
             width=width, rows=rows, gop_boundaries=gop_boundaries, keyframe_interval=args.keyframe_interval,
             adaptive_fps=args.adaptive_fps, scene_threshold=args.scene_threshold, motion=args.motion,
             mv_range=args.mv_range, empty_value=empty_value, tile_size=tile_size, motion_cache=motion_cache,
-            depth=depth, change_ratio_fn=change_ratio_fn,
+            depth=depth, change_ratio_fn=change_ratio_fn, entropy=args.entropy,
         )
         for tile_size in tile_sizes
     ])
