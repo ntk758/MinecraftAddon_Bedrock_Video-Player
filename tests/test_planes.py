@@ -189,3 +189,22 @@ def test_auto_falls_back_to_voxels_with_a_message(tmp_path, capsys):
     from mvcodec.decode import load_frame_data
 
     assert load_frame_data(out)["layout"] == "volume"
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node が必要")
+@pytest.mark.parametrize("render", ["list", "rect"])
+def test_relief_never_shows_holes_while_a_frame_is_drawn_over_several_ticks(tmp_path, render):
+    """1 フレームが何 tick にもまたがっても、relief のどの列も空にならない (新しいブロックを先に置き、空気にするのは最後)。
+    実機の録画 (v6.5.0) で、描画の途中に穴が見えたため。"""
+    from test_codec_v4 import make_scene_frames, run_convert
+    from test_main_js import run_addon
+
+    make_scene_frames(tmp_path / "frames")
+    out = tmp_path / "relief.js"
+    run_convert(tmp_path / "frames", out, "--mode", "relief", "--depth", "8", "--width", "48", "--height", "36",
+                "--fps", "20")
+    # 1 ブロックの費用を重くして、1 フレームを何 tick にも分けさせる
+    costs = '{"setBlock": 200, "fillCall": 400, "fillBlock": 60, "listCall": 400, "listBlock": 120}'
+    result = run_addon(tmp_path / "addon", out, "holes", f"render={render}", f"costs={costs}")
+    assert result["finished"] and result["filledOnce"]
+    assert result["holeTicks"] == 0, (result["holeTicks"], result["maxHoles"])
