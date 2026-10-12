@@ -9,6 +9,7 @@ import { VIDEOS, VIDEO_LIST } from "./videos.js";
 import {
   FORMAT_V4,
   FORMAT_V5,
+  FORMAT_V6,
   createTileDictionary,
   decodeFrameInto,
   decodeUTF16BinaryToBytes,
@@ -22,6 +23,7 @@ import {
   readVarint,
   skipFrameHeader,
   streamSizeOf,
+  unpackGopJob,
   unpackRun,
 } from "./codec.js";
 
@@ -74,7 +76,23 @@ const MAX_TICKING_AREAS = 8;
 // 盤面の比較 (変わったブロックを探す走査) をこの画素数ごとに区切って tick を跨ぐ
 const PIXELS_PER_SCAN_YIELD = 32768;
 // 何フレーム先の GOP を先読みするか
-const GOP_PREFETCH_FRAMES = 10;
+// 次の GOP を何フレーム前から展開し始めるか。v6 (エントロピー符号化) は展開に時間がかかるので早めに始める
+const GOP_PREFETCH_FRAMES = 40;
+// GOP の展開の途中で出す yield の値。描画の yield と違い、1 tick の yield の回数の上限 (ブロック数の上限) には数えず、
+// 時間の予算だけで区切る (展開は何百回も yield するので、回数で区切ると何十 tick もかかる)
+const DECODE_YIELD = 1;
+// 先読み (別の runJob) が GOP を展開し終わるのを待つときの yield。その tick の処理をすぐ終える (空回りで時間を使わない)
+const WAIT_YIELD = 2;
+
+/** ジェネレータの yield をすべて DECODE_YIELD にして実行し、戻り値を返す。 */
+function* asDecodeJob(job) {
+  let result = job.next();
+  while (!result.done) {
+    yield DECODE_YIELD;
+    result = job.next();
+  }
+  return result.value;
+}
 
 const BLOCK_ID_ALIASES = {
   "minecraft:terracotta": "minecraft:hardened_clay",
@@ -295,7 +313,7 @@ class VideoPlayer {
     if (this.decodedVideoId === this.videoId && (this.decodedIndex || this.videoData.frames)) return true;
 
     const format = this.videoData.format;
-    if ((format === FORMAT_V4 || format === FORMAT_V5) && this.videoData.chunks && this.videoData.index) {
+    if ((format === FORMAT_V4 || format === FORMAT_V5 || format === FORMAT_V6) && this.videoData.chunks && this.videoData.index) {
       this.decodedIndex = parseFrameIndexV4(decodeUTF16BinaryToBytes(this.videoData.index));
       const pixels = boardSizeOf(this.videoData);
       const streamPixels = streamSizeOf(this.videoData);
@@ -331,6 +349,8 @@ class VideoPlayer {
       this.decodedIndex = null;
       return true;
     }
+    // 知らない形式 (新しい版の変換ツールで作ったデータなど) は、黙って何も描かないのではなく知らせる
+    warnOnce(`format:${this.videoData.format}`, `Unsupported video data format "${this.videoData.format}". Rebuild the add-on with the same version of the converter`);
     return false;
   }
 
@@ -342,8 +362,15 @@ class VideoPlayer {
     this.gopCache.set(gopId, decoded);
   }
 
-  /** GOP を同期的に展開して返す (LRU キャッシュ)。 */
-  ensureGopDecoded(gopId) {
+  /**
+   * GOP を展開して返す (LRU キャッシュ)。tick を跨いで少しずつ展開するジェネレータ (DECODE_YIELD を出す)。
+   * 先読み (prefetchGop) が同じ GOP を展開中なら、二重に展開せずに終わるのを待つ。
+   */
+  *gopBytesJob(gopId) {
+    if (!this.videoData || !this.videoData.chunks) return null;
+    if (gopId < 0 || gopId >= this.videoData.chunks.length) return null;
+    const videoId = this.videoId;
+    while (this.pendingGops.has(gopId) && !this.gopCache.has(gopId)) yield WAIT_YIELD;
     const cached = this.gopCache.get(gopId);
     if (cached) {
       // 最近使ったものを末尾へ移して LRU にする
@@ -351,10 +378,10 @@ class VideoPlayer {
       this.gopCache.set(gopId, cached);
       return cached;
     }
-    if (!this.videoData || !this.videoData.chunks) return null;
-    if (gopId < 0 || gopId >= this.videoData.chunks.length) return null;
-
-    const decoded = decodeUTF16BinaryToBytes(this.videoData.chunks[gopId]);
+    let decoded = yield* asDecodeJob(decodeUTF16BinaryToBytesJob(this.videoData.chunks[gopId]));
+    // v6 は GOP ごとの入れ物 (エントロピー符号化) を開いて v5 のバイト列にする
+    if (this.videoData.format === FORMAT_V6) decoded = yield* asDecodeJob(unpackGopJob(decoded));
+    if (this.videoId !== videoId) return null;
     this.cacheGop(gopId, decoded);
     return decoded;
   }
@@ -367,10 +394,17 @@ class VideoPlayer {
     const self = this;
     const videoId = this.videoId;
     system.runJob((function* () {
-      const decoded = yield* decodeUTF16BinaryToBytesJob(self.videoData.chunks[gopId]);
-      self.pendingGops.delete(gopId);
-      if (self.videoId === videoId && !self.gopCache.has(gopId)) {
-        self.cacheGop(gopId, decoded);
+      try {
+        let decoded = yield* decodeUTF16BinaryToBytesJob(self.videoData.chunks[gopId]);
+        if (self.videoData.format === FORMAT_V6) decoded = yield* unpackGopJob(decoded);
+        if (self.videoId === videoId && !self.gopCache.has(gopId)) {
+          self.cacheGop(gopId, decoded);
+        }
+      } catch (e) {
+        warnOnce(`prefetch:${gopId}`, `Failed to decode GOP ${gopId}: ${e}`);
+      } finally {
+        // 失敗しても外す (外さないと、この GOP を待つ再生がいつまでも進まない)
+        self.pendingGops.delete(gopId);
       }
     })());
   }
@@ -763,11 +797,11 @@ class VideoPlayer {
       if (frameIndex < 0 || frameIndex >= this.decodedIndex.length) return;
       const entry = this.decodedIndex[frameIndex];
 
-      const lookaheadFrame = frameIndex + GOP_PREFETCH_FRAMES;
-      if (lookaheadFrame < this.decodedIndex.length) {
-        const nextGopId = this.decodedIndex[lookaheadFrame].gopId;
-        if (nextGopId > entry.gopId) this.prefetchGop(nextGopId);
-      }
+      // 先の GOP を先読みする。40 フレーム先までにある GOP をすべて (短い GOP が続いても取りこぼさない)。
+      // キャッシュは MAX_CACHED_GOPS 個なので、今の GOP の次から 2 個まで
+      const lookaheadFrame = Math.min(frameIndex + GOP_PREFETCH_FRAMES, this.decodedIndex.length - 1);
+      const lastGopId = Math.min(this.decodedIndex[lookaheadFrame].gopId, entry.gopId + 2);
+      for (let gopId = entry.gopId + 1; gopId <= lastGopId; gopId++) this.prefetchGop(gopId);
       // decoded を frameIndex の状態にする。直前のフレームの続きでなければ (シークの中断・ベンチマーク・
       // 描画途中での一時停止の後など)、直近のキーフレームから置かずに復元し直す
       let resynced = false;
@@ -776,11 +810,11 @@ class VideoPlayer {
           resynced = true;
           const start = findKeyframeAtOrBefore(this.decodedIndex, frameIndex);
           for (let f = start; f < frameIndex; f++) {
-            if (!this.decodeOnly(f)) return;
-            yield;
+            if (!(yield* this.decodeOnlyJob(f))) return;
+            yield DECODE_YIELD;
           }
         }
-        if (!this.decodeOnly(frameIndex)) return;
+        if (!(yield* this.decodeOnlyJob(frameIndex))) return;
       }
       // 省略フレームは盤面が変わらないので、順番どおりに来たときは何も置かない
       if (entry.length === 0 && !resynced) return;
@@ -815,10 +849,10 @@ class VideoPlayer {
   }
 
   /** frameIndex を decoded へ復元するだけで、ブロックは置かない (decoded は frameIndex - 1 の状態であること)。 */
-  decodeOnly(frameIndex) {
+  *decodeOnlyJob(frameIndex) {
     const entry = this.decodedIndex[frameIndex];
     if (entry.length > 0) {
-      const gopBytes = this.ensureGopDecoded(entry.gopId);
+      const gopBytes = yield* this.gopBytesJob(entry.gopId);
       if (!gopBytes) return false;
       decodeFrameInto(
         gopBytes, entry.offset, entry.offset + entry.length, this.decoded, this.decodeScratch, this.videoData, this.tiles
@@ -881,8 +915,12 @@ class VideoPlayer {
     }
 
     const tickStart = Date.now();
-    for (let yc = 0; yc < MAX_YIELDS_PER_TICK; yc++) {
-      const { done } = this.frameIterator.next();
+    // ブロックを置いた後の yield は MAX_YIELDS_PER_TICK 回まで (1 tick のブロック数の上限)。GOP の展開の yield は数えない
+    let yields = 0;
+    while (yields < MAX_YIELDS_PER_TICK) {
+      const { done, value } = this.frameIterator.next();
+      if (value === WAIT_YIELD) break;
+      if (value !== DECODE_YIELD) yields++;
       if (done) {
         this.recordFrameStats(Date.now() - tickStart);
         this.syncAudioForFrame(this.currentFrame);

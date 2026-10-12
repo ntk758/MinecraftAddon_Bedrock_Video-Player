@@ -15,8 +15,10 @@ import {
   isHeightfield,
   isVolume,
   parseFrameIndexV4,
+  FORMAT_V6,
   readVarint,
   streamSizeOf,
+  unpackGop,
 } from "../../codec.js";
 
 const text = readFileSync(process.argv[2], "utf8");
@@ -24,7 +26,11 @@ const data = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)
 const { width, height } = data;
 const pixels = width * height * (isVolume(data) ? data.depth : 1);
 const entries = parseFrameIndexV4(decodeUTF16BinaryToBytes(data.index));
-const gops = data.chunks.map((chunk) => decodeUTF16BinaryToBytes(chunk));
+// v6 は GOP ごとの入れ物 (エントロピー符号化) を開いて v5 のバイト列にする (main.js と同じ)
+const gops = data.chunks.map((chunk) => {
+  const bytes = decodeUTF16BinaryToBytes(chunk);
+  return data.format === FORMAT_V6 ? unpackGop(bytes) : bytes;
+});
 
 // main.js と同じ手順: 復元した盤面と表示中の盤面を比べ、変わった画素だけ「置く」。
 // 置いた画素には、そのフレームの GOP 番号を記録しておき、別パレットのブロックが残っていないか調べる。
@@ -68,7 +74,7 @@ function applyFrame(state, frameIndex) {
 
 function hasMotion(frameIndex) {
   const entry = entries[frameIndex];
-  if (entry.length === 0 || data.format !== "varint_rle_v5") return false;
+  if (entry.length === 0 || !data.format.startsWith("varint_rle_v") || data.format === "varint_rle_v4") return false;
   const header = readVarint(gops[entry.gopId], { pos: entry.offset });
   return Math.floor(header / 2) % 2 === 1;
 }
@@ -94,7 +100,7 @@ for (let target = 0; target < entries.length; target++) {
 
 const motionFrames = entries.flatMap((_e, i) => (hasMotion(i) ? [i] : []));
 const tileFrames = entries.flatMap((entry, i) => {
-  if (entry.length === 0 || data.format !== "varint_rle_v5") return [];
+  if (entry.length === 0 || !data.format.startsWith("varint_rle_v") || data.format === "varint_rle_v4") return [];
   const header = readVarint(gops[entry.gopId], { pos: entry.offset });
   return Math.floor(header / 4) % 2 === 1 ? [i] : [];
 });

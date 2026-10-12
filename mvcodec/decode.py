@@ -9,12 +9,22 @@ import numpy as np
 
 from mvcodec.color import BLOCK_RGB
 from mvcodec.encode import UTF16_BITS_PER_CHAR, UTF16_CHAR_OFFSET
+from mvcodec.entropy import unpack_gop
 from mvcodec.motion import apply_motion, apply_motion_3d, unpack_vector, unpack_vector_3d
 from mvcodec.planes import LAYOUT as HEIGHTFIELD, planes_to_volume
 from mvcodec.tiles import TileDictionary
 
 FORMAT_V4 = "varint_rle_v4"
 FORMAT_V5 = "varint_rle_v5"
+# v5 のフレームを GOP ごとにエントロピー符号化した入れ物 (mvcodec/entropy.py)。開けば v5 と同じ
+FORMAT_V6 = "varint_rle_v6"
+V5_FAMILY = (FORMAT_V5, FORMAT_V6)
+
+
+def gop_bytes_of(data, gop_id):
+    """GOP の v5 のバイト列 (v6 は入れ物を開く)。"""
+    raw = utf16_str_to_bytes(data["chunks"][gop_id])
+    return unpack_gop(raw) if data.get("format") == FORMAT_V6 else raw
 
 
 def load_frame_data(js_path):
@@ -108,7 +118,7 @@ def stream_rows(data):
 def new_tile_dictionary(data):
     """データがタイル辞書を使っていれば、デコーダ側の辞書を作る (使っていなければ None)。"""
     tile = data.get("tile_size", 0)
-    if not tile or data.get("format") != FORMAT_V5:
+    if not tile or data.get("format") not in V5_FAMILY:
         return None
     return TileDictionary(data["width"], stream_rows(data), tile, data.get("tile_dict_max", 32768), index_contents=False)
 
@@ -123,7 +133,7 @@ def decode_frame(buf, offset, length, board, data, frame_no=None, tiles=None):
     width = data["width"]
     volume = data.get("layout") == "volume"
     height = stream_rows(data)
-    is_v5 = data.get("format") == FORMAT_V5
+    is_v5 = data.get("format") in V5_FAMILY
     pos, end = offset, offset + length
     header, pos = read_varint(buf, pos)
     shift = 3 if is_v5 else 1
@@ -177,7 +187,7 @@ def iter_decoded_frames(data):
     ゲーム内と同じく、パレット番号が変わった画素だけをそのフレームの GOP のパレットで塗り直す。
     スキップフレームは前フレームと同じ盤面を返す。
     """
-    if data.get("format") not in (FORMAT_V4, FORMAT_V5):
+    if data.get("format") not in (FORMAT_V4, *V5_FAMILY):
         raise ValueError(f"未対応のフォーマットです: {data.get('format')}")
     shape = board_shape(data)
     pixels = int(np.prod(shape))
@@ -198,7 +208,7 @@ def iter_decoded_frames(data):
     for frame_no, (gop_id, offset, length, _is_kf) in enumerate(entries):
         if length > 0:
             if gop_id not in gop_bytes:
-                gop_bytes[gop_id] = utf16_str_to_bytes(data["chunks"][gop_id])
+                gop_bytes[gop_id] = gop_bytes_of(data, gop_id)
             new_stream, is_keyframe = decode_frame(gop_bytes[gop_id], offset, length, stream, data, frame_no, tiles)
             if tiles is not None:
                 tiles.update(stream, new_stream, is_keyframe)
