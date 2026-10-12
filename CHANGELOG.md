@@ -2,7 +2,7 @@
 
 このプロジェクトの変更履歴です (新しい順)。各版のダウンロードは [GitHub Releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases) にあります。
 
-## 未リリース (Unreleased)
+## v6.4.0
 
 - **2.5D パラメトリック立体 (Phase 8.3)**: `relief` / `extrude` / `inflate` を色の平面と高さ (厚み) の平面の 2 枚の 2D 映像で送り、アドオンで変わった列だけ立体に組み立て直す (`--volume-encoding`、既定で有効)。置くブロック・呼び出しは同じで、立体のデータが 54〜85% 減 (deflate 後)。
 - **GUI**: 「動画の縦横比に合わせる」ボタン (16:9 の動画で 128×128 → 128×72、Issue #2)、再生負荷の目安の表示、設定の誤りを項目ごとに表示、重い設定の確認。

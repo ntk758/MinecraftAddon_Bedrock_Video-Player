@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v6.3.0](https://img.shields.io/badge/Release-v6.3.0-blue.svg)](#-releases)
+[![Release v6.4.0](https://img.shields.io/badge/Release-v6.4.0-blue.svg)](#-releases)
 [![CI](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml/badge.svg)](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
@@ -18,7 +18,7 @@
   <sub>3D ホログラム (inflate / relief)。変換したデータをゲーム内と同じ規則で組み立て、斜め上から描いた絵 — 3D holograms rebuilt with the in-game rules</sub>
 </p>
 
-**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.3.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.3.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.3.0-windows-x64.zip` (Python 不要) を使ってください。
+**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.4.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.4.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.4.0-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 
 [日本語](#日本語-japanese) | [English](#english) | [変更履歴 / Changelog](CHANGELOG.md)
@@ -26,7 +26,7 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
 ## 🚀 クイックスタート / Quick start
 
 **A. サンプルを試す (変換は不要・約 3 分) / Try the sample (no conversion)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.3.0.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.3.0.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.4.0.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.4.0.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
    Download a sample `.mcaddon` from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) and double-click it to import it into Minecraft Bedrock.
 2. 新しいワールドを作り、**チートを有効**、**ビヘイビアーパックとリソースパックの両方** を有効にします (スーパーフラットがおすすめ)。
    Create a world with **cheats on** and **both** the Behavior Pack and the Resource Pack enabled (a superflat world works best).
@@ -34,8 +34,8 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
    Run `/scriptevent badapple:setup` then `/scriptevent badapple:start`. Use a compass to open the remote control.
 
 **B. 自分の動画を変換する (Windows) / Convert your own video (Windows)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.3.0-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
-   Unzip `BlockVideoPlayer-v6.3.0-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.4.0-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
+   Unzip `BlockVideoPlayer-v6.4.0-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
 2. 「動画を追加」→「動画の縦横比に合わせる」→「.mcaddon を作成」。画面の **再生負荷の目安** が「重い」なら幅・高さ・fps を下げます。
    Add a video → *Match video aspect ratio* → *Create .mcaddon*. If the **playback load estimate** says *heavy*, lower the size or fps.
 3. できた `.mcaddon` を A の 2〜3 と同じように使います。うまくいかないときは [既知の問題](docs/KNOWN_ISSUES.md) を見てください。
@@ -59,10 +59,10 @@ Python で動かす方法・GPU の設定は [インストールと使い方](#-
 リリースページでは各ファイルの横に SHA-256 が表示されます (`SHA256SUMS.txt` が付いている版はそのファイルにも)。手元のファイルの値と一致すれば、壊れても書き換えられてもいません。
 Each file on the release page shows its SHA-256; it must match the value you compute:
 ```powershell
-Get-FileHash .\BlockVideoPlayer-v6.3.0-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\BlockVideoPlayer-v6.4.0-windows-x64.zip -Algorithm SHA256
 ```
 ```bash
-sha256sum BlockVideoPlayer-v6.3.0-windows-x64.zip
+sha256sum BlockVideoPlayer-v6.4.0-windows-x64.zip
 ```
 
 ## 日本語 (Japanese)
@@ -502,6 +502,7 @@ This project is licensed under the [MIT License](LICENSE).
 すべての版の変更点は [CHANGELOG.md](CHANGELOG.md) にあります / Full history: [CHANGELOG.md](CHANGELOG.md).
 
 
+- **v6.4.0**: Phase 8.3 2.5D パラメトリック立体。レリーフ・押し出し・ふくらみを「色 + 高さ (厚み)」の 2 枚の 2D 映像で送り、ゲーム内で変わった列だけ組み立て直す (置くブロックは同じで立体のデータ 54〜85% 減)。GUI に「動画の縦横比に合わせる」ボタン・再生負荷の目安・項目ごとのエラー表示、ゲーム内の計測コマンド `stats`、MS-SSIM、自動パレットの色空間・色数のオプションを追加。クイックスタート・対応環境・性能の測り方・テストの記録などのドキュメントを整備。
 - **v6.3.0**: Phase 8.2 ディザの時間的安定化。前のフレームのブロックの色が新しく選んだ色とほとんど変わらなければ置き直さない条件付き更新 (`--temporal-hysteresis`) で、Blue Noise ではデータ 7〜48%・置くブロック 7〜51% 減。ディザ模様を映像の動きに合わせてずらすオプション (`--dither-follow-motion`) も追加。
 - **v6.2.0**: GUI の再生間隔 (tick) を FPS のスライダー (1〜20 fps) に変更。ゲーム内の言語を「各プレイヤーのゲーム言語 (10 言語)」か「GUI の言語に固定 (全員がその言語で表示、パックが約 20 KB 軽くなる)」から選べるように。
 - **v6.1.0**: Phase 8.1 描画方式の自動選択。描画方式 `auto` (既定) がフレームごとに箱・座標リスト・1 個ずつのうち一番速い置き方を選ぶ (実機の測定値を使用。`bench` で自分の端末の値を測って保存できる)。立体の変換を約 4 倍高速化し、変換中の進み具合と残り時間をログに表示。GUI で立体の表示モードを選ぶとディザを自動で「なし」に。

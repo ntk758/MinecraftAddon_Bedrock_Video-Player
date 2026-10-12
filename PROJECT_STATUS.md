@@ -3,7 +3,7 @@
 ## 1. プロジェクト概要
 本プロジェクトは、動画ファイル（MP4 / MKV / AVI / WEBM 等）を Minecraft Bedrock Edition（統合版）の Behavior Pack（.mcpack）へ超高速かつ最小容量で変換し、ゲーム内のブロック盤面上でスムーズに動動画再生するアドオン＆変換ツール群です。
 
-- **最新バージョン**: `v6.3.0` (ディザの時間的安定化: 条件付き更新)
+- **最新バージョン**: `v6.4.0` (2.5D パラメトリック立体、縦横比の自動調整、ゲーム内の計測)
 - **対象環境**: Minecraft Bedrock Edition 最新版 (安定版 Script API `@minecraft/server` 1.19.0 / `@minecraft/server-ui` 1.2.0。ベータ API 不要)
 - **変換GUI環境**: Python 3.12+ (PyTorch: CUDA / ROCm / DirectML, Pillow, NumPy, Tkinter, FFmpeg) または **独立スタンドアロン EXE (`BlockVideoPlayer.exe`)**
 
@@ -11,7 +11,7 @@
 
 ## 2. 現在の達成状況と到達点
 
-### 🧊 Phase 8.3: 2.5D パラメトリック立体 (次のリリース)
+### 🧊 Phase 8.3: 2.5D パラメトリック立体 (v6.4.0)
 - `relief` / `extrude` / `inflate` を色の平面と値の平面 (表面の段 / 中央にそろえた厚み) の 2 枚の 2D 映像として送り (`layout: "heightfield"`)、アドオンが変わった列だけ立体に組み立て直す。`--volume-encoding auto|planes|voxels` (既定 auto = 送れるなら planes)。
 - 置くブロック・呼び出しは同じで、データは deflate 後 −54〜85% (64×48×16 の合成映像)。
 
