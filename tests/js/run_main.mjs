@@ -26,9 +26,39 @@ let ticks = 0;
 const finished = () => messages.some((m) => JSON.stringify(m).includes("bvp.playback_finished"));
 // 再生中のスクリプトの処理時間 (モックの API はほぼ 0 なので、復元・立体の組み立て・差分の走査の時間)
 const playStart = performance.now();
+// 引数 "holes" で、立体の各列 (幅 × 高さの各マス) に 1 個もブロックが無い瞬間 (穴) を tick ごとに数える。
+// 全部の列が一度埋まった後だけ数える (最初の描画の途中は除く)
+const checkHoles = process.argv.includes("holes") && (video.layout === "volume" || video.layout === "heightfield");
+let holeTicks = 0;
+let maxHoles = 0;
+let filledOnce = false;
+function countEmptyColumns() {
+  const anchor = getAnchor("badapple:anchor");
+  if (!anchor) return -1;
+  let empty = 0;
+  for (let y = 0; y < video.height; y++) {
+    for (let x = 0; x < video.width; x++) {
+      let solid = false;
+      for (let z = 0; z < video.depth && !solid; z++) {
+        const id = board.get(`${anchor.x + x},${anchor.y + y},${anchor.z + z}`);
+        solid = id !== undefined && id !== "minecraft:air";
+      }
+      if (!solid) empty++;
+    }
+  }
+  return empty;
+}
 while (!finished() && ticks < 20000) {
   tick();
   ticks++;
+  if (checkHoles) {
+    const empty = countEmptyColumns();
+    if (empty === 0) filledOnce = true;
+    else if (filledOnce && empty > 0) {
+      holeTicks++;
+      maxHoles = Math.max(maxHoles, empty);
+    }
+  }
 }
 const playMs = performance.now() - playStart;
 
@@ -68,4 +98,4 @@ for (let p = 0; p < cells; p++) {
 }
 
 const costModel = getAnchor("badapple:cost_model") ?? null;
-process.stdout.write(JSON.stringify({ ticks, playMs, statsMessages, finished: finished(), frameCount: video.frame_count, fps: video.fps, anchor, stats, commands, benchMessages, messages, forms, sounds, finalBoard, costModel }));
+process.stdout.write(JSON.stringify({ ticks, playMs, statsMessages, holeTicks, maxHoles, filledOnce, finished: finished(), frameCount: video.frame_count, fps: video.fps, anchor, stats, commands, benchMessages, messages, forms, sounds, finalBoard, costModel }));

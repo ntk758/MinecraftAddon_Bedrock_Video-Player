@@ -18,6 +18,15 @@
   <sub>3D ホログラム (inflate / relief)。変換したデータをゲーム内と同じ規則で組み立て、斜め上から描いた絵 — 3D holograms rebuilt with the in-game rules</sub>
 </p>
 
+<p align="center">
+  <img src="docs/images/ingame_walk.gif" alt="ゲーム内の録画: 丸くふくらませた人型の立体が歩く (In-game recording: inflated walking figure)" height="220">
+  <img src="docs/images/ingame_relief.gif" alt="ゲーム内の録画: 波打つ立体レリーフ (In-game recording: animated relief)" height="220">
+  <img src="docs/images/ingame_bounce.gif" alt="ゲーム内の録画: 跳ねる MagicaVoxel のボール (In-game recording: bouncing MagicaVoxel ball)" height="220">
+  <br>
+  <sub><b>実際のゲーム内の録画</b> (Minecraft 統合版 Windows 11、v6.5.0 の 3D サンプル: 人型 / レリーフ / MagicaVoxel)。レリーフで一瞬見える穴は、1 フレームの描画が何 tick にもまたがったときの途中の状態で、v6.5.1 で「新しいブロックを先に置き、空気にするのは最後」に直しました —
+  <b>Real in-game recording</b> (Windows 11, v6.5.0 3D sample). The brief holes in the relief are frames still being drawn across several ticks; fixed in v6.5.1 by placing new blocks before clearing old ones</sub>
+</p>
+
 **▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.5.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.5.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.5.0-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 

@@ -486,14 +486,18 @@ class VideoPlayer {
     let operations = 0;
     let scanned = 0;
     let failures = 0;
+    // 立体では、新しいブロックを先に置き、空気にするのは最後にする。1 フレームが何 tick にもまたがったとき、
+    // 途中の状態が「古い面が消えて新しい面がまだ無い穴」ではなく「一瞬厚い」に見える (実機の録画で穴が見えたため)
+    const phases = airLevel >= 0 ? 2 : 1;
 
+    for (let phase = 0; phase < phases; phase++) {
     for (let r = 0; r < rows; r++) {
       const rowStart = r * width;
       let x = 0;
       while (x < width) {
         const p = rowStart + x;
         const level = next[p];
-        if (level === board[p] || level < 0) {
+        if (level === board[p] || level < 0 || (phases === 2 && (level === airLevel) !== (phase === 1))) {
           x++;
           continue;
         }
@@ -542,6 +546,7 @@ class VideoPlayer {
         scanned = 0;
         yield;
       }
+    }
     }
     if (failures > 0) {
       warnOnce("setBlock", `Failed to place ${failures} block(s). The screen may be outside the loaded area`);
@@ -708,10 +713,16 @@ class VideoPlayer {
       yield;
     }
 
+    // 立体では空気にするマスを最後に回す (rect 方式と同じく、描画の途中で穴が見えないように)
+    const airCells = [];
     for (let p = 0; p < next.length; p++) {
       if (p % PIXELS_PER_SCAN_YIELD === PIXELS_PER_SCAN_YIELD - 1) yield;
       const level = next[p];
       if (level === board[p] || level < 0) continue;
+      if (level === airLevel) {
+        airCells.push(p);
+        continue;
+      }
       let group = groups.get(level);
       if (!group) {
         group = { cells: [], locations: [] };
@@ -722,6 +733,13 @@ class VideoPlayer {
       if (group.cells.length >= LIST_BATCH) yield* flush(level, group);
     }
     for (const [level, group] of groups) yield* flush(level, group);
+    const airGroup = { cells: [], locations: [] };
+    for (const p of airCells) {
+      airGroup.cells.push(p);
+      airGroup.locations.push(cellToWorld(video, this.anchor, p, { x: 0, y: 0, z: 0 }));
+      if (airGroup.cells.length >= LIST_BATCH) yield* flush(airLevel, airGroup);
+    }
+    yield* flush(airLevel, airGroup);
     if (failures > 0) {
       warnOnce("setBlock", `Failed to place ${failures} block(s). The screen may be outside the loaded area`);
     }
