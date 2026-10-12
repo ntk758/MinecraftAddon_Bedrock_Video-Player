@@ -236,6 +236,58 @@ class VideoPlayer {
     this.expandedPlanes = null;
     this.decodedFrame = -1;
     this.boardGopId = -1;
+    // 再生の計測 (/scriptevent <接頭辞>:stats)。再生・再開のたびに測り直す
+    this.playStats = null;
+  }
+
+  /** 再生の計測を始め直す。実時間は最初のフレームを描く tick から数える (読み込み待ちの tick を含めない)。 */
+  resetPlayStats() {
+    this.playStats = {
+      frames: 0,
+      lateFrames: 0,
+      maxLateTicks: 0,
+      scriptMs: 0,
+      maxFrameMs: 0,
+      frameMs: 0,
+      frameLate: 0,
+      wallStart: null,
+      tickStart: 0,
+      // 一時停止・終了で時計を止める (止めた後に stats を見ても時間が伸びない)
+      wallEnd: null,
+      tickEnd: 0,
+      // 一時停止の前に描きかけだったフレームは、遅れも時間も正しく測れないので数えない
+      skipPartialFrame: this.frameIterator !== null,
+      startFrame: this.currentFrame,
+    };
+  }
+
+  /** 計測の時計を止める (再生の終了・一時停止・停止のとき)。 */
+  stopPlayStatsClock() {
+    const st = this.playStats;
+    if (st && st.wallStart !== null && st.wallEnd === null) {
+      st.wallEnd = Date.now();
+      st.tickEnd = this.elapsedTicks;
+    }
+  }
+
+  /** 計測結果 (再生していなければ null)。driftSeconds が正なら映像が実時間 (= 音声) より遅れている。 */
+  playStatsSummary() {
+    const st = this.playStats;
+    if (!st || st.wallStart === null || st.frames === 0) return null;
+    const seconds = Math.max(0.001, ((st.wallEnd ?? Date.now()) - st.wallStart) / 1000);
+    const videoSeconds = frameToSeconds(this.videoData, this.currentFrame) - frameToSeconds(this.videoData, st.startFrame);
+    return {
+      frames: st.frames,
+      seconds,
+      fps: st.frames / seconds,
+      targetFps: this.videoData.fps || TICKS_PER_SECOND / FRAME_INTERVAL_TICKS,
+      lateFrames: st.lateFrames,
+      maxLateTicks: st.maxLateTicks,
+      avgFrameMs: st.scriptMs / st.frames,
+      maxFrameMs: st.maxFrameMs,
+      tps: ((st.wallEnd !== null ? st.tickEnd : this.elapsedTicks) - st.tickStart) / seconds,
+      driftSeconds: seconds - videoSeconds,
+    };
   }
 
   ensureDecodedData() {
@@ -790,19 +842,48 @@ class VideoPlayer {
       // 動画の fps に合わせて、表示時刻が来るまで次のフレームを始めない
       if (this.currentFrame * this.ticksPerFrame >= this.elapsedTicks) return;
       this.frameIterator = this.applyFrameJob(this.currentFrame);
+      const st = this.playStats;
+      if (st) {
+        if (st.wallStart === null) {
+          st.wallStart = Date.now();
+          st.tickStart = this.elapsedTicks - 1;
+        }
+        // 予定の tick (表示時刻が来た最初の tick) から何 tick 遅れて描き始めたか
+        st.frameLate = this.elapsedTicks - (Math.floor(this.currentFrame * this.ticksPerFrame) + 1);
+        st.frameMs = 0;
+      }
     }
 
     const tickStart = Date.now();
     for (let yc = 0; yc < MAX_YIELDS_PER_TICK; yc++) {
       const { done } = this.frameIterator.next();
       if (done) {
+        this.recordFrameStats(Date.now() - tickStart);
         this.syncAudioForFrame(this.currentFrame);
         this.currentFrame++;
         this.frameIterator = null;
-        break;
+        return;
       }
       if (Date.now() - tickStart > TICK_TIME_BUDGET_MS) break;
     }
+    if (this.playStats) this.playStats.frameMs += Date.now() - tickStart;
+  }
+
+  recordFrameStats(lastTickMs) {
+    const st = this.playStats;
+    if (!st) return;
+    if (st.skipPartialFrame) {
+      st.skipPartialFrame = false;
+      st.startFrame = this.currentFrame + 1;
+      st.wallStart = null;
+      return;
+    }
+    const frameMs = st.frameMs + lastTickMs;
+    st.frames++;
+    st.scriptMs += frameMs;
+    st.maxFrameMs = Math.max(st.maxFrameMs, frameMs);
+    if (st.frameLate > 0) st.lateFrames++;
+    st.maxLateTicks = Math.max(st.maxLateTicks, st.frameLate);
   }
 
   cancelJob() {
@@ -813,6 +894,7 @@ class VideoPlayer {
   }
 
   stopPlayback() {
+    this.stopPlayStatsClock();
     this.running = false;
     this.currentAudioChunk = -1;
     this.cancelJob();
@@ -829,6 +911,7 @@ class VideoPlayer {
     this.elapsedTicks = 0;
     this.running = true;
     this.startDelayTicks = START_LOAD_DELAY_TICKS;
+    this.resetPlayStats();
   }
 
   /** 一時停止・シーク位置から再生を続ける。 */
@@ -842,6 +925,7 @@ class VideoPlayer {
     this.currentAudioChunk = -1;
     this.syncAudioForFrame(this.currentFrame);
     this.running = true;
+    this.resetPlayStats();
   }
 
   canResume() {
@@ -1274,6 +1358,20 @@ function stopAndClearAll(dimension) {
   }
 }
 
+/** 再生の計測結果を表示する (/scriptevent <接頭辞>:stats)。再生中でも、再生が終わった後でもよい。 */
+function showPlayStats() {
+  const vp = getActivePlayer();
+  const summary = vp ? vp.playStatsSummary() : null;
+  if (!summary) {
+    notify("stats_none", EVENT_PREFIX);
+    return;
+  }
+  const fixed = (value, digits) => value.toFixed(digits);
+  notify("stats_play", summary.frames, fixed(summary.seconds, 1), fixed(summary.fps, 2), fixed(summary.targetFps, 2),
+    fixed(summary.tps, 1), fixed(summary.driftSeconds, 2));
+  notify("stats_load", summary.lateFrames, summary.maxLateTicks, fixed(summary.avgFrameMs, 1), summary.maxFrameMs);
+}
+
 function getActivePlayer() {
   const anchorLoc = world.getDynamicProperty(ANCHOR_KEY);
   if (anchorLoc) {
@@ -1434,6 +1532,9 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
   switch (action) {
     case "bench":
       runBenchmark(player);
+      break;
+    case "stats":
+      showPlayStats();
       break;
     case "render":
       setRenderMode(event.message?.trim());

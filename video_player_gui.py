@@ -94,11 +94,102 @@ def get_ffmpeg_path() -> str | None:
     return shutil.which("ffmpeg")
 
 
+_VIDEO_SIZE_PATTERN = re.compile(r"Stream #.*?Video:.*?[ ,](\d{2,5})x(\d{2,5})[ ,\[]")
+# スマートフォンの縦動画などは、保存された大きさと別に回転の情報を持つ (ffmpeg は変換時に回転して読む)
+_ROTATION_PATTERN = re.compile(r"rotation of (-?\d+(?:\.\d+)?) degrees|rotate\s*:\s*(-?\d+)")
+
+
+def probe_video_size(path: str | Path, ffmpeg: str | None = None) -> tuple[int, int] | None:
+    """動画の幅と高さ (画素) を ffmpeg の情報表示から読む。読めなければ None。
+
+    ffprobe は EXE 版に同梱していないので、ffmpeg -i の標準エラー出力の映像ストリームの行を使う。
+    90° / 270° の回転の情報があれば、変換時の向き (ffmpeg が自動で回転した後) の幅と高さを返す。
+    """
+    ffmpeg = ffmpeg or get_ffmpeg_path()
+    if not ffmpeg:
+        return None
+    try:
+        result = subprocess.run([ffmpeg, "-hide_banner", "-i", str(path)], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=30, **subprocess_kwargs())
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = _VIDEO_SIZE_PATTERN.search(result.stderr or "")
+    if not match:
+        return None
+    width, height = int(match.group(1)), int(match.group(2))
+    if width <= 0 or height <= 0:
+        return None
+    # 回転の情報は映像ストリームの行の後 (次のストリームの前) にある
+    rest = result.stderr[match.end():]
+    next_stream = rest.find("Stream #")
+    rotation = _ROTATION_PATTERN.search(rest if next_stream < 0 else rest[:next_stream])
+    if rotation:
+        degrees = round(float(rotation.group(1) or rotation.group(2))) % 180
+        if degrees == 90:
+            width, height = height, width
+    return width, height
+
+
+def suggest_size(source_width: int, source_height: int, long_side: int, limit: int | None = None) -> tuple[int, int]:
+    """元の縦横比のまま、長い辺を long_side ブロックにした幅・高さ (黒帯が出ない大きさ)。
+
+    例: 1920×1080 で long_side 128 → 128×72。どちらの辺も 1〜limit (既定は MAX_SCREEN_SIZE) に収める。
+    """
+    limit = MAX_SCREEN_SIZE if limit is None else limit
+    long_side = max(1, min(limit, int(long_side)))
+    if source_width >= source_height:
+        width, height = long_side, round(long_side * source_height / source_width)
+    else:
+        width, height = round(long_side * source_width / source_height), long_side
+    return max(1, min(limit, width)), max(1, min(limit, height))
+
+
+# 1 ブロック置く費用の目安 (µs)。Windows 版の実測 (fillBlocks の箱 0.55〜1.2、1 個ずつ 2.3) の中間
+LOAD_US_PER_BLOCK = 1.5
+# 全マスが変わったときに 1 tick (50 ms) あたり置くのにかかる時間 (ms) の目安の境目: 軽い / 普通 / それ以上は重い
+LOAD_LEVELS = ((8.0, "light"), (25.0, "medium"))
+# 立体を置ける高さ (オーバーワールドの建築範囲 Y=-64〜319)
+MAX_VOLUME_HEIGHT = 384
+
+
+def estimate_load(width: int, height: int, fps: int, mode: str = "screen", depth: int = 16) -> dict:
+    """再生負荷の目安。全マスが毎フレーム変わる最悪の場合に、1 tick あたり何 ms ブロックを置くことになるか。
+
+    実際に変わるのは多くの映像で 1〜3 割なので、普段の負荷はこれより小さい。立体は表面と側面が中心なので、
+    盤面全体ではなく奥行き 3 段ぶんを目安にする。
+    """
+    cells = width * height * (min(depth, 3) if mode in VOLUME_MODES else 1)
+    blocks_per_second = cells * fps
+    ms_per_tick = blocks_per_second * LOAD_US_PER_BLOCK / 1000 / 20
+    level = next((name for limit, name in LOAD_LEVELS if ms_per_tick < limit), "heavy")
+    return {"cells": cells, "blocks_per_second": blocks_per_second, "ms_per_tick": ms_per_tick, "level": level}
+
+
+def validate_settings(width, height, fps, duration=None, mode="screen", depth=16) -> list[str]:
+    """変換設定の誤りを、エラーメッセージの翻訳キー (error.*) の一覧で返す (空なら問題なし)。"""
+    errors = []
+    if not (1 <= width <= MAX_SCREEN_SIZE and 1 <= height <= MAX_SCREEN_SIZE):
+        errors.append("error.size_range")
+    if not MIN_FPS <= fps <= MAX_FPS:
+        errors.append("error.fps_range")
+    if duration is not None and duration <= 0:
+        errors.append("error.duration")
+    if mode in VOLUME_MODES:
+        if not 2 <= depth <= MAX_DEPTH:
+            errors.append("error.depth_range")
+        if height > MAX_VOLUME_HEIGHT:
+            errors.append("error.volume_height")
+    return errors
+
+
 # 選択肢の値 (convert.py に渡す値)。表示名は locales/*.json の "<種類>.<値>" キー
 PALETTE_VALUES = ("auto", "full", "expanded", "concrete")
 DITHER_VALUES = ("none", "blue_noise", "ordered", "floyd", "atkinson", "burkes", "sierra")
 DEVICE_VALUES = ("auto", "cuda", "directml", "cpu")
 MODE_VALUES = ("screen", "relief", "extrude", "inflate")
+VOLUME_MODES = ("relief", "extrude", "inflate")
+MAX_SCREEN_SIZE = 512
+MAX_DEPTH = 64
 DEFAULT_MODE = "screen"
 DEFAULT_DEPTH = 16
 VOX_SUFFIX = ".vox"
@@ -286,6 +377,8 @@ class PackBuilderApp(tk.Tk):
         self.preset_key = DEFAULT_PRESET
         self._set_option_labels(DEFAULT_PALETTE, DEFAULT_DITHER, DEFAULT_DEVICE, DEFAULT_MODE)
         self.namespace_var.trace_add("write", lambda *_: self._update_command_hint())
+        for variable in (self.width_var, self.height_var, self.depth_var):
+            variable.trace_add("write", lambda *_: self._update_load_hint())
 
         self._build_ui()
         self._apply_quality_preset()
@@ -312,6 +405,7 @@ class PackBuilderApp(tk.Tk):
         self._last_mode = mode
         if new_dither != dither:
             self.dither_var.set(self.tr(f"dither.{new_dither}"))
+        self._update_load_hint()
 
     def _addon_language(self) -> str | None:
         """ゲーム内の表示言語を固定するなら GUI の言語コード、各プレイヤーの言語なら None。"""
@@ -474,6 +568,10 @@ class PackBuilderApp(tk.Tk):
             settings, textvariable=self.dither_var, state="readonly", width=46,
             values=tuple(option_labels(tr, "dither", DITHER_VALUES)),
         ).grid(row=2, column=1, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
+        # 動画の縦横比に合わせた幅・高さにする (黒帯のぶんのブロックを無駄にしない)
+        ttk.Button(settings, text=tr("settings.fit_aspect"), command=self._fit_to_aspect).grid(
+            row=2, column=4, columnspan=4, padx=(10, 10), pady=(0, 6), sticky="w"
+        )
 
         # 知覚最適化(エッジ減衰)オプション
         ttk.Checkbutton(
@@ -496,9 +594,13 @@ class PackBuilderApp(tk.Tk):
         mode_box.grid(row=4, column=1, columnspan=3, padx=(0, 10), pady=(0, 6), sticky="w")
         mode_box.bind("<<ComboboxSelected>>", lambda _event: self._on_mode_selected())
         ttk.Label(settings, text=tr("settings.depth")).grid(row=4, column=4, padx=(10, 4), pady=(0, 6))
-        ttk.Spinbox(settings, from_=2, to=64, textvariable=self.depth_var, width=7).grid(
+        ttk.Spinbox(settings, from_=2, to=MAX_DEPTH, textvariable=self.depth_var, width=7).grid(
             row=4, column=5, padx=(0, 10), pady=(0, 6), sticky="w"
         )
+        # 再生負荷の目安 (幅・高さ・fps・表示モード・奥行きを変えるたびに更新)
+        self.load_label = ttk.Label(settings, wraplength=720)
+        self.load_label.grid(row=5, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
+        self._update_load_hint()
 
         # --- 説明文 ---
         ttk.Label(self, text=tr("info.description"), wraplength=740).grid(row=5, column=0, sticky="w", **pad)
@@ -600,6 +702,51 @@ class PackBuilderApp(tk.Tk):
         self.fps_var.set(fps)
         self._on_fps_changed()
 
+    def _selected_video_path(self) -> str | None:
+        """選択中の動画 (無ければ一覧の先頭から) のパス。.vox は縦横比の対象外。"""
+        items = list(self.video_tree.selection()) or list(self.video_tree.get_children())
+        for iid in items:
+            path = str(self.video_tree.item(iid)["values"][1])
+            if not path.lower().endswith(VOX_SUFFIX):
+                return path
+        return None
+
+    def _fit_to_aspect(self) -> None:
+        """動画の縦横比を読み、今の幅・高さの長い辺はそのままで黒帯の出ない大きさにする。"""
+        path = self._selected_video_path()
+        if path is None:
+            messagebox.showwarning(self.tr("warn.select_title"), self.tr("warn.fit_aspect_no_video"))
+            return
+        size = probe_video_size(path)
+        if size is None:
+            messagebox.showerror(self.tr("error.probe_title"), self.tr("error.probe", path=path))
+            return
+        try:
+            long_side = max(int(self.width_var.get()), int(self.height_var.get()))
+        except (tk.TclError, ValueError):
+            long_side = QUALITY_PRESETS[DEFAULT_PRESET][0]
+        width, height = suggest_size(*size, long_side)
+        self.width_var.set(width)
+        self.height_var.set(height)
+        self.messages.put(self.tr("settings.fit_aspect_done", src_w=size[0], src_h=size[1], width=width, height=height))
+
+    def _update_load_hint(self) -> None:
+        if not hasattr(self, "load_label") or not self.load_label.winfo_exists():
+            return
+        try:
+            width, height = int(self.width_var.get()), int(self.height_var.get())
+            fps = int(round(float(self.fps_var.get())))
+            depth = int(self.depth_var.get())
+        except (tk.TclError, ValueError):
+            self.load_label.configure(text="")
+            return
+        mode = self._selected_values()[3]
+        load = estimate_load(width, height, fps, mode, depth)
+        self.load_label.configure(text=self.tr(
+            "settings.load", blocks=f"{load['blocks_per_second']:,}", ms=f"{load['ms_per_tick']:.0f}",
+            level=self.tr(f"load.{load['level']}"),
+        ))
+
     def _on_fps_changed(self) -> None:
         """スライダーの値を 1〜20 の整数に丸めて表示する。"""
         try:
@@ -611,6 +758,7 @@ class PackBuilderApp(tk.Tk):
             self.fps_var.set(fps)
         if hasattr(self, "fps_label"):
             self.fps_label.configure(text=self.tr("settings.fps_value", fps=fps))
+        self._update_load_hint()
 
     def _select_output(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -648,27 +796,32 @@ class PackBuilderApp(tk.Tk):
                 messagebox.showerror(self.tr("error.file_missing_title"), self.tr("error.file_missing", path=entry["file_path"]))
                 return
 
-        # 解像度
-        width = self.width_var.get()
-        height = self.height_var.get()
-
+        palette, dither_method, device, mode = self._selected_values()
         try:
-            fps = max(MIN_FPS, min(MAX_FPS, int(round(float(self.fps_var.get())))))
+            width = int(self.width_var.get())
+            height = int(self.height_var.get())
+            fps = int(round(float(self.fps_var.get())))
+            # 奥行きは立体のときだけ使う (平面では欄が空でも作れる)
+            depth = int(self.depth_var.get()) if mode in VOLUME_MODES else DEFAULT_DEPTH
             duration = float(self.duration_var.get()) if self.duration_var.get().strip() else None
-            if min(width, height) < 1 or (duration is not None and duration <= 0):
-                raise ValueError
         except (tk.TclError, ValueError):
             messagebox.showerror(self.tr("error.settings_title"), self.tr("error.settings"))
+            return
+        errors = validate_settings(width, height, fps, duration, mode, depth)
+        if errors:
+            text = "\n".join(self.tr(key, max_size=MAX_SCREEN_SIZE, min_fps=MIN_FPS, max_fps=MAX_FPS,
+                                      max_depth=MAX_DEPTH, max_height=MAX_VOLUME_HEIGHT) for key in errors)
+            messagebox.showerror(self.tr("error.settings_title"), text)
+            return
+        # 重い設定は、そのまま作るか確かめる (ゲームが重くなる・映像が遅れる)
+        load = estimate_load(width, height, fps, mode, depth)
+        if load["level"] == "heavy" and not messagebox.askyesno(
+            self.tr("warn.heavy_title"), self.tr("warn.heavy", ms=f"{load['ms_per_tick']:.0f}")
+        ):
             return
 
         pack_name = self.pack_name_var.get().strip()
         namespace = self.namespace_var.get().strip()
-
-        palette, dither_method, device, mode = self._selected_values()
-        try:
-            depth = max(2, min(64, int(self.depth_var.get())))
-        except (tk.TclError, ValueError):
-            depth = DEFAULT_DEPTH
 
         if not pack_name:
             messagebox.showerror(self.tr("error.pack_name_title"), self.tr("error.pack_name"))

@@ -108,7 +108,9 @@ def clip_silhouette(w, h, n):
 
 
 def clip_ffmpeg(source, w, h, n):
-    cmd = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"{source}=size={w}x{h}:rate={FPS}",
+    # source は "名前" か "名前=オプション" (大きさと速さは後ろに足す)
+    joiner = ":" if "=" in source else "="
+    cmd = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"{source}{joiner}size={w}x{h}:rate={FPS}",
            "-frames:v", str(n), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     raw = subprocess.run(cmd, capture_output=True, check=True).stdout
     return list(np.frombuffer(raw, np.uint8).reshape(-1, h, w, 3))
@@ -125,6 +127,9 @@ def make_clip(name, w, h, n):
         return clip_ffmpeg("testsrc2", w, h, n)
     if name == "mandelbrot":
         return clip_ffmpeg("mandelbrot", w, h, n)
+    if name == "gradients":
+        # 色が多く、なめらかに変わる映像 (自動パレット・色空間の比較用)。seed を指定しても実行ごとに模様が変わる (この環境の ffmpeg 9.0 で確認) ので、比べるときは保存したフレームを使う
+        return clip_ffmpeg("gradients=speed=0.02:nb_colors=4:seed=7", w, h, n)
     raise ValueError(name)
 
 

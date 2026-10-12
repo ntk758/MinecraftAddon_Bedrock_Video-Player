@@ -1,12 +1,20 @@
 import numpy as np
 
-def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, sample_stride=10, seed=0, warn=None):
+# K-Means とブロックの対応を行う色空間。oklab は知覚的に均等な色空間 (GPU の減色と同じ)
+COLOR_SPACES = ("oklab", "rgb")
+# OkLab の L は 0〜1 なので、収束判定 (atol) と RGB の 0〜255 の目盛りをそろえるために掛ける
+OKLAB_SCALE = 100.0
+
+
+def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, sample_stride=10, seed=0, warn=None,
+                          color_space="rgb"):
     """
     動画のフレーム群から代表色を抽出し、all_blocksの中から最適なMinecraftブロックを選出する。
     device は torch のデバイス (CUDA / ROCm / DirectML)。None なら CPU で計算する。
     sample_stride フレームごとに 1 枚をサンプリングする (呼び出し側で間引き済みなら 1)。
     warn は GPU で失敗して CPU でやり直すときに例外を渡して呼ぶ関数 (表示言語は呼び出し側で決める)。
     同じ入力からは常に同じパレットを返すよう乱数シードを固定している。
+    color_space は K-Means と「代表色に一番近いブロック」を求める色空間 ("oklab" か "rgb")。
     """
     rng = np.random.default_rng(seed)
     sampled_pixels = []
@@ -33,7 +41,7 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, 
         return all_blocks[:max_colors]
 
     try:
-        return _kmeans_select(pixels, all_blocks, max_colors, device, seed)
+        return _kmeans_select(pixels, all_blocks, max_colors, device, seed, color_space)
     except Exception as error:
         if device is None:
             raise
@@ -42,18 +50,29 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, 
             warn(error)
         else:
             print(f"[MVCodec] Warning: the auto palette could not be computed on the GPU; retrying on the CPU: {error}")
-        return _kmeans_select(pixels, all_blocks, max_colors, None, seed)
+        return _kmeans_select(pixels, all_blocks, max_colors, None, seed, color_space)
 
 
-def _kmeans_select(pixels, all_blocks, max_colors, device, seed):
-    """簡易 K-Means で代表色を求め、それぞれに最も近いブロックを選ぶ。"""
+def _to_space(rgb, color_space):
+    """(N, 3) の RGB (0〜255) の tensor を、K-Means に使う色空間の座標にする。"""
+    if color_space == "rgb":
+        return rgb
+    if color_space == "oklab":
+        from mvcodec.color import rgb_to_oklab_torch
+
+        return rgb_to_oklab_torch(rgb) * OKLAB_SCALE
+    raise ValueError(f"未対応の色空間: {color_space}")
+
+
+def _kmeans_select(pixels, all_blocks, max_colors, device, seed, color_space="rgb"):
+    """簡易 K-Means で代表色を求め、それぞれに最も近いブロックを選ぶ (どちらも color_space で計算する)。"""
     import torch
     from mvcodec.device import squared_distances
 
     if device is None:
         device = torch.device("cpu")
 
-    X = torch.tensor(pixels, device=device)
+    X = _to_space(torch.tensor(pixels, device=device), color_space)
     num_clusters = min(max_colors, len(all_blocks), X.shape[0])
 
     # 乱数で初期化 (シード固定で再現性を保つ)
@@ -69,7 +88,8 @@ def _kmeans_select(pixels, all_blocks, max_colors, device, seed):
         centroids = new_centroids
 
     # centroids に最も近い Minecraft ブロックを選択
-    all_rgb_tensor = torch.tensor(np.array([b['rgb'] for b in all_blocks], dtype=np.float32), device=device)
+    all_rgb_tensor = _to_space(
+        torch.tensor(np.array([b['rgb'] for b in all_blocks], dtype=np.float32), device=device), color_space)
     best = torch.argmin(squared_distances(centroids, all_rgb_tensor), dim=1).cpu().numpy()
 
     selected_blocks = []

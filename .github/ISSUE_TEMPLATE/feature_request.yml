@@ -1,0 +1,33 @@
+name: 機能の要望 / Feature request
+description: こんな機能がほしい / Suggest an idea
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        要望ありがとうございます。予定している機能は TODO.md と README のロードマップにあります。
+        Thanks! Planned work is listed in TODO.md and the README roadmap.
+  - type: textarea
+    id: problem
+    attributes:
+      label: 困っていること・やりたいこと / What do you want to do?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: こうなるとうれしい / Proposed solution
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 今の回避策・ほかの案 / Workarounds or alternatives
+  - type: dropdown
+    id: area
+    attributes:
+      label: 対象 / Area
+      options:
+        - Minecraft での再生 / Playback in Minecraft
+        - 変換ツール / Converter
+        - 画質・圧縮 / Quality & compression
+        - ドキュメント / Documentation
+        - その他 / Other

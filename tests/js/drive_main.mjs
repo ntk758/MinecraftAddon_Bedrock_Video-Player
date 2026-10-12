@@ -37,6 +37,7 @@ for (const step of steps) {
   try {
     if (step.event) fireScriptEvent(step.event, step.message ?? "");
     else if (step.tick) for (let i = 0; i < step.tick; i++) tick();
+    else if (step.sleepMs) await new Promise((resolve) => setTimeout(resolve, step.sleepMs));
     else if (step.until) {
       for (let n = 0; n < 20000 && !messages.some((m) => JSON.stringify(m).includes(step.until)); n++) tick();
     } else if (step.ui) {

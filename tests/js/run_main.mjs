@@ -32,6 +32,14 @@ while (!finished() && ticks < 20000) {
 }
 const playMs = performance.now() - playStart;
 
+// 引数 "stats" で再生後に計測結果を表示させる
+let statsMessages = [];
+if (process.argv.includes("stats")) {
+  const before = messages.length;
+  fireScriptEvent("badapple:stats");
+  statsMessages = messages.slice(before);
+}
+
 fireScriptEvent("badapple:list");
 fireScriptEvent("badapple:play", "no_such_video");
 useItem("minecraft:compass");
@@ -60,4 +68,4 @@ for (let p = 0; p < cells; p++) {
 }
 
 const costModel = getAnchor("badapple:cost_model") ?? null;
-process.stdout.write(JSON.stringify({ ticks, playMs, finished: finished(), frameCount: video.frame_count, fps: video.fps, anchor, stats, commands, benchMessages, messages, forms, sounds, finalBoard, costModel }));
+process.stdout.write(JSON.stringify({ ticks, playMs, statsMessages, finished: finished(), frameCount: video.frame_count, fps: video.fps, anchor, stats, commands, benchMessages, messages, forms, sounds, finalBoard, costModel }));

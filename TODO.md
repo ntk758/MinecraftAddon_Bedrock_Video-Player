@@ -5,6 +5,11 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 
 ---
 
+## 🔁 定期的な運用 (Operations)
+- **2 週間に 1 回**: `python scripts/traffic_report.py` で閲覧数・参照元・ダウンロード数を確認 (GitHub は直近 14 日分しか残らない)。CurseForge の作者ページでダウンロード数とコメントを確認。
+- **リリースごと**: [docs/TESTING.md](docs/TESTING.md) の「リリースごとの記録」に自動テスト・モック・EXE・実機の結果を書く。手順は [docs/RELEASING.md](docs/RELEASING.md)。
+- **実機の計測を集める**: Windows 以外の端末での動作と、`/scriptevent <接頭辞>:stats` の結果を [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) と [docs/PERFORMANCE.md](docs/PERFORMANCE.md) に追記する (まだ Windows の `bench` しか無い)。
+
 ## 🔴 優先度: 高 (Phase 8: In-World Rendering & Perceptual Stability)
 
 ### ✅ 8.1 描画方式の自動選択 (実装済み)
@@ -52,10 +57,11 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 - **概要**: 権利上公開できる実映像のデータセットで、データ量・呼び出し回数・ゲーム内の tick 時間 (MSPT)・ちらつき (時間方向の変化率) を CI で継続計測する。合成映像は辞書の再利用を多く (または少なく) 見積もるおそれがある。
 
 ### 可変パレットの精度向上 (Per-Video Custom K-Means Block Mapping)
-- **概要**: 現在の自動パレット (`--palette auto`) は RGB 空間の簡易 K-Means で 39 色の候補から選んでいる。OkLab 空間でのクラスタリングや、ブロック候補 DB の拡充 (重力で落ちないブロックに限る) で色差 $\Delta E$ をさらに下げる。
+- **検証済み (Issue #3)**: OkLab でのクラスタリングを `--palette-space oklab` として実装し比較した ([docs/research/palette_space.md](docs/research/palette_space.md))。候補が 39 色しか無いため既定 (上限 64 色) では全ブロックが選ばれて差が出ず、16 色に絞ると映像によって良し悪しが分かれたので、既定は RGB のまま。
+- **次の課題**: ブロック候補 DB の拡充 (重力で落ちない色付きブロック) で、色を選ぶ余地を作る。色数の上限 (`--palette-colors`) の映像に合わせた自動決定。
 
-### MS-SSIM 指標の実装
-- **概要**: `benchmark/metrics/ms_ssim.py` は未実装 (常に NaN)。マルチスケール SSIM を実装してベンチマークに加える。
+### ✅ MS-SSIM 指標の実装 (実装済み)
+- **概要**: `benchmark/metrics/ms_ssim.py` に明るさの MS-SSIM (Wang 2003、5 段・小さい画像は段数を減らす) を実装。1 段では scikit-image の SSIM と一致することをテストで確認。
 
 ---
 

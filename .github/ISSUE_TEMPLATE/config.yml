@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 既知の問題と回避策 / Known issues
+    url: https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/blob/main/docs/KNOWN_ISSUES.md
+    about: よくある問題はここで解決できるかもしれません / Common problems and workarounds

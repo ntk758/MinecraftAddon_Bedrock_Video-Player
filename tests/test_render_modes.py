@@ -128,3 +128,53 @@ def test_auto_mode_picks_lists_for_scattered_changes_and_boxes_for_solids(runs, 
     convert_vox(tmp_path / "cube.vox", tmp_path / "cube.js")
     cube = run_addon(tmp_path / "cube", tmp_path / "cube.js", "render=auto")["stats"]
     assert cube["fillCalls"] == 1 and cube["listFillCalls"] == 0 and cube["blocksPlaced"] == 8 ** 3
+
+
+def test_stats_command_reports_playback_measurements(tmp_path):
+    """/scriptevent <接頭辞>:stats で、表示したフレーム数・遅れ・スクリプト時間を表示する。"""
+    from mvcodec.decode import load_frame_data
+
+    # 20 fps (1 tick に 1 フレーム) で、1 ブロック 100 µs の重い環境をまねると、全マスを置く最初のフレームが
+    # 1 tick に収まらず、後のフレームが予定より遅れて始まる
+    make_scene_frames(tmp_path / "frames")
+    frames_js = tmp_path / "fast.js"
+    run_convert(tmp_path / "frames", frames_js, "--width", "64", "--height", "48", "--fps", "20")
+    result = run_addon(tmp_path / "addon", frames_js, "stats", "render=block", 'costs={"setBlock": 100}')
+    text = json.dumps(result["statsMessages"])
+    assert "bvp.stats_play" in text and "bvp.stats_load" in text
+    keys = set(re.findall(r'"translate": "(bvp\.[a-z_.]+)"', text))
+    assert keys <= lang_keys()
+    play_args = re.search(r'"bvp.stats_play", "with": \{"rawtext": (\[[^\]]*\])', text)
+    load_args = re.search(r'"bvp.stats_load", "with": \{"rawtext": (\[[^\]]*\])', text)
+    frames, _seconds, _fps, target, _tps, _drift = [item["text"] for item in json.loads(play_args.group(1))]
+    late, max_late, avg_ms, max_ms = [float(item["text"]) for item in json.loads(load_args.group(1))]
+    assert int(frames) == load_frame_data(frames_js)["frame_count"]
+    assert float(target) == load_frame_data(frames_js)["fps"]
+    assert late > 0 and max_late >= 1 and max_ms >= avg_ms > 0
+
+
+def test_stats_command_before_playback_explains_how_to_use(tmp_path):
+    from test_playback_control import drive
+
+    frames = tmp_path / "frames"
+    make_scene_frames(frames)
+    run_convert(frames, tmp_path / "scene.js")
+    out = drive(tmp_path / "addon", {"demo": tmp_path / "scene.js"}, [{"event": "badapple:stats"}])
+    assert "bvp.stats_none" in json.dumps(out)
+
+
+def test_stats_clock_stops_when_playback_ends(tmp_path):
+    """再生が終わった後で時間をおいて stats を見ても、再生時間・fps は変わらない。"""
+    from test_playback_control import drive
+
+    frames = tmp_path / "frames"
+    make_scene_frames(frames)
+    run_convert(frames, tmp_path / "scene.js")
+    out = drive(tmp_path / "addon", {"demo": tmp_path / "scene.js"},
+                [{"event": "badapple:setup"}, {"event": "badapple:start"}, {"until": "bvp.playback_finished"},
+                 {"event": "badapple:stats"}, {"sleepMs": 1500}, {"tick": 40}, {"event": "badapple:stats"}])
+    messages = [json.loads(m) if isinstance(m, str) else m for m in out["messages"]]
+    reports = [[arg["text"] for arg in part["with"]["rawtext"]]
+               for m in messages for part in m["rawtext"] if part.get("translate") == "bvp.stats_play"]
+    assert len(reports) == 2
+    assert reports[0] == reports[1]

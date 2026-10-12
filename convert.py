@@ -205,7 +205,7 @@ def analyze_gops(frames, palette_for_gop=None):
     return boundaries, palettes
 
 
-def make_auto_palette_builder(gpu):
+def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MAX_COLORS):
     from mvcodec.auto_palette import generate_auto_palette
 
     cache = {}
@@ -215,8 +215,8 @@ def make_auto_palette_builder(gpu):
         thumb_hash = hashlib.md5(np.ascontiguousarray(first_frame[::8, ::8]).tobytes()).hexdigest()
         if thumb_hash not in cache:
             cache[thumb_hash] = generate_auto_palette(
-                samples, ALL_BLOCKS, max_colors=AUTO_PALETTE_MAX_COLORS, device=gpu.torch_device if gpu else None, sample_stride=1,
-                warn=lambda error: print(_tr("convert.palette_cpu_retry", error=error)),
+                samples, ALL_BLOCKS, max_colors=max_colors, device=gpu.torch_device if gpu else None, sample_stride=1,
+                warn=lambda error: print(_tr("convert.palette_cpu_retry", error=error)), color_space=color_space,
             )
         return cache[thumb_hash]
 
@@ -473,6 +473,12 @@ def parse_args(argv=None):
     parser.add_argument("--fps", type=float, default=20.0, help="出力フレームレート (Minecraft は最大 20fps)")
     parser.add_argument("--duration", type=float, default=None)
     parser.add_argument("--palette", default="full", choices=[*PALETTES.keys(), "auto"])
+    parser.add_argument("--palette-space", default="rgb", choices=["rgb", "oklab"],
+                        help="--palette auto で代表色を求め、ブロックを選ぶ色空間。oklab は人の目に近い色の差で選ぶ "
+                             "(候補より少ない --palette-colors のときだけ結果が変わる。docs/research/palette_space.md)")
+    parser.add_argument("--palette-colors", type=int, default=AUTO_PALETTE_MAX_COLORS,
+                        help=f"--palette auto で GOP ごとに選ぶブロックの色数の上限 (候補は {len(ALL_BLOCKS)} 色。"
+                             "減らすとディザの粒・ちらつき・データが減るが、色の再現は粗くなる)")
     parser.add_argument("--dither-method", default="none", choices=["none", "floyd", "ordered", "blue_noise", "atkinson", "burkes", "sierra"])
     parser.add_argument("--temporal-hysteresis", type=float, default=TEMPORAL_HYSTERESIS,
                         help="前のフレームと同じブロックの色が、新しく選んだ色より RGB の距離でこの値以内しか悪くならないなら"
@@ -522,6 +528,8 @@ def parse_args(argv=None):
         parser.error("--depth は 2〜128 にしてください")
     if args.depth_video and args.mode != "relief":
         parser.error("--depth-video は --mode relief でだけ使えます")
+    if args.palette_colors < 2:
+        parser.error("--palette-colors は 2 以上にしてください")
     if args.temporal_hysteresis < 0:
         parser.error("--temporal-hysteresis は 0 以上にしてください")
     if args.depth_hysteresis < 0:
@@ -736,7 +744,8 @@ def main(argv=None):
 
     # --- Pass 1: GOP 分割 (+ 自動パレット) ---
     is_adaptive_palette = args.palette == "auto"
-    palette_builder = make_auto_palette_builder(gpu) if is_adaptive_palette else None
+    palette_builder = (make_auto_palette_builder(gpu, args.palette_space, args.palette_colors)
+                       if is_adaptive_palette else None)
     print(_tr("convert.analyzing"))
     gop_boundaries, adaptive_palettes = analyze_gops(frame_source(), palette_builder)
     total_frames = gop_boundaries[-1]

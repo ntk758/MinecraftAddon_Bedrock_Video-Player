@@ -1,0 +1,61 @@
+name: 不具合の報告 / Bug report
+description: 動かない・表示がおかしい・エラーが出る / Something does not work
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        報告ありがとうございます。日本語でも英語でも大丈夫です。既知の問題は docs/KNOWN_ISSUES.md にあります。
+        Thanks for the report! Japanese or English is fine. Known problems are listed in docs/KNOWN_ISSUES.md.
+  - type: dropdown
+    id: area
+    attributes:
+      label: どこで起きましたか / Where does it happen?
+      options:
+        - Minecraft での再生 / Playback in Minecraft
+        - 変換ツール (GUI / EXE) / Converter (GUI / EXE)
+        - 変換ツール (コマンドライン) / Converter (command line)
+        - その他 / Other
+    validations:
+      required: true
+  - type: input
+    id: addon_version
+    attributes:
+      label: アドオン / ツールの版 / Add-on or tool version
+      placeholder: v6.3.0
+    validations:
+      required: true
+  - type: input
+    id: minecraft
+    attributes:
+      label: Minecraft の版と端末 / Minecraft version and device
+      description: 設定 → 一般 の下に表示される版 / shown at the bottom of Settings → General
+      placeholder: 26.xx / Windows 11 (Android, iOS, Xbox, PlayStation, Switch, BDS, Realms)
+  - type: input
+    id: pc
+    attributes:
+      label: 変換に使った PC (変換の問題のとき) / PC used for conversion
+      placeholder: Windows 11, GPU (例 RTX 4060 / RX 9070 XT / なし), EXE or Python 3.12
+  - type: textarea
+    id: steps
+    attributes:
+      label: 手順 / Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した動き と 実際の動き / Expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ・画面 / Logs or screenshots
+      description: |
+        変換ツールの処理ログ、チャットのメッセージ、スクリーンショットなど。再生が重いときは `/scriptevent <接頭辞>:stats` の結果も。
+        Converter log, chat messages, screenshots. For lag, include the output of `/scriptevent <prefix>:stats`.
+      render: text
