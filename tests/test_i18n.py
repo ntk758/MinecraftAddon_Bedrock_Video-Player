@@ -142,3 +142,20 @@ def test_addon_lang_files_cover_all_languages():
     for path, content in files.items():
         if path.endswith(".lang"):
             assert [line.split("=", 1)[0] for line in content.splitlines()] == [line.split("=", 1)[0] for line in english], path
+
+
+def test_in_game_texts_have_no_symbols_missing_from_the_minecraft_font():
+    """ゲーム内の文字 (addon.*) に、Minecraft の文字フォントに無い記号 (矢印・技術記号・絵文字) を使わない。
+    実機では ☒ の四角で表示される (2026-10-12 に録画で確認)。"""
+    import json
+    import re
+    from pathlib import Path
+
+    bad = re.compile("[\u2190-\u2bff\U0001F000-\U0001FAFF\uFE0F]")
+    for path in (Path(__file__).resolve().parent.parent / "locales").glob("*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        found = {k: v for k, v in data.items() if k.startswith("addon.") and bad.search(v)}
+        assert not found, (path.name, found)
+        for k, v in data.items():
+            if k.startswith("addon."):
+                assert "  " not in v.replace("§", "") and not v.endswith(" "), (path.name, k, v)

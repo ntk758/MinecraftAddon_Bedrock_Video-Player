@@ -34,6 +34,7 @@ Minecraft の新しい版で動作を確かめたら、この表に追記して�
 | アドオンの版 | Minecraft の版 | 端末 | 結果 | 日付 |
 |---|---|---|---|---|
 | v6.0.0 | 未記録 | Windows 11 (作者の PC) | ✅ 再生・3D・bench | 2026-10-11 |
+| v6.5.0 | 未記録 | Windows 11 (作者の PC) | ✅ 3D サンプルの再生・リモコン・動画の切り替え・停止とクリア。⚠️ リモコンの記号が ☒ で表示 (v6.5.1 で修正) | 2026-10-12 |
 
 不具合を見つけたら [Issue](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/issues/new/choose) で
 「Minecraft の版・端末・アドオンの版」を添えて知らせてください。
