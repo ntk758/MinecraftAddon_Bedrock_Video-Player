@@ -60,13 +60,16 @@ def test_dither_prefix_matching():
 def test_palette_options():
     """パレット選択肢の判定テスト"""
     expected = {
-        "自動 (動画解析・最適化)": "auto",
+        "自動 (おすすめ: 112 色の候補からシーンごとに最大 64 色)": "auto",
+        "全ブロック 112 色 (コンクリート・テラコッタ・羊毛・木材・石など)": "all",
         "全39色(concrete + terracotta + 自発光)": "full",
         "拡張 33色（concrete + terracotta）": "expanded",
         "基本 16色（concrete）": "concrete",
     }
 
     assert set(PALETTE_OPTIONS.keys()) == set(expected.keys()), "PALETTE_OPTIONS のキーが一致すること"
+    # 以前の版で保存された表示名も読める
+    assert resolve_palette("自動 (動画解析・最適化)") == "auto"
 
     for text, expected_value in expected.items():
         actual = resolve_palette(text)

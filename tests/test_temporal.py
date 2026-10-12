@@ -89,7 +89,8 @@ def test_auto_palette_color_space_and_size_limit():
         again = generate_auto_palette(iter(frames), ALL_BLOCKS, max_colors=12, sample_stride=1, color_space=space)
         assert len(first) == 12 and first == again
     # 赤一色の映像なら、どちらの色空間でも赤いブロックが選ばれる
-    red = [np.full((8, 8, 3), (200, 30, 30), np.uint8)]
+    red = [np.full((8, 8, 3), (150, 35, 35), np.uint8)]
     for space in ("rgb", "oklab"):
         picked = generate_auto_palette(iter(red), ALL_BLOCKS, max_colors=2, sample_stride=1, color_space=space)
-        assert "red" in picked[0]["block"]
+        r, g, b = picked[0]["rgb"]
+        assert r > g + 60 and r > b + 60, picked[0]

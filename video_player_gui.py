@@ -183,7 +183,7 @@ def validate_settings(width, height, fps, duration=None, mode="screen", depth=16
 
 
 # 選択肢の値 (convert.py に渡す値)。表示名は locales/*.json の "<種類>.<値>" キー
-PALETTE_VALUES = ("auto", "full", "expanded", "concrete")
+PALETTE_VALUES = ("auto", "all", "full", "expanded", "concrete")
 DITHER_VALUES = ("none", "blue_noise", "ordered", "floyd", "atkinson", "burkes", "sierra")
 DEVICE_VALUES = ("auto", "cuda", "directml", "cpu")
 MODE_VALUES = ("screen", "relief", "extrude", "inflate")
@@ -207,7 +207,8 @@ MIN_FPS, MAX_FPS = 1, 20
 # ゲーム内の表示言語: all = 各プレイヤーのゲーム言語 (10 言語) / fixed = この画面の言語に固定 (言語ファイル 1 個)
 ADDON_LANG_VALUES = ("all", "fixed")
 DEFAULT_PRESET = "high"
-DEFAULT_PALETTE = "expanded"
+# 自動: 全ブロックの候補からシーンごとに最大 64 色を選ぶ (全ブロックとほぼ同じ画質でデータが少ない。docs/research/palette_space.md)
+DEFAULT_PALETTE = "auto"
 DEFAULT_DITHER = "blue_noise"
 # 立体の表示モードで使うディザ。立体は形 (奥行き) が主役で、ディザの粒は表面の白い点々のノイズになるので使わない
 VOLUME_DITHER = "none"
@@ -316,6 +317,8 @@ def resolve_palette(pal_text: str) -> str:
         return labels[pal_text]
     if pal_text.startswith("自動"):
         return "auto"
+    elif pal_text.startswith("全ブロック"):
+        return "all"
     elif pal_text.startswith("全39"):
         return "full"
     elif pal_text.startswith("拡張"):

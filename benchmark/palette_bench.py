@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from codec_bench import convert, make_clip, save_frames  # noqa: E402
+from codec_bench import convert, export_tree, make_clip, save_frames  # noqa: E402
 from metrics.deltae import calculate_deltae  # noqa: E402
 from metrics.ms_ssim import calculate_ms_ssim  # noqa: E402
 from mvcodec.decode import iter_decoded_frames, load_frame_data  # noqa: E402
@@ -63,11 +63,14 @@ def main(argv=None):
     parser.add_argument("--size", default="128x72")
     parser.add_argument("--frames", type=int, default=60)
     parser.add_argument("--dithers", nargs="+", default=["none", "blue_noise"])
-    parser.add_argument("--colors", nargs="+", type=int, default=[16, 24],
-                        help="自動パレットの色数 (候補の 39 色より少ないときだけ色空間で選ぶブロックが変わる)")
+    parser.add_argument("--colors", nargs="+", type=int, default=[64],
+                        help="自動パレットの色数の上限")
+    parser.add_argument("--baseline", default=None,
+                        help="一緒に比べる git の版 (その版の --palette full で変換し、今の版の色の表で見た目を評価する)")
     args = parser.parse_args(argv)
     w, h = map(int, args.size.split("x"))
     out_dir = Path(args.out).resolve()
+    baseline_tree = export_tree(args.baseline, out_dir / "trees" / args.baseline) if args.baseline else None
     rows = []
     for clip in args.clips:
         frames_dir = out_dir / "clips" / f"{clip}_{w}x{h}"
@@ -76,13 +79,16 @@ def main(argv=None):
         # 比べる元の映像は、変換に使ったファイルから読む (ffmpeg の gradients は実行ごとに模様が変わるため)
         frames = [np.asarray(Image.open(path).convert("RGB")) for path in sorted(frames_dir.glob("*.png"))]
         for dither in args.dithers:
-            variants = [("full (39)", ["--palette", "full"])]
-            variants += [(f"auto {n} {space}", ["--palette", "auto", "--palette-colors", str(n), "--palette-space", space])
-                         for n in args.colors for space in ("rgb", "oklab")]
-            for name, extra in variants:
+            variants = []
+            if args.baseline:
+                variants.append((f"{args.baseline} full", ["--palette", "full"], baseline_tree))
+            variants += [("full (39)", ["--palette", "full"], ROOT), ("all", ["--palette", "all"], ROOT)]
+            variants += [(f"auto {n} {space}", ["--palette", "auto", "--palette-colors", str(n), "--palette-space", space],
+                          ROOT) for n in args.colors for space in ("rgb", "oklab")]
+            for name, extra, tree in variants:
                 js = out_dir / "palette" / f"{clip}_{dither}_{name.replace(' ', '_').replace('(', '').replace(')', '')}.js"
                 js.parent.mkdir(parents=True, exist_ok=True)
-                convert(ROOT, frames_dir, js, w, h, [*extra, "--dither-method", dither])
+                convert(tree, frames_dir, js, w, h, [*extra, "--dither-method", dither])
                 row = {"clip": clip, "dither": dither, "palette": name, **evaluate(frames, js)}
                 rows.append(row)
                 print(json.dumps(row), flush=True)

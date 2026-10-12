@@ -58,7 +58,8 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 
 ### 可変パレットの精度向上 (Per-Video Custom K-Means Block Mapping)
 - **検証済み (Issue #3)**: OkLab でのクラスタリングを `--palette-space oklab` として実装し比較した ([docs/research/palette_space.md](docs/research/palette_space.md))。候補が 39 色しか無いため既定 (上限 64 色) では全ブロックが選ばれて差が出ず、16 色に絞ると映像によって良し悪しが分かれたので、既定は RGB のまま。
-- **次の課題**: ブロック候補 DB の拡充 (重力で落ちない色付きブロック) で、色を選ぶ余地を作る。色数の上限 (`--palette-colors`) の映像に合わせた自動決定。
+- **✅ 候補の拡充 (実装済み)**: 公式テクスチャの実測の平均色で 112 色に拡充 (`scripts/generate_block_colors.py`)。GUI の既定を自動パレット (最大 64 色) にした。色差 ΔE2000 が v6.4.0 より 28〜62% 減、データは −14〜+68%。
+- **次の課題**: 色数の上限 (`--palette-colors`) を映像に合わせて自動で決める。上面と側面の見た目が違うブロック (原木・柱など) を立体の側面に使う。
 
 ### ✅ MS-SSIM 指標の実装 (実装済み)
 - **概要**: `benchmark/metrics/ms_ssim.py` に明るさの MS-SSIM (Wang 2003、5 段・小さい画像は段数を減らす) を実装。1 段では scikit-image の SSIM と一致することをテストで確認。
