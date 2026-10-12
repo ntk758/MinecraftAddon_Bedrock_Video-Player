@@ -791,6 +791,9 @@ def main(argv=None):
 
     use_planes = volume and args.volume_encoding != "voxels" and planes_supported(args.mode, args.depth, args.hollow)
     solid_rule = solid_rule_for(args.mode) if use_planes else None
+    if volume and args.volume_encoding == "auto" and not use_planes:
+        # --hollow や奥行き 128 の extrude / inflate は平面で正確に表せないので、立体のまま送る
+        print(_tr("convert.volume_voxels"))
     lifter = VolumeLifter(args.mode, args.depth, threshold=args.extrude_threshold, invert=args.extrude_invert,
                           thickness=args.thickness, make_hollow=args.hollow,
                           hysteresis=args.depth_hysteresis) if volume else None

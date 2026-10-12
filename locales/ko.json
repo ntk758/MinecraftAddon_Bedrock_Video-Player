@@ -172,5 +172,6 @@
   "addon.bench_unreliable": "§e측정 시간이 너무 짧아 (방식당 %1 ms 미만) 비용을 저장하지 않았습니다. 더 큰 화면에서 실행하세요",
   "addon.bench_done": "§a벤치마크 완료. 현재 그리기 방식: %1",
   "addon.render_mode_usage": "§e사용법: /scriptevent %1render auto|rect|list|block (현재: %2)",
-  "addon.render_mode_set": "§a그리기 방식을 %1(으)로 설정했습니다"
+  "addon.render_mode_set": "§a그리기 방식을 %1(으)로 설정했습니다",
+  "convert.volume_voxels": "[MVCodec] 이 입체는 2.5D 평면으로 보낼 수 없는 설정(--hollow, 또는 깊이 128의 extrude / inflate)이므로 복셀 그대로 보냅니다 (데이터가 커집니다)"
 }

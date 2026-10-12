@@ -156,3 +156,36 @@ def test_heightfield_seek_and_resume(relief_scene, tmp_path):
     seek, final = out["snaps"]
     assert placed(seek["board"]) == frames[60]
     assert placed(final["board"]) == frames[-1]
+
+
+def test_volume_change_ratio_matches_counting_on_volumes():
+    """列の区間から数えた変化率が、立体を組み立てて数えた値と同じになる。"""
+    from mvcodec.planes import volume_change_ratio
+
+    rng = np.random.default_rng(5)
+    h, w, depth = 6, 9, 8
+    for rule, limit in (("relief", depth), ("span", depth + 1)):
+        ratio = volume_change_ratio(w, h, depth, rule)
+        for _ in range(20):
+            a = np.concatenate([rng.integers(0, 4, (h, w)), rng.integers(0, limit, (h, w))])
+            b = a.copy()
+            mask = rng.random((2 * h, w)) < 0.3
+            b[:h][mask[:h]] = rng.integers(0, 4, int(mask[:h].sum()))
+            b[h:][mask[h:]] = rng.integers(0, limit, int(mask[h:].sum()))
+            va, vb = planes_to_volume(a, depth, rule), planes_to_volume(b, depth, rule)
+            expected = np.count_nonzero(va != vb) / max(1, np.count_nonzero((va != AIR_LEVEL) | (vb != AIR_LEVEL)))
+            assert ratio(a.reshape(-1), b.reshape(-1)) == pytest.approx(expected)
+
+
+def test_auto_falls_back_to_voxels_with_a_message(tmp_path, capsys):
+    from test_codec_v4 import make_scene_frames
+
+    make_scene_frames(tmp_path / "frames")
+    out = tmp_path / "hollow.js"
+    assert convert.main(["--frames-dir", str(tmp_path / "frames"), "--output", str(out), "--width", "16", "--height",
+                         "12", "--fps", "10", "--device", "cpu", "--mode", "extrude", "--depth", "6", "--hollow",
+                         "--lang", "en", "--duration", "1"]) == 0
+    assert "sent as voxels" in capsys.readouterr().out
+    from mvcodec.decode import load_frame_data
+
+    assert load_frame_data(out)["layout"] == "volume"

@@ -172,5 +172,6 @@
   "addon.bench_unreliable": "§e計測時間が短すぎる (各方式 %1 ms 未満) ため、費用は保存しませんでした。もっと大きなスクリーンで実行してください",
   "addon.bench_done": "§aベンチマーク完了。現在の描画方式: %1",
   "addon.render_mode_usage": "§e使い方: /scriptevent %1render auto|rect|list|block (現在: %2)",
-  "addon.render_mode_set": "§a描画方式を %1 にしました"
+  "addon.render_mode_set": "§a描画方式を %1 にしました",
+  "convert.volume_voxels": "[MVCodec] この立体は 2.5D の平面で表せない設定 (--hollow、または extrude / inflate で奥行き 128) なので、ボクセルのまま送ります (データは大きくなります)"
 }

@@ -86,14 +86,22 @@ def volume_to_planes(volume, rule, previous=None):
 
 
 def volume_change_ratio(width, height, depth, rule):
-    """StreamEncoder.change_ratio_fn 用: 平面を立体に組み立てて、立体 (voxels) と同じ規則で変化率を測る関数を返す。
+    """StreamEncoder.change_ratio_fn 用: 平面を立体にしたときと同じ規則で変化率を測る関数を返す。
 
     空気以外のマス (どちらかのフレームで埋まっているマス) に対する、変わったマスの割合。
+    立体は組み立てず、列ごとの区間 A (前) と B (後) から数える: 変わったマス = |A △ B| + (色が違えば |A ∩ B|)、
+    埋まっているマス = |A ∪ B|。
     """
     def ratio(previous, current):
-        before = planes_to_volume(np.asarray(previous).reshape(2 * height, width), depth, rule)
-        after = planes_to_volume(np.asarray(current).reshape(2 * height, width), depth, rule)
-        changed = int(np.count_nonzero(before != after))
-        solid = int(np.count_nonzero((before != AIR_LEVEL) | (after != AIR_LEVEL)))
+        before = np.asarray(previous).reshape(2 * height, width)
+        after = np.asarray(current).reshape(2 * height, width)
+        low0, high0 = column_ranges(before[height:], depth, rule)
+        low1, high1 = column_ranges(after[height:], depth, rule)
+        size0 = np.maximum(0, high0 - low0 + 1)
+        size1 = np.maximum(0, high1 - low1 + 1)
+        common = np.maximum(0, np.minimum(high0, high1) - np.maximum(low0, low1) + 1)
+        recoloured = before[:height] != after[:height]
+        changed = int((size0 + size1 - 2 * common + np.where(recoloured, common, 0)).sum())
+        solid = int((size0 + size1 - common).sum())
         return changed / max(1, solid)
     return ratio

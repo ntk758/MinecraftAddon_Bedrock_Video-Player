@@ -172,5 +172,6 @@
   "addon.bench_unreliable": "§eThe measured times were too short (under %1 ms per method), so the costs were not saved. Run it on a larger screen",
   "addon.bench_done": "§aBenchmark finished. Current render mode: %1",
   "addon.render_mode_usage": "§eUsage: /scriptevent %1render auto|rect|list|block (current: %2)",
-  "addon.render_mode_set": "§aRender mode set to %1"
+  "addon.render_mode_set": "§aRender mode set to %1",
+  "convert.volume_voxels": "[MVCodec] This volume cannot be sent as 2.5D planes (--hollow, or extrude / inflate with depth 128), so it is sent as voxels (larger data)"
 }
