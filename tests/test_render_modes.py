@@ -178,3 +178,18 @@ def test_stats_clock_stops_when_playback_ends(tmp_path):
                for m in messages for part in m["rawtext"] if part.get("translate") == "bvp.stats_play"]
     assert len(reports) == 2
     assert reports[0] == reports[1]
+
+
+def test_frames_with_many_colors_are_not_held_back_by_yields(tmp_path):
+    """色の多いフレーム (自動パレット + Blue Noise) を座標リストで置いても、色の数だけ区切って何 tick もかからない。
+    実機の録画 (128×128・10 fps) で映像が約 3.4 倍遅れ、音声が途切れていた不具合の再発防止。"""
+    make_scene_frames(tmp_path / "frames")
+    out = tmp_path / "colors.js"
+    run_convert(tmp_path / "frames", out, "--width", "64", "--height", "48", "--fps", "20", "--palette", "auto",
+                "--dither-method", "blue_noise", "--keyframe-interval", "0")
+    costs = '{"setBlock": 2.3, "fillCall": 15, "fillBlock": 0.55, "listCall": 15, "listBlock": 1.42}'
+    result = run_addon(tmp_path / "addon", out, "stats", "render=list", f"costs={costs}")
+    load = next(part for m in result["statsMessages"] for part in m["rawtext"] if part.get("translate") == "bvp.stats_load")
+    late_frames = int(load["with"]["rawtext"][0]["text"])
+    # 最初のフレーム (全マスを置く) 以外は 1 tick に収まる
+    assert late_frames <= 2, late_frames
