@@ -66,7 +66,9 @@ def main(argv=None):
     parser.add_argument("--colors", nargs="+", type=int, default=[64],
                         help="自動パレットの色数の上限")
     parser.add_argument("--baseline", default=None,
-                        help="一緒に比べる git の版 (その版の --palette full で変換し、今の版の色の表で見た目を評価する)")
+                        help="一緒に比べる git の版 (その版で変換し、今の版の色の表で見た目を評価する)")
+    parser.add_argument("--baseline-palettes", nargs="+", default=["expanded", "full"],
+                        help="--baseline の版で使うパレット (v6.4.0 の GUI の既定は expanded)")
     args = parser.parse_args(argv)
     w, h = map(int, args.size.split("x"))
     out_dir = Path(args.out).resolve()
@@ -81,7 +83,8 @@ def main(argv=None):
         for dither in args.dithers:
             variants = []
             if args.baseline:
-                variants.append((f"{args.baseline} full", ["--palette", "full"], baseline_tree))
+                variants += [(f"{args.baseline} {name}", ["--palette", name], baseline_tree)
+                             for name in args.baseline_palettes]
             variants += [("full (39)", ["--palette", "full"], ROOT), ("all", ["--palette", "all"], ROOT)]
             variants += [(f"auto {n} {space}", ["--palette", "auto", "--palette-colors", str(n), "--palette-space", space],
                           ROOT) for n in args.colors for space in ("rgb", "oklab")]

@@ -37,8 +37,8 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, 
     try:
         import torch  # noqa: F401
     except ImportError:
-        # PyTorchがない場合は単純に最初のN個を返す
-        return all_blocks[:max_colors]
+        # PyTorch が無いときは、各画素に一番近いブロックを数えて、多く使われる色から選ぶ (numpy だけ)
+        return _histogram_select(pixels, all_blocks, max_colors)
 
     try:
         return _kmeans_select(pixels, all_blocks, max_colors, device, seed, color_space)
@@ -51,6 +51,24 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, 
         else:
             print(f"[MVCodec] Warning: the auto palette could not be computed on the GPU; retrying on the CPU: {error}")
         return _kmeans_select(pixels, all_blocks, max_colors, None, seed, color_space)
+
+
+def _histogram_select(pixels, all_blocks, max_colors):
+    """各画素に一番近いブロック (RGB の距離) を数え、多い順に max_colors 個を選ぶ。足りなければ候補の順に埋める。"""
+    block_rgb = np.array([b["rgb"] for b in all_blocks], dtype=np.float32)
+    counts = np.zeros(len(all_blocks), dtype=np.int64)
+    for start in range(0, len(pixels), 4096):
+        chunk = pixels[start:start + 4096]
+        nearest = ((chunk[:, None, :] - block_rgb[None]) ** 2).sum(axis=2).argmin(axis=1)
+        counts += np.bincount(nearest, minlength=len(all_blocks))
+    order = [int(i) for i in np.argsort(-counts, kind="stable") if counts[i] > 0][:max_colors]
+    selected = [all_blocks[i] for i in order]
+    for b in all_blocks:
+        if len(selected) >= max_colors:
+            break
+        if b not in selected:
+            selected.append(b)
+    return selected
 
 
 def _to_space(rgb, color_space):

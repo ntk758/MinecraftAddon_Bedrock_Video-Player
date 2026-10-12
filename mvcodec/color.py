@@ -97,8 +97,9 @@ PALETTES = {
     "all": EVERY_BLOCK_PALETTE,
 }
 
-# 自動パレットが色を選ぶ候補
-AUTO_PALETTE_CANDIDATES = EVERY_BLOCK_PALETTE
+# 自動パレットが色を選ぶ候補。光るブロックは入れない (置き替えるたびに明るさの計算が起き、夜はスクリーンの明るさがまだらになる。
+# 負荷はまだ実機で測っていない)。「全ブロック」パレットと 39 色以下のパレットには入っている
+AUTO_PALETTE_CANDIDATES = [item for item in EVERY_BLOCK_PALETTE if item["group"] != "light"]
 
 # ブロックID -> RGB (デコーダ・評価用)
 BLOCK_RGB = {item["block"]: tuple(item["rgb"]) for item in ALL_BLOCKS + WOOL_PALETTE + EVERY_BLOCK_PALETTE}

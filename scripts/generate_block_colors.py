@@ -10,10 +10,12 @@
 
 色の決め方:
 - 上面 (スクリーンは上から見る) のテクスチャの全画素を、線形の明るさで平均して sRGB に戻す
-  (遠くから見たときにブロック 1 個が見える色に近い)。アニメーションするテクスチャは最初のコマ
+  (遠くから見たときにブロック 1 個が見える色に近い)。アニメーションするテクスチャは全部のコマの平均
 - 候補は「ブロック 1 マスの不透明な立方体で、重力で落ちず、時間で変化せず (酸化・枯れる・溶ける・草が生える)、
   まわりに作用しない (ダメージ・レッドストーン信号)、面ごとの見た目の差や模様が小さい」もの (CANDIDATES)。
-  金・ダイヤモンド・エメラルド・ネザライトのブロックは、サバイバルでスクリーンを掘ると資源になるので入れない
+  資源や経験値になるブロック (金・ダイヤモンド・エメラルド・ネザライト・鉄・ラピスラズリ・石炭、その原石、スカルク) は、
+  サバイバルでスクリーンを掘ると無限に得られてしまうので入れない
+- 光るブロック (group "light") は「全ブロック」には入れるが、自動パレットの候補には入れない (mvcodec/color.py)
 - アドオンの対応する一番古い版 (min_engine_version 1.21.80) に無いブロックは使わない (置けないと土になる)
 - 色がほとんど同じブロック (OkLab の距離 × 100 が DEDUPE_DISTANCE 未満) は、先に書いた方だけ残す
 """
@@ -56,14 +58,16 @@ CANDIDATES = (
         "smooth_basalt", "polished_blackstone", "polished_blackstone_bricks", "end_stone", "end_bricks",
         "purpur_block", "prismarine", "prismarine_bricks", "dark_prismarine", "smooth_quartz", "quartz_bricks",
         "brick_block", "mud_bricks", "packed_mud", "nether_brick", "red_nether_brick", "netherrack", "obsidian",
-        "crying_obsidian", "resin_bricks")]
-    # 金・ダイヤモンド・エメラルド・ネザライトなど貴重なブロックは入れない (サバイバルでスクリーンを掘ると資源になる)
+        "resin_bricks")]
+    + [("light", "crying_obsidian", None)]
+    # 金・ダイヤモンド・エメラルド・ネザライト・鉄・ラピスラズリ・石炭のブロックとその原石、スカルク (経験値が出る) は入れない
+    # (スクリーンは変わったブロックを毎フレーム置き直すので、サバイバルで掘ると資源や経験値を無限に得られてしまう)
     + [("mineral", b, None) for b in (
-        "iron_block", "lapis_block", "coal_block", "amethyst_block", "raw_iron_block", "raw_copper_block", "waxed_copper",
+        "amethyst_block", "raw_copper_block", "waxed_copper",
         "waxed_exposed_copper", "waxed_weathered_copper", "waxed_oxidized_copper", "resin_block")]
     + [("nature", b, None) for b in (
         "moss_block", "pale_moss_block", "coarse_dirt", "clay", "packed_ice", "blue_ice", "snow", "honeycomb_block",
-        "nether_wart_block", "warped_wart_block", "soul_soil", "sculk", "dead_brain_coral_block")]
+        "nether_wart_block", "warped_wart_block", "soul_soil", "dead_brain_coral_block")]
 )
 
 
@@ -124,8 +128,8 @@ def main(argv=None):
         path = entry[0] if isinstance(entry, list) else entry
         path = path["path"] if isinstance(path, dict) else path
         file = next(rp / (path + ext) for ext in (".png", ".tga") if (rp / (path + ext)).exists())
+        # アニメーションするテクスチャ (縦に並んだコマ) は全部のコマの平均
         img = np.asarray(Image.open(file).convert("RGBA"), dtype=np.float64)
-        img = img[: img.shape[1]]  # アニメーションは最初のコマ
         return linear_to_srgb(srgb_to_linear(img[..., :3].reshape(-1, 3)).mean(axis=0))
 
     rows, skipped = [], []

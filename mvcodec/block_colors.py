@@ -1,7 +1,7 @@
 """ブロックの見た目の平均色 (自動生成: scripts/generate_block_colors.py。手で書き換えない)。
 
 出典: Mojang/bedrock-samples 1.26.50.4 のテクスチャの上面を線形の明るさで平均した sRGB。
-1.21.80 (v1.21.80.3) にもあるブロックだけ。112 色。
+1.21.80 (v1.21.80.3) にもあるブロックだけ。108 色。
 """
 
 BLOCK_COLORS = [
@@ -38,7 +38,7 @@ BLOCK_COLORS = [
     {"group": "terracotta", "block": "minecraft:green_terracotta", "rgb": (76, 83, 42)},
     {"group": "terracotta", "block": "minecraft:red_terracotta", "rgb": (143, 61, 47)},
     {"group": "terracotta", "block": "minecraft:black_terracotta", "rgb": (37, 23, 16)},
-    {"group": "light", "block": "minecraft:sea_lantern", "rgb": (184, 206, 197)},
+    {"group": "light", "block": "minecraft:sea_lantern", "rgb": (184, 205, 196)},
     {"group": "light", "block": "minecraft:glowstone", "rgb": (184, 151, 111)},
     {"group": "light", "block": "minecraft:shroomlight", "rgb": (242, 157, 93)},
     {"group": "light", "block": "minecraft:pearlescent_froglight", "rgb": (246, 241, 241)},
@@ -87,7 +87,7 @@ BLOCK_COLORS = [
     {"group": "stone", "block": "minecraft:polished_blackstone", "rgb": (55, 51, 60)},
     {"group": "stone", "block": "minecraft:end_stone", "rgb": (220, 224, 159)},
     {"group": "stone", "block": "minecraft:purpur_block", "rgb": (171, 128, 171)},
-    {"group": "stone", "block": "minecraft:prismarine", "rgb": (104, 165, 150)},
+    {"group": "stone", "block": "minecraft:prismarine", "rgb": (106, 160, 155)},
     {"group": "stone", "block": "minecraft:prismarine_bricks", "rgb": (102, 173, 161)},
     {"group": "stone", "block": "minecraft:dark_prismarine", "rgb": (53, 95, 78)},
     {"group": "stone", "block": "minecraft:smooth_quartz", "rgb": (237, 230, 224)},
@@ -96,12 +96,9 @@ BLOCK_COLORS = [
     {"group": "stone", "block": "minecraft:red_nether_brick", "rgb": (74, 8, 10)},
     {"group": "stone", "block": "minecraft:netherrack", "rgb": (99, 40, 40)},
     {"group": "stone", "block": "minecraft:obsidian", "rgb": (21, 14, 35)},
-    {"group": "stone", "block": "minecraft:crying_obsidian", "rgb": (49, 13, 92)},
     {"group": "stone", "block": "minecraft:resin_bricks", "rgb": (208, 95, 28)},
-    {"group": "mineral", "block": "minecraft:lapis_block", "rgb": (31, 69, 141)},
-    {"group": "mineral", "block": "minecraft:coal_block", "rgb": (18, 17, 17)},
+    {"group": "light", "block": "minecraft:crying_obsidian", "rgb": (49, 13, 92)},
     {"group": "mineral", "block": "minecraft:amethyst_block", "rgb": (140, 104, 194)},
-    {"group": "mineral", "block": "minecraft:raw_iron_block", "rgb": (173, 142, 116)},
     {"group": "mineral", "block": "minecraft:raw_copper_block", "rgb": (163, 109, 83)},
     {"group": "mineral", "block": "minecraft:waxed_copper", "rgb": (194, 109, 82)},
     {"group": "mineral", "block": "minecraft:waxed_exposed_copper", "rgb": (164, 126, 105)},
@@ -116,5 +113,4 @@ BLOCK_COLORS = [
     {"group": "nature", "block": "minecraft:nether_wart_block", "rgb": (117, 5, 4)},
     {"group": "nature", "block": "minecraft:warped_wart_block", "rgb": (23, 122, 122)},
     {"group": "nature", "block": "minecraft:soul_soil", "rgb": (78, 59, 48)},
-    {"group": "nature", "block": "minecraft:sculk", "rgb": (13, 31, 37)},
 ]

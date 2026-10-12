@@ -295,7 +295,8 @@ def write_vox_thumbnail(vox_path: Path, png_path: Path, size: int = 256) -> None
     from mvcodec.volume import AIR_LEVEL, iso_view, load_vox_frames, nearest_levels, vox_to_volume, vox_volume_shape
 
     frames, vox_palette = load_vox_frames(vox_path)
-    block_rgb = np.array([item["rgb"] for item in PALETTES["full"]], dtype=np.float64)
+    # 変換 (convert_vox) と同じく、自動のときは全ブロックから選ぶ
+    block_rgb = np.array([item["rgb"] for item in PALETTES["all"]], dtype=np.float64)
     color_to_level = np.full(256, AIR_LEVEL, dtype=np.int16)
     color_to_level[1:] = nearest_levels(vox_palette[:255, :3], block_rgb)
     shape = vox_volume_shape(frames)

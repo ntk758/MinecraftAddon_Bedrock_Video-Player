@@ -16,7 +16,8 @@ from mvcodec.encode import MAX_PALETTE_COLORS  # noqa: E402
 # 置くと困るブロック: 重力で落ちる・時間で変化する・まわりに作用する
 # (氷は溶けるが、packed_ice・blue_ice は溶けない。銅はろう引きしたものだけ酸化しない)
 FORBIDDEN = ("sand", "gravel", "concrete_powder", "redstone_block", "magma", "tnt", "leaves", "grass", "dirt_with",
-             "mycelium", "farmland", "coral_block", "gold", "diamond", "emerald", "netherite")
+             "mycelium", "farmland", "coral_block", "gold", "diamond", "emerald", "netherite", "iron_block", "raw_iron",
+             "lapis", "coal", "sculk")
 
 
 def test_every_block_palette_fits_volumes_and_is_safe():
@@ -41,7 +42,9 @@ def test_old_palettes_use_measured_colors():
     assert max(white["rgb"]) < 230
     for item in ALL_BLOCKS:
         assert BLOCK_RGB[item["block"]] == tuple(item["rgb"])
-    assert AUTO_PALETTE_CANDIDATES is PALETTES["all"]
+    # 自動パレットの候補には光るブロックを入れない (全ブロックには入る)
+    assert all(item["group"] != "light" for item in AUTO_PALETTE_CANDIDATES)
+    assert {item["block"] for item in AUTO_PALETTE_CANDIDATES} < {item["block"] for item in PALETTES["all"]}
 
 
 @pytest.mark.parametrize("mode", ["screen", "relief"])
@@ -62,7 +65,24 @@ def test_convert_with_every_block_palette(tmp_path, mode):
 def test_gui_labels_show_the_current_color_count():
     import json
 
-    count = str(len(PALETTES["all"]))
+    every, auto = str(len(PALETTES["all"])), str(len(AUTO_PALETTE_CANDIDATES))
     for path in (ROOT / "locales").glob("*.json"):
         data = json.loads(path.read_text(encoding="utf-8"))
-        assert count in data["palette.all"] and count in data["palette.auto"], path.name
+        assert every in data["palette.all"] and auto in data["palette.auto"], path.name
+
+
+def test_auto_palette_without_torch_picks_colors_from_the_video(monkeypatch):
+    """PyTorch が無くても、先頭の固定の色ではなく、映像に多い色のブロックを選ぶ。"""
+    import numpy as np
+
+    from mvcodec.auto_palette import generate_auto_palette
+
+    monkeypatch.setitem(sys.modules, "torch", None)
+    frame = np.zeros((16, 16, 3), np.uint8)
+    frame[:8] = (130, 165, 245)   # 水色 (packed_ice に近い)
+    frame[8:] = (40, 120, 120)    # 青緑 (warped_wart_block などに近い)
+    picked = generate_auto_palette(iter([frame]), AUTO_PALETTE_CANDIDATES, max_colors=8, sample_stride=1)
+    assert len(picked) == 8
+    top = [item["rgb"] for item in picked[:2]]
+    assert any(abs(r - 130) + abs(g - 165) + abs(b - 245) < 60 for r, g, b in top), top
+    assert any(abs(r - 40) + abs(g - 120) + abs(b - 120) < 60 for r, g, b in top), top
