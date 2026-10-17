@@ -27,8 +27,11 @@ from mvcodec.color import (
 from gui_i18n import LOCALES, Translator, detect_system_language
 from mvcodec.device import DEVICE_CHOICES, detect_gpu, empty_cache, squared_distances
 from mvcodec.dither_motion import DitherAligner
+from mvcodec.block_rdo import MODES as BLOCK_MODES, BlockRDO
 # 条件付き更新のしきい値 (RGB の距離)。前のブロックの色がこれ以内しか悪くならなければ変えない
 TEMPORAL_HYSTERESIS = 24.0
+# ブロックモードのレート歪み最適化の強さ (mvcodec/block_rdo.py。0 で無効)
+BLOCK_RDO_STRENGTH = 16.0
 from mvcodec.encode import MAX_PALETTE_COLORS
 from mvcodec.motion import MV_BLOCK, MV_RANGE
 from mvcodec.stream import StreamEncoder
@@ -486,6 +489,10 @@ def parse_args(argv=None):
                         help="前のフレームと同じブロックの色が、新しく選んだ色より RGB の距離でこの値以内しか悪くならないなら"
                              "変えない (条件付き更新)。置き直すブロックとデータが減る。0 で無効。CPU で減色するときに使う "
                              "(GPU の減色には同様の仕組み (RDO) が入っている)")
+    parser.add_argument("--block-rdo", type=float, default=BLOCK_RDO_STRENGTH,
+                        help="平面スクリーンで、8×8 ごとに「減色のまま / 前のフレームのまま / 動き補償の予測 / 1 色 / 2 色」から、色の誤差と"
+                             "置く費用・データ量の釣り合いで選ぶ強さ (0 で無効)。大きいほど置くブロック・呼び出し・データが減り、"
+                             "色は粗くなる。データ形式は変わらない")
     parser.add_argument("--dither-follow-motion", action=argparse.BooleanOptionalAction, default=False,
                         help="Blue Noise / Ordered のディザ模様を映像の全体の動き (パン) に合わせてずらす。"
                              "パンのデータは大きく減るが、模様が毎フレーム動くので置き直すブロックは増える (既定は無効)")
@@ -539,6 +546,8 @@ def parse_args(argv=None):
         parser.error("--temporal-hysteresis は 0 以上にしてください")
     if args.depth_hysteresis < 0:
         parser.error("--depth-hysteresis は 0 以上にしてください")
+    if args.block_rdo < 0:
+        parser.error("--block-rdo は 0 以上にしてください")
     if args.volume_encoding == "planes" and not planes_supported(args.mode, args.depth, args.hollow):
         parser.error("--volume-encoding planes は relief / extrude / inflate で、--hollow なし、"
                      "--depth 127 以下 (relief は 128 以下) のときだけ使えます")
@@ -660,7 +669,7 @@ def write_frame_data(args, frame_data):
     return out_path
 
 
-def print_stats(out_path, encoder, num_gops, avg_ssim=0.0):
+def print_stats(out_path, encoder, num_gops, avg_ssim=0.0, block_rdo=None):
     stats = encoder.stats
     print(f"[MVCodec Benchmark] SSIM: {avg_ssim:.4f}")
     print(f"[MVCodec Benchmark] FileSizeKB: {out_path.stat().st_size / 1024:.2f}")
@@ -671,6 +680,8 @@ def print_stats(out_path, encoder, num_gops, avg_ssim=0.0):
     print(f"[MVCodec Benchmark] TileFrames: {stats.tile_frames}")
     print(f"[MVCodec Benchmark] TileRefs: {stats.tile_refs}")
     print(f"[MVCodec Benchmark] GOPs: {num_gops}")
+    if block_rdo is not None:
+        print(f"[MVCodec Benchmark] BlockModes: {json.dumps(block_rdo.stats)}")
 
 
 class EncoderSet:
@@ -682,6 +693,10 @@ class EncoderSet:
     def add(self, frame_no, gop_id, frame):
         for encoder in self.encoders:
             encoder.add(frame_no, gop_id, frame)
+
+    def reference(self):
+        """アドオンが今表示している盤面 (最後に符号化したフレーム。省略したフレームは含まない)。"""
+        return self.encoders[0].reference
 
     def best(self):
         """一番小さいエンコーダ。最後の GOP も閉じて (入れ物に入れて) から比べる (closing=finish の前に呼ぶ)。"""
@@ -783,6 +798,12 @@ def main(argv=None):
     # ブロック色の明るさを使うと、ディザの粒が奥行きのノイズになり、境目もギザギザになるため
     source_heights = {}
     use_source_heights = volume and not args.depth_video
+    # ブロックモードの最適化 (平面スクリーンだけ) は元の色と比べて選ぶので、元フレームを全部とっておく
+    block_rdo = None
+    if args.block_rdo > 0 and not volume:
+        modes = [mode for mode in BLOCK_MODES if args.motion or mode != "motion"]
+        block_rdo = BlockRDO(args.block_rdo, modes=modes, hysteresis=args.temporal_hysteresis, mv_range=args.mv_range)
+    source_frames = {}
 
     def tee_originals(frames):
         for i, f in enumerate(frames):
@@ -790,6 +811,8 @@ def main(argv=None):
                 sampled_originals[i] = f
             if use_source_heights:
                 source_heights[i] = luminance01(f)
+            if block_rdo is not None:
+                source_frames[i] = f
             yield f
 
     dither_method = args.dither_method
@@ -828,9 +851,17 @@ def main(argv=None):
     gif_frames = []
 
     progress = Progress(total_frames)
+    previous_gop = None
     for i, (frame, gop_id) in enumerate(zip(quantized, iter_gop_ids(gop_boundaries))):
         original = sampled_originals.pop(i, None)
         screen = np.asarray(frame, dtype=np.int32).reshape(height, width)
+        if block_rdo is not None:
+            # 前の盤面はパレットが同じ間だけ使える (自動パレットで GOP が変わると番号の意味が変わる)
+            same_palette = previous_gop is not None and gop_palettes_rgb[gop_id] is gop_palettes_rgb[previous_gop]
+            reference = encoder.reference() if same_palette else None
+            screen = block_rdo(screen, source_frames.pop(i), gop_palettes_rgb[gop_id],
+                               None if reference is None else reference.reshape(height, width))
+            previous_gop = gop_id
         if original is not None:
             ssim_pairs.append((original, screen.reshape(-1).copy(), gop_id))
         if args.demo_gif:
@@ -884,7 +915,7 @@ def main(argv=None):
                        duration=int(1000 / args.fps), loop=0)
         print(f"Demo GIF saved to {args.demo_gif}")
 
-    print_stats(out_path, encoder, num_gops, avg_ssim)
+    print_stats(out_path, encoder, num_gops, avg_ssim, block_rdo)
     return 0
 
 

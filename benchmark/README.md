@@ -43,3 +43,13 @@ python benchmark/codec_bench.py --out bench_out --suite volume                  
 ```
 
 `<out>/results_<suite>.md` に、版・設定ごとの出力 .js のバイト数、deflate 後のバイト数、1 フレームあたりの API 呼び出し数 (`calls_render=rect` など) と置いたブロック数が出力されます。
+
+## ブロックモードの最適化の強さ (`rdo_bench.py`、Phase 8.5)
+
+`--block-rdo` の強さを変えて同じ合成映像を変換し、画質 (ΔE2000・ぼかした ΔE2000・MS-SSIM)、deflate 後のデータ量、モックで rect / list 方式で再生したときの呼び出し数・置いたブロック数と、アドオンの費用のモデルで見積もった描画時間を並べます。
+
+```bash
+python benchmark/rdo_bench.py --out bench_out --strengths 0 16 32
+```
+
+タイル辞書に回転・反転の参照を足したときの効果の見積もりは `tile_orientation_study.py` です (結果は docs/research/phase7x.md の 12 章)。

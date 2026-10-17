@@ -59,11 +59,21 @@ def candidate_vectors(search_range=MV_RANGE, global_vector=None, limit=None):
     return vectors
 
 
-def _shift_mismatch(prev2d, cur2d, dx, dy):
-    height, width = cur2d.shape
-    rows = np.clip(np.arange(height) + dy, 0, height - 1)
-    cols = np.clip(np.arange(width) + dx, 0, width - 1)
-    return prev2d[rows][:, cols] != cur2d
+class _Shifter:
+    """前フレームを端の値で margin だけ広げておき、(dx, dy) ずらした画像をコピーせずに取り出す。
+
+    shifted(dx, dy)[y][x] = prev[clamp(y + dy)][clamp(x + dx)]  (|dx|, |dy| <= margin)
+    毎回 clip した番号で引く (fancy indexing) より速い。"""
+
+    def __init__(self, prev2d, margin):
+        self.margin = margin
+        self.height, self.width = prev2d.shape
+        self.padded = np.pad(prev2d, margin, mode="edge")
+
+    def mismatch(self, cur2d, dx, dy, out=None):
+        m = self.margin
+        shifted = self.padded[m + dy:m + dy + self.height, m + dx:m + dx + self.width]
+        return np.not_equal(shifted, cur2d, out=out)
 
 
 def estimate_global_motion(prev2d, cur2d, search_range=GLOBAL_SEARCH_RANGE):
@@ -72,12 +82,13 @@ def estimate_global_motion(prev2d, cur2d, search_range=GLOBAL_SEARCH_RANGE):
     factor = downscale_factor(width, height)
     if factor == 1:
         return None
-    small_prev = prev2d[::factor, ::factor]
     small_cur = cur2d[::factor, ::factor]
+    shifter = _Shifter(prev2d[::factor, ::factor], search_range)
+    mismatch = np.empty(small_cur.shape, dtype=bool)
     best, best_cost = (0, 0), None
     for dy in range(-search_range, search_range + 1):
         for dx in range(-search_range, search_range + 1):
-            cost = int(_shift_mismatch(small_prev, small_cur, dx, dy).sum())
+            cost = int(np.count_nonzero(shifter.mismatch(small_cur, dx, dy, mismatch)))
             if best_cost is None or cost < best_cost:
                 best, best_cost = (dx, dy), cost
     return best[0] * factor, best[1] * factor
@@ -101,9 +112,13 @@ def estimate_motion(prev, cur, width, height, block=MV_BLOCK, search_range=MV_RA
     candidates = candidate_vectors(search_range, global_vector, vector_limit(width, height, search_range))
 
     costs = np.empty((len(candidates), len(row_starts), len(col_starts)), dtype=np.int32)
+    shifter = _Shifter(prev2d, max(max(abs(dx), abs(dy)) for dx, dy in candidates))
+    mismatch = np.empty(cur2d.shape, dtype=bool)
     for k, (dx, dy) in enumerate(candidates):
-        mismatch = _shift_mismatch(prev2d, cur2d, dx, dy).astype(np.int32)
-        costs[k] = np.add.reduceat(np.add.reduceat(mismatch, row_starts, axis=0), col_starts, axis=1)
+        shifter.mismatch(cur2d, dx, dy, mismatch)
+        # 行方向は小さな整数型で足してから int32 で列方向に足す (ブロックの 1 列は最大 MV_BLOCK 画素)
+        rows = np.add.reduceat(mismatch.view(np.uint8), row_starts, axis=0, dtype=np.uint8 if block < 256 else np.int32)
+        costs[k] = np.add.reduceat(rows, col_starts, axis=1, dtype=np.int32)
 
     best_k = costs.argmin(axis=0)
     best_cost = np.take_along_axis(costs, best_k[None], axis=0)[0]
@@ -119,16 +134,19 @@ def estimate_motion(prev, cur, width, height, block=MV_BLOCK, search_range=MV_RA
 def apply_motion(prev, vectors, width, height, block=MV_BLOCK):
     """動きベクトルで前フレームから予測フレーム (1 次元) を作る。"""
     prev2d = np.asarray(prev).reshape(height, width)
-    pred = prev2d.copy()
-    mb_cols, _ = mb_grid(width, height, block)
-    for mb, (dx, dy) in vectors.items():
-        by, bx = divmod(mb, mb_cols)
-        y0, x0 = by * block, bx * block
-        y1, x1 = min(y0 + block, height), min(x0 + block, width)
-        rows = np.clip(np.arange(y0, y1) + dy, 0, height - 1)
-        cols = np.clip(np.arange(x0, x1) + dx, 0, width - 1)
-        pred[y0:y1, x0:x1] = prev2d[np.ix_(rows, cols)]
-    return pred.reshape(-1)
+    if not vectors:
+        return prev2d.reshape(-1).copy()
+    mb_cols, mb_rows = mb_grid(width, height, block)
+    # ブロックごとのベクトルを画素ごとに広げ、全画素の参照先を一度に引く (ベクトルの無いブロックは (0, 0) = そのまま)
+    shift = np.zeros((2, mb_rows * mb_cols), dtype=np.intp)
+    blocks = np.fromiter(vectors.keys(), dtype=np.intp, count=len(vectors))
+    shift[:, blocks] = np.array(list(vectors.values()), dtype=np.intp).T
+    shift = shift.reshape(2, mb_rows, mb_cols)
+    ys, xs = np.arange(height), np.arange(width)
+    by, bx = ys // block, xs // block
+    rows = np.clip(ys[:, None] + shift[1][by[:, None], bx[None, :]], 0, height - 1)
+    cols = np.clip(xs[None, :] + shift[0][by[:, None], bx[None, :]], 0, width - 1)
+    return prev2d[rows, cols].reshape(-1)
 
 
 def pack_vector(dx, dy, search_range=MV_RANGE):

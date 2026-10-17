@@ -14,7 +14,7 @@
 | 符号化・復元 | Python の参照デコーダと `codec.js` が全フレームで同じ盤面を作る。シークの結果が通常再生と同じ | `test_codec_v4.py`, `test_rle_roundtrip.py`, `test_motion.py`, `test_tiles.py` |
 | 立体 | relief / extrude / inflate / vox、3D 動き補償、2.5D の平面 (変わった列だけの組み立てが全体の組み立てと同じ) | `test_volume.py`, `test_volume3d.py`, `test_planes.py` |
 | アドオン (`main.js`) | モックの Minecraft で再生し、最後の画面のブロックが正しい。描画方式 (auto / rect / list / block) で結果が同じ。変わったブロックだけ置く。シーク・一時停止・再開・動画の切り替え・クリア・常時読み込み・建築限界・`bench`・`stats` | `test_main_js.py`, `test_render_modes.py`, `test_playback_control.py` |
-| 減色 | ディザ・条件付き更新・自動パレット (色空間・色数)・GPU 経路 (CPU 版 PyTorch で同じコードを実行) | `test_temporal.py`, `test_device.py` |
+| 減色 | ディザ・条件付き更新・自動パレット (色空間・色数)・GPU 経路 (CPU 版 PyTorch で同じコードを実行)・ブロックモードの最適化 (置く費用を増やす候補を選ばない、変換結果がそのまま復元できる) | `test_temporal.py`, `test_device.py`, `test_block_rdo.py` |
 | GUI | 変換の引数、プリセット、縦横比の提案、設定の検査、負荷の目安、パックの UUID / バージョン | `test_gui_options.py` |
 | 翻訳 | 10 言語でキーと `{}` の置き換えがそろっている。アドオンが使う翻訳キーがすべてある | `test_i18n.py`, `test_main_js.py` |
 | 画質指標 | MS-SSIM (1 段では scikit-image の SSIM と一致) | `test_ms_ssim.py` |

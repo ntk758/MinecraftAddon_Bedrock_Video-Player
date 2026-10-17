@@ -213,6 +213,8 @@ def play(tree, js_path, work, *node_args):
     shutil.rmtree(work, ignore_errors=True)
     return {
         "calls_per_frame": (stats["setBlockCalls"] + stats["fillCalls"]) / frames,
+        "set_calls_per_frame": stats["setBlockCalls"] / frames,
+        "fill_calls_per_frame": stats["fillCalls"] / frames,
         "blocks_per_frame": stats["blocksPlaced"] / frames,
         "script_ms_per_frame": out.get("playMs", 0) / frames,
     }

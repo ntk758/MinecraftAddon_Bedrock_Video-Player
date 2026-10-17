@@ -132,8 +132,10 @@ def test_decoding_a_large_gop_does_not_delay_playback(tmp_path):
 
     save_frames(make_clip("pan", 192, 108, 40), tmp_path / "frames")
     out = tmp_path / "big.js"
+    # --block-rdo 0: 最適化すると最初のキーフレームが箱にまとまり、rect 方式の 1 tick のブロック数の上限で数 tick かかる
+    # (展開の遅れとは別の理由で遅れが出る) ため、展開だけを比べられるよう減色のままにする
     data = run_convert(tmp_path / "frames", out, "--width", "192", "--height", "108", "--palette", "auto",
-                       "--dither-method", "blue_noise", "--keyframe-interval", "0")
+                       "--dither-method", "blue_noise", "--keyframe-interval", "0", "--block-rdo", "0")
     assert data["format"] == "varint_rle_v6" and len(data["chunks"]) == 1
     costs = '{"setBlock": 2.3, "fillCall": 15, "fillBlock": 0.55, "listCall": 15, "listBlock": 1.42}'
     result = run_addon(tmp_path / "addon", out, "stats", f"costs={costs}")
