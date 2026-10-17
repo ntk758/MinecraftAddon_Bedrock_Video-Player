@@ -115,7 +115,8 @@ def test_auto_mode_picks_lists_for_scattered_changes_and_boxes_for_solids(runs, 
         Image.fromarray(frame).save(frames_dir / f"f{t}.png")
     dots_js = tmp_path / "dots.js"
     assert convert.main(["--frames-dir", str(frames_dir), "--output", str(dots_js), "--width", "64", "--height", "48",
-                         "--fps", "10", "--device", "cpu", "--no-adaptive-fps", "--no-motion", "--tile-size", "0"]) == 0
+                         "--fps", "10", "--device", "cpu", "--no-adaptive-fps", "--no-motion", "--tile-size", "0",
+                         "--block-rdo", "0"]) == 0
     dots = run_addon(tmp_path / "dots_addon", dots_js, "render=auto")["stats"]
     assert dots["listFillCalls"] > 0 and dots["setBlockCalls"] == 0
 

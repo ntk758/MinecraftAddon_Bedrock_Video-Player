@@ -101,6 +101,11 @@ class StreamEncoder:
             self.tiles.update(self._prev, flat, is_keyframe)
         self._prev = flat
 
+    @property
+    def reference(self):
+        """最後に符号化した (アドオンが表示している) 盤面の 1 次元配列。まだ無ければ None。"""
+        return self._prev
+
     def _change_ratio(self, flat):
         """前フレームから変わった割合。立体 (空気が基準) では、空気以外のマスに対する割合にする
         (ほとんどが空気の立体では全体に対する割合が小さく出て、動いているのに省略されてしまうため)。"""

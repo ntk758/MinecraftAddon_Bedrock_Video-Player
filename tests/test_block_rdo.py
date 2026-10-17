@@ -1,0 +1,98 @@
+"""ブロックモードのレート歪み最適化 (Phase 8.5、mvcodec/block_rdo.py) のテスト。"""
+import sys
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+import convert  # noqa: E402
+from mvcodec.block_rdo import BlockRDO  # noqa: E402
+from mvcodec.decode import iter_decoded_frames, load_frame_data  # noqa: E402
+
+PALETTE = np.array([[0, 0, 0], [255, 255, 255], [128, 128, 128], [200, 40, 40]], np.float32)
+
+
+def dithered_gray(h=16, w=16):
+    """元は一様な灰色 (128) なのに、減色で黒と白の市松模様になったフレーム (ディザの粒)。"""
+    source = np.full((h, w, 3), 128, np.uint8)
+    checker = (np.add.outer(np.arange(h), np.arange(w)) % 2).astype(np.int32)  # 0 = 黒, 1 = 白
+    return source, checker
+
+
+def test_zero_strength_returns_the_input():
+    source, indices = dithered_gray()
+    assert np.array_equal(BlockRDO(0)(indices, source, PALETTE), indices)
+
+
+def test_dither_noise_on_a_flat_area_becomes_one_block_color():
+    source, indices = dithered_gray()
+    out = BlockRDO(16)(indices, source, PALETTE)
+    # 灰色のブロックがあるので、8×8 ごとに 1 色 (灰色) で塗るのが、色の誤差も置く費用も小さい
+    assert np.all(out == 2)
+
+
+def test_unchanged_source_keeps_the_displayed_blocks():
+    source, indices = dithered_gray()
+    reference = np.full_like(indices, 2)
+    # 前のフレームで灰色に塗った場所に、また同じ元の色が来た: 置き直さない
+    rdo = BlockRDO(16)
+    out = rdo(1 - indices, source, PALETTE, reference)
+    assert np.array_equal(out, reference)
+    assert rdo.stats["skip"] + rdo.stats["exact"] == 4
+
+
+def test_never_places_more_than_the_quantized_frame():
+    rng = np.random.default_rng(3)
+    h, w = 24, 40
+    source = rng.integers(0, 256, (h, w, 3), dtype=np.uint8)
+    indices = ((PALETTE[None, None] - source[:, :, None].astype(np.float32)) ** 2).sum(-1).argmin(-1).astype(np.int32)
+    reference = rng.integers(-1, 4, (h, w)).astype(np.int32)
+    rdo = BlockRDO(64, hysteresis=0)
+    out = rdo(indices, source, PALETTE, reference)
+    assert out.shape == indices.shape and out.min() >= 0 and out.max() < len(PALETTE)
+    # 8×8 ごとに、見積もった置く時間は減色の結果以下 (置く費用を増やす候補は選ばない)。
+    # マスの数は増えることがある (散らばった 50 マスより、1 個の箱にできる 54 マスの方が速い)
+    out_place, _ = rdo._rate(out, reference, reference)
+    exact_place, _ = rdo._rate(indices, reference, reference)
+    assert np.all(out_place <= exact_place + 1e-6)
+    assert rdo.stats["exact"] < 15
+    # 前の盤面に未設置 (-1) のマスがあるブロックは、そのマスを未設置のまま残さない
+    assert out.min() >= 0
+
+
+def test_motion_candidate_copies_a_shifted_block():
+    h, w = 16, 32
+    stripes = np.tile(np.array([3, 3, 1, 1, 1, 0, 0, 0], np.int32), (h, w // 8))
+    reference = stripes.copy()
+    shifted = np.roll(stripes, 1, axis=1)
+    source = PALETTE[shifted].astype(np.uint8)
+    rdo = BlockRDO(16)
+    out = rdo(shifted, source, PALETTE, reference)
+    # 動き補償の予測が元の映像と一致するブロックはそのまま使う (端の列は範囲外なので予測と違うことがある)
+    assert np.array_equal(out[:, 8:], shifted[:, 8:])
+
+
+def write_noisy_pan(folder, frames=8, w=32, h=16):
+    folder.mkdir()
+    rng = np.random.default_rng(0)
+    world = (rng.random((h, w + frames, 1)) * 60 + np.linspace(60, 200, w + frames)[None, :, None]).repeat(3, 2)
+    for t in range(frames):
+        Image.fromarray(world[:, t:t + w].astype(np.uint8)).save(folder / f"f{t:03d}.png")
+    return w, h
+
+
+def test_convert_with_block_rdo_decodes_to_the_optimized_frames(tmp_path):
+    w, h = write_noisy_pan(tmp_path / "frames")
+    common = ["--frames-dir", str(tmp_path / "frames"), "--width", str(w), "--height", str(h), "--fps", "10",
+              "--device", "cpu", "--palette", "full", "--dither-method", "blue_noise"]
+    assert convert.main([*common, "--output", str(tmp_path / "off.js"), "--block-rdo", "0"]) == 0
+    assert convert.main([*common, "--output", str(tmp_path / "on.js"), "--block-rdo", "64"]) == 0
+    off = load_frame_data(tmp_path / "off.js")
+    on = load_frame_data(tmp_path / "on.js")
+    assert on["format"] == off["format"] and on["frame_count"] == off["frame_count"] == 8
+    boards = [board for board, _ in iter_decoded_frames(on)]
+    assert len(boards) == 8 and all(b.min() >= 0 for b in boards)
+    assert sum(map(len, on["chunks"])) < sum(map(len, off["chunks"]))
