@@ -7,8 +7,11 @@ v5 のフレームのバイト列はそのままに、GOP 単位の「入れ物�
 復号は入れ物を開いて元の v5 のバイト列に戻すだけなので、フレームの位置の表 (index) と、その後の復元
 (動き補償・タイル辞書・差分ラン) は v5 と同じ。
 
+v6.16 からは、確率を学習しながら符号化する区間符号の入れ物 (種類 2、mvcodec/rangecode.py) を使う
+(ハフマンより 1〜2 割小さい)。ハフマンの入れ物も読める。
+
 入れ物 (バイト列):
-  1 バイト: 0 = 生 (以降は v5 のバイト列そのまま) / 1 = ハフマン
+  1 バイト: 0 = 生 (以降は v5 のバイト列そのまま) / 1 = ハフマン / 2 = 区間符号 (mvcodec/rangecode.py)
   ハフマンのとき: varint フレーム数、varint 元のバイト数 (復号側が出力を一度で確保する)、続いて 8 個のストリームそれぞれについて
     varint 記号の数 (0 なら以降なし) / varint 記号の種類 A / 符号長 (4bit × A、上位から詰める) /
     varint 符号のバイト数 / 符号 (MSB から詰める)
@@ -19,6 +22,7 @@ import heapq
 import numpy as np
 
 from mvcodec.encode import encode_varint
+from mvcodec.rangecode import MODE_RANGE, pack_gop_range, unpack_gop_range
 
 MAX_CODE_LENGTH = 12
 MODE_RAW = 0
@@ -255,17 +259,24 @@ def decode_stream(buf, pos):
 ALPHABETS = [256, 256, 256, 256, 256, 256, 64, 128]
 
 
-def pack_gop(gop_bytes, frames):
+def pack_gop(gop_bytes, frames, mode=MODE_RANGE):
     """GOP の v5 のバイト列を入れ物にする。frames は (offset, length) の並び (長さ 0 のフレームは含めない)。
-    フレームは gop_bytes の中で隙間なく並んでいること (StreamEncoder が作る形)。"""
+    フレームは gop_bytes の中で隙間なく並んでいること (StreamEncoder が作る形)。
+    mode は MODE_RANGE (v6.16 から。mvcodec/rangecode.py) か MODE_HUFFMAN。小さくならなければ生のまま入れる。"""
     gop_bytes = bytes(gop_bytes)
     raw = bytes([MODE_RAW]) + gop_bytes
     if not frames:
         return raw
+    if mode == MODE_RANGE:
+        try:
+            packed = pack_gop_range(gop_bytes, frames)
+        except (ValueError, IndexError):
+            return raw  # 想定外の形のフレームは生のまま入れる (開けば必ず同じバイト列)
+        return packed if len(packed) < len(raw) else raw
     try:
         streams = split_frames(gop_bytes, frames)
     except (ValueError, IndexError):
-        return raw  # 想定外の形のフレームは生のまま入れる (開けば必ず同じバイト列)
+        return raw
     out = bytearray([MODE_HUFFMAN])
     encode_varint(len(frames), out)
     encode_varint(len(gop_bytes), out)
@@ -281,6 +292,8 @@ def unpack_gop(container):
         return b""
     if container[0] == MODE_RAW:
         return container[1:]
+    if container[0] == MODE_RANGE:
+        return unpack_gop_range(container)
     if container[0] != MODE_HUFFMAN:
         raise ValueError(f"未対応の入れ物の種類: {container[0]}")
     frame_count, pos = _read_varint(container, 1)

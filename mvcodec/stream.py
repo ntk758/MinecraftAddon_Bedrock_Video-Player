@@ -9,6 +9,7 @@ import numpy as np
 
 from mvcodec.encode import bytes_to_text, encode_frame_v5, encode_varint
 from mvcodec.entropy import pack_gop
+from mvcodec.rangecode import MODE_RANGE
 from mvcodec.motion import (
     MV_BLOCK,
     MV_RANGE,
@@ -55,6 +56,8 @@ class StreamEncoder:
     change_ratio_fn: object = None
     # GOP ごとのエントロピー符号化 (varint_rle_v6、mvcodec/entropy.py)。フレームの位置 (index) は v5 のバイト列のまま
     entropy: bool = False
+    # 入れ物の種類 (MODE_RANGE か mvcodec/entropy.py の MODE_HUFFMAN)
+    entropy_mode: int = MODE_RANGE
     stats: StreamStats = field(default_factory=StreamStats)
 
     def __post_init__(self):
@@ -165,7 +168,7 @@ class StreamEncoder:
         return sum(len(s) for s in self._gop_strings) * 2 + len(self._gop_binary)
 
     def _close_gop(self):
-        data = pack_gop(self._gop_binary, self._gop_frames) if self.entropy else self._gop_binary
+        data = pack_gop(self._gop_binary, self._gop_frames, self.entropy_mode) if self.entropy else self._gop_binary
         self._gop_strings.append(bytes_to_text(data))
         self._gop_binary = bytearray()
         self._gop_frames = []

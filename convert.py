@@ -37,6 +37,7 @@ TEMPORAL_HYSTERESIS = 24.0
 # docs/research/phase7x.md の 16 章)
 BLOCK_RDO_STRENGTH = "auto"
 from mvcodec.encode import MAX_PALETTE_COLORS
+from mvcodec.entropy import MODE_HUFFMAN, MODE_RANGE
 from mvcodec.motion import MV_BLOCK, MV_RANGE
 from mvcodec.stream import StreamEncoder
 from mvcodec.planes import (
@@ -493,6 +494,9 @@ def parse_args(argv=None):
     parser.add_argument("--entropy", action=argparse.BooleanOptionalAction, default=True,
                         help="GOP ごとにハフマン符号で圧縮する (varint_rle_v6)。.js が約 3〜5 割、.mcaddon が約 3 割小さくなる。"
                              "v6.5 以前のアドオンでは再生できない (--no-entropy で v5 のまま)")
+    parser.add_argument("--entropy-coder", default="range", choices=["range", "huffman"],
+                        help="GOP の圧縮のしかた。range (v6.16 から) は確率を学習する区間符号でハフマンより 1〜2 割小さい。"
+                             "huffman はゲーム内での展開が数倍速い (とても大きな画面で展開が追いつかないとき用)")
     parser.add_argument("--scene-threshold", type=float, default=0.015,
                         help="adaptive-fps でフレームを省略する変化率のしきい値")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
@@ -729,6 +733,7 @@ def make_encoder(args, width, rows, gop_boundaries, empty_value, depth=1, change
             adaptive_fps=args.adaptive_fps, scene_threshold=args.scene_threshold, motion=args.motion,
             mv_range=args.mv_range, empty_value=empty_value, tile_size=tile_size, motion_cache=motion_cache,
             depth=depth, change_ratio_fn=change_ratio_fn, entropy=args.entropy,
+            entropy_mode=MODE_HUFFMAN if args.entropy_coder == "huffman" else MODE_RANGE,
         )
         for tile_size in tile_sizes
     ])
