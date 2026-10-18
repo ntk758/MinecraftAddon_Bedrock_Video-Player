@@ -192,6 +192,7 @@ python video_player_gui.py
 | コマンド | 動作 |
 |---|---|
 | `/scriptevent badapple:setup` | 現在地にスクリーンを設置 |
+| `/scriptevent badapple:setup align` | スクリーンがまたぐチャンク (16×16 の区画) が一番少なくなるよう、東西・南北に最大 15 ブロックずらして設置 (128×72 で平均 48.6 → 40 チャンク) |
 | `/scriptevent badapple:start` | 選択中の動画を最初から再生 |
 | `/scriptevent badapple:list` | 収録動画の一覧 |
 | `/scriptevent badapple:play <動画ID>` | 指定した動画を再生 |
@@ -228,6 +229,13 @@ GUI の **表示モード** で立体の作り方を選び、**奥行き (ブロ
 - 変換結果は Minecraft を起動しなくても確認できます:
   ```bash
   python scripts/preview_volume.py out.js --output preview.gif --source-frames frames_dir
+  ```
+- **ステンドグラスのパレット** (GUI の「ステンドグラス 16 色」、`--palette glass`): 半透明のステンドグラスだけで立体を作ります。奥のブロックや景色が透けるホログラムらしい見た目になります (色は後ろにある物で変わるので、平面スクリーンには向きません)。中まで詰まった立体では何枚も重なって暗く見えるので、`--hollow` で表面だけにすると透け感が残ります。
+- **AI の深度推定で奥行きを付ける**: `relief` は既定で明るさを奥行きにしますが、`scripts/make_depth_video.py` で動画から深度動画 (明るいほど手前) を作って `--depth-video` に渡すと、人物などが実際に手前へ浮き出ます (Depth Anything V2 Small、初回に約 100 MB のモデルをダウンロード。CPU で 128×72 なら 1 フレーム約 0.5 秒)。
+  ```bash
+  pip install transformers torch
+  python scripts/make_depth_video.py in.mp4 depth.mp4 --width 128 --height 72 --fps 10
+  python convert.py --input-video in.mp4 --depth-video depth.mp4 --output out.js --width 128 --height 72 --fps 10 --mode relief --depth 16
   ```
 
 コマンドラインでの例:
@@ -487,7 +495,7 @@ A. パック名とコマンド接頭辞が同じなら同じパック (同じ UU
   - [x] **8.4 エントロピー符号化**: フレームをヘッダ・動きベクトル・タイル・ランの間隔・長さ・色の 8 個のストリームに分け、GOP ごとの静的ハフマン符号 (Smacker 型) で圧縮 (`varint_rle_v6`、`--entropy` で既定)。置くブロックと画質は同じまま、`.js` (ゲーム内のメモリ) が **−35〜−53%**、`.mcaddon` が **−26〜−36%**
   - [x] **8.5 ブロックモードのレート歪み最適化**: 8×8 ごとに「減色のまま / 前のフレームのまま / 動き補償の予測 / 1 色 / 2 色」を、色差 + 強さ × (置く費用 + データ量) で選ぶ (Smacker・RoQ 型、`--block-rdo`、既定の強さ 16)。データ形式は同じまま、Blue Noise でデータ **−13〜−44%**・`rect` の呼び出し **−23〜−53%**、描画時間の見積もり −8〜+1%、色差は 5 本中 4 本で改善。タイルの回転・反転の参照は Blue Noise で 0〜4.6% (上限の見積もり) と小さく、データ形式の変更に見合わないので見送り
   - [x] **8.6 構造物とクローンによる描画** (調査の結果見送り): 構造物は実機で 1 ブロック 2.31 µs と座標リストより遅い。`cloneBlocks` (Script API 2.10.0 = Minecraft 26.50 以降) で動きベクトルのブロックをコピーしても、コピーが 1 ブロック 0.5 µs なら描画時間 −1% 以下 (変わるマスだけを置く今の方式がもともと速いため)。対応する Minecraft の版を狭める代償に見合わない
-  - [ ] **8.7 ホログラムの素材と入力**: ステンドグラスや発光ブロックの半透明パレット、AI による単眼深度推定 (Video-Depth-Anything など) の深度動画を `--depth-video` に使う手順、サブチャンク (16 ブロック) にそろえた設置
+  - [x] **8.7 ホログラムの素材と入力**: ステンドグラス 16 色の半透明パレット (`--palette glass`、公式テクスチャから測った色)、AI の単眼深度推定 (Depth Anything V2) で深度動画を作る `scripts/make_depth_video.py`、チャンクにそろえた設置 (`setup align`、またぐチャンク −14〜−24%)
   - [ ] **8.8 実映像での評価**: 権利上公開できる実映像のデータセットで、データ量・呼び出し回数・ゲーム内の tick 時間 (MSPT)・ちらつき (時間方向の変化率) を CI で継続計測
 
 詳細は [TODO.md](TODO.md) を参照してください。

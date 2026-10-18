@@ -152,3 +152,28 @@ def test_setup_elsewhere_removes_previous_ticking_areas(scene, tmp_path):
         else:
             alive.discard(name)
     assert alive and all("_70_" in name for name in alive), alive
+
+
+def chunks_spanned(start, size):
+    return (start + size - 1) // 16 - start // 16 + 1
+
+
+@pytest.mark.parametrize("x, z", [(5, 100), (-7, 37)])
+def test_setup_align_lines_the_screen_up_with_chunks(scene, tmp_path, x, z):
+    """setup align は、スクリーンがまたぐチャンクが一番少なくなるよう最大 15 ブロックずらし、再生はそこで行う。"""
+    path, data = scene
+    frames = reference_frames(data)
+    steps = [{"x": x, "z": z}, {"event": "badapple:setup", "message": "align"}, {"event": "badapple:start"},
+             {"until": "bvp.playback_finished"}, {"snap": "final"}]
+    out = drive(tmp_path / "addon", {"demo": path}, steps)
+    assert out["errors"] == []
+    final = out["snaps"][0]
+    anchor = final["anchor"]
+    width, height = data["width"], data["height"]
+    best = min(chunks_spanned(a, width) for a in range(anchor["x"] - 15, anchor["x"] + 16))
+    assert chunks_spanned(anchor["x"], width) == best
+    best = min(chunks_spanned(a, height) for a in range(anchor["z"] - 15, anchor["z"] + 16))
+    assert chunks_spanned(anchor["z"], height) == best
+    assert abs(anchor["x"] - x) <= 15
+    assert any("bvp.setup_aligned" in m for m in out["messages"])
+    assert final["board"] == frames[-1]
