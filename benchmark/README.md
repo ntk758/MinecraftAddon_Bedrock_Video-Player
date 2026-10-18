@@ -53,3 +53,5 @@ python benchmark/rdo_bench.py --out bench_out --strengths 0 16 32
 ```
 
 タイル辞書に回転・反転の参照を足したときの効果の見積もりは `tile_orientation_study.py` です (結果は docs/research/phase7x.md の 12 章)。
+
+`cloneBlocks` で動きベクトルのブロックをコピーしたときの得の見積もりは `clone_study.py` です (結果は docs/research/phase7x.md の 13 章)。
