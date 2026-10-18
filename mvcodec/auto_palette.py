@@ -4,6 +4,10 @@ import numpy as np
 COLOR_SPACES = ("oklab", "rgb")
 # OkLab の L は 0〜1 なので、収束判定 (atol) と RGB の 0〜255 の目盛りをそろえるために掛ける
 OKLAB_SCALE = 100.0
+# max_colors="auto" で試す色数 (少ない順) と、許す色の誤差の増え方 (一番多い色数のときの何倍まで)。
+# 16 色はパンの映像でぼかした色差が +1.0 と大きく崩れたので候補にしない (docs/research/phase7x.md の 16 章)
+AUTO_COLOR_COUNTS = (24, 32, 48, 64)
+AUTO_COLOR_TOLERANCE = 1.05
 
 
 def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, sample_stride=10, seed=0, warn=None,
@@ -38,19 +42,53 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, 
         import torch  # noqa: F401
     except ImportError:
         # PyTorch が無いときは、各画素に一番近いブロックを数えて、多く使われる色から選ぶ (numpy だけ)
-        return _histogram_select(pixels, all_blocks, max_colors)
+        def select(count):
+            return _histogram_select(pixels, all_blocks, count)
+    else:
+        state = {"device": device}
 
-    try:
-        return _kmeans_select(pixels, all_blocks, max_colors, device, seed, color_space)
-    except Exception as error:
-        if device is None:
-            raise
-        # GPU (DirectML 等) で未対応の演算があれば CPU でやり直す
-        if warn is not None:
-            warn(error)
-        else:
-            print(f"[MVCodec] Warning: the auto palette could not be computed on the GPU; retrying on the CPU: {error}")
-        return _kmeans_select(pixels, all_blocks, max_colors, None, seed, color_space)
+        def select(count):
+            try:
+                return _kmeans_select(pixels, all_blocks, count, state["device"], seed, color_space)
+            except Exception as error:
+                if state["device"] is None:
+                    raise
+                # GPU (DirectML 等) で未対応の演算があれば CPU でやり直す
+                if warn is not None:
+                    warn(error)
+                else:
+                    print(f"[MVCodec] Warning: the auto palette could not be computed on the GPU; retrying on the CPU: {error}")
+                state["device"] = None
+                return _kmeans_select(pixels, all_blocks, count, None, seed, color_space)
+
+    if max_colors != "auto":
+        return select(max_colors)
+    return _select_color_count(pixels, select)
+
+
+def _select_color_count(pixels, select):
+    """AUTO_COLOR_COUNTS の少ない方から、色の誤差 (各画素と一番近いブロックの OkLab の距離の平均) が、
+    一番多い色数のときの AUTO_COLOR_TOLERANCE 倍以内に収まる最初のパレットを選ぶ。色数が少ないほど、
+    ディザの粒・ちらつき・データ・座標リストの呼び出し (色の数) が減る。"""
+    from mvcodec.block_rdo import rgb_to_oklab
+
+    lab = rgb_to_oklab(np.clip(pixels, 0, 255).astype(np.uint8))
+
+    def error_of(blocks):
+        block_lab = rgb_to_oklab(np.array([b["rgb"] for b in blocks], dtype=np.uint8))
+        nearest = np.full(len(lab), np.inf, dtype=np.float32)
+        for start in range(0, len(block_lab), 16):
+            part = block_lab[start:start + 16]
+            nearest = np.minimum(nearest, ((lab[:, None, :] - part[None]) ** 2).sum(-1).min(1))
+        return float(np.sqrt(nearest).mean())
+
+    largest = select(AUTO_COLOR_COUNTS[-1])
+    limit = error_of(largest) * AUTO_COLOR_TOLERANCE
+    for count in AUTO_COLOR_COUNTS[:-1]:
+        blocks = select(count)
+        if error_of(blocks) <= limit:
+            return blocks
+    return largest
 
 
 def _histogram_select(pixels, all_blocks, max_colors):

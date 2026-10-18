@@ -373,8 +373,8 @@ python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 
 |---|---|
 | `--input-video` / `--frames-dir` | 入力動画、または画像連番フォルダ |
 | `--width` `--height` `--fps` `--duration` | 解像度・fps (最大 20)・変換する秒数 |
-| `--palette` | `concrete` (16 色) / `expanded` (33 色) / `full` (39 色) / `all` (全ブロック 108 色) / `auto` (101 色からシーンごとに選ぶ。GUI の既定) |
-| `--palette-colors` / `--palette-space` | `auto` で選ぶ色数の上限 (既定 64、候補は光るブロックを除く 101 色) / 色を選ぶ色空間 `rgb` (既定) か `oklab` ([比較](docs/research/palette_space.md)) |
+| `--palette` | `concrete` (16 色) / `expanded` (33 色) / `full` (39 色) / `all` (全ブロック 108 色) / `auto` (101 色からシーンごとに選ぶ。GUI の既定) / `glass` (ステンドグラス 16 色、立体向け) |
+| `--palette-colors` / `--palette-space` | `--palette auto` で選ぶ色数。既定の `auto` はシーンごとに 24 / 32 / 48 / 64 色から、色の誤差が 64 色のときの 1.05 倍以内に収まる一番少ない色数を選ぶ (数を指定するとその数まで。候補は光るブロックを除く 101 色) / 色を選ぶ色空間 `rgb` (既定) か `oklab` ([比較](docs/research/palette_space.md)) |
 | `--dither-method` | `none` / `blue_noise` / `ordered` / `floyd` / `atkinson` / `burkes` / `sierra` |
 | `--device` | `auto` / `cuda` / `rocm` / `directml` / `cpu` |
 | `--keyframe-interval` | キーフレーム間隔 (0 でシーン先頭のみ) |
@@ -391,7 +391,7 @@ python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 
 | `--hollow` | 外から見えない内部を置かない (既定は無効。`block` 描画方式で置く数を減らしたいとき用。有効にすると 2.5D の送り方は使えない) |
 | `--entropy` / `--no-entropy` | GOP ごとにハフマン符号で圧縮する (既定は有効、`varint_rle_v6`)。`.js` が約 3〜5 割、`.mcaddon` が約 3 割小さくなる。v6.5 以前のアドオンでは再生できないので、古いアドオンに入れるデータは `--no-entropy` |
 | `--volume-encoding` | `relief` / `extrude` / `inflate` の送り方。`planes` は色の平面と高さ (厚み) の平面の 2 枚で送りアドオンで立体に組み立てる (データが小さい)、`voxels` は立体をそのまま送る。既定の `auto` は送れるなら `planes` |
-| `--block-rdo` | ブロックモードの最適化の強さ (既定 16、0 で無効。平面スクリーンだけ)。8×8 ごとに「減色のまま / 前のフレームのまま / 動き補償の予測 / 1 色 / 2 色」から、色の誤差と置く費用・データ量の釣り合いで選ぶ。大きいほどデータと呼び出しが減り、色は粗くなる。データ形式は変わらない |
+| `--block-rdo` / `--rdo-budget` | ブロックモードの最適化の強さ (既定 `auto`、0 で無効。平面スクリーンだけ)。8×8 ごとに「減色のまま / 前のフレームのまま / 動き補償の予測 / 1 色 / 2 色」から、色の誤差と置く費用・データ量の釣り合いで選ぶ。数を指定すると固定の強さ (大きいほどデータと呼び出しが減り、色は粗くなる)。`auto` はフレームごとに、増える色の誤差が `--rdo-budget` (既定 3) 以内の一番強い強さを選ぶ。データ形式は変わらない |
 | `--temporal-hysteresis` | 条件付き更新のしきい値 (RGB の距離、既定 24、0 で無効)。前のフレームのブロックの色が、新しく選んだ色よりこの値以内しか悪くならなければ変えない (CPU で減色するとき。GPU の減色には同様の仕組みが入っている) |
 | `--dither-follow-motion` | ディザ模様を映像の全体の動き (パン) に合わせてずらす (既定は無効。パンのデータは大きく減るが、置き直すブロックは増える) |
 | `--ffmpeg` | ffmpeg のパス |
@@ -497,6 +497,9 @@ A. パック名とコマンド接頭辞が同じなら同じパック (同じ UU
   - [x] **8.6 構造物とクローンによる描画** (調査の結果見送り): 構造物は実機で 1 ブロック 2.31 µs と座標リストより遅い。`cloneBlocks` (Script API 2.10.0 = Minecraft 26.50 以降) で動きベクトルのブロックをコピーしても、コピーが 1 ブロック 0.5 µs なら描画時間 −1% 以下 (変わるマスだけを置く今の方式がもともと速いため)。対応する Minecraft の版を狭める代償に見合わない
   - [x] **8.7 ホログラムの素材と入力**: ステンドグラス 16 色の半透明パレット (`--palette glass`、公式テクスチャから測った色)、AI の単眼深度推定 (Depth Anything V2) で深度動画を作る `scripts/make_depth_video.py`、チャンクにそろえた設置 (`setup align`、またぐチャンク −14〜−24%)
   - [x] **8.8 実映像での評価**: Blender Foundation のオープンムービー 3 本 (実写・CG・アニメ、CC-BY 3.0) で、データ量・画質・ちらつき・描画時間の見積もりを測る `benchmark/real_video_bench.py` と週 1 回の CI。v6.6.0 比でデータ −34〜−49%、描画時間 −2〜−34% (実写で一番効く)
+- [ ] **Phase 9: 映像に合わせた自動調整 (Content-adaptive encoding)**
+  - [x] **9.1 最適化の強さの自動選択** (`--block-rdo auto`、既定): フレームごとに、色の誤差の増え方が予算以内の一番強い強さを選ぶ。固定の 16 と比べ、8 本の映像でデータの削減は同程度 (平均 −34% → −37%) のまま、MS-SSIM の一番大きい低下が −0.041 → −0.021
+  - [x] **9.2 パレットの色数の自動選択** (`--palette-colors auto`、既定): シーンごとに 24〜64 色から選ぶ。9.1 と合わせて v6.8.0 の既定より描画時間 −3〜−16%、座標リストの呼び出し −25〜−48%、データ 平均 −16%
 
 詳細は [TODO.md](TODO.md) を参照してください。
 

@@ -2,6 +2,7 @@
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -116,3 +117,29 @@ def test_auto_palette_without_torch_picks_colors_from_the_video(monkeypatch):
     top = [item["rgb"] for item in picked[:2]]
     assert any(abs(r - 130) + abs(g - 165) + abs(b - 245) < 60 for r, g, b in top), top
     assert any(abs(r - 40) + abs(g - 120) + abs(b - 120) < 60 for r, g, b in top), top
+
+
+def test_auto_color_count_picks_the_fewest_colors_that_keep_the_error():
+    """--palette-colors auto: 色の誤差が一番多い色数の 1.05 倍以内に収まる、一番少ない色数を選ぶ。"""
+    from mvcodec.auto_palette import AUTO_COLOR_COUNTS, _select_color_count, generate_auto_palette
+
+    candidates = AUTO_PALETTE_CANDIDATES
+    # 3 色だけの映像: 24 色で 64 色と同じ誤差になる
+    few = np.array([candidates[i]["rgb"] for i in (0, 5, 9)] * 400, dtype=np.float32)
+    calls = []
+
+    def select(count):
+        calls.append(count)
+        return candidates[:count] if count == 64 else [candidates[i] for i in (0, 5, 9)] + candidates[20:20 + count - 3]
+
+    assert len(_select_color_count(few, select)) == AUTO_COLOR_COUNTS[0]
+    assert calls[0] == AUTO_COLOR_COUNTS[-1]
+    # 色の多い映像で、少ない色数では誤差が大きく増える: 一番多い色数のまま
+    rng = np.random.default_rng(0)
+    many = rng.integers(0, 256, (3000, 3)).astype(np.float32)
+    chosen = _select_color_count(many, lambda count: candidates[:count] if count == 64 else candidates[:2])
+    assert len(chosen) == 64
+    # 実際の選び方 (PyTorch が無ければ色の数え上げ) でも、上限の 64 色以下のパレットになる
+    frames = [rng.integers(0, 256, (24, 32, 3), dtype=np.uint8) for _ in range(3)]
+    palette = generate_auto_palette(frames, candidates, max_colors="auto", sample_stride=1)
+    assert len(palette) in AUTO_COLOR_COUNTS

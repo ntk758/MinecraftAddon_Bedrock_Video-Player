@@ -40,6 +40,9 @@ BYTE_WEIGHT_US = 2.0
 # ぼかした差に足す、画素ごとの差の重み
 PIXEL_WEIGHT = 0.1
 MODES = ("exact", "skip", "motion", "solid_mean", "solid_mode", "two")
+# --block-rdo auto で試す強さ (強い順) と、1 画素あたりに増やしてよい色の誤差 (_distortion と同じ単位の平均)
+AUTO_STRENGTHS = (64, 32, 16, 8, 4, 2, 1)
+AUTO_BUDGET = 3.0
 
 _M1 = np.array([[0.4122214708, 0.5363325363, 0.0514459929], [0.2119034982, 0.6806995451, 0.1073969566],
                 [0.0883024619, 0.2817188376, 0.6299787005]])
@@ -89,8 +92,15 @@ def _expand(block_values, shape, block):
 class BlockRDO:
     """フレームの列に順番にかける (前のフレームを覚えるのは呼び出し側: reference に符号化済みの盤面を渡す)。"""
 
-    def __init__(self, strength, block=RDO_BLOCK, modes=MODES, hysteresis=24.0, mv_range=MV_RANGE):
-        self.strength = float(strength)
+    def __init__(self, strength, block=RDO_BLOCK, modes=MODES, hysteresis=24.0, mv_range=MV_RANGE,
+                 budget=AUTO_BUDGET):
+        # "auto" はフレームごとに強さを選ぶ (AUTO_STRENGTHS の強い方から、色の誤差の増え方が budget 以内のもの)
+        self.auto = strength == "auto"
+        self.strength = AUTO_STRENGTHS[0] if self.auto else float(strength)
+        self.budget = float(budget)
+        self.strength_counts = {}
+        # フレームごとの、増えた色の誤差 (1 画素あたり)。強さの予算を決めるための記録
+        self.added_errors = []
         self.mv_range = mv_range
         # exact の画素のうち、表示中の色が元の色から (RGB の距離で) これ以内しか悪くならないものは表示中のままにする
         # (convert.py の条件付き更新 --temporal-hysteresis と同じ。減色は自分の前の結果と比べて条件付き更新するが、
@@ -158,29 +168,51 @@ class BlockRDO:
                 candidates["two"] = np.where(closer_a, a, c).astype(np.int32)
 
         names = list(candidates)
-        costs = np.empty((len(names), bh, bw), np.float64)
-        exact_place = exact_rate = None
+        distortion = np.empty((len(names), bh, bw), np.float64)
+        rate = np.empty_like(distortion)
+        usable = np.ones(distortion.shape, bool)
+        exact_place = None
         for k, name in enumerate(names):
             place, data = self._rate(candidates[name], reference, predicted)
-            rate = place + data
-            costs[k] = self._distortion(candidates[name], pal_lab, src_lab, src_blur) + self.strength * rate
+            rate[k] = place + data
+            distortion[k] = self._distortion(candidates[name], pal_lab, src_lab, src_blur)
             if name == "exact":
-                exact_place, exact_rate = place, rate
+                exact_place = place
             else:
                 # 減色の結果より費用が減らない候補と、置く費用が増える候補は使わない (強さは「色の誤差と引き換えに
                 # 費用を減らす」量だけを決める。ぼかした誤差だけ小さくて費用が増える候補や、データは減るが置くブロックが
                 # 増える候補 (パンで動き補償の予測を選ぶと、条件付き更新で残せたマスまで置き直す) を選ぶと、
                 # ゲーム内の描画がかえって重くなるため)
-                costs[k][(rate >= exact_rate) | (place > exact_place)] = np.inf
+                usable[k] = (rate[k] < rate[0]) & (place <= exact_place)
         # 未設置 (-1) のマスを含む skip / motion は使えない (前の盤面に描かれていない)
         for name in ("skip", "motion"):
             if name in candidates:
-                costs[names.index(name)][_block_sum((candidates[name] < 0).astype(np.int32), b) > 0] = np.inf
-        choice = costs.argmin(0)
+                usable[names.index(name)] &= _block_sum((candidates[name] < 0).astype(np.int32), b) == 0
+        choice = self._choose(distortion, rate, usable, h * w)
         for k, name in enumerate(names):
             self.stats[name] += int((choice == k).sum())
         stacked = np.stack([candidates[name] for name in names])
         return np.take_along_axis(stacked, _expand(choice, (h, w), b)[None], 0)[0]
+
+    def _choose(self, distortion, rate, usable, pixels):
+        """ブロックごとに選ぶ候補の番号 (0 は exact)。auto なら、増える色の誤差が予算以内の一番強い強さで選ぶ。"""
+
+        def choose(strength):
+            costs = np.where(usable, distortion + strength * rate, np.inf)
+            return costs.argmin(0)
+
+        def added_error(choice):
+            return float((np.take_along_axis(distortion, choice[None], 0)[0] - distortion[0]).sum() / pixels)
+
+        strengths = AUTO_STRENGTHS if self.auto else (self.strength,)
+        for strength in strengths:
+            choice = choose(strength)
+            added = added_error(choice)
+            if not self.auto or added <= self.budget:
+                break
+        self.strength_counts[strength] = self.strength_counts.get(strength, 0) + 1
+        self.added_errors.append(added)
+        return choice
 
     def _keep_reference(self, target, reference, source_rgb, palette_rgb):
         palette = np.asarray(palette_rgb, dtype=np.float32)
