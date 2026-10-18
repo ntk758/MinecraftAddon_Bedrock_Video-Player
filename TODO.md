@@ -49,8 +49,10 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 - **チャンクにそろえた設置** (`setup align`): またぐチャンクが 128×72 で平均 48.6 → 40 (−18%)。
 - **未計測**: ステンドグラスの描画の重さ (半透明の並べ替え)、チャンクをそろえたときのゲーム内の効果。発光ブロックだけのパレットは 7 色しかないので作っていない。
 
-### GUI の Web アプリケーション化 (Web-based Converter)
-- **概要**: Tkinter ベースのローカル GUI に加え、PyScript または WebAssembly (Wasm) + FFmpeg.wasm を用いて、ブラウザ上で完結する Web 版コンバーターを開発。
+### ✅ GUI の Web アプリケーション化 (Web-based Converter、v6.10 でベータ版)
+- **構成** (`web/`): 動画のコマは `<video>` + canvas、音声は WebAudio で 22.05 kHz モノラルの WAV (統合版は .wav も再生できる) にしてブラウザで取り出し、変換とアドオンの組み立ては Web Worker の Pyodide (WebAssembly の Python) で Windows 版と同じ `convert.py` / `mvcodec` / `pack_builder.py` を動かす。FFmpeg.wasm は使わない (大きく、ブラウザの動画の読み込みで足りる)。
+- **公開**: `scripts/build_web.py` でサイトを組み立て、`.github/workflows/pages.yml` で GitHub Pages に置く。CI は Node の Pyodide で変換と組み立てが最後まで動くことを確かめる (32bit の整数の違いを見つけるため)。
+- **制限**: CPU だけ (GPU の減色・K-Means は使えず、自動パレットは色の数え上げで選ぶ)、.vox は未対応、音声は WAV なのでアドオンが大きい。
 
 ### ✅ 画面アスペクト比の自由自動調整 (v6.4.0 で実装済み)
 - GUI の「動画の縦横比に合わせる」ボタンで、黒帯が出ない幅・高さを提案する (回転した動画も考慮)。

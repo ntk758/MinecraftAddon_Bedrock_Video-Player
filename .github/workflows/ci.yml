@@ -48,3 +48,25 @@ jobs:
           python benchmark/run.py --video bench_input.mp4 --output bench_output.js --fps 10 --force | tee bench_report.md
           echo "## Benchmark (testsrc2, 64x64, 10fps)" >> "$GITHUB_STEP_SUMMARY"
           sed -n '/^| Metric/,$p' bench_report.md >> "$GITHUB_STEP_SUMMARY"
+
+  # ブラウザ版 (web/) と同じ Pyodide (32bit の WebAssembly の Python) で、変換とアドオンの組み立てが最後まで動くこと
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build the web converter and run it in Pyodide
+        run: |
+          python scripts/build_web.py --out web_dist
+          mkdir -p pyodide_smoke && cp tests/js/pyodide_smoke.mjs pyodide_smoke/
+          cd pyodide_smoke
+          npm install --no-save pyodide@0.26.4
+          node pyodide_smoke.mjs ../web_dist
