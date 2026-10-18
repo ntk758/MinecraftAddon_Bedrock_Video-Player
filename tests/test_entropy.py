@@ -62,8 +62,9 @@ def make_video(tmp_path, *extra):
 
 
 def test_v6_is_exact_and_smaller(tmp_path):
-    v6_path, v6 = make_video(tmp_path)
-    v5_path, v5 = make_video(tmp_path, "--no-entropy")
+    # タイルの大きさは固定する (auto は入れ物に入れた後の大きさで 4 と 8 を選ぶので、v5 と v6 で選ぶ方が変わりうる)
+    v6_path, v6 = make_video(tmp_path, "--tile-size", "8")
+    v5_path, v5 = make_video(tmp_path, "--tile-size", "8", "--no-entropy")
     assert v6["format"] == "varint_rle_v6" and v5["format"] == "varint_rle_v5"
     # 入れ物を開いた中身は v5 とバイト単位で同じ。フレームの位置の表も同じ
     assert v6["index"] == v5["index"]

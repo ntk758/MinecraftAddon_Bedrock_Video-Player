@@ -75,6 +75,21 @@ def test_motion_candidate_copies_a_shifted_block():
     assert np.array_equal(out[:, 8:], shifted[:, 8:])
 
 
+def test_auto_strength_stays_within_the_error_budget():
+    rng = np.random.default_rng(7)
+    h, w = 32, 48
+    source = (rng.random((h, w, 3)) * 255).astype(np.uint8)
+    indices = ((PALETTE[None, None] - source[:, :, None].astype(np.float32)) ** 2).sum(-1).argmin(-1).astype(np.int32)
+    reference = rng.integers(0, 4, (h, w)).astype(np.int32)
+    # 予算が十分大きければ一番強い強さと同じ、0 なら色の誤差を増やさない
+    loose = BlockRDO("auto", budget=1e9)
+    assert np.array_equal(loose(indices, source, PALETTE, reference), BlockRDO(64)(indices, source, PALETTE, reference))
+    assert loose.strength_counts == {64: 1}
+    strict = BlockRDO("auto", budget=0)
+    strict(indices, source, PALETTE, reference)
+    assert strict.added_errors[-1] <= 0 or list(strict.strength_counts) == [1]
+
+
 def write_noisy_pan(folder, frames=8, w=32, h=16):
     folder.mkdir()
     rng = np.random.default_rng(0)

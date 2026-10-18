@@ -27,11 +27,13 @@ from mvcodec.color import (
 from gui_i18n import LOCALES, Translator, detect_system_language
 from mvcodec.device import DEVICE_CHOICES, detect_gpu, empty_cache, squared_distances
 from mvcodec.dither_motion import DitherAligner
-from mvcodec.block_rdo import MODES as BLOCK_MODES, BlockRDO
+from mvcodec.block_rdo import AUTO_BUDGET, MODES as BLOCK_MODES, BlockRDO
 # 条件付き更新のしきい値 (RGB の距離)。前のブロックの色がこれ以内しか悪くならなければ変えない
 TEMPORAL_HYSTERESIS = 24.0
-# ブロックモードのレート歪み最適化の強さ (mvcodec/block_rdo.py。0 で無効)
-BLOCK_RDO_STRENGTH = 16.0
+# ブロックモードのレート歪み最適化の強さ (mvcodec/block_rdo.py。0 で無効)。auto はフレームごとに選ぶ
+# (固定の 16 と比べ、8 本の映像でデータの削減は平均 −34% → −37%、MS-SSIM の一番大きい低下は −0.041 → −0.021。
+# docs/research/phase7x.md の 16 章)
+BLOCK_RDO_STRENGTH = "auto"
 from mvcodec.encode import MAX_PALETTE_COLORS
 from mvcodec.motion import MV_BLOCK, MV_RANGE
 from mvcodec.stream import StreamEncoder
@@ -59,6 +61,8 @@ MIN_GOP_SIZE = 20
 MAX_GOP_SIZE = 300
 SCENE_CUT_THRESHOLD = 30.0
 AUTO_PALETTE_MAX_COLORS = 64
+# --palette-colors の既定。auto は GOP ごとに 24 / 32 / 48 / 64 色から選ぶ (mvcodec/auto_palette.py)
+AUTO_PALETTE_COLORS = "auto"
 AUTO_PALETTE_SAMPLE_STRIDE = 10
 AUTO_PALETTE_MAX_SAMPLES = 30
 SSIM_SAMPLE_INTERVAL = 10
@@ -481,18 +485,22 @@ def parse_args(argv=None):
     parser.add_argument("--palette-space", default="rgb", choices=["rgb", "oklab"],
                         help="--palette auto で代表色を求め、ブロックを選ぶ色空間。oklab は人の目に近い色の差で選ぶ "
                              "(候補より少ない --palette-colors のときだけ結果が変わる。docs/research/palette_space.md)")
-    parser.add_argument("--palette-colors", type=int, default=AUTO_PALETTE_MAX_COLORS,
+    parser.add_argument("--palette-colors", type=palette_colors, default=AUTO_PALETTE_COLORS,
                         help=f"--palette auto で GOP ごとに選ぶブロックの色数の上限 (候補は {len(AUTO_PALETTE_CANDIDATES)} 色。"
-                             "減らすとディザの粒・ちらつき・データが減るが、色の再現は粗くなる)")
+                             "減らすとディザの粒・ちらつき・データが減るが、色の再現は粗くなる)。既定の auto はシーンごとに "
+                             "24 / 32 / 48 / 64 色から、色の誤差が 64 色のときの 1.05 倍以内に収まる一番少ない色数を選ぶ")
     parser.add_argument("--dither-method", default="none", choices=["none", "floyd", "ordered", "blue_noise", "atkinson", "burkes", "sierra"])
     parser.add_argument("--temporal-hysteresis", type=float, default=TEMPORAL_HYSTERESIS,
                         help="前のフレームと同じブロックの色が、新しく選んだ色より RGB の距離でこの値以内しか悪くならないなら"
                              "変えない (条件付き更新)。置き直すブロックとデータが減る。0 で無効。CPU で減色するときに使う "
                              "(GPU の減色には同様の仕組み (RDO) が入っている)")
-    parser.add_argument("--block-rdo", type=float, default=BLOCK_RDO_STRENGTH,
-                        help="平面スクリーンで、8×8 ごとに「減色のまま / 前のフレームのまま / 動き補償の予測 / 1 色 / 2 色」から、色の誤差と"
+    parser.add_argument("--block-rdo", type=block_rdo_strength, default=BLOCK_RDO_STRENGTH,
+                        help="(既定 auto) 平面スクリーンで、8×8 ごとに「減色のまま / 前のフレームのまま / 動き補償の予測 / 1 色 / 2 色」から、色の誤差と"
                              "置く費用・データ量の釣り合いで選ぶ強さ (0 で無効)。大きいほど置くブロック・呼び出し・データが減り、"
-                             "色は粗くなる。データ形式は変わらない")
+                             "色は粗くなる。auto はフレームごとに、色の誤差の増え方が --rdo-budget 以内の一番強い強さを選ぶ。"
+                             "データ形式は変わらない")
+    parser.add_argument("--rdo-budget", type=float, default=AUTO_BUDGET,
+                        help="--block-rdo auto で、1 画素あたりに増やしてよい色の誤差 (OkLab×100 の二乗、3×3 でぼかした差の平均)")
     parser.add_argument("--dither-follow-motion", action=argparse.BooleanOptionalAction, default=False,
                         help="Blue Noise / Ordered のディザ模様を映像の全体の動き (パン) に合わせてずらす。"
                              "パンのデータは大きく減るが、模様が毎フレーム動くので置き直すブロックは増える (既定は無効)")
@@ -540,18 +548,40 @@ def parse_args(argv=None):
         parser.error("--depth は 2〜128 にしてください")
     if args.depth_video and args.mode != "relief":
         parser.error("--depth-video は --mode relief でだけ使えます")
-    if args.palette_colors < 2:
-        parser.error("--palette-colors は 2 以上にしてください")
+    if args.palette_colors != "auto" and args.palette_colors < 2:
+        parser.error("--palette-colors は 2 以上か auto にしてください")
     if args.temporal_hysteresis < 0:
         parser.error("--temporal-hysteresis は 0 以上にしてください")
     if args.depth_hysteresis < 0:
         parser.error("--depth-hysteresis は 0 以上にしてください")
-    if args.block_rdo < 0:
-        parser.error("--block-rdo は 0 以上にしてください")
+    if args.block_rdo != "auto" and args.block_rdo < 0:
+        parser.error("--block-rdo は 0 以上か auto にしてください")
+    if args.rdo_budget < 0:
+        parser.error("--rdo-budget は 0 以上にしてください")
     if args.volume_encoding == "planes" and not planes_supported(args.mode, args.depth, args.hollow):
         parser.error("--volume-encoding planes は relief / extrude / inflate で、--hollow なし、"
                      "--depth 127 以下 (relief は 128 以下) のときだけ使えます")
     return args
+
+
+def palette_colors(text):
+    """--palette-colors の値: 整数か auto。"""
+    if text == "auto":
+        return text
+    try:
+        return int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("整数か auto を指定してください") from None
+
+
+def block_rdo_strength(text):
+    """--block-rdo の値: 数 (強さ) か auto。"""
+    if text == "auto":
+        return text
+    try:
+        return float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("数か auto を指定してください") from None
 
 
 def gpu_self_test(gpu, dither_method, apply_perceptual):
@@ -682,6 +712,9 @@ def print_stats(out_path, encoder, num_gops, avg_ssim=0.0, block_rdo=None):
     print(f"[MVCodec Benchmark] GOPs: {num_gops}")
     if block_rdo is not None:
         print(f"[MVCodec Benchmark] BlockModes: {json.dumps(block_rdo.stats)}")
+        added = np.asarray(block_rdo.added_errors or [0.0])
+        print(f"[MVCodec Benchmark] BlockStrengths: {json.dumps(block_rdo.strength_counts)} "
+              f"added error mean {added.mean():.2f} p90 {np.percentile(added, 90):.2f}")
 
 
 class EncoderSet:
@@ -800,9 +833,10 @@ def main(argv=None):
     use_source_heights = volume and not args.depth_video
     # ブロックモードの最適化 (平面スクリーンだけ) は元の色と比べて選ぶので、元フレームを全部とっておく
     block_rdo = None
-    if args.block_rdo > 0 and not volume:
+    if (args.block_rdo == "auto" or args.block_rdo > 0) and not volume:
         modes = [mode for mode in BLOCK_MODES if args.motion or mode != "motion"]
-        block_rdo = BlockRDO(args.block_rdo, modes=modes, hysteresis=args.temporal_hysteresis, mv_range=args.mv_range)
+        block_rdo = BlockRDO(args.block_rdo, modes=modes, hysteresis=args.temporal_hysteresis, mv_range=args.mv_range,
+                             budget=args.rdo_budget)
     source_frames = {}
 
     def tee_originals(frames):
@@ -916,6 +950,8 @@ def main(argv=None):
         print(f"Demo GIF saved to {args.demo_gif}")
 
     print_stats(out_path, encoder, num_gops, avg_ssim, block_rdo)
+    if is_adaptive_palette:
+        print(f"[MVCodec Benchmark] PaletteColors: {[len(p) for p in gop_palettes]}")
     return 0
 
 
