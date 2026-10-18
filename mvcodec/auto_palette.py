@@ -6,7 +6,7 @@ COLOR_SPACES = ("oklab", "rgb")
 OKLAB_SCALE = 100.0
 # max_colors="auto" で試す色数 (少ない順) と、許す色の誤差の増え方 (一番多い色数のときの何倍まで)。
 # 16 色はパンの映像でぼかした色差が +1.0 と大きく崩れたので候補にしない (docs/research/phase7x.md の 16 章)
-AUTO_COLOR_COUNTS = (24, 32, 48, 64)
+AUTO_COLOR_COUNTS = (24, 32, 48, 64, 96, 127)
 AUTO_COLOR_TOLERANCE = 1.05
 
 

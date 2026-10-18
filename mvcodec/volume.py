@@ -548,10 +548,11 @@ def _iso_sprite(unit):
     return vx + min_x, vy + min_y, sprite[vy, vx], (hw, hh, vh)
 
 
-def iso_view(volume, palette_rgb=None, unit=4, background=(24, 26, 32), rgb=None):
+def iso_view(volume, palette_rgb=None, unit=4, background=(24, 26, 32), rgb=None, side_rgb=None):
     """立体を南東の斜め上から見た等角投影の画像 (H, W, 3)。上面・正面 (南)・側面 (東) を明るさで塗り分ける。
 
     色はパレット番号を palette_rgb で引くか、各ボクセルの色 rgb (奥行き, 高さ, 幅, 3) をそのまま使う。
+    side_rgb (rgb と同じ形) を渡すと、正面と側面はその色で塗る (原木などは上面と側面の見た目が違う)。
 
     ゲームの外で立体の出来を確かめるためのプレビュー用 (scripts/preview_volume.py、GUI のサムネイル)。
     手前のボクセルほど後から描く z バッファ方式で、numpy だけで計算する。
@@ -588,7 +589,12 @@ def iso_view(volume, palette_rgb=None, unit=4, background=(24, 26, 32), rgb=None
     py = (oy[:, None] + sprite_y[None] + shift_y).ravel()
     nearness = np.repeat(wx + wy + wz, len(sprite_x))
     faces = np.tile(sprite_face, len(d))
-    colors = np.repeat(voxel_rgb, len(sprite_x), axis=0) * shade[faces][:, None]
+    colors = np.repeat(voxel_rgb, len(sprite_x), axis=0)
+    if side_rgb is not None:
+        # 上面 (1) 以外の面は側面の色
+        side_colors = np.repeat(np.asarray(side_rgb, dtype=np.float32)[d, row, col], len(sprite_x), axis=0)
+        colors = np.where((faces != 1)[:, None], side_colors, colors)
+    colors = colors * shade[faces][:, None]
     inside = (px >= 0) & (px < canvas_w) & (py >= 0) & (py < canvas_h)
     order = np.argsort(nearness[inside], kind="stable")
     image[py[inside][order], px[inside][order]] = np.clip(colors[inside][order], 0, 255).astype(np.uint8)

@@ -85,11 +85,40 @@ for _item in CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE + WOOL_PA
 ALL_BLOCKS = CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE
 
 def _palette_item(item):
-    return {"name": item["block"].split(":", 1)[1], "block": item["block"], "rgb": tuple(item["rgb"]), "group": item["group"]}
+    return {"name": item["block"].split(":", 1)[1], "block": item["block"], "rgb": tuple(item["rgb"]),
+            "side": tuple(item.get("side", item["rgb"])), "group": item["group"]}
 
 
-# 重力で落ちず・時間で変化しない・面ごとの見た目の差が小さい不透明なブロックすべて (色がほぼ同じものは 1 つに絞り済み)
-EVERY_BLOCK_PALETTE = [_palette_item(item) for item in BLOCK_COLORS if item["group"] != "glass"]
+# 1 つのパレットに入れられる色の数 (パレット番号は 7bit、立体は 1 つを空気に使う)
+MAX_PALETTE_BLOCKS = 127
+
+
+def _most_distinct(items, count):
+    """items から、上面と側面の色 (OkLab) が互いに一番離れるように count 個を選ぶ (先頭から優先。順番は items のまま)。"""
+    if len(items) <= count:
+        return list(items)
+    from mvcodec.block_rdo import rgb_to_oklab
+
+    lab = np.concatenate([rgb_to_oklab(np.array([item["rgb"] for item in items], dtype=np.uint8)),
+                          rgb_to_oklab(np.array([item["side"] for item in items], dtype=np.uint8))], axis=1)
+    chosen = [0]
+    distance = np.linalg.norm(lab - lab[0], axis=1)
+    while len(chosen) < count:
+        index = int(distance.argmax())
+        chosen.append(index)
+        distance = np.minimum(distance, np.linalg.norm(lab - lab[index], axis=1))
+    return [items[i] for i in sorted(chosen)]
+
+
+def side_palette(palette):
+    """立体用: 各ブロックの色を側面の色にしたパレット (立体は横から見るので、原木などは樹皮の色で選ぶ)。"""
+    return [dict(item, rgb=tuple(item.get("side", item["rgb"]))) for item in palette]
+
+
+# 重力で落ちず・時間で変化せず・まわりに作用しない不透明な立方体のブロックすべて (上面も側面も色がほぼ同じものは 1 つに絞り済み)。
+# 雪のブロックは光るブロックの明かりで溶けるので、光るブロックと一緒に使うパレット (全ブロック) には入れない
+OPAQUE_BLOCKS = [_palette_item(item) for item in BLOCK_COLORS if item["group"] != "glass"]
+EVERY_BLOCK_PALETTE = [item for item in OPAQUE_BLOCKS if item["group"] != "snow"]
 # 半透明のステンドグラス (3D ホログラム向け。奥のブロックや景色が透けるので、平面スクリーンでは色が背景で変わる)。
 # 色はテクスチャの不透明な部分の色 (透けて見える色は後ろの物で変わる)
 GLASS_PALETTE = [_palette_item(item) for item in BLOCK_COLORS if item["group"] == "glass"]
@@ -98,16 +127,19 @@ PALETTES = {
     "concrete": CONCRETE_PALETTE,
     "expanded": CONCRETE_PALETTE + TERRACOTTA_PALETTE,
     "full": ALL_BLOCKS,
-    "all": EVERY_BLOCK_PALETTE,
+    # 全ブロックは 127 色を超えるので、色が互いに一番離れる 127 色を選ぶ
+    "all": _most_distinct(EVERY_BLOCK_PALETTE, MAX_PALETTE_BLOCKS),
     "glass": GLASS_PALETTE,
 }
 
-# 自動パレットが色を選ぶ候補。光るブロックは入れない (置き替えるたびに明るさの計算が起き、夜はスクリーンの明るさがまだらになる。
-# 負荷はまだ実機で測っていない)。「全ブロック」パレットと 39 色以下のパレットには入っている
-AUTO_PALETTE_CANDIDATES = [item for item in EVERY_BLOCK_PALETTE if item["group"] != "light"]
+# 自動パレットが色を選ぶ候補 (全ブロックから光るものを除いたもの)。光るブロックは入れない (置き替えるたびに明るさの計算が起き、
+# 夜はスクリーンの明るさがまだらになる。負荷はまだ実機で測っていない)。「全ブロック」パレットと 39 色以下のパレットには入っている
+AUTO_PALETTE_CANDIDATES = [item for item in OPAQUE_BLOCKS if item["group"] != "light"]
 
 # ブロックID -> RGB (デコーダ・評価用)
-BLOCK_RGB = {item["block"]: tuple(item["rgb"]) for item in ALL_BLOCKS + WOOL_PALETTE + EVERY_BLOCK_PALETTE + GLASS_PALETTE}
+BLOCK_RGB = {item["block"]: tuple(item["rgb"]) for item in ALL_BLOCKS + WOOL_PALETTE + OPAQUE_BLOCKS + GLASS_PALETTE}
+# ブロックID -> 側面の RGB (立体のプレビュー用。原木などは上面と違う)
+BLOCK_SIDE_RGB = {**BLOCK_RGB, **{item["block"]: tuple(item.get("side", item["rgb"])) for item in BLOCK_COLORS}}
 
 def create_palette_image(palette):
     pal_img = Image.new("P", (1, 1))

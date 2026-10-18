@@ -123,11 +123,13 @@ def test_adaptive_palette_switch_keeps_colors_correct(tmp_path, monkeypatch):
                          color_space="rgb"):
         shift = 7 * len(calls)
         calls.append(shift)
-        return all_blocks[shift:] + all_blocks[:shift]
+        return (all_blocks[shift:] + all_blocks[:shift])[:60]  # 1 つのパレットは 128 色まで
 
     monkeypatch.setattr(auto_palette, "generate_auto_palette", rotating_palette)
     frames = make_scene_frames(tmp_path / "frames")
-    data = run_convert(tmp_path / "frames", tmp_path / "out.js", "--palette", "auto", "--keyframe-interval", "0")
+    # 表示色を減色の結果と完全に比べるので、ブロックモードの最適化は使わない
+    data = run_convert(tmp_path / "frames", tmp_path / "out.js", "--palette", "auto", "--keyframe-interval", "0",
+                       "--block-rdo", "0")
 
     assert data["adaptive_palette"] is True
     assert len(calls) == 3
@@ -138,7 +140,7 @@ def test_adaptive_palette_switch_keeps_colors_correct(tmp_path, monkeypatch):
     for f, (frame, (_idx, rgb)) in enumerate(zip(frames, iter_decoded_frames(data))):
         gop = np.searchsorted(data["gop_boundaries"], f, side="right") - 1
         shift = calls[gop]
-        palette = AUTO_PALETTE_CANDIDATES[shift:] + AUTO_PALETTE_CANDIDATES[:shift]
+        palette = (AUTO_PALETTE_CANDIDATES[shift:] + AUTO_PALETTE_CANDIDATES[:shift])[:60]
         expected_rgb = np.array([item["rgb"] for item in palette], dtype=np.uint8)[expected_indices(frame, palette)]
         if entries[f][2] == 0:
             continue  # adaptive-fps で省略されたフレームは前の表示を維持する
