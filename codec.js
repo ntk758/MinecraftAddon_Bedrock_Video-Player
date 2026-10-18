@@ -408,11 +408,14 @@ function* decodeHuffmanStreamJob(buf, cursor, symbolsPerYield) {
 /**
  * v6 の GOP の入れ物を開いて、v5 のバイト列に戻す (mvcodec/entropy.py の unpack_gop と同じ)。
  * system.runJob に渡せるよう、symbolsPerYield 個の記号ごと・64 フレームごとに yield する。
+ * progress ({ bytes, produced }) を渡すと、出力の配列と、yield の時点で前から何バイトできているかを書く
+ * (できた所までのフレームは、GOP を開き終わる前に再生できる)。
  * QuickJS (ゲーム内のスクリプト) では関数呼び出しが重いので、1 バイトごとの処理は関数にせずに書いている。
  */
-export function* unpackGopJob(container, symbolsPerYield = 8192) {
+export function* unpackGopJob(container, symbolsPerYield = 8192, progress = null) {
   if (container.length === 0) return container;
   if (container[0] === 0) return container.subarray(1); // 生のまま入れた GOP
+  if (container[0] === 2) return yield* unpackRangeGopJob(container, progress);
   if (container[0] !== 1) throw new Error(`Unknown GOP container mode ${container[0]}`);
   const cursor = { pos: 1 };
   const frameCount = readVarint(container, cursor);
@@ -422,6 +425,7 @@ export function* unpackGopJob(container, symbolsPerYield = 8192) {
 
   const out = new Uint8Array(total);
   let o = 0;
+  if (progress) progress.bytes = out;
   const header = streams[S_HEADER];
   const runGap = streams[S_RUN_GAP];
   const runLength = streams[S_RUN_LEN];
@@ -509,12 +513,206 @@ export function* unpackGopJob(container, symbolsPerYield = 8192) {
       out[o++] = v;
       if (o >= nextYield) {
         nextYield = o + OUTPUT_BYTES_PER_YIELD;
+        if (progress) progress.produced = o;
         yield;
       }
     }
     if (o >= nextYield) {
       nextYield = o + OUTPUT_BYTES_PER_YIELD;
+      if (progress) progress.produced = o;
       yield;
+    }
+  }
+  if (o !== total) throw new Error(`GOP container size mismatch: ${o} != ${total}`);
+  return out;
+}
+
+// --- Phase 10.2: 入れ物の種類 2 (適応的な算術符号。mvcodec/rangecode.py と同じ規則) ---
+const PROB_BITS = 11;
+const PROB_ONE = 1 << PROB_BITS;
+const RC_TOP = 1 << 24;
+// 確率の表 (Uint16Array 1 本) の中の位置: 8 ビットの木 × 5 種類、間隔の区分、区分ごとの残りの上位 2 ビット、長さ、色 (直前の色ごと)
+const RC_BYTES = 0;
+const RC_SLOT = RC_BYTES + 5 * 256;
+const RC_EXTRA = RC_SLOT + 64;
+const RC_LENGTH = RC_EXTRA + 64 * 4;
+const RC_LEVEL = RC_LENGTH + 64;
+const RC_PROB_COUNT = RC_LEVEL + 128 * 128;
+// 区間符号は 1 バイト作るのにハフマンより手間がかかるので、yield の間隔を短くする
+const RANGE_OUTPUT_BYTES_PER_YIELD = 4096;
+
+function* unpackRangeGopJob(buf, progress) {
+  const cursor = { pos: 1 };
+  const frameCount = readVarint(buf, cursor);
+  const total = readVarint(buf, cursor);
+  const probs = new Uint16Array(RC_PROB_COUNT).fill(PROB_ONE >> 1);
+  const end = buf.length;
+  let p = cursor.pos + 1; // 先頭の 1 バイトは常に 0
+  let code = 0;
+  for (let i = 0; i < 4; i++) code = code * 256 + (p < end ? buf[p++] : 0);
+  let range = 0xffffffff;
+
+  // probs[base + 1 .. base + 2^nbits - 1] のビット木で nbits ビットを読む
+  const tree = (base, nbits, move) => {
+    let node = 1;
+    for (let k = 0; k < nbits; k++) {
+      const prob = probs[base + node];
+      const bound = (range >>> PROB_BITS) * prob;
+      if (code < bound) {
+        range = bound;
+        probs[base + node] = prob + ((PROB_ONE - prob) >> move);
+        node <<= 1;
+      } else {
+        code -= bound;
+        range -= bound;
+        probs[base + node] = prob - (prob >> move);
+        node = (node << 1) | 1;
+      }
+      if (range < RC_TOP) {
+        range = (range * 256) >>> 0;
+        code = (code * 256 + (p < end ? buf[p++] : 0)) >>> 0;
+      }
+    }
+    return node - (1 << nbits);
+  };
+
+  const out = new Uint8Array(total);
+  let o = 0;
+  if (progress) progress.bytes = out;
+  // v5 のバイト (varint) を 8 ビットの木で読んで書き写し、値を返す
+  const copyVarint = (model) => {
+    const base = RC_BYTES + model * 256;
+    let value = 0;
+    let scale = 1;
+    let b;
+    do {
+      b = tree(base, 8, 5);
+      out[o++] = b;
+      value += (b & 0x7f) * scale;
+      scale *= 128;
+    } while (b >= 0x80);
+    return value;
+  };
+
+  let previousLevel = 0;
+  let nextYield = RANGE_OUTPUT_BYTES_PER_YIELD;
+  for (let f = 0; f < frameCount; f++) {
+    const flags = copyVarint(0);
+    if (Math.floor(flags / 2) % 2 === 1) {
+      for (let k = copyVarint(0); k > 0; k--) {
+        copyVarint(1);
+        copyVarint(2);
+      }
+    }
+    if (Math.floor(flags / 4) % 2 === 1) {
+      for (let k = copyVarint(0); k > 0; k--) {
+        copyVarint(3);
+        copyVarint(4);
+      }
+    }
+    for (let k = copyVarint(0); k > 0; k--) {
+      // 間隔: 区分 (6 ビット) と残りのビット (上位 2 ビットは区分ごとの確率、それより下は確率 1/2)
+      // ラン 1 個あたりの木 (区分・長さ・色) は、関数を呼ばずにその場で読む (QuickJS では関数呼び出しが重い)
+      let slotNode = 1;
+      for (let bitNo = 0; bitNo < 6; bitNo++) {
+        const prob = probs[RC_SLOT + slotNode];
+        const bound = (range >>> PROB_BITS) * prob;
+        if (code < bound) {
+          range = bound;
+          probs[RC_SLOT + slotNode] = prob + ((PROB_ONE - prob) >> 5);
+          slotNode <<= 1;
+        } else {
+          code -= bound;
+          range -= bound;
+          probs[RC_SLOT + slotNode] = prob - (prob >> 5);
+          slotNode = (slotNode << 1) | 1;
+        }
+        if (range < RC_TOP) {
+          range = (range * 256) >>> 0;
+          code = (code * 256 + (p < end ? buf[p++] : 0)) >>> 0;
+        }
+      }
+      const slot = slotNode - 64;
+      let gap = slot;
+      if (slot >= 4) {
+        const extraBits = (slot >> 1) - 1;
+        const modeled = extraBits < 2 ? extraBits : 2;
+        let rest = tree(RC_EXTRA + slot * 4, modeled, 5);
+        for (let d = extraBits - modeled; d > 0; d--) {
+          range = Math.floor(range / 2);
+          let bit = 0;
+          if (code >= range) {
+            code -= range;
+            bit = 1;
+          }
+          rest = rest * 2 + bit;
+          if (range < RC_TOP) {
+            range = (range * 256) >>> 0;
+            code = (code * 256 + (p < end ? buf[p++] : 0)) >>> 0;
+          }
+        }
+        gap = (2 + (slot & 1)) * 2 ** extraBits + rest;
+      }
+      let lengthNode = 1;
+      for (let bitNo = 0; bitNo < 6; bitNo++) {
+        const prob = probs[RC_LENGTH + lengthNode];
+        const bound = (range >>> PROB_BITS) * prob;
+        if (code < bound) {
+          range = bound;
+          probs[RC_LENGTH + lengthNode] = prob + ((PROB_ONE - prob) >> 5);
+          lengthNode <<= 1;
+        } else {
+          code -= bound;
+          range -= bound;
+          probs[RC_LENGTH + lengthNode] = prob - (prob >> 5);
+          lengthNode = (lengthNode << 1) | 1;
+        }
+        if (range < RC_TOP) {
+          range = (range * 256) >>> 0;
+          code = (code * 256 + (p < end ? buf[p++] : 0)) >>> 0;
+        }
+      }
+      const length = lengthNode - 64;
+      const levelBase = RC_LEVEL + previousLevel * 128;
+      let levelNode = 1;
+      for (let bitNo = 0; bitNo < 7; bitNo++) {
+        const prob = probs[levelBase + levelNode];
+        const bound = (range >>> PROB_BITS) * prob;
+        if (code < bound) {
+          range = bound;
+          probs[levelBase + levelNode] = prob + ((PROB_ONE - prob) >> 4);
+          levelNode <<= 1;
+        } else {
+          code -= bound;
+          range -= bound;
+          probs[levelBase + levelNode] = prob - (prob >> 4);
+          levelNode = (levelNode << 1) | 1;
+        }
+        if (range < RC_TOP) {
+          range = (range * 256) >>> 0;
+          code = (code * 256 + (p < end ? buf[p++] : 0)) >>> 0;
+        }
+      }
+      const level = levelNode - 128;
+      previousLevel = level;
+      let v = gap * RUN_POSITION_DIVISOR + length * 128 + level;
+      if (v < 0x80000000) {
+        while (v >= 0x80) {
+          out[o++] = (v & 0x7f) | 0x80;
+          v >>>= 7;
+        }
+      } else {
+        while (v >= 0x80) {
+          out[o++] = (v % 128) | 0x80;
+          v = Math.floor(v / 128);
+        }
+      }
+      out[o++] = v;
+      if (o >= nextYield) {
+        nextYield = o + RANGE_OUTPUT_BYTES_PER_YIELD;
+        if (progress) progress.produced = o;
+        yield;
+      }
     }
   }
   if (o !== total) throw new Error(`GOP container size mismatch: ${o} != ${total}`);

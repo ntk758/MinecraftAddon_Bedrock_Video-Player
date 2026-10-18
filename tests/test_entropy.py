@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mvcodec.decode import gop_bytes_of, iter_decoded_frames, parse_index, utf16_str_to_bytes  # noqa: E402
 from mvcodec.entropy import (  # noqa: E402
     MAX_CODE_LENGTH,
+    MODE_HUFFMAN,
+    MODE_RANGE,
     canonical_codes,
     code_lengths,
     decode_stream,
@@ -143,3 +145,61 @@ def test_decoding_a_large_gop_does_not_delay_playback(tmp_path):
     load = next(part for m in result["statsMessages"] for part in m["rawtext"] if part.get("translate") == "bvp.stats_load")
     late_frames, max_late_ticks = (int(load["with"]["rawtext"][i]["text"]) for i in (0, 1))
     assert max_late_ticks <= 2, (late_frames, max_late_ticks)
+
+
+def make_gop(frame_runs):
+    """ランだけのフレーム (frame_runs[i] は (間隔, 長さ-1, 色) の並び) を並べた v5 の GOP と、フレームの位置。"""
+    from mvcodec.encode import encode_varint
+
+    gop = bytearray()
+    frames = []
+    for number, runs in enumerate(frame_runs):
+        start = len(gop)
+        encode_varint((number << 3) | (1 if number == 0 else 0), gop)
+        encode_varint(len(runs), gop)
+        for gap, length, level in runs:
+            encode_varint((gap << 13) | (length << 7) | level, gop)
+        frames.append((start, len(gop) - start))
+    return bytes(gop), frames
+
+
+# 間隔の区分の境目 (3/4、7/8、…) と、2^31 を超えるランの値 (JS のビット演算が使えない) を含む
+EDGE_RUNS = [[(0, 0, 0), (3, 63, 127), (4, 1, 5), (7, 2, 5), (8, 0, 9), (2 ** 18 - 1, 5, 1), (2 ** 18, 0, 0)],
+             [(2 ** 30 + 12345, 63, 127), (1, 0, 0)], [], [(5, 3, 64)] * 300]
+
+
+def test_range_container_roundtrips_edge_values():
+    from mvcodec.rangecode import MODE_RANGE
+
+    gop, frames = make_gop(EDGE_RUNS)
+    container = pack_gop(gop, frames)
+    assert container[0] == MODE_RANGE
+    assert unpack_gop(container) == gop
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node が必要")
+def test_codec_js_unpacks_range_edge_values(tmp_path):
+    gop, frames = make_gop(EDGE_RUNS)
+    script = tmp_path / "unpack.mjs"
+    script.write_text(
+        f'import {{ unpackGop }} from "{(ROOT / "codec.js").as_uri()}";\n'
+        'const input = Uint8Array.from(Buffer.from(process.argv[2], "hex"));\n'
+        'process.stdout.write(Buffer.from(unpackGop(input)).toString("hex"));\n', encoding="utf-8")
+    for container in (pack_gop(gop, frames), pack_gop(gop, frames, MODE_HUFFMAN)):
+        out = subprocess.run(["node", str(script), container.hex()], capture_output=True, text=True, check=True)
+        assert bytes.fromhex(out.stdout) == gop
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node が必要")
+def test_huffman_coder_option_still_plays(tmp_path):
+    """--entropy-coder huffman (v6.15 までの入れ物) も今の codec.js で同じ盤面になる。range の方が小さい。"""
+    path, data = make_video(tmp_path, "--entropy-coder", "huffman")
+    range_path, range_data = make_video(tmp_path)
+    assert {utf16_str_to_bytes(c)[0] for c in data["chunks"]} <= {0, MODE_HUFFMAN}
+    assert MODE_RANGE in {utf16_str_to_bytes(c)[0] for c in range_data["chunks"]}
+    size = lambda d: sum(len(utf16_str_to_bytes(c)) for c in d["chunks"])  # noqa: E731
+    assert size(range_data) < size(data)
+    for p, d in ((path, data), (range_path, range_data)):
+        result = subprocess.run(["node", str(ROOT / "tests" / "js" / "decode_frames.mjs"), str(p)],
+                                capture_output=True, text=True, check=True)
+        assert json.loads(result.stdout)["frames"] == [b.reshape(-1).tolist() for b, _ in iter_decoded_frames(d)]
