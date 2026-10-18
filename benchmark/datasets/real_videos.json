@@ -1,0 +1,41 @@
+{
+  "_comment": "benchmark/real_video_bench.py が使う実映像。どれも Blender Foundation のオープンムービーで CC-BY 3.0。リポジトリには入れず、実行時に公式の配布元から取得してキャッシュする (url と sha256 を変えるときはキャッシュも消す)。segment は映像の一部だけを ffmpeg で読み出す (全体を取得しない)",
+  "videos": [
+    {
+      "id": "tears_of_steel",
+      "title": "Tears of Steel (橋の上の 2 人)",
+      "kind": "実写 (手持ちカメラ・屋外)",
+      "url": "https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov",
+      "sha256": null,
+      "segment": true,
+      "start": 24,
+      "duration": 15,
+      "license": "CC-BY 3.0",
+      "credit": "(CC) Blender Foundation | mango.blender.org"
+    },
+    {
+      "id": "sintel_trailer",
+      "title": "Sintel 予告編",
+      "kind": "CG 映画 (暗い場面・場面の切り替わり・字幕)",
+      "url": "https://download.blender.org/durian/trailer/sintel_trailer-480p.mp4",
+      "sha256": "b670602fa00934ca27c4351bb0efe7ea7a07fae57284e44226025eeed7c51254",
+      "segment": false,
+      "start": 4,
+      "duration": 28,
+      "license": "CC-BY 3.0",
+      "credit": "© copyright Blender Foundation | durian.blender.org"
+    },
+    {
+      "id": "big_buck_bunny_trailer",
+      "title": "Big Buck Bunny 予告編",
+      "kind": "3D アニメ (明るい色・草木・白い字幕画面)",
+      "url": "https://download.blender.org/peach/trailer/trailer_400p.ogg",
+      "sha256": "dcbe6f2ea404a52d4b2f6fc91f274874e69be1671a1097eb3dc19f28f7c6e40f",
+      "segment": false,
+      "start": 3,
+      "duration": 24,
+      "license": "CC-BY 3.0",
+      "credit": "(c) copyright 2008, Blender Foundation | www.bigbuckbunny.org"
+    }
+  ]
+}

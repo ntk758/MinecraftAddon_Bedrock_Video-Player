@@ -1,0 +1,58 @@
+name: Real-video benchmark
+
+# 実映像での評価 (Phase 8.8、benchmark/real_video_bench.py)。映像の取得に時間がかかるので、プルリクエストごとではなく
+# 週に 1 回と手動で実行し、最新のリリースと比べた結果をジョブサマリーと成果物に残す (失敗判定はしない)
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: "比べる版 (空なら最新のタグ)"
+        required: false
+        default: ""
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt -r requirements-benchmark.txt
+
+      # 映像 (CC-BY 3.0、Blender Foundation) は公式の配布元から取得し、一覧が変わるまでキャッシュする
+      - uses: actions/cache@v4
+        with:
+          path: bench_videos
+          key: real-videos-${{ hashFiles('benchmark/datasets/real_videos.json') }}
+
+      - name: Benchmark
+        run: |
+          BASELINE="${{ github.event.inputs.baseline }}"
+          if [ -z "$BASELINE" ]; then BASELINE="$(git describe --tags --abbrev=0)"; fi
+          python benchmark/real_video_bench.py --out bench_out --cache bench_videos --baseline "$BASELINE"
+          echo "## Real-video benchmark (vs $BASELINE)" >> "$GITHUB_STEP_SUMMARY"
+          cat bench_out/results_real.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-video-bench
+          path: |
+            bench_out/results_real.json
+            bench_out/results_real.md
