@@ -17,7 +17,7 @@ flowchart TD
     D -->|relief / extrude / inflate| L[立体 (奥行き×高さ×幅)]
     L --> E[StreamEncoder: 差分 / 動き補償 (2D・3D) / タイル辞書 のうち最小を選択]
     E -->|間隔符号化 RLE + VarInt| F[GOP 単位バイナリ]
-    F -->|15bit/文字 UTF-16 パッキング| G[frames_video_id.js]
+    F -->|base64 で文字列化| G[frames_video_id.js]
     G -->|videos.js 自動生成| H[Behavior Pack + Resource Pack .mcaddon]
     H -->|Minecraft インポート| I[Script API / main.js + codec.js]
     I -->|VideoPlayer: decoded (論理盤面) と board (表示中) を分けて差分だけ描画| J[rect: fillBlocks(BlockVolume) の箱 / list: fillBlocks(ListBlockVolume) / block: setBlockPermutation]
@@ -74,8 +74,8 @@ varint(ラン数), varint(val) × ラン数        … 予測 (動き補償 → 
 - 形式: 1 バイトの種類 (0 = 生、1 = ハフマン)。ハフマンのときは フレーム数・元のバイト数 (varint) と、ストリームごとに 記号の数・記号の種類・符号長 (4bit ずつ)・符号のバイト数・符号。縮まない GOP は生のまま入れる。
 - 復号 (`codec.js` の `unpackGopJob`) は入れ物を開いて v5 のバイト列に戻すだけで、その後の復元は v5 と同じ。GOP の展開は再生のジェネレータの中で少しずつ行い (`DECODE_YIELD`)、1 tick の時間の予算 (30 ms) で区切る。次の GOP は 40 フレーム前から先読みする。
 
-### ④ 文字列化 (15bit/文字)
-バイト列を 15 ビットずつ区切り、`0x1000 + 値` の文字にします (先頭文字はパディングビット数)。サロゲート領域や引用符・バックスラッシュを含まないため、JSON 文字列としてそのまま埋め込めます。
+### ④ 文字列化 (base64)
+バイト列を `"B:"` + base64 の文字列にします (v6.15〜)。ASCII だけなので、JS のファイル (UTF-8) で 1 文字 1 バイト、QuickJS の中でも 1 文字 1 バイトで持たれます。v6.14 までは 15 ビットずつ `0x1000 + 値` の文字にしていましたが、その文字は UTF-8 で 3 バイトになり、データの 1.6 倍に膨らんでいました (base64 は 1.33 倍)。デコーダは先頭の `"B:"` で見分けるので、以前の文字列も読めます。
 
 ### ⑤ 立体 (3D ホログラム) のレイアウト
 - 立体は (奥行き D, 高さ H, 幅 W) の配列で、空気は `air_level` (127) 番です。符号化では (D×H) 行 × W 列の 2D 画像として扱い、位置 `p = (z × H + y) × W + x` です (z = 0 が一番奥 = 北、y = 0 が一番上)。
@@ -131,8 +131,8 @@ export const FRAME_DATA = {
   "layout": "screen",              // "screen" (平面)、"volume" (立体)、"heightfield" (2.5D の立体)
   // 立体のときだけ: "depth": 16, "air_level": 127
   // 2.5D のときだけ: "solid_rule": "relief" または "span"
-  "index": "...",                  // フレームごとの [gop_id, offset<<1|keyframe, length] (VarInt, 15bit文字列)
-  "chunks": ["...", "..."]         // GOP ごとのフレームバイナリ (15bit文字列)
+  "index": "B:...",                // フレームごとの [gop_id, offset<<1|keyframe, length] (VarInt, base64)
+  "chunks": ["B:...", "B:..."]     // GOP ごとのフレームバイナリ (base64)
 };
 ```
 

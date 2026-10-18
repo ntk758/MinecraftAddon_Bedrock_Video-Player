@@ -36,9 +36,14 @@ def load_frame_data(js_path):
 
 
 def utf16_str_to_bytes(text):
-    """bytearray_to_utf16_str の逆変換。"""
+    """アドオンの JS の文字列をバイト列に戻す: "B:" で始まれば base64 (bytes_to_text)、そうでなければ以前の
+    15bit/文字 (bytearray_to_utf16_str)。"""
     if not text:
         return b""
+    if text.startswith("B:"):
+        import base64
+
+        return base64.b64decode(text[2:])
     codes = np.frombuffer(text.encode("utf-16-le"), dtype="<u2").astype(np.int64) - UTF16_CHAR_OFFSET
     pad_len = int(codes[0])
     vals = codes[1:]

@@ -20,6 +20,9 @@ export function decodeUTF16BinaryToBytes(utf16Str) {
  */
 export function* decodeUTF16BinaryToBytesJob(utf16Str, charsPerYield = 4096) {
   if (!utf16Str) return new Uint8Array(0);
+  if (utf16Str.startsWith("B:")) {
+    return yield* decodeBase64Job(utf16Str, 2, charsPerYield);
+  }
   if (utf16Str.startsWith("K:")) {
     utf16Str = utf16Str.slice(2);
   }
@@ -49,6 +52,45 @@ export function* decodeUTF16BinaryToBytesJob(utf16Str, charsPerYield = 4096) {
       }
     }
     if (i % charsPerYield === 0) yield;
+  }
+  return bytes;
+}
+
+const BASE64_VALUES = (() => {
+  const table = new Uint8Array(128).fill(255);
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  for (let i = 0; i < alphabet.length; i++) table[alphabet.charCodeAt(i)] = i;
+  return table;
+})();
+
+/**
+ * "B:" + base64 の文字列をバイト列に戻す (v6.15 からの書き方。以前の 15bit/文字 は UTF-8 のファイルで 1.6 倍に膨らんでいた)。
+ * QuickJS は ASCII の文字列を 1 文字 1 バイトで持つ。charsPerYield 文字ごとに yield する。
+ */
+export function* decodeBase64Job(text, start = 0, charsPerYield = 4096) {
+  let end = text.length;
+  while (end > start && text.charCodeAt(end - 1) === 61) end--; // "=" の詰め物
+  const count = end - start;
+  const bytes = new Uint8Array(Math.floor((count * 6) / 8));
+  let out = 0;
+  let i = start;
+  // 4 文字 → 3 バイト
+  const full = start + count - (count % 4);
+  while (i < full) {
+    const v = (BASE64_VALUES[text.charCodeAt(i)] << 18) | (BASE64_VALUES[text.charCodeAt(i + 1)] << 12)
+      | (BASE64_VALUES[text.charCodeAt(i + 2)] << 6) | BASE64_VALUES[text.charCodeAt(i + 3)];
+    bytes[out++] = v >>> 16;
+    bytes[out++] = (v >>> 8) & 0xff;
+    bytes[out++] = v & 0xff;
+    i += 4;
+    if ((i - start) % charsPerYield === 0) yield;
+  }
+  const rest = end - i;
+  if (rest >= 2) {
+    const v = (BASE64_VALUES[text.charCodeAt(i)] << 18) | (BASE64_VALUES[text.charCodeAt(i + 1)] << 12)
+      | (rest === 3 ? BASE64_VALUES[text.charCodeAt(i + 2)] << 6 : 0);
+    bytes[out++] = v >>> 16;
+    if (rest === 3) bytes[out++] = (v >>> 8) & 0xff;
   }
   return bytes;
 }

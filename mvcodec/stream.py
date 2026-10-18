@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from mvcodec.encode import bytearray_to_utf16_str, encode_frame_v5, encode_varint
+from mvcodec.encode import bytes_to_text, encode_frame_v5, encode_varint
 from mvcodec.entropy import pack_gop
 from mvcodec.motion import (
     MV_BLOCK,
@@ -166,7 +166,7 @@ class StreamEncoder:
 
     def _close_gop(self):
         data = pack_gop(self._gop_binary, self._gop_frames) if self.entropy else self._gop_binary
-        self._gop_strings.append(bytearray_to_utf16_str(data))
+        self._gop_strings.append(bytes_to_text(data))
         self._gop_binary = bytearray()
         self._gop_frames = []
 
@@ -185,4 +185,4 @@ class StreamEncoder:
             encode_varint(gop_id, index_data)
             encode_varint((offset << 1) | (1 if is_keyframe else 0), index_data)
             encode_varint(length, index_data)
-        return self._gop_strings, bytearray_to_utf16_str(index_data)
+        return self._gop_strings, bytes_to_text(index_data)
