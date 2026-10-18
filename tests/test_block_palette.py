@@ -151,7 +151,7 @@ def test_auto_palette_without_torch_picks_colors_from_the_video(monkeypatch):
 
 
 def test_auto_color_count_picks_the_fewest_colors_that_keep_the_error():
-    """--palette-colors auto: 色の誤差が一番多い色数の 1.05 倍以内に収まる、一番少ない色数を選ぶ。"""
+    """--palette-colors auto: 色の誤差が一番多い色数の AUTO_COLOR_TOLERANCE 倍以内に収まる、一番少ない色数を選ぶ。"""
     from mvcodec.auto_palette import AUTO_COLOR_COUNTS, _select_color_count, generate_auto_palette
 
     candidates = AUTO_PALETTE_CANDIDATES
@@ -175,3 +175,30 @@ def test_auto_color_count_picks_the_fewest_colors_that_keep_the_error():
     frames = [rng.integers(0, 256, (24, 32, 3), dtype=np.uint8) for _ in range(3)]
     palette = generate_auto_palette(frames, candidates, max_colors="auto", sample_stride=1)
     assert len(palette) in AUTO_COLOR_COUNTS
+
+
+def test_auto_palette_is_not_shared_by_scenes_that_start_black():
+    """黒い画面から始まる別々の場面には、それぞれのパレットを作る (以前は最初のコマだけで同じ場面とみなし、
+    最初の場面のパレットを使い回していた)。"""
+    import convert
+
+    built = []
+
+    def fake_palette(samples, candidates, **kwargs):
+        built.append(len(samples))
+        return candidates[:24]
+
+    black = np.zeros((16, 16, 3), np.uint8)
+    red = np.zeros((16, 16, 3), np.uint8); red[..., 0] = 200
+    blue = np.zeros((16, 16, 3), np.uint8); blue[..., 2] = 200
+    import mvcodec.auto_palette as ap
+    original = ap.generate_auto_palette
+    ap.generate_auto_palette = fake_palette
+    try:
+        build = convert.make_auto_palette_builder(None)
+        build([black, red, red], black)
+        build([black, blue, blue], black)
+        build([black, red, red], black)  # 同じ見た目の場面は使い回す
+    finally:
+        ap.generate_auto_palette = original
+    assert len(built) == 2

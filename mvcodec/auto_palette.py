@@ -5,9 +5,11 @@ COLOR_SPACES = ("oklab", "rgb")
 # OkLab の L は 0〜1 なので、収束判定 (atol) と RGB の 0〜255 の目盛りをそろえるために掛ける
 OKLAB_SCALE = 100.0
 # max_colors="auto" で試す色数 (少ない順) と、許す色の誤差の増え方 (一番多い色数のときの何倍まで)。
-# 16 色はパンの映像でぼかした色差が +1.0 と大きく崩れたので候補にしない (docs/research/phase7x.md の 16 章)
+# 16 色はパンの映像でぼかした色差が +1.0 と大きく崩れたので候補にしない (docs/research/phase7x.md の 16 章)。
+# 許す倍率は 1.05 → 1.02 (v6.11.0): 実際の動画 (アニメ MV) と録画の比較で、1.05 では色の多い場面でも 24 色が選ばれ、
+# グラデーションが粗くなっていた。8 本の評価用映像でぼかした色差 −1〜−9%、データ +10〜15% (docs/research/phase7x.md の 17 章)
 AUTO_COLOR_COUNTS = (24, 32, 48, 64, 96, 127)
-AUTO_COLOR_TOLERANCE = 1.05
+AUTO_COLOR_TOLERANCE = 1.02
 
 
 def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, sample_stride=10, seed=0, warn=None,
