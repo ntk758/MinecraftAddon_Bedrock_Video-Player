@@ -270,7 +270,7 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
     gpu が None の場合は PyTorch の CPU 実行になる (テスト用)。
     """
     import torch
-    from mvcodec.color import get_edge_mask_gpu
+    from mvcodec.color import get_edge_mask_gpu, knoll_dither_torch
     from mvcodec.dither_motion import DitherAligner, dither_pattern
 
     device = gpu.torch_device if gpu is not None else torch.device("cpu")
@@ -312,14 +312,20 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
 
         orig_img_tensor = torch.tensor(img_arr, dtype=torch.float32, device=device)
         img_tensor = orig_img_tensor
-        if dither_scale is not None:
-            dither_tensor = dither_tensor_at(offset)
-            bias = dither_tensor * get_edge_mask_gpu(img_tensor) if apply_perceptual else dither_tensor
-            img_tensor = torch.clamp(img_tensor + bias, 0, 255)
+        if dither_method == "blue_noise":
+            # パターンディザ (mvcodec/color.py の knoll_dither_indices と同じ。CPU と同じ結果の考え方)
+            noise = torch.tensor(dither_pattern("blue_noise", width, height, offset) + 0.5, dtype=torch.float32, device=device)
+            mask = get_edge_mask_gpu(img_tensor)[..., 0] if apply_perceptual else None
+            idx_tensor = knoll_dither_torch(img_tensor, pal_tensor, noise, mask)
+        else:
+            if dither_scale is not None:
+                dither_tensor = dither_tensor_at(offset)
+                bias = dither_tensor * get_edge_mask_gpu(img_tensor) if apply_perceptual else dither_tensor
+                img_tensor = torch.clamp(img_tensor + bias, 0, 255)
 
-        # OkLab 知覚色空間でのカラーマッチング
-        img_oklab = weighted(rgb_to_oklab_torch(img_tensor.view(-1, 3)))
-        idx_tensor = torch.argmin(squared_distances(img_oklab, pal_oklab), dim=1).view(height, width)
+            # OkLab 知覚色空間でのカラーマッチング
+            img_oklab = weighted(rgb_to_oklab_torch(img_tensor.view(-1, 3)))
+            idx_tensor = torch.argmin(squared_distances(img_oklab, pal_oklab), dim=1).view(height, width)
 
         if prev_idx_tensor is not None and temporal_hysteresis > 0:
             # 条件付き更新 (keep_previous_blocks と同じ): 誤差は今のフレームの元の色と比べるので積み重ならない

@@ -220,3 +220,40 @@ def test_dark_foliage_stays_green():
 def test_dried_kelp_block_is_a_dark_green_candidate():
     """乾燥した昆布ブロック (暗い緑) は、名前に kelp (植物の昆布を除く語) を含んでも候補に入る。"""
     assert any(b["block"] == "minecraft:dried_kelp_block" for b in AUTO_PALETTE_CANDIDATES)
+
+
+def test_pattern_dither_mixes_hue_and_keeps_exact_colours_clean():
+    """パターンディザ (Knoll): ちょうど合うブロックの無い色 (肌の桃色) は、色合いも含めて平均が元の色に近い混ざりになり、
+    ちょうど合うブロックのある色 (暗い紺) は 1 色のまま (粒が出ない)。"""
+    from mvcodec.block_rdo import rgb_to_oklab
+    from mvcodec.color import BLOCK_RGB, knoll_dither_indices
+    from mvcodec.dither_motion import dither_pattern
+
+    names = ["minecraft:smooth_quartz", "minecraft:target", "minecraft:chiseled_sandstone", "minecraft:pale_oak_planks",
+             "minecraft:blue_concrete"]
+    pal = np.array([BLOCK_RGB[n] for n in names], dtype=np.float32)
+    noise = dither_pattern("blue_noise", 32, 32) + 0.5
+    skin = np.full((32, 32, 3), (246, 218, 201), np.uint8)
+    out = knoll_dither_indices(skin, pal, noise)
+    assert len(np.unique(out)) >= 2  # 混ざる
+    lin = lambda c: np.where(c / 255 <= 0.04045, c / 255 / 12.92, ((c / 255 + 0.055) / 1.055) ** 2.4)  # noqa: E731
+    mean = lin(pal[out]).reshape(-1, 3).mean(0)
+    mean_rgb = np.where(mean <= 0.0031308, mean * 12.92, 1.055 * mean ** (1 / 2.4) - 0.055) * 255
+    nearest_one = pal[np.argmin(((rgb_to_oklab(pal.astype(np.uint8)) - rgb_to_oklab(skin[:1, :1])[0, 0]) ** 2).sum(1))]
+    err = lambda c: np.sqrt(((rgb_to_oklab(np.clip(c, 0, 255).astype(np.uint8)[None]) - rgb_to_oklab(skin[:1, 0])) ** 2).sum())  # noqa: E731
+    assert err(mean_rgb) < err(nearest_one)  # 1 色で塗るより元の色に近い
+    exact = np.full((32, 32, 3), BLOCK_RGB["minecraft:blue_concrete"], np.uint8)
+    assert np.all(knoll_dither_indices(exact, pal, noise) == 4)
+
+
+def test_pattern_dither_gpu_version_matches_cpu():
+    torch = pytest.importorskip("torch")
+    from mvcodec.color import knoll_dither_indices, knoll_dither_torch
+
+    rng = np.random.default_rng(0)
+    pal = np.array([b["rgb"] for b in AUTO_PALETTE_CANDIDATES[:48]], dtype=np.float32)
+    img = rng.integers(0, 256, (24, 40, 3)).astype(np.uint8)
+    noise = rng.random((24, 40)).astype(np.float32)
+    cpu = knoll_dither_indices(img, pal, noise)
+    gpu = knoll_dither_torch(torch.tensor(img, dtype=torch.float32), torch.tensor(pal), torch.tensor(noise)).numpy()
+    assert (cpu == gpu).mean() > 0.99

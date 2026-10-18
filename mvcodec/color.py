@@ -260,6 +260,10 @@ def process_single_frame_img(img, pal_img, width, height, num_colors, dither_met
     if img.size != (width, height):
         img = img.resize((width, height), Image.Resampling.LANCZOS)
         
+    if dither_method == 'blue_noise' and palette_rgb is not None:
+        noise = dither_pattern("blue_noise", width, height, dither_offset) + 0.5
+        mask = get_edge_mask_cpu(img)[..., 0] if apply_perceptual else None
+        return knoll_dither_indices(np.asarray(img), palette_rgb, noise, mask) % num_colors
     if dither_method == 'blue_noise':
         bn = dither_pattern("blue_noise", width, height, dither_offset) * 64.0
         bn_tiled = np.stack([bn]*3, axis=-1)
@@ -301,6 +305,10 @@ def process_single_frame_img(img, pal_img, width, height, num_colors, dither_met
 # CPU は以前 Pillow の RGB の距離で選んでいて、同じ OkLab にしたことで実写のぼかした色差が −11%
 # (docs/research/phase7x.md の 18 章)
 CHROMA_WEIGHT = 2.0
+# パターンディザ (knoll_dither_indices) の候補の数と、誤差を足す割合。1.0 より 0.5 の方が、実写 16 本・ジャンル 24 本で
+# MS-SSIM が高く (粒が細かい)、ぼかした色差は同じ (docs/research/phase7x.md の 20 章)
+KNOLL_STEPS = 8
+KNOLL_GAIN = 0.5
 
 
 def nearest_oklab_indices(rgb, palette_rgb):
@@ -313,6 +321,52 @@ def nearest_oklab_indices(rgb, palette_rgb):
     # |x - p|^2 = |x|^2 - 2 x.p + |p|^2 (|x|^2 は比較に要らない)
     d = (pal ** 2).sum(1)[None] - 2.0 * lab @ pal.T
     return d.argmin(1).astype(np.int32).reshape(np.asarray(rgb).shape[:2])
+
+def _srgb_to_linear_np(rgb):
+    c = np.asarray(rgb, dtype=np.float32) / 255.0
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def _linear_to_oklab_np(lin):
+    from mvcodec.block_rdo import _M1, _M2
+
+    return np.cbrt(np.maximum(lin, 0) @ _M1.T.astype(np.float32)) @ (_M2.T * 100.0).astype(np.float32)
+
+
+def knoll_dither_indices(rgb, palette_rgb, noise01, edge_mask=None, steps=KNOLL_STEPS, error_gain=KNOLL_GAIN):
+    """パターンディザ (Knoll): 各画素で、誤差を足しながら一番近い色を steps 回選んで候補を作り、明るさの順に並べて、
+    ノイズ (0〜1) で 1 つを選ぶ。候補の平均 (線形の明るさ) が元の色に近づくので、明るさだけでなく色合いも、2 色に限らず
+    混ざる (肌の桃色が白と暖色のブロックの混ざりになる)。元の色にちょうど合うブロックがある所では粒が出ず、暗い所で
+    明るさの揺らぎが大きすぎることもない (以前の Blue Noise は明るさに一定の揺らぎを足していた)。
+    edge_mask (輪郭で小さい) が 0.5 未満の画素は 1 つ目の候補 (一番近い色) にする。"""
+    from mvcodec.block_rdo import rgb_to_oklab
+
+    shape = np.asarray(rgb).shape[:2]
+    scale = np.array([1.0, CHROMA_WEIGHT, CHROMA_WEIGHT], np.float32)
+    src = np.asarray(rgb, dtype=np.uint8).reshape(-1, 3)
+    pal_rgb = np.clip(np.asarray(palette_rgb, dtype=np.float32), 0, 255)
+    pal_lab = rgb_to_oklab(pal_rgb.astype(np.uint8)) * scale
+    pal_lin = _srgb_to_linear_np(pal_rgb)
+    pal_sq = (pal_lab ** 2).sum(1)
+    goal = _srgb_to_linear_np(src)
+    err = np.zeros_like(goal)
+    cands = np.empty((steps, len(src)), np.int32)
+    for i in range(steps):
+        attempt = np.clip(goal + err * error_gain, 0, 1)
+        lab = _linear_to_oklab_np(attempt) * scale
+        c = (pal_sq[None] - 2.0 * lab @ pal_lab.T).argmin(1)
+        cands[i] = c
+        err += goal - pal_lin[c]
+    first = cands[0].copy()
+    order = np.argsort(pal_lab[:, 0][cands], axis=0, kind="stable")
+    cands = np.take_along_axis(cands, order, 0)
+    n = np.asarray(noise01, dtype=np.float32).reshape(-1)
+    pick = np.clip((n * steps).astype(np.int32), 0, steps - 1)
+    out = cands[pick, np.arange(len(src))]
+    if edge_mask is not None:
+        out = np.where(np.asarray(edge_mask, dtype=np.float32).reshape(-1) < 0.5, first, out)
+    return out.astype(np.int32).reshape(shape)
+
 
 def rgb_to_oklab_torch(rgb_tensor):
     import torch
@@ -335,3 +389,63 @@ def rgb_to_oklab_torch(rgb_tensor):
         [ 0.0259040371,  0.7827717662, -0.8086757660]
     ], dtype=rgb_tensor.dtype, device=rgb_tensor.device)
     return torch.matmul(lms_, m2.T)
+
+
+def linear_to_oklab_torch(linear):
+    """線形 RGB (0〜1) の tensor を OkLab にする (rgb_to_oklab_torch の後半と同じ)。"""
+    import torch
+
+    m1 = torch.tensor([[0.4122214708, 0.5363325363, 0.0514459929], [0.2119034982, 0.6806995451, 0.1073969566],
+                       [0.0883024619, 0.2817188376, 0.6299787005]], dtype=linear.dtype, device=linear.device)
+    m2 = torch.tensor([[0.2104542553, 0.7936177850, -0.0040720468], [1.9779984951, -2.4285922050, 0.4505937099],
+                       [0.0259040371, 0.7827717662, -0.8086757660]], dtype=linear.dtype, device=linear.device)
+    lms = torch.matmul(linear, m1.T)
+    return torch.matmul(torch.sign(lms) * torch.pow(torch.abs(lms), 1.0 / 3.0), m2.T)
+
+
+def knoll_dither_torch(img_rgb, pal_rgb, noise01, edge_mask=None, chroma_weight=CHROMA_WEIGHT, steps=KNOLL_STEPS,
+                       error_gain=KNOLL_GAIN):
+    """knoll_dither_indices の GPU (PyTorch) 版。img_rgb は (H, W, 3) の 0〜255、pal_rgb は (K, 3)、noise01 と edge_mask は
+    (H, W)。戻り値は (H, W) のパレット番号 (long)。"""
+    import torch
+
+    h, w = img_rgb.shape[:2]
+    scale = torch.tensor([1.0, chroma_weight, chroma_weight], dtype=torch.float32, device=img_rgb.device)
+
+    def to_linear(rgb):
+        c = rgb / 255.0
+        return torch.where(c > 0.04045, torch.pow((c + 0.055) / 1.055, 2.4), c / 12.92)
+
+    goal = to_linear(img_rgb.reshape(-1, 3))
+    pal_lin = to_linear(pal_rgb)
+    pal_lab = linear_to_oklab_torch(pal_lin) * scale
+    # 1 回ごとの演算の数を減らす (DirectML は小さな演算ごとの手間が大きい): 線形 RGB は 0 以上なので LMS も 0 以上で、
+    # 立方根は pow だけでよい。OkLab への 2 つ目の行列に色合いの重みを掛けておき、距離は |p|^2 - 2 x.p で比べる
+    m1t = torch.tensor([[0.4122214708, 0.5363325363, 0.0514459929], [0.2119034982, 0.6806995451, 0.1073969566],
+                        [0.0883024619, 0.2817188376, 0.6299787005]], dtype=torch.float32, device=img_rgb.device).T
+    m2s = torch.tensor([[0.2104542553, 0.7936177850, -0.0040720468], [1.9779984951, -2.4285922050, 0.4505937099],
+                        [0.0259040371, 0.7827717662, -0.8086757660]], dtype=torch.float32, device=img_rgb.device).T * scale
+    pal_t2 = (pal_lab * -2.0).T.contiguous()
+    pal_sq = (pal_lab ** 2).sum(1)
+    err = torch.zeros_like(goal)
+    cands = []
+    for _ in range(steps):
+        attempt = torch.clamp(goal + err * error_gain, 0, 1)
+        lab = torch.pow(attempt @ m1t, 1.0 / 3.0) @ m2s
+        c = torch.argmin(torch.addmm(pal_sq, lab, pal_t2), dim=1)
+        cands.append(c)
+        err = err + (goal - pal_lin[c])
+    cands = torch.stack(cands)
+    first = cands[0]
+    # 候補を明るさの順に並べて pick 番目を取る。並べ替え (argsort) は DirectML で遅いので、各候補の順位を比べて数える
+    lum = pal_lab[:, 0][cands]
+    idx = torch.arange(steps, device=img_rgb.device).view(steps, 1, 1)
+    before = (lum.unsqueeze(1) < lum.unsqueeze(0)) | ((lum.unsqueeze(1) == lum.unsqueeze(0)) & (idx.transpose(0, 1) < idx))
+    rank = before.sum(0)  # rank[i]: 候補 i より前に並ぶ候補の数
+    pick = torch.clamp((noise01.reshape(1, -1) * steps).long(), 0, steps - 1)
+    slot = torch.argmax((rank == pick).int(), dim=0)
+    out = torch.gather(cands, 0, slot.unsqueeze(0))[0]
+    if edge_mask is not None:
+        out = torch.where(edge_mask.reshape(-1) < 0.5, first, out)
+    return out.view(h, w)
+
