@@ -81,19 +81,6 @@ const GOP_PREFETCH_FRAMES = 40;
 // GOP の展開の途中で出す yield の値。描画の yield と違い、1 tick の yield の回数の上限 (ブロック数の上限) には数えず、
 // 時間の予算だけで区切る (展開は何百回も yield するので、回数で区切ると何十 tick もかかる)
 const DECODE_YIELD = 1;
-// 先読み (別の runJob) が GOP を展開し終わるのを待つときの yield。その tick の処理をすぐ終える (空回りで時間を使わない)
-const WAIT_YIELD = 2;
-
-/** ジェネレータの yield をすべて DECODE_YIELD にして実行し、戻り値を返す。 */
-function* asDecodeJob(job) {
-  let result = job.next();
-  while (!result.done) {
-    yield DECODE_YIELD;
-    result = job.next();
-  }
-  return result.value;
-}
-
 const BLOCK_ID_ALIASES = {
   "minecraft:terracotta": "minecraft:hardened_clay",
 };
@@ -224,7 +211,8 @@ class VideoPlayer {
     this.decodedIndex = null;
     this.decodedVideoId = null;
     this.gopCache = new Map();
-    this.pendingGops = new Set();
+    // 展開中の GOP: gopId → { job, progress: { bytes, produced }, done, videoId }。再生と先読みが同じ展開を進める
+    this.partialGops = new Map();
     this.MAX_CACHED_GOPS = 4;
     this.decodedBinary = null;
 
@@ -332,6 +320,7 @@ class VideoPlayer {
       this.decodedFrame = -1;
       this.decodedBinary = null;
       this.gopCache.clear();
+      this.partialGops.clear();
       this.decodedVideoId = this.videoId;
       return true;
     }
@@ -362,15 +351,49 @@ class VideoPlayer {
     this.gopCache.set(gopId, decoded);
   }
 
+  /** GOP の展開を始める (まだ進めない)。 */
+  startGopDecode(gopId) {
+    const chunk = this.videoData.chunks[gopId];
+    const isV6 = this.videoData.format === FORMAT_V6;
+    const progress = { bytes: null, produced: 0 };
+    const job = (function* () {
+      let decoded = yield* decodeUTF16BinaryToBytesJob(chunk);
+      // v6 は GOP ごとの入れ物 (エントロピー符号化) を開いて v5 のバイト列にする
+      if (isV6) decoded = yield* unpackGopJob(decoded, 8192, progress);
+      return decoded;
+    })();
+    const entry = { job, progress, done: false, videoId: this.videoId };
+    this.partialGops.set(gopId, entry);
+    return entry;
+  }
+
+  /** 展開を次の yield まで進める。終わればキャッシュに入れる。失敗したら展開中の印を外して投げ直す。 */
+  stepGopDecode(gopId, entry) {
+    let result;
+    try {
+      result = entry.job.next();
+    } catch (e) {
+      entry.done = true;
+      if (this.partialGops.get(gopId) === entry) this.partialGops.delete(gopId);
+      throw e;
+    }
+    if (!result.done) return;
+    entry.done = true;
+    entry.progress.bytes = result.value;
+    entry.progress.produced = result.value.length;
+    if (this.partialGops.get(gopId) === entry) this.partialGops.delete(gopId);
+    if (this.videoId === entry.videoId) this.cacheGop(gopId, result.value);
+  }
+
   /**
-   * GOP を展開して返す (LRU キャッシュ)。tick を跨いで少しずつ展開するジェネレータ (DECODE_YIELD を出す)。
-   * 先読み (prefetchGop) が同じ GOP を展開中なら、二重に展開せずに終わるのを待つ。
+   * GOP のバイト列を返す (LRU キャッシュ)。tick を跨いで少しずつ展開するジェネレータ (DECODE_YIELD を出す)。
+   * needed バイト目まで (再生するフレームの終わりまで) できれば、GOP を開き終わる前でも返す (残りは続けて展開する)。
+   * 先読み (prefetchGop) が同じ GOP を展開中なら、その続きを進める。
    */
-  *gopBytesJob(gopId) {
+  *gopBytesJob(gopId, needed = Infinity) {
     if (!this.videoData || !this.videoData.chunks) return null;
     if (gopId < 0 || gopId >= this.videoData.chunks.length) return null;
     const videoId = this.videoId;
-    while (this.pendingGops.has(gopId) && !this.gopCache.has(gopId)) yield WAIT_YIELD;
     const cached = this.gopCache.get(gopId);
     if (cached) {
       // 最近使ったものを末尾へ移して LRU にする
@@ -378,33 +401,30 @@ class VideoPlayer {
       this.gopCache.set(gopId, cached);
       return cached;
     }
-    let decoded = yield* asDecodeJob(decodeUTF16BinaryToBytesJob(this.videoData.chunks[gopId]));
-    // v6 は GOP ごとの入れ物 (エントロピー符号化) を開いて v5 のバイト列にする
-    if (this.videoData.format === FORMAT_V6) decoded = yield* asDecodeJob(unpackGopJob(decoded));
+    const entry = this.partialGops.get(gopId) || this.startGopDecode(gopId);
+    while (!entry.done && !(entry.progress.bytes && entry.progress.produced >= needed)) {
+      this.stepGopDecode(gopId, entry);
+      if (this.videoId !== videoId) return null;
+      if (!entry.done) yield DECODE_YIELD;
+    }
     if (this.videoId !== videoId) return null;
-    this.cacheGop(gopId, decoded);
-    return decoded;
+    return entry.progress.bytes;
   }
 
   /** 次の GOP を runJob で tick を跨いで展開しておく (再生中のスパイク防止)。 */
   prefetchGop(gopId) {
-    if (this.gopCache.has(gopId) || this.pendingGops.has(gopId)) return;
+    if (this.gopCache.has(gopId) || this.partialGops.has(gopId)) return;
     if (!this.videoData || !this.videoData.chunks || gopId >= this.videoData.chunks.length) return;
-    this.pendingGops.add(gopId);
     const self = this;
-    const videoId = this.videoId;
+    const entry = this.startGopDecode(gopId);
     system.runJob((function* () {
       try {
-        let decoded = yield* decodeUTF16BinaryToBytesJob(self.videoData.chunks[gopId]);
-        if (self.videoData.format === FORMAT_V6) decoded = yield* unpackGopJob(decoded);
-        if (self.videoId === videoId && !self.gopCache.has(gopId)) {
-          self.cacheGop(gopId, decoded);
+        while (!entry.done && self.videoId === entry.videoId) {
+          self.stepGopDecode(gopId, entry);
+          if (!entry.done) yield;
         }
       } catch (e) {
         warnOnce(`prefetch:${gopId}`, `Failed to decode GOP ${gopId}: ${e}`);
-      } finally {
-        // 失敗しても外す (外さないと、この GOP を待つ再生がいつまでも進まない)
-        self.pendingGops.delete(gopId);
       }
     })());
   }
@@ -852,7 +872,7 @@ class VideoPlayer {
   *decodeOnlyJob(frameIndex) {
     const entry = this.decodedIndex[frameIndex];
     if (entry.length > 0) {
-      const gopBytes = yield* this.gopBytesJob(entry.gopId);
+      const gopBytes = yield* this.gopBytesJob(entry.gopId, entry.offset + entry.length);
       if (!gopBytes) return false;
       decodeFrameInto(
         gopBytes, entry.offset, entry.offset + entry.length, this.decoded, this.decodeScratch, this.videoData, this.tiles
@@ -919,7 +939,6 @@ class VideoPlayer {
     let yields = 0;
     while (yields < MAX_YIELDS_PER_TICK) {
       const { done, value } = this.frameIterator.next();
-      if (value === WAIT_YIELD) break;
       if (value !== DECODE_YIELD) yields++;
       if (done) {
         this.recordFrameStats(Date.now() - tickStart);

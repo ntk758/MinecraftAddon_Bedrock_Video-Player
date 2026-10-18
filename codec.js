@@ -408,12 +408,14 @@ function* decodeHuffmanStreamJob(buf, cursor, symbolsPerYield) {
 /**
  * v6 の GOP の入れ物を開いて、v5 のバイト列に戻す (mvcodec/entropy.py の unpack_gop と同じ)。
  * system.runJob に渡せるよう、symbolsPerYield 個の記号ごと・64 フレームごとに yield する。
+ * progress ({ bytes, produced }) を渡すと、出力の配列と、yield の時点で前から何バイトできているかを書く
+ * (できた所までのフレームは、GOP を開き終わる前に再生できる)。
  * QuickJS (ゲーム内のスクリプト) では関数呼び出しが重いので、1 バイトごとの処理は関数にせずに書いている。
  */
-export function* unpackGopJob(container, symbolsPerYield = 8192) {
+export function* unpackGopJob(container, symbolsPerYield = 8192, progress = null) {
   if (container.length === 0) return container;
   if (container[0] === 0) return container.subarray(1); // 生のまま入れた GOP
-  if (container[0] === 2) return yield* unpackRangeGopJob(container);
+  if (container[0] === 2) return yield* unpackRangeGopJob(container, progress);
   if (container[0] !== 1) throw new Error(`Unknown GOP container mode ${container[0]}`);
   const cursor = { pos: 1 };
   const frameCount = readVarint(container, cursor);
@@ -423,6 +425,7 @@ export function* unpackGopJob(container, symbolsPerYield = 8192) {
 
   const out = new Uint8Array(total);
   let o = 0;
+  if (progress) progress.bytes = out;
   const header = streams[S_HEADER];
   const runGap = streams[S_RUN_GAP];
   const runLength = streams[S_RUN_LEN];
@@ -510,11 +513,13 @@ export function* unpackGopJob(container, symbolsPerYield = 8192) {
       out[o++] = v;
       if (o >= nextYield) {
         nextYield = o + OUTPUT_BYTES_PER_YIELD;
+        if (progress) progress.produced = o;
         yield;
       }
     }
     if (o >= nextYield) {
       nextYield = o + OUTPUT_BYTES_PER_YIELD;
+      if (progress) progress.produced = o;
       yield;
     }
   }
@@ -536,7 +541,7 @@ const RC_PROB_COUNT = RC_LEVEL + 128 * 128;
 // 区間符号は 1 バイト作るのにハフマンより手間がかかるので、yield の間隔を短くする
 const RANGE_OUTPUT_BYTES_PER_YIELD = 4096;
 
-function* unpackRangeGopJob(buf) {
+function* unpackRangeGopJob(buf, progress) {
   const cursor = { pos: 1 };
   const frameCount = readVarint(buf, cursor);
   const total = readVarint(buf, cursor);
@@ -573,6 +578,7 @@ function* unpackRangeGopJob(buf) {
 
   const out = new Uint8Array(total);
   let o = 0;
+  if (progress) progress.bytes = out;
   // v5 のバイト (varint) を 8 ビットの木で読んで書き写し、値を返す
   const copyVarint = (model) => {
     const base = RC_BYTES + model * 256;
@@ -704,6 +710,7 @@ function* unpackRangeGopJob(buf) {
       out[o++] = v;
       if (o >= nextYield) {
         nextYield = o + RANGE_OUTPUT_BYTES_PER_YIELD;
+        if (progress) progress.produced = o;
         yield;
       }
     }
