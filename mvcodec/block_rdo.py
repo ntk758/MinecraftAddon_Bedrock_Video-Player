@@ -109,6 +109,7 @@ class BlockRDO:
         self.block = block
         self.modes = tuple(modes)
         self._palette_key = None
+        self._weight = None
         self.stats = {mode: 0 for mode in MODES}
 
     def _palette_lab(self, palette_rgb):
@@ -118,16 +119,19 @@ class BlockRDO:
             self._pal_lab = rgb_to_oklab(np.asarray(palette_rgb, dtype=np.float32))
         return self._pal_lab
 
-    def __call__(self, indices, source_rgb, palette_rgb, reference=None):
+    def __call__(self, indices, source_rgb, palette_rgb, reference=None, place_weight=None):
         """indices (H, W) のパレット番号を、ブロックごとに選んだ候補に置き替えて返す。
 
         source_rgb は減色前の (H, W, 3)、reference はアドオンが今表示している盤面 (同じパレットの番号、未設置は -1)。
         GOP の先頭などで前の盤面が使えないときは None (skip を使わない)。
+        place_weight (H, W) は 2.5D の立体の色の平面用: 各マスの色を変えると置き直すブロックの数 (列の厚み)。
+        0 のマスは空の列なので、色の誤差にも数えない (見えない)。
         """
         target = np.asarray(indices, dtype=np.int32)
         if self.strength <= 0:
             return target
         h, w = target.shape
+        self._weight = None if place_weight is None else np.asarray(place_weight, dtype=np.float32).reshape(h, w)
         b = self.block
         pal_lab = self._palette_lab(palette_rgb)
         src_lab = rgb_to_oklab(source_rgb).reshape(h, w, 3)
@@ -227,7 +231,10 @@ class BlockRDO:
         lab = pal_lab[recon]
         blur_err = ((_box_blur(lab) - src_blur) ** 2).sum(-1)
         pixel_err = ((lab - src_lab) ** 2).sum(-1)
-        return _block_sum(blur_err + PIXEL_WEIGHT * pixel_err, self.block)
+        error = blur_err + PIXEL_WEIGHT * pixel_err
+        if self._weight is not None:
+            error = error * (self._weight > 0)
+        return _block_sum(error, self.block)
 
     def _rate(self, recon, reference, predicted):
         """ブロックごとの (置く費用 (µs、表示中の盤面との差), データ量 (µs 換算、動き補償した予測との差))。"""
@@ -237,7 +244,13 @@ class BlockRDO:
         up_same = np.zeros_like(changed)
         up_same[1:] = changed[1:] & changed[:-1] & (recon[1:] == recon[:-1])
         box_starts = run_starts & ~up_same
-        n_changed = _block_sum(changed.astype(np.float32), b)
+        if self._weight is not None:
+            # 2.5D: 色を変えたマスは列の厚みだけブロックを置き直す (rect 方式では奥行き方向に 1 個の箱)。空の列は置かない
+            changed_blocks = changed * self._weight
+            box_starts = box_starts & (self._weight > 0)
+        else:
+            changed_blocks = changed.astype(np.float32)
+        n_changed = _block_sum(changed_blocks, b)
         boxes = _block_sum(box_starts.astype(np.float32), b)
         place = np.minimum(FILL_CALL_US * boxes + FILL_BLOCK_US * n_changed, LIST_BLOCK_US * n_changed)
         if predicted is not reference:

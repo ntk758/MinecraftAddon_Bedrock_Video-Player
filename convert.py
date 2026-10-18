@@ -38,7 +38,14 @@ BLOCK_RDO_STRENGTH = "auto"
 from mvcodec.encode import MAX_PALETTE_COLORS
 from mvcodec.motion import MV_BLOCK, MV_RANGE
 from mvcodec.stream import StreamEncoder
-from mvcodec.planes import LAYOUT as PLANES_LAYOUT, planes_supported, solid_rule_for, volume_change_ratio, volume_to_planes
+from mvcodec.planes import (
+    LAYOUT as PLANES_LAYOUT,
+    column_ranges,
+    planes_supported,
+    solid_rule_for,
+    volume_change_ratio,
+    volume_to_planes,
+)
 from mvcodec.volume import (
     AIR_LEVEL,
     RELIEF_HYSTERESIS,
@@ -498,7 +505,7 @@ def parse_args(argv=None):
                              "変えない (条件付き更新)。置き直すブロックとデータが減る。0 で無効。CPU で減色するときに使う "
                              "(GPU の減色には同様の仕組み (RDO) が入っている)")
     parser.add_argument("--block-rdo", type=block_rdo_strength, default=BLOCK_RDO_STRENGTH,
-                        help="(既定 auto) 平面スクリーンで、8×8 ごとに「減色のまま / 前のフレームのまま / 動き補償の予測 / 1 色 / 2 色」から、色の誤差と"
+                        help="(既定 auto) 平面スクリーンと 2.5D の立体の色の平面で、8×8 ごとに「減色のまま / 前のフレームのまま / 動き補償の予測 / 1 色 / 2 色」から、色の誤差と"
                              "置く費用・データ量の釣り合いで選ぶ強さ (0 で無効)。大きいほど置くブロック・呼び出し・データが減り、"
                              "色は粗くなる。auto はフレームごとに、色の誤差の増え方が --rdo-budget 以内の一番強い強さを選ぶ。"
                              "データ形式は変わらない")
@@ -741,6 +748,20 @@ class EncoderSet:
         return min(self.encoders, key=lambda encoder: encoder.payload_size())
 
 
+def optimize_colour_plane(block_rdo, planes, source_rgb, palette_rgb, reference, depth, solid_rule):
+    """2.5D の立体の色の平面 (上半分) にブロックモードの最適化をかける。値の平面 (下半分) はそのまま。
+
+    色を変えたマスは列の厚みだけブロックを置き直すので、置く費用を厚みで重み付けし、空の列 (厚み 0) は色の誤差に数えない。
+    reference は直前に符号化した平面 (2H 行) か None。"""
+    height = planes.shape[0] // 2
+    colour, values = planes[:height], planes[height:]
+    low, high = column_ranges(values, depth, solid_rule)
+    thickness = np.maximum(0, high - low + 1)
+    previous_colour = None if reference is None else np.asarray(reference).reshape(planes.shape)[:height]
+    colour = block_rdo(colour, source_rgb, palette_rgb, previous_colour, place_weight=thickness)
+    return np.concatenate([colour, values], axis=0).astype(planes.dtype)
+
+
 def make_encoder(args, width, rows, gop_boundaries, empty_value, depth=1, change_ratio_fn=None):
     tile_sizes = [4, 8] if args.tile_size == "auto" else [int(args.tile_size)]
     motion_cache = {} if len(tile_sizes) > 1 else None
@@ -837,9 +858,10 @@ def main(argv=None):
     # ブロック色の明るさを使うと、ディザの粒が奥行きのノイズになり、境目もギザギザになるため
     source_heights = {}
     use_source_heights = volume and not args.depth_video
-    # ブロックモードの最適化 (平面スクリーンだけ) は元の色と比べて選ぶので、元フレームを全部とっておく
+    # ブロックモードの最適化は元の色と比べて選ぶので、元フレームを全部とっておく。平面スクリーンと、2.5D の立体の色の平面にかける
+    # (2.5D でない立体 (--volume-encoding voxels / --hollow) にはかけない)
     block_rdo = None
-    if (args.block_rdo == "auto" or args.block_rdo > 0) and not volume:
+    if args.block_rdo == "auto" or args.block_rdo > 0:
         modes = [mode for mode in BLOCK_MODES if args.motion or mode != "motion"]
         block_rdo = BlockRDO(args.block_rdo, modes=modes, hysteresis=args.temporal_hysteresis, mv_range=args.mv_range,
                              budget=args.rdo_budget)
@@ -871,6 +893,8 @@ def main(argv=None):
         depth_frames = ffmpeg_frame_generator(args.depth_video, width, height, args.fps, args.duration, args.ffmpeg)
 
     use_planes = volume and args.volume_encoding != "voxels" and planes_supported(args.mode, args.depth, args.hollow)
+    if volume and not use_planes:
+        block_rdo = None
     solid_rule = solid_rule_for(args.mode) if use_planes else None
     if volume and args.volume_encoding == "auto" and not use_planes:
         # --hollow や奥行き 128 の extrude / inflate は平面で正確に表せないので、立体のまま送る
@@ -895,13 +919,15 @@ def main(argv=None):
     for i, (frame, gop_id) in enumerate(zip(quantized, iter_gop_ids(gop_boundaries))):
         original = sampled_originals.pop(i, None)
         screen = np.asarray(frame, dtype=np.int32).reshape(height, width)
+        reference = None
         if block_rdo is not None:
             # 前の盤面はパレットが同じ間だけ使える (自動パレットで GOP が変わると番号の意味が変わる)
             same_palette = previous_gop is not None and gop_palettes_rgb[gop_id] is gop_palettes_rgb[previous_gop]
             reference = encoder.reference() if same_palette else None
+            previous_gop = gop_id
+        if block_rdo is not None and not volume:
             screen = block_rdo(screen, source_frames.pop(i), gop_palettes_rgb[gop_id],
                                None if reference is None else reference.reshape(height, width))
-            previous_gop = gop_id
         if original is not None:
             ssim_pairs.append((original, screen.reshape(-1).copy(), gop_id))
         if args.demo_gif:
@@ -919,7 +945,11 @@ def main(argv=None):
                 heights = luminance01(depth_frame)
             encoded_frame = lifter(screen, gop_palettes_rgb[gop_id], heights)
             if use_planes:
-                encoded_frame = previous_planes = volume_to_planes(encoded_frame, solid_rule, previous_planes)
+                encoded_frame = volume_to_planes(encoded_frame, solid_rule, previous_planes)
+                if block_rdo is not None:
+                    encoded_frame = optimize_colour_plane(block_rdo, encoded_frame, source_frames.pop(i),
+                                                          gop_palettes_rgb[gop_id], reference, args.depth, solid_rule)
+                previous_planes = encoded_frame
         else:
             encoded_frame = screen
         encoder.add(i, gop_id, encoded_frame)

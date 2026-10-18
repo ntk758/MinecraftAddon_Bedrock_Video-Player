@@ -111,3 +111,23 @@ def test_convert_with_block_rdo_decodes_to_the_optimized_frames(tmp_path):
     boards = [board for board, _ in iter_decoded_frames(on)]
     assert len(boards) == 8 and all(b.min() >= 0 for b in boards)
     assert sum(map(len, on["chunks"])) < sum(map(len, off["chunks"]))
+
+
+def test_heightfield_colour_plane_is_optimized_without_touching_the_shape(tmp_path):
+    """2.5D の立体では色の平面だけを最適化し、形 (値の平面) はそのまま。空の列の色は誤差に数えない。"""
+    w, h = write_noisy_pan(tmp_path / "frames")
+    common = ["--frames-dir", str(tmp_path / "frames"), "--width", str(w), "--height", str(h), "--fps", "10",
+              "--device", "cpu", "--palette", "full", "--dither-method", "blue_noise", "--mode", "relief", "--depth", "6"]
+    assert convert.main([*common, "--output", str(tmp_path / "off.js"), "--block-rdo", "0"]) == 0
+    assert convert.main([*common, "--output", str(tmp_path / "on.js"), "--block-rdo", "64"]) == 0
+    off, on = load_frame_data(tmp_path / "off.js"), load_frame_data(tmp_path / "on.js")
+    assert on["layout"] == "heightfield"
+    for (a, _), (b, _) in zip(iter_decoded_frames(off), iter_decoded_frames(on)):
+        # 埋まっているマスの位置 (形) は同じ
+        assert np.array_equal(a != off["air_level"], b != on["air_level"])
+    assert sum(map(len, on["chunks"])) < sum(map(len, off["chunks"]))
+    # 空の列 (厚み 0) は見えないので、色の誤差に数えない
+    rdo = BlockRDO(16)
+    rdo(np.zeros((4, 8), np.int32), np.full((4, 8, 3), 128, np.uint8), PALETTE, None, place_weight=np.zeros((4, 8)))
+    assert rdo._distortion(np.full((4, 8), 3), rdo._palette_lab(PALETTE), np.zeros((4, 8, 3), np.float32),
+                           np.zeros((4, 8, 3), np.float32)).sum() == 0
