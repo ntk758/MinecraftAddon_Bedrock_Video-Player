@@ -78,3 +78,40 @@ def test_build_web_site(tmp_path):
     assert files == APP_FILES
     for required in ("convert.py", "pack_builder.py", "mvcodec/entropy.py", "locales/ja.json", "main.js", "manifest.json"):
         assert required in files and (out / "app" / required).is_file(), required
+
+
+def test_vox_animation_addon(tmp_path):
+    """ブラウザ版と同じ手順で、MagicaVoxel の立体アニメからサムネイルとアドオンを作る。"""
+    from PIL import Image
+
+    from mvcodec.decode import iter_decoded_frames, load_frame_data
+    from mvcodec.volume import write_vox
+    from pack_builder import vox_thumbnail_png
+
+    palette = np.zeros((256, 4), np.uint8)
+    palette[0] = (230, 40, 40, 255)
+    palette[1] = (240, 240, 240, 255)
+    models = []
+    for t in range(5):
+        cube = [[x, y, z, 1 if z < 2 else 2] for x in range(t, t + 3) for y in range(3) for z in range(4)]
+        models.append(((8, 3, 4), np.array(cube, np.uint8)))
+    vox_path = tmp_path / "walk.vox"
+    vox_path.write_bytes(write_vox(models, palette))
+
+    thumbnail = vox_thumbnail_png(vox_path)
+    image = Image.open(io.BytesIO(thumbnail))
+    assert image.size == (256, 256)
+    # 赤と白の立体が描かれている (背景の黒だけではない)
+    assert np.asarray(image.convert("RGB")).max(axis=(0, 1)).min() > 150
+
+    out = tmp_path / "frames_walk.js"
+    assert convert.main(["--input-vox", str(vox_path), "--mode", "vox", "--output", str(out), "--fps", "10",
+                         "--palette", "auto", "--device", "cpu", "--threads", "1"]) == 0
+    data = load_frame_data(out)
+    assert (data["width"], data["height"], data["depth"]) == (8, 4, 3)
+    assert sum(1 for _ in iter_decoded_frames(data)) == 5
+    addon = build_addon_bytes([{"id": "walk", "title": "Walk", "frames_js": out.read_text(encoding="utf-8"),
+                                "thumbnail": thumbnail, "sounds": []}], "Vox", "vox")
+    archive = zipfile.ZipFile(io.BytesIO(addon))
+    assert archive.read("RP/pack_icon.png") == thumbnail
+    assert '"depth":3' in archive.read("BP/scripts/videos.js").decode("utf-8").replace(" ", "")

@@ -32,6 +32,12 @@ import convert, pack_builder  # noqa: F401
 
 const ready = setup();
 
+// MagicaVoxel の立体アニメ: 大きさは .vox のまま、色は全ブロック (自動のとき) から一番近いものを選ぶ
+function voxArgs(s, voxPath, out, lang) {
+  return ["--input-vox", voxPath, "--mode", "vox", "--output", out, "--fps", String(s.fps), "--palette", s.palette,
+          "--device", "cpu", "--threads", "1", "--lang", lang];
+}
+
 function convertArgs(s, framesDir, out, lang) {
   return ["--frames-dir", framesDir, "--output", out, "--width", String(s.width), "--height", String(s.height),
           "--fps", String(s.fps), "--palette", s.palette, "--dither-method", s.dither, "--device", "cpu",
@@ -50,9 +56,18 @@ self.onmessage = async (event) => {
       log(`[${n + 1}/${jobs.length}] ${job.title}: ブロックに変換中 / converting to blocks…`);
       post("progress", { value: (n + 0.4) / jobs.length });
       const out = `/work/frames_${job.id}.js`;
-      const code = pyodide.globals.get("convert").main(pyodide.toPy(convertArgs(s, dir, out, lang)));
+      let args = convertArgs(s, dir, out, lang);
+      if (job.vox) {
+        const voxPath = `${dir}/${job.id}.vox`;
+        pyodide.FS.writeFile(voxPath, job.vox);
+        args = voxArgs(s, voxPath, out, lang);
+        const thumb = pyodide.globals.get("pack_builder").vox_thumbnail_png(voxPath, 256, s.palette);
+        job.thumbnail = thumb.toJs();
+        thumb.destroy();
+      }
+      const code = pyodide.globals.get("convert").main(pyodide.toPy(args));
       if (code !== 0) throw new Error(`convert.py exit ${code}`);
-      for (const name of pyodide.FS.readdir(dir)) if (name.endsWith(".ppm")) pyodide.FS.unlink(`${dir}/${name}`);
+      for (const name of pyodide.FS.readdir(dir)) if (/\.(ppm|vox)$/.test(name)) pyodide.FS.unlink(`${dir}/${name}`);
       videos.push({ id: job.id, title: job.title, frames_js: pyodide.FS.readFile(out, { encoding: "utf8" }),
                     thumbnail: job.thumbnail, sounds: job.sounds, width: s.width, height: s.height });
       post("progress", { value: (n + 1) / jobs.length * 0.95 });

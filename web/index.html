@@ -15,8 +15,10 @@
 
 <main>
   <section class="card">
-    <h2>1. 動画 / Videos</h2>
-    <input type="file" id="files" accept="video/*" multiple>
+    <h2>1. 動画・.vox / Videos and .vox</h2>
+    <input type="file" id="files" accept="video/*,.vox" multiple>
+    <p class="hint">MagicaVoxel の立体アニメ (.vox) も追加できます。大きさとコマ数は .vox のまま使い、FPS とパレットだけが効きます。<br>
+       MagicaVoxel animations (.vox) can be added too: their size and frames are kept; only FPS and palette apply.</p>
     <ul id="videoList"></ul>
   </section>
 
