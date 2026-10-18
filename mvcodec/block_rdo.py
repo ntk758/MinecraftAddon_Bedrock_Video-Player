@@ -43,6 +43,10 @@ MODES = ("exact", "skip", "motion", "solid_mean", "solid_mode", "two")
 # --block-rdo auto で試す強さ (強い順) と、1 画素あたりに増やしてよい色の誤差 (_distortion と同じ単位の平均)
 AUTO_STRENGTHS = (64, 32, 16, 8, 4, 2, 1)
 AUTO_BUDGET = 3.0
+# 候補ごとに、ブロックの 1 画素あたりで増えてよい色の誤差 (_distortion と同じ単位) の上限。ジャンルを広げた評価
+# (スライド・歌詞動画風・雪山・スポーツなど 24 本) で、5 だとスライドの文字が消えず、ぼかした色差 −5%・MS-SSIM +0.007、
+# 誤差の大きいマスの上位 0.1% が −10%。データ +12〜29%・描画時間 +6〜9% (docs/research/phase7x.md の 19 章)
+BLOCK_ERROR_CAP = 5.0
 
 _M1 = np.array([[0.4122214708, 0.5363325363, 0.0514459929], [0.2119034982, 0.6806995451, 0.1073969566],
                 [0.0883024619, 0.2817188376, 0.6299787005]])
@@ -100,7 +104,9 @@ class BlockRDO:
     """フレームの列に順番にかける (前のフレームを覚えるのは呼び出し側: reference に符号化済みの盤面を渡す)。"""
 
     def __init__(self, strength, block=RDO_BLOCK, modes=MODES, hysteresis=24.0, mv_range=MV_RANGE,
-                 budget=AUTO_BUDGET):
+                 budget=AUTO_BUDGET, block_cap=BLOCK_ERROR_CAP):
+        # 1 ブロックで増えてよい色の誤差 (1 画素あたり)。0 なら上限なし (v6.12.0 まで)
+        self.block_cap = float(block_cap)
         # "auto" はフレームごとに強さを選ぶ (AUTO_STRENGTHS の強い方から、色の誤差の増え方が budget 以内のもの)
         self.auto = strength == "auto"
         self.strength = AUTO_STRENGTHS[0] if self.auto else float(strength)
@@ -195,6 +201,10 @@ class BlockRDO:
                 # 増える候補 (パンで動き補償の予測を選ぶと、条件付き更新で残せたマスまで置き直す) を選ぶと、
                 # ゲーム内の描画がかえって重くなるため)
                 usable[k] = (rate[k] < rate[0]) & (place <= exact_place)
+        # 1 つのブロックで色の誤差が大きく増える候補は使わない (強さの予算はフレーム全体の平均なので、動きの少ない
+        # 画面ほど、細い文字を白で塗りつぶす・白い壁や雪に灰色の 8×8 を残すといった局所的な崩れが平均に埋もれていた)
+        if self.block_cap > 0:
+            usable[1:] &= (distortion[1:] - distortion[0]) <= self.block_cap * b * b
         # 未設置 (-1) のマスを含む skip / motion は使えない (前の盤面に描かれていない)
         for name in ("skip", "motion"):
             if name in candidates:
