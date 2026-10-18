@@ -76,7 +76,7 @@ AUTO_PALETTE_MAX_SAMPLES = 30
 SSIM_SAMPLE_INTERVAL = 10
 SSIM_MAX_SAMPLES = 50
 CPU_BATCH_SIZE = 256
-IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".ppm")
 GPU_DITHER_METHODS = ("none", "ordered", "blue_noise")
 
 # ログの表示言語 (main で --lang に合わせて切り替える)
@@ -441,7 +441,12 @@ def quantize_frames_cpu(frames, gop_palettes, gop_boundaries, width, height,
     aligner = DitherAligner(enabled=dither_follow_motion and dither_method in ("blue_noise", "ordered"))
     jobs = ((frame, gop_palettes[gop_id], aligner.update(frame))
             for frame, gop_id in zip(frames, iter_gop_ids(gop_boundaries)))
-    with ThreadPoolExecutor(max_workers=max(1, threads)) as executor:
+    if threads <= 1:
+        # スレッドを使わない (ブラウザの中の Python (Pyodide、web/) はスレッドを作れない)
+        for job in jobs:
+            yield from finish([job], [task(job)])
+        return
+    with ThreadPoolExecutor(max_workers=threads) as executor:
         batch = []
         for job in jobs:
             batch.append(job)

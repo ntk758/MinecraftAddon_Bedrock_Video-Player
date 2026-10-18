@@ -50,6 +50,12 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
 3. できた `.mcaddon` を A の 2〜3 と同じように使います。うまくいかないときは [既知の問題](docs/KNOWN_ISSUES.md) を見てください。
    Use the result like steps A-2 and A-3. See [known issues](docs/KNOWN_ISSUES.md) if something goes wrong.
 
+**C. ブラウザで変換する (インストール不要、ベータ版) / Convert in your browser (no install, beta)**
+- [Web 版の変換ツール](https://ntk758.github.io/MinecraftAddon_Bedrock_Video-Player/) を開き、動画を選んで「.mcaddon を作る」を押します。Windows 以外 (Mac・Linux・Chromebook) でも使え、動画はどこにも送信されません (ブラウザの中で、Windows 版と同じ変換のコードを Pyodide で動かします)。
+  Open the [web converter](https://ntk758.github.io/MinecraftAddon_Bedrock_Video-Player/), pick videos and press *Create .mcaddon*. Works on any OS; your videos never leave the browser.
+- CPU だけで変換し、音声は WAV (22.05 kHz モノラル) になるので、長い動画や大きな画面では Windows 版の方が速く、アドオンも小さくなります。初回は Python (約 20 MB) を読み込みます。
+  It converts on the CPU only and stores audio as WAV, so the Windows app is faster and makes smaller add-ons for long videos.
+
 Python で動かす方法・GPU の設定は [インストールと使い方](#-インストールと使い方-installation--usage) にあります / To run from Python, see [Usage](#-usage).
 
 ### 対応環境 / Supported environments

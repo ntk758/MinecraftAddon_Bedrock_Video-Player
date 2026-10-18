@@ -191,7 +191,7 @@ def encode_stream(symbols, alphabet, out):
     encode_varint(len(symbols), out)
     if not symbols:
         return
-    counts = np.bincount(np.asarray(symbols, dtype=np.int64), minlength=alphabet)
+    counts = np.bincount(np.asarray(symbols, dtype=np.intp), minlength=alphabet)  # intp: 32bit の環境 (Pyodide) でも動く
     lengths = code_lengths(counts)
     used_alphabet = int(np.nonzero(lengths)[0].max()) + 1
     encode_varint(used_alphabet, out)

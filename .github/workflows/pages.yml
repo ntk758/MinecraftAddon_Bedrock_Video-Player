@@ -1,0 +1,54 @@
+name: Web converter (GitHub Pages)
+
+# ブラウザ版の変換ツール (web/) を GitHub Pages に公開する。リポジトリの設定 (Settings → Pages) で
+# Source を "GitHub Actions" にしてから使う。main に変換・組み立てのコードが入ったときと、手動で実行したときに公開し直す
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'web/**'
+      - 'convert.py'
+      - 'gui_i18n.py'
+      - 'pack_builder.py'
+      - 'pack_metadata.py'
+      - 'mvcodec/**'
+      - 'locales/**'
+      - 'main.js'
+      - 'codec.js'
+      - 'manifest.json'
+      - 'scripts/build_web.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build the site
+        run: python scripts/build_web.py --out web_dist
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web_dist
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

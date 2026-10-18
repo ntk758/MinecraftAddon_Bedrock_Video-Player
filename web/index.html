@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Block Video Player Web Converter</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Block Video Player <span class="sub">Web Converter (beta)</span></h1>
+  <p>動画をブラウザの中だけで Minecraft 統合版のアドオン (.mcaddon) に変換します。ファイルはどこにも送信されません。<br>
+     Convert videos into a Minecraft Bedrock add-on entirely in your browser. Your files are never uploaded.</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1. 動画 / Videos</h2>
+    <input type="file" id="files" accept="video/*" multiple>
+    <ul id="videoList"></ul>
+  </section>
+
+  <section class="card">
+    <h2>2. 設定 / Settings</h2>
+    <div class="grid">
+      <label>幅 Width <input type="number" id="width" value="128" min="8" max="256"></label>
+      <label>高さ Height <input type="number" id="height" value="72" min="8" max="256"></label>
+      <button type="button" id="fitAspect">縦横比に合わせる / Match aspect ratio</button>
+      <label>FPS <input type="number" id="fps" value="10" min="1" max="20"></label>
+      <label>長さの上限 (秒) Max length (s) <input type="number" id="duration" value="60" min="1" max="600"></label>
+      <label>表示 Display
+        <select id="mode">
+          <option value="screen">平面スクリーン / Flat screen</option>
+          <option value="relief">3D レリーフ / 3D relief</option>
+          <option value="extrude">3D シルエット / 3D silhouette</option>
+          <option value="inflate">3D ふくらみ / 3D inflate</option>
+        </select>
+      </label>
+      <label>奥行き Depth <input type="number" id="depth" value="16" min="2" max="64"></label>
+      <label>パレット Palette
+        <select id="palette">
+          <option value="auto">自動 (おすすめ) / Auto (recommended)</option>
+          <option value="all">全ブロック / All blocks</option>
+          <option value="full">39 色 / 39 colors</option>
+          <option value="concrete">コンクリート 16 色 / Concrete 16</option>
+          <option value="glass">ステンドグラス 16 色 (3D) / Stained glass (3D)</option>
+        </select>
+      </label>
+      <label>ディザ Dither
+        <select id="dither">
+          <option value="blue_noise">Blue Noise</option>
+          <option value="none">なし / None</option>
+          <option value="ordered">Ordered</option>
+          <option value="floyd">Floyd-Steinberg</option>
+        </select>
+      </label>
+      <label>パック名 Pack name <input type="text" id="packName" value="Block Video Player"></label>
+      <label>コマンドの接頭辞 Command prefix <input type="text" id="namespace" value="badapple" pattern="[a-z0-9_]+"></label>
+    </div>
+    <p id="loadHint" class="hint"></p>
+  </section>
+
+  <section class="card">
+    <h2>3. 作成 / Build</h2>
+    <button type="button" id="build" disabled>.mcaddon を作る / Create .mcaddon</button>
+    <a id="download" class="download" hidden>ダウンロード / Download</a>
+    <progress id="progress" max="1" value="0"></progress>
+    <pre id="log"></pre>
+  </section>
+
+  <section class="card small">
+    <h2>使い方 / How to use</h2>
+    <ol>
+      <li>作った .mcaddon を開いて Minecraft にインポートし、ワールドの設定で行動パックとリソースパックを両方有効にし、チートをオンにします。</li>
+      <li>平らな場所で <code>/scriptevent badapple:setup</code> → コンパスを使うとリモコンが開きます。</li>
+    </ol>
+    <p>初回は変換用の Python (約 20 MB) を読み込むので時間がかかります。ブラウザ版は CPU だけで変換し、音声は WAV になるので、
+       長い動画や大きな画面では Windows 版 (GPU 対応) の方が速く、アドオンも小さくなります。
+       <a href="https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player">GitHub</a></p>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

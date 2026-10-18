@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import queue
 import re
@@ -11,17 +10,22 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
-import uuid
-import zipfile
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from gui_i18n import (
-    LOCALES, Translator, addon_lang_files, available_languages, initial_language, load_settings, save_settings,
+    LOCALES, Translator, available_languages, initial_language, load_settings, save_settings,
 )
-from pack_metadata import PACK_VERSION, RELEASE_NOTES, changelog_markdown, manifest_description, version_text
+from pack_builder import (  # noqa: F401 (stable_pack_uuid などは以前からこのモジュールにあった名前)
+    AUDIO_CHUNK_SECONDS,
+    BUILD_STAMP_EPOCH,
+    MANIFEST_VERSION_MAX,
+    build_addon,
+    build_manifest_version,
+    stable_pack_uuid,
+)
+from pack_metadata import PACK_VERSION, RELEASE_NOTES, version_text  # noqa: F401 (PACK_VERSION はテストが使う)
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -29,14 +33,8 @@ MANIFEST = APP_DIR / "manifest.json"
 MAIN_SCRIPT = APP_DIR / "main.js"
 CODEC_SCRIPT = APP_DIR / "codec.js"
 CONVERTER = APP_DIR / "convert.py"
-# main.js の AUDIO_CHUNK_SECONDS と一致させること
-AUDIO_CHUNK_SECONDS = 10
 # EXE 版で自分自身を変換器として起動するための引数
 RUN_CONVERTER_FLAG = "--run-converter"
-# 再ビルドしたパックをワールドが「新しい版」と認識できるよう、ビルド日時をバージョン番号に使う
-BUILD_STAMP_EPOCH = 1704067200  # 2024-01-01T00:00:00Z
-# Bedrock はバージョン番号の各要素を 16bit (0〜65535) で扱う。超えるとマニフェストが不正になりインポートできない
-MANIFEST_VERSION_MAX = 65535
 
 
 def subprocess_kwargs() -> dict:
@@ -51,23 +49,6 @@ def converter_command() -> list[str]:
     if getattr(sys, "frozen", False):
         return [sys.executable, RUN_CONVERTER_FLAG]
     return [sys.executable, str(CONVERTER)]
-
-
-def stable_pack_uuid(namespace: str, pack_name: str, role: str) -> str:
-    """同じパック名・接頭辞なら毎回同じ UUID にする (再ビルドしても別パック扱いにならない)。"""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"block-video-player/{namespace}/{pack_name}/{role}"))
-
-
-def build_manifest_version(now: float | None = None) -> list[int]:
-    """[major, 2024-01-01 からの日数, その日の分 (0〜1439)]。
-
-    UUID が同じでも新しいビルドを「新しい版」として読み込ませるため、ビルドごとに必ず大きくなる値にする。
-    どの要素も MANIFEST_VERSION_MAX 以下 (日数は約 179 年分まで収まる)。
-    """
-    now = time.time() if now is None else now
-    minutes = max(0, int(now - BUILD_STAMP_EPOCH) // 60)
-    days, minute_of_day = divmod(minutes, 24 * 60)
-    return [PACK_VERSION[0], min(days, MANIFEST_VERSION_MAX), minute_of_day]
 
 
 def get_ffmpeg_path() -> str | None:
@@ -280,10 +261,6 @@ def build_converter_args(
     if duration is not None:
         args.extend(["--duration", str(duration)])
     return args
-
-
-class _NoAudio(Exception):
-    """.vox など音声の無い入力。"""
 
 
 def write_vox_thumbnail(vox_path: Path, png_path: Path, size: int = 256) -> None:
@@ -875,17 +852,7 @@ class PackBuilderApp(tk.Tk):
 
             with tempfile.TemporaryDirectory(prefix="block-video-player-") as temp_dir:
                 temp = Path(temp_dir)
-                bp_root = temp / "BP"
-                rp_root = temp / "RP"
-                scripts = bp_root / "scripts"
-                scripts.mkdir(parents=True)
-                rp_sounds = rp_root / "sounds"
-                rp_sounds.mkdir(parents=True)
-
-                video_index_entries = []
-                first_thumbnail = None
-                sound_definitions = {}
-
+                videos = []
                 total_videos = len(video_entries)
                 for vi, entry in enumerate(video_entries, 1):
                     video = Path(entry["file_path"])
@@ -894,7 +861,7 @@ class PackBuilderApp(tk.Tk):
 
                     self.messages.put(self.tr("build.processing", index=vi, total=total_videos, id=video_id))
 
-                    generated_data = scripts / f"frames_{video_id}.js"
+                    generated_data = temp / f"frames_{video_id}.js"
                     thumbnail = temp / f"thumb_{video_id}.png"
 
                     is_vox = video.suffix.lower() == VOX_SUFFIX
@@ -912,42 +879,22 @@ class PackBuilderApp(tk.Tk):
                     if not thumbnail.is_file() or thumbnail.stat().st_size == 0:
                         raise RuntimeError(self.tr("build.thumbnail_failed", id=video_id))
 
-                    if first_thumbnail is None:
-                        first_thumbnail = thumbnail
-
                     # 音声切り出し (10秒分割 .ogg, 44.1kHz ステレオ)
-                    sounds_dir = rp_root / "sounds" / "music" / video_id
+                    sounds_dir = temp / "sounds" / video_id
                     sounds_dir.mkdir(parents=True, exist_ok=True)
                     if not is_vox:
                         self.messages.put(self.tr("build.audio", sec=AUDIO_CHUNK_SECONDS))
-                    try:
-                        if is_vox:
-                            raise _NoAudio()
-                        self._run([
-                            ffmpeg, "-y", "-i", str(video),
-                            "-f", "segment", "-segment_time", str(AUDIO_CHUNK_SECONDS),
-                            "-vn", "-acodec", "libvorbis",
-                            "-ar", "44100", "-ac", "2", "-b:a", "192k",
-                            str(sounds_dir / "chunk_%d.ogg")
-                        ])
-                    except _NoAudio:
-                        pass
-                    except Exception as e:
-                        self.messages.put(self.tr("build.audio_skipped", error=e))
-
-                    ogg_files = sorted(sounds_dir.glob("chunk_*.ogg"), key=lambda p: int(p.stem.split("_")[1]))
-                    for ogg_file in ogg_files:
-                        chunk_idx = int(ogg_file.stem.split("_")[1])
-                        sound_key = f"{namespace}.{video_id}.chunk_{chunk_idx}"
-                        sound_definitions[sound_key] = {
-                            "category": "ui",
-                            "sounds": [
-                                {
-                                    "name": f"sounds/music/{video_id}/{ogg_file.stem}",
-                                    "stream": True,
-                                }
-                            ]
-                        }
+                        try:
+                            self._run([
+                                ffmpeg, "-y", "-i", str(video),
+                                "-f", "segment", "-segment_time", str(AUDIO_CHUNK_SECONDS),
+                                "-vn", "-acodec", "libvorbis",
+                                "-ar", "44100", "-ac", "2", "-b:a", "192k",
+                                str(sounds_dir / "chunk_%d.ogg")
+                            ])
+                        except Exception as e:
+                            self.messages.put(self.tr("build.audio_skipped", error=e))
+                    sounds = [(int(f.stem.split("_")[1]), "ogg", f.read_bytes()) for f in sounds_dir.glob("chunk_*.ogg")]
 
                     # ブロックデータ変換
                     self.messages.put(self.tr("build.converting"))
@@ -960,126 +907,13 @@ class PackBuilderApp(tk.Tk):
                         ),
                     ]
                     self._run(converter_args)
+                    videos.append({
+                        "id": video_id, "title": video.stem, "frames_js": generated_data.read_text(encoding="utf-8"),
+                        "thumbnail": thumbnail.read_bytes(), "sounds": sounds, "width": width, "height": height,
+                    })
 
-                    # 大きさは変換結果から取る (.vox は GUI の幅・高さではなくモデルの大きさになる)
-                    dims = {}
-                    try:
-                        js_text = generated_data.read_text(encoding="utf-8")
-                        import re as _re
-                        for key in ("frame_count", "width", "height", "depth"):
-                            match = _re.search(rf'"{key}":\s*(\d+)', js_text)
-                            if match:
-                                dims[key] = int(match.group(1))
-                    except Exception:
-                        pass
-
-                    entry = {
-                        "id": video_id,
-                        "title": video.stem,
-                        "frame_count": dims.get("frame_count", 0),
-                        "width": dims.get("width", width),
-                        "height": dims.get("height", height),
-                    }
-                    if "depth" in dims:
-                        entry["depth"] = dims["depth"]
-                    video_index_entries.append(entry)
-
-                # sound_definitions.json の生成
-                if sound_definitions:
-                    sound_def_file = rp_root / "sounds" / "sound_definitions.json"
-                    sound_def_file.parent.mkdir(parents=True, exist_ok=True)
-                    sound_def_file.write_text(
-                        json.dumps({"format_version": "1.14.0", "sound_definitions": sound_definitions}, ensure_ascii=False, indent=2),
-                        encoding="utf-8"
-                    )
-
-                # ゲーム内表示の翻訳 (既定は各プレイヤーのゲーム言語。固定なら GUI の言語だけ)
-                for relative_path, content in addon_lang_files(addon_language).items():
-                    lang_file = rp_root / relative_path
-                    lang_file.parent.mkdir(parents=True, exist_ok=True)
-                    lang_file.write_text(content, encoding="utf-8")
-
-                # videos.js 自動生成
                 self.messages.put(self.tr("build.videos_index"))
-                videos_js_lines = []
-                for entry in video_index_entries:
-                    vid = entry["id"]
-                    videos_js_lines.append(f'import {{ FRAME_DATA as video_{vid} }} from "./frames_{vid}.js";')
-                videos_js_lines.append("")
-                videos_obj_entries = ", ".join(f'"{e["id"]}": video_{e["id"]}' for e in video_index_entries)
-                videos_js_lines.append(f"export const VIDEOS = {{ {videos_obj_entries} }};")
-                videos_js_lines.append("")
-                video_list_json = json.dumps(video_index_entries, ensure_ascii=False, separators=(",", ":"))
-                videos_js_lines.append(f"export const VIDEO_LIST = {video_list_json};")
-                videos_js_lines.append("")
-                (scripts / "videos.js").write_text("\n".join(videos_js_lines), encoding="utf-8")
-
-                # manifest.json
-                bp_uuid = stable_pack_uuid(namespace, pack_name, "bp")
-                rp_uuid = stable_pack_uuid(namespace, pack_name, "rp")
-                bp_mod_uuid = stable_pack_uuid(namespace, pack_name, "bp-script")
-                rp_mod_uuid = stable_pack_uuid(namespace, pack_name, "rp-resources")
-                manifest_version = build_manifest_version()
-
-                # BP manifest
-                bp_manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-                bp_manifest["header"]["name"] = f"{pack_name} v{version_text()}"
-                bp_manifest["header"]["description"] = manifest_description()
-                bp_manifest["header"]["uuid"] = bp_uuid
-                bp_manifest["header"]["version"] = manifest_version
-                bp_manifest["modules"][0]["uuid"] = bp_mod_uuid
-                bp_manifest["modules"][0]["version"] = manifest_version
-                bp_manifest.setdefault("dependencies", []).append({"uuid": rp_uuid, "version": manifest_version})
-                (bp_root / "manifest.json").write_text(
-                    json.dumps(bp_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-                )
-
-                # RP manifest
-                rp_manifest = {
-                    "format_version": 2,
-                    "header": {
-                        "name": f"{pack_name} Res v{version_text()}",
-                        "description": manifest_description(),
-                        "uuid": rp_uuid,
-                        "version": manifest_version,
-                        "min_engine_version": bp_manifest["header"]["min_engine_version"]
-                    },
-                    "modules": [
-                        {
-                            "description": "Resources",
-                            "type": "resources",
-                            "uuid": rp_mod_uuid,
-                            "version": manifest_version
-                        }
-                    ],
-                    "dependencies": [{"uuid": bp_uuid, "version": manifest_version}]
-                }
-                (rp_root / "manifest.json").write_text(
-                    json.dumps(rp_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-                )
-
-                # main.js
-                main_text = MAIN_SCRIPT.read_text(encoding="utf-8")
-                # 再生速度は各動画データの fps から決まるため、ここでは接頭辞だけ差し替える
-                main_text = main_text.replace(
-                    'const EVENT_NAMESPACE = "badapple";', f'const EVENT_NAMESPACE = "{namespace}";'
-                )
-                (scripts / "main.js").write_text(main_text, encoding="utf-8")
-                shutil.copy2(CODEC_SCRIPT, scripts / "codec.js")
-
-                if first_thumbnail and first_thumbnail.is_file():
-                    shutil.copy2(first_thumbnail, rp_root / "pack_icon.png")
-                    shutil.copy2(first_thumbnail, bp_root / "pack_icon.png")
-
-                (bp_root / "CHANGELOG.md").write_text(changelog_markdown(pack_name), encoding="utf-8")
-                (rp_root / "CHANGELOG.md").write_text(changelog_markdown(pack_name), encoding="utf-8")
-
-                output.parent.mkdir(parents=True, exist_ok=True)
-                with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-                    for pack_dir in (bp_root, rp_root):
-                        for file in pack_dir.rglob("*"):
-                            if file.is_file():
-                                archive.write(file, file.relative_to(temp))
+                video_index_entries = build_addon(output, videos, pack_name, namespace, addon_language)
 
             video_names = ", ".join(e["id"] for e in video_index_entries)
             self.messages.put((
