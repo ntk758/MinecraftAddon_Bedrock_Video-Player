@@ -2,6 +2,10 @@
 
 このプロジェクトの変更履歴です (新しい順)。各版のダウンロードは [GitHub Releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases) にあります。
 
+## 次の版 / Unreleased
+
+- **EXE 版の既定の保存先を修正**: 作った .mcaddon の既定の保存先が、EXE の中身の `_internal` フォルダになっていた。EXE と同じフォルダにした。
+
 ## v6.15.0
 
 - **アドオンのデータを 15% 小さく (画質は同じ)**: 動画のデータを JS の文字列にする方法を、15 ビット/文字 (UTF-8 で 1 文字 3 バイトに膨らんでいた) から base64 に変えた。アニメ MV で JS ファイル 3,480 → 2,912 KB、.mcaddon −15%、ゲーム内のデータの展開も約 3 割速い。以前の形式のデータも読める。
