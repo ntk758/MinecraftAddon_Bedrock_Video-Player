@@ -5,7 +5,7 @@
 //   {"until": "bvp.playback_finished"}                そのメッセージが出るまで tick を進める (最大 20000)
 //   {"ui": [{"selection": 0}, {"formValues": [6]}]}   リモコン (コンパス) を使い、開いたフォームへ順に応答する
 //   {"failZ": 92} / {"failZ": null}                   z がその値以上のマスへの設置を失敗させる / 元に戻す
-//   {"y": 318}                                        プレイヤーの立つ高さを変える
+//   {"y": 318} / {"x": 5, "z": 100}                   プレイヤーの立つ位置を変える
 //   {"snap": "名前"}                                  いま選ばれている動画の盤面 (各マスのブロック) を記録する
 import {
   board, commands, fireScriptEvent, getAnchor, messages, options, player, stats, tick, uiResponses, useItem,
@@ -45,7 +45,7 @@ for (const step of steps) {
       useItem("minecraft:compass");
       for (let i = 0; i < 10; i++) await Promise.resolve();
     } else if ("failZ" in step) options.failZ = step.failZ ?? undefined;
-    else if ("y" in step) player.location.y = step.y;
+    else if ("y" in step || "x" in step || "z" in step) Object.assign(player.location, step);
     else if (step.snap) snap(step.snap, step.video ?? Object.keys(VIDEOS)[0]);
   } catch (e) {
     errors.push(String(e?.stack ?? e));

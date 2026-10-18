@@ -1326,14 +1326,56 @@ function fitToBuildHeight(dimension, y, sizeY) {
   return Math.max(range.min, Math.min(y, range.max - sizeY));
 }
 
-function setup(player) {
+// チャンク (16×16 の区画) の大きさ。ブロックを置き替えると、そのブロックがあるサブチャンク (16×16×16) が描き直され、
+// プレイヤーへ送り直される。スクリーンが区画の境目をまたがないようにそろえると、触るチャンクの数が減る
+const CHUNK_SIZE = 16;
+
+/** start から size マスの範囲がまたぐチャンクの数。 */
+function chunksSpanned(start, size) {
+  return Math.floor((start + size - 1) / CHUNK_SIZE) - Math.floor(start / CHUNK_SIZE) + 1;
+}
+
+/** start を ±(CHUNK_SIZE - 1) の範囲でずらして、またぐチャンクが一番少なくなる量 (同じなら動かす量が小さい方)。 */
+function chunkAlignShift(start, size) {
+  let best = 0;
+  for (let s = -(CHUNK_SIZE - 1); s <= CHUNK_SIZE - 1; s++) {
+    const fewer = chunksSpanned(start + s, size) - chunksSpanned(start + best, size);
+    if (fewer < 0 || (fewer === 0 && Math.abs(s) < Math.abs(best))) best = s;
+  }
+  return best;
+}
+
+/**
+ * スクリーン (立体は床の範囲) がまたぐチャンクの数が一番少なくなるよう、置く位置 origin を東西・南北にずらす
+ * (/scriptevent <接頭辞>:setup align)。ずらした量と、ずらす前後のチャンクの数を返す。
+ */
+function alignOriginToChunks(videoData, origin, dimension) {
+  const { anchor } = anchorForVideo(videoData, origin, dimension);
+  const { sizeX, sizeZ } = footprintOf(videoData);
+  const dx = chunkAlignShift(anchor.x, sizeX);
+  const dz = chunkAlignShift(anchor.z, sizeZ);
+  return {
+    origin: { x: origin.x + dx, y: origin.y, z: origin.z + dz },
+    dx,
+    dz,
+    before: chunksSpanned(anchor.x, sizeX) * chunksSpanned(anchor.z, sizeZ),
+    after: chunksSpanned(anchor.x + dx, sizeX) * chunksSpanned(anchor.z + dz, sizeZ),
+  };
+}
+
+function setup(player, options = "") {
   if (!globalSelectedVideoId) {
     notify("no_video_selected");
     return;
   }
   const videoData = VIDEOS[globalSelectedVideoId];
   const loc = player.location;
-  const origin = { x: Math.floor(loc.x), y: Math.floor(loc.y), z: Math.floor(loc.z) };
+  let origin = { x: Math.floor(loc.x), y: Math.floor(loc.y), z: Math.floor(loc.z) };
+  if (options.split(/\s+/).includes("align")) {
+    const aligned = alignOriginToChunks(videoData, origin, player.dimension);
+    origin = aligned.origin;
+    notify("setup_aligned", aligned.dx, aligned.dz, aligned.before, aligned.after);
+  }
   // 建築できる高さ (オーバーワールドは Y=-64〜319) からはみ出すと置けないので、収まる高さへずらす
   const { anchor, shifted } = anchorForVideo(videoData, origin, player.dimension);
   if (shifted) notify("setup_shifted", anchor.y);
@@ -1608,7 +1650,7 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
         notify("setup_needs_player");
         break;
       }
-      setup(player);
+      setup(player, event.message ?? "");
       break;
     case "start":
       startPlayback(dimension);

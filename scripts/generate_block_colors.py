@@ -18,6 +18,9 @@
 - 光るブロック (group "light") は「全ブロック」には入れるが、自動パレットの候補には入れない (mvcodec/color.py)
 - アドオンの対応する一番古い版 (min_engine_version 1.21.80) に無いブロックは使わない (置けないと土になる)
 - 色がほとんど同じブロック (OkLab の距離 × 100 が DEDUPE_DISTANCE 未満) は、先に書いた方だけ残す
+- ステンドグラス (group "glass") は半透明なので、不透明な画素ほど重く (アルファで重みを付けて) 平均し、平均のアルファも書く。
+  「全ブロック」や自動パレットには入れず、ホログラム用の「ステンドグラス」パレットだけで使う (mvcodec/color.py)。
+  不透明なブロックと色が近くても別のものとして残す
 """
 import argparse
 import json
@@ -68,7 +71,10 @@ CANDIDATES = (
     + [("nature", b, None) for b in (
         "moss_block", "pale_moss_block", "coarse_dirt", "clay", "packed_ice", "blue_ice", "snow", "honeycomb_block",
         "nether_wart_block", "warped_wart_block", "soul_soil", "dead_brain_coral_block")]
+    + [("glass", f"{c}_stained_glass", None) for c in COLORS]
 )
+# 半透明で、不透明なブロックとは別に扱うグループ
+TRANSLUCENT_GROUPS = ("glass",)
 
 
 def load_json(path):
@@ -128,9 +134,12 @@ def main(argv=None):
         path = entry[0] if isinstance(entry, list) else entry
         path = path["path"] if isinstance(path, dict) else path
         file = next(rp / (path + ext) for ext in (".png", ".tga") if (rp / (path + ext)).exists())
-        # アニメーションするテクスチャ (縦に並んだコマ) は全部のコマの平均
-        img = np.asarray(Image.open(file).convert("RGBA"), dtype=np.float64)
-        return linear_to_srgb(srgb_to_linear(img[..., :3].reshape(-1, 3)).mean(axis=0))
+        # アニメーションするテクスチャ (縦に並んだコマ) は全部のコマの平均。半透明の画素はアルファで重みを付ける
+        img = np.asarray(Image.open(file).convert("RGBA"), dtype=np.float64).reshape(-1, 4)
+        alpha = img[:, 3] / 255.0
+        weights = alpha if alpha.sum() > 0 else np.ones_like(alpha)
+        linear = (srgb_to_linear(img[:, :3]) * weights[:, None]).sum(axis=0) / weights.sum()
+        return linear_to_srgb(linear), round(float(alpha.mean()), 2)
 
     rows, skipped = [], []
     for group, block, key in CANDIDATES:
@@ -138,26 +147,30 @@ def main(argv=None):
         if block_id not in current or block_id not in oldest:
             skipped.append(f"{block} (1.21.80 に無い)" if block_id in current else f"{block} (存在しない)")
             continue
-        rgb = face_color(key or block)
+        rgb, alpha = face_color(key or block)
         lab = oklab(rgb) * 100
-        twin = next((r for r in rows if np.linalg.norm(r["lab"] - lab) < DEDUPE_DISTANCE), None)
+        translucent = group in TRANSLUCENT_GROUPS
+        twin = next((r for r in rows if (r["group"] in TRANSLUCENT_GROUPS) == translucent
+                     and np.linalg.norm(r["lab"] - lab) < DEDUPE_DISTANCE), None)
         if twin is not None:
             skipped.append(f"{block} ({twin['block']} とほぼ同じ色)")
             continue
-        rows.append({"group": group, "block": block_id, "rgb": rgb, "lab": lab})
+        rows.append({"group": group, "block": block_id, "rgb": rgb, "lab": lab, "alpha": alpha if translucent else None})
 
     lines = [
         '"""ブロックの見た目の平均色 (自動生成: scripts/generate_block_colors.py。手で書き換えない)。',
         "",
         f"出典: Mojang/bedrock-samples {version} のテクスチャの上面を線形の明るさで平均した sRGB。",
-        f"1.21.80 ({MIN_VERSION_TAG}) にもあるブロックだけ。{len(rows)} 色。",
+        f"1.21.80 ({MIN_VERSION_TAG}) にもあるブロックだけ。{len(rows)} 色 (うち半透明 "
+        f"{sum(r['group'] in TRANSLUCENT_GROUPS for r in rows)} 色。alpha は平均の不透明度)。",
         '"""',
         "",
         "BLOCK_COLORS = [",
     ]
     for row in rows:
+        alpha = f', "alpha": {row["alpha"]}' if row["alpha"] is not None else ""
         lines.append(f'    {{"group": "{row["group"]}", "block": "{row["block"]}", "rgb": ({row["rgb"][0]}, '
-                     f'{row["rgb"][1]}, {row["rgb"][2]})}},')
+                     f'{row["rgb"][1]}, {row["rgb"][2]}){alpha}}},')
     lines += ["]", ""]
     Path(args.output).write_text("\n".join(lines), encoding="utf-8")
     print(f"{len(rows)} colors -> {args.output}")

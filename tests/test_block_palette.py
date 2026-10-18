@@ -62,6 +62,36 @@ def test_convert_with_every_block_palette(tmp_path, mode):
     assert sum(1 for _ in iter_decoded_frames(data)) == data["frame_count"]
 
 
+def test_glass_palette_is_only_for_holograms():
+    """ステンドグラス (半透明) は専用のパレットだけにあり、全ブロック・自動パレットには入らない。"""
+    glass = PALETTES["glass"]
+    assert len(glass) == 16
+    assert all(item["block"].endswith("_stained_glass") for item in glass)
+    assert all(0 < item["alpha"] < 1 for item in BLOCK_COLORS if item["group"] == "glass")
+    opaque = {item["block"] for item in PALETTES["all"]} | {item["block"] for item in AUTO_PALETTE_CANDIDATES}
+    assert not opaque & {item["block"] for item in glass}
+    assert all(BLOCK_RGB[item["block"]] == item["rgb"] for item in glass)
+
+
+def test_glass_hologram_places_stained_glass(tmp_path):
+    """ステンドグラスのパレットで立体を作り、モックの Minecraft で再生するとステンドグラスと空気だけが置かれる。"""
+    import shutil
+
+    from test_codec_v4 import make_scene_frames
+    from test_main_js import run_addon
+
+    if shutil.which("node") is None:
+        pytest.skip("node が必要")
+    make_scene_frames(tmp_path / "frames")
+    out = tmp_path / "glass.js"
+    assert convert.main(["--frames-dir", str(tmp_path / "frames"), "--output", str(out), "--width", "24",
+                         "--height", "16", "--fps", "10", "--device", "cpu", "--palette", "glass", "--mode", "relief",
+                         "--depth", "6", "--duration", "1"]) == 0
+    result = run_addon(tmp_path / "addon", out)
+    placed = {block for block in result["finalBoard"] if block}
+    assert placed and all(block.endswith("_stained_glass") or block == "minecraft:air" for block in placed), placed
+
+
 def test_gui_labels_show_the_current_color_count():
     import json
 

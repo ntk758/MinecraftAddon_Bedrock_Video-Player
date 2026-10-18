@@ -1,7 +1,7 @@
 """ブロックの見た目の平均色 (自動生成: scripts/generate_block_colors.py。手で書き換えない)。
 
 出典: Mojang/bedrock-samples 1.26.50.4 のテクスチャの上面を線形の明るさで平均した sRGB。
-1.21.80 (v1.21.80.3) にもあるブロックだけ。108 色。
+1.21.80 (v1.21.80.3) にもあるブロックだけ。124 色 (うち半透明 16 色。alpha は平均の不透明度)。
 """
 
 BLOCK_COLORS = [
@@ -113,4 +113,20 @@ BLOCK_COLORS = [
     {"group": "nature", "block": "minecraft:nether_wart_block", "rgb": (117, 5, 4)},
     {"group": "nature", "block": "minecraft:warped_wart_block", "rgb": (23, 122, 122)},
     {"group": "nature", "block": "minecraft:soul_soil", "rgb": (78, 59, 48)},
+    {"group": "glass", "block": "minecraft:white_stained_glass", "rgb": (255, 255, 255), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:orange_stained_glass", "rgb": (216, 127, 51), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:magenta_stained_glass", "rgb": (178, 76, 216), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:light_blue_stained_glass", "rgb": (102, 153, 216), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:yellow_stained_glass", "rgb": (229, 229, 51), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:lime_stained_glass", "rgb": (127, 204, 25), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:pink_stained_glass", "rgb": (242, 127, 165), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:gray_stained_glass", "rgb": (76, 76, 76), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:light_gray_stained_glass", "rgb": (153, 153, 153), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:cyan_stained_glass", "rgb": (76, 127, 153), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:purple_stained_glass", "rgb": (127, 63, 178), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:blue_stained_glass", "rgb": (51, 76, 178), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:brown_stained_glass", "rgb": (102, 76, 51), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:green_stained_glass", "rgb": (102, 127, 51), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:red_stained_glass", "rgb": (153, 51, 51), "alpha": 0.46},
+    {"group": "glass", "block": "minecraft:black_stained_glass", "rgb": (25, 25, 25), "alpha": 0.46},
 ]

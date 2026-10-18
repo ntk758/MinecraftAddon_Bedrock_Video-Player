@@ -65,6 +65,7 @@ def test_palette_options():
         "全39色(concrete + terracotta + 自発光)": "full",
         "拡張 33色（concrete + terracotta）": "expanded",
         "基本 16色（concrete）": "concrete",
+        "ステンドグラス 16 色 (半透明。3D ホログラム向け)": "glass",
     }
 
     assert set(PALETTE_OPTIONS.keys()) == set(expected.keys()), "PALETTE_OPTIONS のキーが一致すること"

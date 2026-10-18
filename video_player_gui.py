@@ -183,7 +183,7 @@ def validate_settings(width, height, fps, duration=None, mode="screen", depth=16
 
 
 # 選択肢の値 (convert.py に渡す値)。表示名は locales/*.json の "<種類>.<値>" キー
-PALETTE_VALUES = ("auto", "all", "full", "expanded", "concrete")
+PALETTE_VALUES = ("auto", "all", "full", "expanded", "concrete", "glass")
 DITHER_VALUES = ("none", "blue_noise", "ordered", "floyd", "atkinson", "burkes", "sierra")
 DEVICE_VALUES = ("auto", "cuda", "directml", "cpu")
 MODE_VALUES = ("screen", "relief", "extrude", "inflate")

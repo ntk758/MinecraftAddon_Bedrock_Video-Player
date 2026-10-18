@@ -84,17 +84,22 @@ for _item in CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE + WOOL_PA
 
 ALL_BLOCKS = CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE
 
-# 重力で落ちず・時間で変化しない・面ごとの見た目の差が小さいブロックすべて (色がほぼ同じものは 1 つに絞り済み)
-EVERY_BLOCK_PALETTE = [
-    {"name": item["block"].split(":", 1)[1], "block": item["block"], "rgb": tuple(item["rgb"]), "group": item["group"]}
-    for item in BLOCK_COLORS
-]
+def _palette_item(item):
+    return {"name": item["block"].split(":", 1)[1], "block": item["block"], "rgb": tuple(item["rgb"]), "group": item["group"]}
+
+
+# 重力で落ちず・時間で変化しない・面ごとの見た目の差が小さい不透明なブロックすべて (色がほぼ同じものは 1 つに絞り済み)
+EVERY_BLOCK_PALETTE = [_palette_item(item) for item in BLOCK_COLORS if item["group"] != "glass"]
+# 半透明のステンドグラス (3D ホログラム向け。奥のブロックや景色が透けるので、平面スクリーンでは色が背景で変わる)。
+# 色はテクスチャの不透明な部分の色 (透けて見える色は後ろの物で変わる)
+GLASS_PALETTE = [_palette_item(item) for item in BLOCK_COLORS if item["group"] == "glass"]
 
 PALETTES = {
     "concrete": CONCRETE_PALETTE,
     "expanded": CONCRETE_PALETTE + TERRACOTTA_PALETTE,
     "full": ALL_BLOCKS,
     "all": EVERY_BLOCK_PALETTE,
+    "glass": GLASS_PALETTE,
 }
 
 # 自動パレットが色を選ぶ候補。光るブロックは入れない (置き替えるたびに明るさの計算が起き、夜はスクリーンの明るさがまだらになる。
@@ -102,7 +107,7 @@ PALETTES = {
 AUTO_PALETTE_CANDIDATES = [item for item in EVERY_BLOCK_PALETTE if item["group"] != "light"]
 
 # ブロックID -> RGB (デコーダ・評価用)
-BLOCK_RGB = {item["block"]: tuple(item["rgb"]) for item in ALL_BLOCKS + WOOL_PALETTE + EVERY_BLOCK_PALETTE}
+BLOCK_RGB = {item["block"]: tuple(item["rgb"]) for item in ALL_BLOCKS + WOOL_PALETTE + EVERY_BLOCK_PALETTE + GLASS_PALETTE}
 
 def create_palette_image(palette):
     pal_img = Image.new("P", (1, 1))
