@@ -55,6 +55,8 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
   Open the [web converter](https://ntk758.github.io/MinecraftAddon_Bedrock_Video-Player/), pick videos and press *Create .mcaddon*. Works on any OS; your videos never leave the browser.
 - CPU だけで変換し、音声は WAV (22.05 kHz モノラル) になるので、長い動画や大きな画面では Windows 版の方が速く、アドオンも小さくなります。初回は Python (約 20 MB) を読み込みます。
   It converts on the CPU only and stores audio as WAV, so the Windows app is faster and makes smaller add-ons for long videos.
+- MagicaVoxel の立体アニメ (`.vox`) もそのまま追加できます (大きさとコマ数は `.vox` のまま、サムネイルは立体を斜め上から見た絵)。
+  MagicaVoxel animations (`.vox`) can be added as well (size and frames are kept; the thumbnail is an isometric view).
 
 Python で動かす方法・GPU の設定は [インストールと使い方](#-インストールと使い方-installation--usage) にあります / To run from Python, see [Usage](#-usage).
 

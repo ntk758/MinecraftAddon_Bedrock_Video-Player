@@ -39,8 +39,23 @@ for mode in ("screen", "relief"):
     addon = pack_builder.build_addon_bytes([{"id": mode, "title": mode, "frames_js": text, "thumbnail": None, "sounds": []}],
                                            "Smoke", "smoke")
     assert "BP/scripts/frames_%s.js" % mode in zipfile.ZipFile(io.BytesIO(addon)).namelist()
+# MagicaVoxel の立体アニメ (ブラウザ版は .vox をそのまま渡し、サムネイルも Python で作る)
+from mvcodec.volume import write_vox
+vox_palette = np.zeros((256, 4), np.uint8)
+vox_palette[0] = (230, 40, 40, 255)
+models = [((8, 3, 4), np.array([[x, y, z, 1] for x in range(t, t + 3) for y in range(3) for z in range(4)], np.uint8))
+          for t in range(5)]
+with open("/work/walk.vox", "wb") as f:
+    f.write(write_vox(models, vox_palette))
+thumb = pack_builder.vox_thumbnail_png("/work/walk.vox", 256, "auto")
+assert convert.main(["--input-vox", "/work/walk.vox", "--mode", "vox", "--output", "/work/vox.js", "--fps", "10",
+                     "--palette", "auto", "--device", "cpu", "--threads", "1"]) == 0
+text = open("/work/vox.js", encoding="utf-8").read()
+counts["vox"] = sum(1 for _ in iter_decoded_frames(json.loads(text[text.index("{"):text.rindex("}") + 1])))
+pack_builder.build_addon_bytes([{"id": "walk", "title": "walk", "frames_js": text, "thumbnail": thumb, "sounds": []}],
+                               "Smoke", "smoke")
 json.dumps(counts)
 `);
 const counts = JSON.parse(result);
 console.log(JSON.stringify(counts));
-if (counts.screen !== 20 || counts.relief !== 20) process.exit(1);
+if (counts.screen !== 20 || counts.relief !== 20 || counts.vox !== 5) process.exit(1);

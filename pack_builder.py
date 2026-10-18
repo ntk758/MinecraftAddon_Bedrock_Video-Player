@@ -56,6 +56,40 @@ def frame_data_dims(frames_js: str) -> dict:
     return dims
 
 
+def vox_thumbnail_png(vox_path, size: int = 256, palette: str = "auto") -> bytes:
+    """MagicaVoxel の最初のフレームを斜め上から見た立体の画像 (PNG の bytes)。.vox のサムネイルに使う。
+
+    ブロックの選び方は変換 (convert.convert_vox) と同じ: 自動のときは全ブロックから、側面の色で一番近いものを選ぶ。
+    上面はブロックの上面の色、正面と側面は側面の色で塗る。
+    """
+    import numpy as np
+    from PIL import Image
+
+    from mvcodec.color import PALETTES, side_palette
+    from mvcodec.volume import AIR_LEVEL, iso_view, load_vox_frames, nearest_levels, vox_to_volume, vox_volume_shape
+
+    blocks = PALETTES["all" if palette == "auto" else palette]
+    top_rgb = np.array([item["rgb"] for item in blocks], dtype=np.float64)
+    side_rgb = np.array([item["rgb"] for item in side_palette(blocks)], dtype=np.float64)
+    frames, vox_palette = load_vox_frames(vox_path)
+    color_to_level = np.full(256, AIR_LEVEL, dtype=np.int16)
+    color_to_level[1:] = nearest_levels(vox_palette[:255, :3], side_rgb)
+    volume = vox_to_volume(frames[0], vox_volume_shape(frames), color_to_level)
+    table = np.vstack([top_rgb, np.zeros((256, 3))])
+    side_table = np.vstack([side_rgb, np.zeros((256, 3))])
+    image = Image.fromarray(iso_view(volume, rgb=table[volume], side_rgb=side_table[volume], background=(0, 0, 0)))
+    if max(image.size) > size:
+        image.thumbnail((size, size), Image.Resampling.LANCZOS)
+    else:
+        scale = size // max(image.size)
+        image = image.resize((image.width * scale, image.height * scale), Image.Resampling.NEAREST)
+    canvas = Image.new("RGB", (size, size))
+    canvas.paste(image, ((size - image.width) // 2, (size - image.height) // 2))
+    out = io.BytesIO()
+    canvas.save(out, format="PNG")
+    return out.getvalue()
+
+
 def videos_js(entries: list[dict]) -> str:
     """動画の一覧 (videos.js)。"""
     lines = [f'import {{ FRAME_DATA as video_{e["id"]} }} from "./frames_{e["id"]}.js";' for e in entries]

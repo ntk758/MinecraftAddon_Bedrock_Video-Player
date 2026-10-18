@@ -8,7 +8,8 @@ const AUDIO_RATE = 22050; // WAV は大きいので 22.05 kHz モノラルにす
 const THUMB_SIZE = 256;
 
 const $ = (id) => document.getElementById(id);
-const videos = []; // { file, url, id, title, width, height, duration }
+const videos = []; // { file, url, id, title, width, height, duration, vox }
+const isVox = (file) => /\.vox$/i.test(file.name);
 let worker = null;
 let lastDownloadUrl = null;
 
@@ -42,6 +43,13 @@ function loadVideoElement(url) {
 async function addFiles(fileList) {
   const used = new Set(videos.map((v) => v.id));
   for (const file of fileList) {
+    if (isVox(file)) {
+      // MagicaVoxel の立体アニメ: 大きさ・コマ数は .vox のまま (設定は FPS とパレットだけを使う)
+      const header = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+      if (String.fromCharCode(...header) !== "VOX ") { log(`${file.name}: MagicaVoxel の .vox ではありません / not a MagicaVoxel .vox file`); continue; }
+      videos.push({ file, id: safeId(file.name, used), title: file.name.replace(/\.[^.]+$/, ""), vox: true });
+      continue;
+    }
     const url = URL.createObjectURL(file);
     try {
       const el = await loadVideoElement(url);
@@ -63,7 +71,7 @@ function renderList() {
     input.value = v.id;
     input.title = "動画 ID / Video ID";
     input.onchange = () => { v.id = safeId(input.value, new Set(videos.filter((o) => o !== v).map((o) => o.id))); input.value = v.id; };
-    li.append(input, ` ${v.title} (${v.width}×${v.height}, ${v.duration.toFixed(1)} s)`);
+    li.append(input, v.vox ? ` ${v.title} (MagicaVoxel 3D)` : ` ${v.title} (${v.width}×${v.height}, ${v.duration.toFixed(1)} s)`);
     list.append(li);
   }
   $("build").disabled = videos.length === 0;
@@ -72,7 +80,7 @@ function renderList() {
 
 // GUI の「動画の縦横比に合わせる」と同じ: 長い辺をそのままに、短い辺を縦横比に合わせる (偶数にそろえる)
 function fitAspect() {
-  const v = videos[0];
+  const v = videos.find((o) => !o.vox);
   if (!v) return;
   const longSide = Math.max(Number($("width").value), Number($("height").value));
   let w, h;
@@ -224,6 +232,11 @@ async function build() {
   const w = startWorker();
   const jobs = [];
   for (const [n, v] of videos.entries()) {
+    if (v.vox) {
+      // .vox はそのまま渡し、変換とサムネイル (立体を斜め上から見た絵) は Python で作る。音声は無し
+      jobs.push({ id: v.id, title: v.title, vox: new Uint8Array(await v.file.arrayBuffer()), frames: [], thumbnail: null, sounds: [] });
+      continue;
+    }
     log(`[${n + 1}/${videos.length}] ${v.title}: コマを取り出し中 / extracting frames…`);
     const { frames, thumbnail, length } = await extractFrames(v, s, (f) => { $("progress").value = (n + f * 0.4) / videos.length; });
     log(`  ${frames.length} frames`);
@@ -233,7 +246,8 @@ async function build() {
   const transfer = [];
   for (const job of jobs) {
     for (const f of job.frames) transfer.push(f.buffer);
-    transfer.push(job.thumbnail.buffer);
+    if (job.thumbnail) transfer.push(job.thumbnail.buffer);
+    if (job.vox) transfer.push(job.vox.buffer);
     for (const [, , bytes] of job.sounds) transfer.push(bytes.buffer);
   }
   w.postMessage({ type: "build", settings: s, jobs, lang: navigator.language.startsWith("ja") ? "ja" : "en" }, transfer);

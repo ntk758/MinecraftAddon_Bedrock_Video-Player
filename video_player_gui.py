@@ -24,6 +24,7 @@ from pack_builder import (  # noqa: F401 (stable_pack_uuid などは以前から
     build_addon,
     build_manifest_version,
     stable_pack_uuid,
+    vox_thumbnail_png,
 )
 from pack_metadata import PACK_VERSION, RELEASE_NOTES, version_text  # noqa: F401 (PACK_VERSION はテストが使う)
 
@@ -263,29 +264,9 @@ def build_converter_args(
     return args
 
 
-def write_vox_thumbnail(vox_path: Path, png_path: Path, size: int = 256) -> None:
-    """MagicaVoxel の最初のフレームを斜め上から見た立体の画像をサムネイルにする。"""
-    import numpy as np
-    from PIL import Image
-
-    from mvcodec.color import PALETTES
-    from mvcodec.volume import AIR_LEVEL, iso_view, load_vox_frames, nearest_levels, vox_to_volume, vox_volume_shape
-
-    frames, vox_palette = load_vox_frames(vox_path)
-    # 変換 (convert_vox) と同じく、自動のときは全ブロックから選ぶ
-    block_rgb = np.array([item["rgb"] for item in PALETTES["all"]], dtype=np.float64)
-    color_to_level = np.full(256, AIR_LEVEL, dtype=np.int16)
-    color_to_level[1:] = nearest_levels(vox_palette[:255, :3], block_rgb)
-    shape = vox_volume_shape(frames)
-    image = Image.fromarray(iso_view(vox_to_volume(frames[0], shape, color_to_level), block_rgb, background=(0, 0, 0)))
-    if max(image.size) > size:
-        image.thumbnail((size, size), Image.Resampling.LANCZOS)
-    else:
-        scale = size // max(image.size)
-        image = image.resize((image.width * scale, image.height * scale), Image.Resampling.NEAREST)
-    canvas = Image.new("RGB", (size, size))
-    canvas.paste(image, ((size - image.width) // 2, (size - image.height) // 2))
-    canvas.save(png_path)
+def write_vox_thumbnail(vox_path: Path, png_path: Path, size: int = 256, palette: str = "auto") -> None:
+    """MagicaVoxel の最初のフレームを斜め上から見た立体の画像をサムネイルにする (ブラウザ版と共通)。"""
+    Path(png_path).write_bytes(vox_thumbnail_png(vox_path, size, palette))
 
 
 def resolve_palette(pal_text: str) -> str:
@@ -868,7 +849,7 @@ class PackBuilderApp(tk.Tk):
                     # サムネイル生成 (.vox は立体を正面から見た画像)
                     if is_vox:
                         self.messages.put(self.tr("build.vox_preview"))
-                        write_vox_thumbnail(video, thumbnail)
+                        write_vox_thumbnail(video, thumbnail, palette=palette)
                     else:
                         self.messages.put(self.tr("build.thumbnail", sec=thumb_sec))
                         self._run([
