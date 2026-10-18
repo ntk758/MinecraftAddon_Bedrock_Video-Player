@@ -37,7 +37,7 @@
   "preset.detail": "Detallada (128×128 / 5fps)",
   "preset.ultra": "Ultra (256×256 / 5fps)",
   "preset.extreme": "Extrema (512×512 / 2fps)",
-  "palette.auto": "Automática (recomendada: hasta 127 de 190 colores por escena)",
+  "palette.auto": "Automática (recomendada: hasta 127 de 191 colores por escena)",
   "palette.all": "Todos los bloques, 127 colores (hormigón, terracota, lana, madera, piedra, bloques de luz…)",
   "palette.full": "39 colores (hormigón + terracota + bloques de luz)",
   "palette.expanded": "33 colores (hormigón + terracota)",

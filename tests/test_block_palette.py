@@ -202,3 +202,21 @@ def test_auto_palette_is_not_shared_by_scenes_that_start_black():
     finally:
         ap.generate_auto_palette = original
     assert len(built) == 2
+
+
+def test_dark_foliage_stays_green():
+    """暗い木の葉・芝生の色は、明るさの近い茶色ではなく緑のブロックになる (減色は OkLab で色合いの差を重く見る)。
+    RGB の距離では茶色 (はがした濃いオークの原木) の方が近い。"""
+    from mvcodec.color import BLOCK_RGB, nearest_oklab_indices
+
+    names = ["minecraft:green_concrete", "minecraft:stripped_dark_oak_log", "minecraft:black_concrete"]
+    pal = np.array([BLOCK_RGB[n] for n in names], dtype=np.float32)
+    foliage = np.array([[(45, 65, 25), (50, 70, 25), (35, 60, 20)]], dtype=np.uint8)
+    rgb_nearest = ((foliage[0, :, None, :].astype(np.float32) - pal[None]) ** 2).sum(-1).argmin(1)
+    assert (rgb_nearest == 1).all()
+    assert (nearest_oklab_indices(foliage, pal) == 0).all()
+
+
+def test_dried_kelp_block_is_a_dark_green_candidate():
+    """乾燥した昆布ブロック (暗い緑) は、名前に kelp (植物の昆布を除く語) を含んでも候補に入る。"""
+    assert any(b["block"] == "minecraft:dried_kelp_block" for b in AUTO_PALETTE_CANDIDATES)

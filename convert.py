@@ -19,6 +19,7 @@ from PIL import Image
 
 from mvcodec.color import (
     AUTO_PALETTE_CANDIDATES,
+    CHROMA_WEIGHT,
     PALETTES,
     create_palette_image,
     process_single_frame_img,
@@ -274,9 +275,13 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
 
     device = gpu.torch_device if gpu is not None else torch.device("cpu")
 
+    def weighted(lab):
+        # 色合い (a, b) の差を明るさ (L) の差より重く見る: 暗い緑の葉が「明るさの近い茶色」になるのを防ぐ
+        return torch.cat([lab[..., :1], lab[..., 1:] * CHROMA_WEIGHT], dim=-1)
+
     def get_pal_tensors(pal_data):
         t = torch.tensor(pal_data, dtype=torch.float32, device=device)
-        return t, rgb_to_oklab_torch(t)
+        return t, weighted(rgb_to_oklab_torch(t))
 
     dither_scale = {"ordered": 32.0, "blue_noise": 64.0}.get(dither_method)
     # ディザ模様と前フレームの番号を、映像の全体の動きに合わせてずらす (mvcodec/dither_motion.py)
@@ -313,7 +318,7 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
             img_tensor = torch.clamp(img_tensor + bias, 0, 255)
 
         # OkLab 知覚色空間でのカラーマッチング
-        img_oklab = rgb_to_oklab_torch(img_tensor.view(-1, 3))
+        img_oklab = weighted(rgb_to_oklab_torch(img_tensor.view(-1, 3)))
         idx_tensor = torch.argmin(squared_distances(img_oklab, pal_oklab), dim=1).view(height, width)
 
         if prev_idx_tensor is not None and temporal_hysteresis > 0:

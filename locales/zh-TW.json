@@ -37,7 +37,7 @@
   "preset.detail": "高精細 (128×128 / 5fps)",
   "preset.ultra": "超高 (256×256 / 5fps)",
   "preset.extreme": "極限 (512×512 / 2fps)",
-  "palette.auto": "自動（推薦：每個場景從 190 種顏色中最多選 127 種）",
+  "palette.auto": "自動（推薦：每個場景從 191 種顏色中最多選 127 種）",
   "palette.all": "全部方塊 127 色（混凝土、陶瓦、羊毛、木材、石頭、發光方塊等）",
   "palette.full": "全部 39 色（混凝土 + 陶土 + 發光方塊）",
   "palette.expanded": "擴充 33 色（混凝土 + 陶土）",

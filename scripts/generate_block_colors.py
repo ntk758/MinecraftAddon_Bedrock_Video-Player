@@ -102,14 +102,14 @@ EXCLUDE_WORDS = (
     "bubble", "deprecated", "ghast",
 )
 # EXCLUDE_WORDS に当てはまっても使うもの (落ちない砂岩・ソウルサンド、変化しない土・サンゴ・氷・キノコのブロック、幹、
-# 明かりをともしたカボチャ、信号が無ければ消えたままのレッドストーンランプ)
+# 明かりをともしたカボチャ、信号が無ければ消えたままのレッドストーンランプ、乾燥した昆布ブロック (暗い緑))
 INCLUDE = {
     "sandstone", "chiseled_sandstone", "cut_sandstone", "smooth_sandstone", "red_sandstone", "chiseled_red_sandstone",
     "cut_red_sandstone", "smooth_red_sandstone", "soul_sand", "coarse_dirt", "packed_ice", "blue_ice",
     "red_mushroom_block", "brown_mushroom_block", "mushroom_stem", "nether_wart_block", "warped_wart_block",
     "crimson_stem", "warped_stem", "stripped_crimson_stem", "stripped_warped_stem", "lit_pumpkin",
     "dead_brain_coral_block", "dead_bubble_coral_block", "dead_fire_coral_block", "dead_horn_coral_block",
-    "dead_tube_coral_block", "redstone_lamp",
+    "dead_tube_coral_block", "redstone_lamp", "dried_kelp_block",
 }
 # 自動で集めたブロックのうち、光るもの (自動パレットの候補には入れない)
 LIGHT_BLOCKS = {"lit_pumpkin", "glowstone", "sea_lantern", "shroomlight", "ochre_froglight", "verdant_froglight",

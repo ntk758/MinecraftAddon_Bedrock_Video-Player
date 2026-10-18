@@ -37,7 +37,7 @@
   "preset.detail": "Detalhada (128×128 / 5fps)",
   "preset.ultra": "Ultra (256×256 / 5fps)",
   "preset.extreme": "Extrema (512×512 / 2fps)",
-  "palette.auto": "Automática (recomendada: até 127 de 190 cores por cena)",
+  "palette.auto": "Automática (recomendada: até 127 de 191 cores por cena)",
   "palette.all": "Todos os blocos, 127 cores (concreto, terracota, lã, madeira, pedra, blocos de luz…)",
   "palette.full": "39 cores (concreto + terracota + blocos de luz)",
   "palette.expanded": "33 cores (concreto + terracota)",
