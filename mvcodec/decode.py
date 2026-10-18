@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from mvcodec.color import BLOCK_RGB
+from mvcodec.color import BLOCK_RGB, BLOCK_SIDE_RGB
 from mvcodec.encode import UTF16_BITS_PER_CHAR, UTF16_CHAR_OFFSET
 from mvcodec.entropy import unpack_gop
 from mvcodec.motion import apply_motion, apply_motion_3d, unpack_vector, unpack_vector_3d
@@ -75,17 +75,18 @@ def parse_index(data):
     return entries
 
 
-def palette_rgb_table(level_blocks):
-    """level_blocks (ブロックID列) から RGB テーブル (N, 3) を作る。"""
-    return np.array([BLOCK_RGB.get(spec["block"], (0, 0, 0)) for spec in level_blocks], dtype=np.uint8)
+def palette_rgb_table(level_blocks, face="up"):
+    """level_blocks (ブロックID列) から RGB テーブル (N, 3) を作る。face="side" なら側面の色。"""
+    colors = BLOCK_SIDE_RGB if face == "side" else BLOCK_RGB
+    return np.array([colors.get(spec["block"], (0, 0, 0)) for spec in level_blocks], dtype=np.uint8)
 
 
-def gop_palettes(data):
+def gop_palettes(data, face="up"):
     """GOP ごとの RGB パレット表を返す (固定パレット時は全GOPで同じ表)。"""
     num_gops = len(data["chunks"])
     if data.get("adaptive_palette"):
-        return [palette_rgb_table(blocks) for blocks in data["level_blocks"]]
-    table = palette_rgb_table(data["level_blocks"])
+        return [palette_rgb_table(blocks, face) for blocks in data["level_blocks"]]
+    table = palette_rgb_table(data["level_blocks"], face)
     return [table] * max(1, num_gops)
 
 
@@ -179,20 +180,20 @@ def decode_frame(buf, offset, length, board, data, frame_no=None, tiles=None):
     return out, is_keyframe
 
 
-def iter_decoded_frames(data):
+def iter_decoded_frames(data, face="up"):
     """各フレーム表示後の盤面を (index_board, rgb_board) として順に返す。
 
     index_board は最後に設置したパレット番号 (未設置は -1、立体の空気は air_level)、rgb_board は実際に見える
     ブロック色 (空気は黒)。形は平面なら (高さ, 幅)、立体なら (奥行き, 高さ, 幅)。
     ゲーム内と同じく、パレット番号が変わった画素だけをそのフレームの GOP のパレットで塗り直す。
-    スキップフレームは前フレームと同じ盤面を返す。
+    スキップフレームは前フレームと同じ盤面を返す。face="side" なら rgb_board はブロックの側面の色 (立体のプレビュー用)。
     """
     if data.get("format") not in (FORMAT_V4, *V5_FAMILY):
         raise ValueError(f"未対応のフォーマットです: {data.get('format')}")
     shape = board_shape(data)
     pixels = int(np.prod(shape))
     entries = parse_index(data)
-    palettes = gop_palettes(data)
+    palettes = gop_palettes(data, face)
     if data.get("layout") in ("volume", HEIGHTFIELD):
         # 空気の番号まで引けるよう、パレット表を 128 色に広げる (空気は黒)
         palettes = [np.vstack([table, np.zeros((128 - len(table), 3), np.uint8)]) for table in palettes]

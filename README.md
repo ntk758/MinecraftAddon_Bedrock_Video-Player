@@ -87,7 +87,7 @@ Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを
 - 🎵 **音声の同期再生** (10 秒単位の OGG に分割し、再生位置に合わせて切り替え)
 - 🎮 **ゲーム内リモコン** (コンパスを使うと再生・一時停止・シーク・音量・動画切替の画面が開く)
 - 📚 **マルチ動画対応** (1 つのアドオンに複数の動画を収録)
-- 👑 **マイクラ実在ブロック 108 色** (コンクリート・テラコッタ・羊毛・木材・石・レンガ・光るブロックなど。重力で落ちず、時間で変化せず、掘っても資源にならないブロックだけ) から、シーンごとに最大 64 色を選ぶ自動パレット (既定、光るブロックは除く)。色は公式テクスチャの実測の平均色で、v6.4.0 の既定より色差 (ΔE2000) が 18〜62% 小さい ([比較](docs/research/palette_space.md))
+- 👑 **マイクラ実在ブロック 197 色** (コンクリート・テラコッタ・羊毛・木材・原木・石・レンガ・鉱石・鉱物・光るブロックなど。不透明な立方体で、重力で落ちず、時間で変化せず、まわりに作用しないブロックすべて) から、シーンごとに 24〜127 色を選ぶ自動パレット (既定、光るブロックは除く)。色は公式テクスチャの実測の平均色で、立体では側面の色で選ぶ (原木は樹皮の色) ([比較](docs/research/palette_space.md))
 - 🗜 **予測圧縮 (Phase 7.x)**: 変化したブロックだけを送る差分に、**動き補償** (平面は 8×8 ブロック、立体は 8×8×8 ブリック)・**タイル辞書** (一度出た模様を番号で再利用)・ランの位置の間隔符号化を組み合わせ、フレームごとに一番小さい方法を自動で選択。v5.4.0 よりデータ量が **47〜88% 減** (ディザなし。Blue Noise では約 43〜67% 減、[計測結果](#-ベンチマーク-phase-7x))。シーンごとのキーフレームで高速シーク
 - 🧊 **3D ホログラム再生**: 映像を立体 (明るさを奥行きにした **レリーフ**・明るい部分の **押し出し**・丸く **ふくらませた** 立体) にして再生。MagicaVoxel (`.vox`) の立体アニメもそのまま再生。レリーフ・押し出し・ふくらみは「色 + 高さ (厚み)」の 2 枚の 2D 映像で送ってゲーム内で組み立てるので、立体のデータが 54〜85% 小さい
 - 🧱 **まとめ置き描画**: 同じ色の変化を箱 (`fillBlocks`) や色ごとの座標リストにまとめて置き、API 呼び出しを 1 フレーム数百〜千回 → **数回〜数百回** に。キーフレームでも変わったブロックだけを置き直す。実機で置き方の速さを計る `bench` と、再生の実効 fps・遅れたフレーム・映像の遅れを表示する `stats` コマンド付き ([性能](docs/PERFORMANCE.md))
@@ -156,7 +156,7 @@ python video_player_gui.py
    | 幅 / 高さ | スクリーンのブロック数 (最大 512) |
    | FPS | スライダーで 1〜20 fps を選びます (Minecraft は 1 秒 20 tick なので 20 が上限。20・10・5・4・2・1 のように 20 を割り切れる値だと一定の間隔で表示されます) |
    | キーフレーム間隔 | 何フレームごとに全画面を描き直すか (シークの速さに影響)。0 ならシーンの先頭のみ |
-   | パレット | 自動 (おすすめ・既定: 101 色の候補からシーンごとに最大 64 色) / 全ブロック 108 色 (光るブロックを含む) / 39 色 / 拡張 33 色 / 基本 16 色。色を増やすと画質は上がり、データと置き替えるブロックは増えます |
+   | パレット | 自動 (おすすめ・既定: 190 色の候補からシーンごとに最大 127 色) / 全ブロック 127 色 (光るブロックを含む 196 色から、色が互いに離れたもの) / 39 色 / 拡張 33 色 / 基本 16 色 / ステンドグラス 16 色 (立体向け)。色を増やすと画質は上がり、データと置き替えるブロックは増えます |
    | ディザリング | なし / Blue Noise / Ordered (GPU 対応)、Floyd-Steinberg / Atkinson / Burkes / Sierra Lite (CPU のみ) |
    | 知覚最適化 | 輪郭部分だけにディザをかけて、平坦部のちらつきを抑えます |
    | 変換デバイス | 自動 / NVIDIA CUDA・AMD ROCm / DirectML / CPU のみ |
@@ -270,7 +270,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - 🎵 **Synchronized audio** (10-second OGG chunks switched by playback position)
 - 🎮 **In-game remote control** (use a compass: play/pause, seek, volume, switch videos)
 - 📚 **Multiple videos per add-on**
-- 👑 **108 real block colors** (concrete, terracotta, wool, wood, stone, bricks, light blocks… — only blocks that don't fall, don't change over time and can't be farmed for resources) with a per-scene automatic palette of up to 64 colors (default, light blocks excluded). Colors are measured from the official textures: 18–62% lower color error (ΔE2000) than v6.4.0's default
+- 👑 **197 real block colors** (concrete, terracotta, wool, wood, logs, stone, bricks, ores, minerals, light blocks… — every opaque full block that doesn't fall, change over time or affect its surroundings) with a per-scene automatic palette of 24–127 colors (default, light blocks excluded). Colors are measured from the official textures; 3D holograms pick blocks by their side color (bark for logs)
 - 🗜 **Predictive compression (Phase 7.x)**: on top of sending only changed blocks, each frame picks the smallest of **motion compensation** (8×8 blocks on screens, 8×8×8 bricks in 3D), a **tile dictionary** (patterns seen before are reused by number) and gap-coded run positions — **47–88% less data** than v5.4.0 without dithering (roughly 43–67% with Blue Noise; [benchmarks](#-ベンチマーク-phase-7x)); per-scene keyframes for fast seeking
 - 🧊 **3D hologram playback**: turn a video into a volume (brightness-as-depth **relief**, **extruded** or rounded **inflated** silhouettes) or play MagicaVoxel (`.vox`) animations directly. Relief / extrude / inflate are sent as two 2D planes (colour + height/thickness) and rebuilt in-game, cutting 3D data by 54–85%
 - 🧱 **Batched placement**: same-colour changes are placed as boxes (`fillBlocks`) or per-colour position lists, cutting API calls from hundreds–thousands per frame to **a few–a few hundred**; keyframes only re-place blocks that changed. `/scriptevent <prefix>:bench` measures the placement methods on your device and `:stats` reports playback fps, late frames and how far the video lags behind real time ([performance](docs/PERFORMANCE.md))
@@ -373,8 +373,8 @@ python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 
 |---|---|
 | `--input-video` / `--frames-dir` | 入力動画、または画像連番フォルダ |
 | `--width` `--height` `--fps` `--duration` | 解像度・fps (最大 20)・変換する秒数 |
-| `--palette` | `concrete` (16 色) / `expanded` (33 色) / `full` (39 色) / `all` (全ブロック 108 色) / `auto` (101 色からシーンごとに選ぶ。GUI の既定) / `glass` (ステンドグラス 16 色、立体向け) |
-| `--palette-colors` / `--palette-space` | `--palette auto` で選ぶ色数。既定の `auto` はシーンごとに 24 / 32 / 48 / 64 色から、色の誤差が 64 色のときの 1.05 倍以内に収まる一番少ない色数を選ぶ (数を指定するとその数まで。候補は光るブロックを除く 101 色) / 色を選ぶ色空間 `rgb` (既定) か `oklab` ([比較](docs/research/palette_space.md)) |
+| `--palette` | `concrete` (16 色) / `expanded` (33 色) / `full` (39 色) / `all` (全ブロックから色の離れた 127 色) / `auto` (190 色からシーンごとに選ぶ。GUI の既定) / `glass` (ステンドグラス 16 色、立体向け)。立体ではブロックの側面の色で選ぶ |
+| `--palette-colors` / `--palette-space` | `--palette auto` で選ぶ色数。既定の `auto` はシーンごとに 24 / 32 / 48 / 64 / 96 / 127 色から、色の誤差が 127 色のときの 1.05 倍以内に収まる一番少ない色数を選ぶ (数を指定するとその数まで。候補は光るブロックを除く 190 色) / 色を選ぶ色空間 `rgb` (既定) か `oklab` ([比較](docs/research/palette_space.md)) |
 | `--dither-method` | `none` / `blue_noise` / `ordered` / `floyd` / `atkinson` / `burkes` / `sierra` |
 | `--device` | `auto` / `cuda` / `rocm` / `directml` / `cpu` |
 | `--keyframe-interval` | キーフレーム間隔 (0 でシーン先頭のみ) |

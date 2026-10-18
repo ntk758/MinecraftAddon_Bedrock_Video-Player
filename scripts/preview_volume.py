@@ -24,13 +24,16 @@ from mvcodec.volume import iso_view  # noqa: E402
 def render_frames(data, unit=4, max_frames=None, step=1):
     """復元した各フレームの絵 (numpy の RGB 画像) を順に返す。"""
     volume = data.get("layout") in ("volume", "heightfield")
+    # 立体の正面・側面はブロックの側面の色で塗る (原木などは上面と違う)
+    sides = iter_decoded_frames(data, face="side") if volume else None
     for i, (_index, rgb) in enumerate(iter_decoded_frames(data)):
+        side_rgb = next(sides)[1] if volume else None
         if max_frames is not None and i >= max_frames:
             break
         if i % step:
             continue
         if volume:
-            yield iso_view(_index, rgb=rgb, unit=unit)
+            yield iso_view(_index, rgb=rgb, unit=unit, side_rgb=side_rgb)
         else:
             yield np.kron(rgb, np.ones((unit, unit, 1), np.uint8))
 

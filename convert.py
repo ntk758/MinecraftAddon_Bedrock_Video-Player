@@ -23,6 +23,7 @@ from mvcodec.color import (
     create_palette_image,
     process_single_frame_img,
     rgb_to_oklab_torch,
+    side_palette,
 )
 from gui_i18n import LOCALES, Translator, detect_system_language
 from mvcodec.device import DEVICE_CHOICES, detect_gpu, empty_cache, squared_distances
@@ -214,8 +215,10 @@ def analyze_gops(frames, palette_for_gop=None):
     return boundaries, palettes
 
 
-def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MAX_COLORS):
+def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MAX_COLORS, candidates=None):
     from mvcodec.auto_palette import generate_auto_palette
+
+    candidates = AUTO_PALETTE_CANDIDATES if candidates is None else candidates
 
     cache = {}
 
@@ -224,7 +227,7 @@ def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MA
         thumb_hash = hashlib.md5(np.ascontiguousarray(first_frame[::8, ::8]).tobytes()).hexdigest()
         if thumb_hash not in cache:
             cache[thumb_hash] = generate_auto_palette(
-                samples, AUTO_PALETTE_CANDIDATES, max_colors=max_colors, device=gpu.torch_device if gpu else None, sample_stride=1,
+                samples, candidates, max_colors=max_colors, device=gpu.torch_device if gpu else None, sample_stride=1,
                 warn=lambda error: print(_tr("convert.palette_cpu_retry", error=error)), color_space=color_space,
             )
         return cache[thumb_hash]
@@ -756,7 +759,8 @@ def convert_vox(args):
     """MagicaVoxel の立体アニメを変換する (減色はブロック色への最近傍対応だけ)。"""
     frames, vox_palettes = load_vox_frames_with_palettes(args.input_vox)
     # .vox はモデルの色にそのまま一番近いブロックを選ぶので、自動のときは全ブロックから選ぶ
-    palette = PALETTES["all" if args.palette == "auto" else args.palette]
+    # 立体は横から見るので、ブロックの側面の色で選ぶ
+    palette = side_palette(PALETTES["all" if args.palette == "auto" else args.palette])
     block_rgb = np.array([item["rgb"] for item in palette], dtype=np.float64)
     tables = {}
 
@@ -801,7 +805,9 @@ def main(argv=None):
 
     # --- Pass 1: GOP 分割 (+ 自動パレット) ---
     is_adaptive_palette = args.palette == "auto"
-    palette_builder = (make_auto_palette_builder(gpu, args.palette_space, args.palette_colors)
+    # 立体は横から見るので、原木などは側面 (樹皮) の色で選ぶ
+    palette_builder = (make_auto_palette_builder(gpu, args.palette_space, args.palette_colors,
+                                                 side_palette(AUTO_PALETTE_CANDIDATES) if volume else None)
                        if is_adaptive_palette else None)
     print(_tr("convert.analyzing"))
     gop_boundaries, adaptive_palettes = analyze_gops(frame_source(), palette_builder)
@@ -814,7 +820,7 @@ def main(argv=None):
     if is_adaptive_palette:
         gop_palettes = adaptive_palettes
     else:
-        gop_palettes = [PALETTES[args.palette]] * num_gops
+        gop_palettes = [side_palette(PALETTES[args.palette]) if volume else PALETTES[args.palette]] * num_gops
     if max(len(p) for p in gop_palettes) > MAX_PALETTE_COLORS - (1 if volume else 0):
         raise ValueError(f"パレットは最大 {MAX_PALETTE_COLORS} 色までです")
     gop_palettes_rgb = []
