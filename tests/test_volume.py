@@ -112,7 +112,7 @@ def quantize(frame):
 def convert_volume(frames_dir, out, mode, *extra):
     argv = ["--frames-dir", str(frames_dir), "--output", str(out), "--width", str(WIDTH), "--height", str(HEIGHT),
             "--fps", "10", "--device", "cpu", "--palette", "full", "--mode", mode, "--depth", str(DEPTH),
-            "--no-adaptive-fps", "--keyframe-interval", "5", "--threads", "2", *extra]
+            "--no-adaptive-fps", "--keyframe-interval", "5", "--threads", "2", "--block-rdo", "0", *extra]
     assert convert.main(argv) == 0
     return load_frame_data(out)
 
