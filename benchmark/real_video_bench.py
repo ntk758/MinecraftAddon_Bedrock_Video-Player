@@ -38,6 +38,8 @@ from palette_bench import evaluate  # noqa: E402
 from rdo_bench import placement_us  # noqa: E402
 
 DATASET = Path(__file__).resolve().parent / "datasets" / "real_videos.json"
+# download.blender.org は Python の既定の User-Agent (Python-urllib) を 403 で断るので、名乗ってから取得する
+USER_AGENT = "BlockVideoPlayer-benchmark/1.0 (+https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player)"
 CONFIGS = {
     # 名前: convert.py の引数 (GUI の既定は自動パレット + Blue Noise)
     "default": ["--palette", "auto", "--dither-method", "blue_noise"],
@@ -68,7 +70,8 @@ def fetch(entry, cache):
     path = cache / Path(entry["url"]).name
     if not path.exists() or sha256_of(path) != entry["sha256"]:
         tmp = path.with_name(path.name + ".part")
-        with urllib.request.urlopen(entry["url"], timeout=120) as response, open(tmp, "wb") as f:
+        request = urllib.request.Request(entry["url"], headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(request, timeout=120) as response, open(tmp, "wb") as f:
             shutil.copyfileobj(response, f)
         if sha256_of(tmp) != entry["sha256"]:
             tmp.unlink()
