@@ -69,6 +69,20 @@ def encode_frame_v5(frame_no, is_keyframe, frame, reference, width, height, vect
     return encoded
 
 
+BASE64_PREFIX = "B:"
+
+
+def bytes_to_text(byte_arr):
+    """アドオンの JS に書くための文字列にする: "B:" + base64 (v6.15〜)。
+    以前の 15bit/文字 (bytearray_to_utf16_str) は UTF-8 のファイルで 1 文字 3 バイトになり、データの 1.6 倍に膨らんでいた。
+    base64 は 1.33 倍で、.mcaddon (zip) でもよく縮む (アニメ MV で JS 3,480 → 2,914 KB、.mcaddon −15%)。"""
+    import base64
+
+    if not byte_arr:
+        return ""
+    return BASE64_PREFIX + base64.b64encode(bytes(byte_arr)).decode("ascii")
+
+
 def bytearray_to_utf16_str(byte_arr):
     """バイト列を 15bit/文字 の文字列へ変換する。先頭文字にパディングビット数を格納する。"""
     if not byte_arr:

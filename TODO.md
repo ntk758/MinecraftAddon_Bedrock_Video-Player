@@ -10,7 +10,37 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 - **リリースごと**: [docs/TESTING.md](docs/TESTING.md) の「リリースごとの記録」に自動テスト・モック・EXE・実機の結果を書く。手順は [docs/RELEASING.md](docs/RELEASING.md)。
 - **実機の計測を集める**: Windows 以外の端末での動作と、`/scriptevent <接頭辞>:stats` の結果を [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) と [docs/PERFORMANCE.md](docs/PERFORMANCE.md) に追記する (まだ Windows の `bench` しか無い)。
 
-## 🔴 優先度: 高 (Phase 8: In-World Rendering & Perceptual Stability)
+## 🔴 優先度: 高 (Phase 10: 画質を保ったまま軽くする)
+
+v6.11〜v6.14 で、実機の録画・実写 16 本・新しいジャンル 24 本 (どれも手元だけで使う) を元の映像と比べて画質を上げた
+(docs/research/phase7x.md の 17〜20 章)。代わりに、利用者のアニメ MV のデータが 1.8 → 3.5 MB に増えた。
+
+### ✅ 10.1 データの文字列化 (v6.15、21 章)
+- 15 ビット/文字 (UTF-8 で 1.6 倍に膨らむ) → base64。JS ファイル −16%、.mcaddon −15%、JS の展開 −33%。画質は同じ。
+
+### 10.2 文脈を使うエントロピー符号化
+- 今のハフマン符号 2,124 KB に対し、xz では 1,734 KB (−18%)。隣の画素・前のフレームを文脈にした符号化 (算術符号など) で
+  縮める。QuickJS での復号の速さ (GOP の展開は tick をまたいで少しずつ) を測ってから決める。
+
+### 10.3 まだ弱いジャンル
+- 暗い舞台の人物 (Dancers、MS-SSIM 0.83)、アメフトの芝の緑が黄土色寄り、スライドの色付きの見出し帯の粒、
+  口の中のような小さな赤い面に混ざるオレンジの粒 (パターンディザ)。
+
+### 10.4 実機での確認
+- v6.14 以降の実機の録画 (パターンディザ・崩れの上限)、スマートフォン・ゲーム機での `stats`。
+
+### ✅ v6.11〜v6.14 で済んだこと
+- **v6.11**: GPU の減色の古い更新制御を外す (前の映像が 8×8 で残る問題)、黒い画面から始まる場面のパレットの使い回しを修正、
+  自動の色数の倍率 1.05 → 1.02。ブラウザ版で MagicaVoxel (.vox)。
+- **v6.12**: 減色で OkLab の色合いを 2 倍に重く見る (暗い緑が茶色になる問題)、CPU も OkLab に、乾燥した昆布ブロック (198 色)。
+- **v6.13**: 8×8 ごとの崩れの上限 (`--rdo-block-cap`、スライドの文字が消える・白い面に四角が残る問題)。
+- **v6.14**: Blue Noise をパターンディザ (Knoll) に (暗いグラデーションの粒・白っぽい肌)。
+
+---
+
+## 🟠 済んだフェーズ (Phase 8〜9)
+
+### (Phase 8: In-World Rendering & Perceptual Stability)
 
 ### ✅ 8.1 描画方式の自動選択 (実装済み)
 - **概要**: `/scriptevent <接頭辞>:bench` の結果 (方式ごとの µs/ブロック と 1 回あたりの費用) をワールドに保存し、フレームごとに「呼び出し回数 × 1 回の費用 + ブロック数 × 1 個の費用」が最小の方式 (箱 / 座標リスト / 1 個ずつ) を選ぶ。
@@ -52,7 +82,7 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 ### ✅ GUI の Web アプリケーション化 (Web-based Converter、v6.10 でベータ版)
 - **構成** (`web/`): 動画のコマは `<video>` + canvas、音声は WebAudio で 22.05 kHz モノラルの WAV (統合版は .wav も再生できる) にしてブラウザで取り出し、変換とアドオンの組み立ては Web Worker の Pyodide (WebAssembly の Python) で Windows 版と同じ `convert.py` / `mvcodec` / `pack_builder.py` を動かす。FFmpeg.wasm は使わない (大きく、ブラウザの動画の読み込みで足りる)。
 - **公開**: `scripts/build_web.py` でサイトを組み立て、`.github/workflows/pages.yml` で GitHub Pages に置く。CI は Node の Pyodide で変換と組み立てが最後まで動くことを確かめる (32bit の整数の違いを見つけるため)。
-- **制限**: CPU だけ (GPU の減色・K-Means は使えず、自動パレットは色の数え上げで選ぶ)、.vox は未対応、音声は WAV なのでアドオンが大きい。
+- **制限**: CPU だけ (GPU の減色・K-Means は使えず、自動パレットは色の数え上げで選ぶ)、音声は WAV なのでアドオンが大きい。.vox は v6.11 で対応。
 
 ### ✅ 画面アスペクト比の自由自動調整 (v6.4.0 で実装済み)
 - GUI の「動画の縦横比に合わせる」ボタンで、黒帯が出ない幅・高さを提案する (回転した動画も考慮)。

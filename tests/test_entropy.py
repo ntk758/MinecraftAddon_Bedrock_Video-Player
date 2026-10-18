@@ -72,9 +72,9 @@ def test_v6_is_exact_and_smaller(tmp_path):
         assert gop_bytes_of(v6, gop_id) == utf16_str_to_bytes(v5["chunks"][gop_id])
     for (a, _), (b, _) in zip(iter_decoded_frames(v6), iter_decoded_frames(v5)):
         assert np.array_equal(a, b)
-    size = lambda d: sum(len(c) for c in d["chunks"])  # noqa: E731
+    size = lambda d: sum(len(utf16_str_to_bytes(c)) for c in d["chunks"])  # noqa: E731 (バイト数で比べる)
     assert size(v6) < size(v5) * 0.8, (size(v6), size(v5))
-    # 小さすぎて縮まない GOP は生のまま入れるので、増えても 1 GOP あたり 1 文字まで
+    # 小さすぎて縮まない GOP は生のまま入れるので、増えても 1 GOP あたり 1 バイト (入れ物の印) まで
     tiny, tiny_v5 = make_video(tmp_path, "--width", "24", "--height", "16")[1], make_video(tmp_path, "--width", "24",
                                                                                                "--height", "16",
                                                                                                "--no-entropy")[1]

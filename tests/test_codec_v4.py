@@ -175,3 +175,15 @@ def test_auto_device_output_is_consistent(tmp_path, palette):
     assert all(entries[start][3] for start in data["gop_boundaries"][:-1])
     for index_board, _rgb in iter_decoded_frames(data):
         assert index_board.min() >= 0
+
+
+def test_base64_text_roundtrip_and_old_strings_still_decode():
+    """v6.15 からは "B:" + base64 で書く。以前の 15bit/文字 の文字列も読める (古いアドオンのデータを調べるため)。"""
+    from mvcodec.encode import bytes_to_text
+
+    for n in (0, 1, 2, 3, 4, 100, 4097):
+        data = bytes((i * 37 + 11) & 255 for i in range(n))
+        text = bytes_to_text(data)
+        assert utf16_str_to_bytes(text) == data
+        assert all(ord(ch) < 128 for ch in text)  # ASCII だけ (UTF-8 で 1 文字 1 バイト)
+        assert utf16_str_to_bytes(bytearray_to_utf16_str(data)) == data
