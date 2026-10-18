@@ -131,3 +131,28 @@ def test_heightfield_colour_plane_is_optimized_without_touching_the_shape(tmp_pa
     rdo(np.zeros((4, 8), np.int32), np.full((4, 8, 3), 128, np.uint8), PALETTE, None, place_weight=np.zeros((4, 8)))
     assert rdo._distortion(np.full((4, 8), 3), rdo._palette_lab(PALETTE), np.zeros((4, 8, 3), np.float32),
                            np.zeros((4, 8, 3), np.float32)).sum() == 0
+
+
+def test_thin_text_on_a_static_page_is_not_painted_over():
+    """動きのない白いページの、細い灰色の文字 (縮小でにじんだ文字) の入ったブロックを、前の盤面 (文字の無い白) で済ませない。
+    強さの予算はフレーム全体の平均なので、以前は少しのブロックの大きな崩れが平均に埋もれて、文字が消えていた。"""
+    palette = np.array([[250, 250, 250], [200, 200, 200]], np.float32)
+    h, w = 64, 128
+    source = np.full((h, w, 3), 250, np.uint8)
+    source[20, 8:40] = 200  # 1 行の細い文字の画
+    indices = np.where(source[..., 0] == 200, 1, 0).astype(np.int32)
+    reference = np.zeros((h, w), np.int32)  # 表示中は真っ白 (文字が消えた状態)
+    for strength in (64, "auto"):
+        out = BlockRDO(strength)(indices, source, palette, reference)
+        assert np.array_equal(out, indices), strength
+
+
+def test_block_cap_zero_restores_the_previous_behaviour():
+    """--rdo-block-cap 0 は上限なし (v6.12.0 まで): 細い文字のブロックの一部を前の盤面で済ませてしまう。"""
+    palette = np.array([[250, 250, 250], [200, 200, 200]], np.float32)
+    source = np.full((64, 128, 3), 250, np.uint8)
+    source[20, 8:40] = 200
+    indices = np.where(source[..., 0] == 200, 1, 0).astype(np.int32)
+    reference = np.zeros((64, 128), np.int32)
+    out = BlockRDO(64, block_cap=0)(indices, source, palette, reference)
+    assert (out == 1).sum() < (indices == 1).sum()  # 文字の画の一部が消える

@@ -29,7 +29,7 @@ from mvcodec.color import (
 from gui_i18n import LOCALES, Translator, detect_system_language
 from mvcodec.device import DEVICE_CHOICES, detect_gpu, empty_cache, squared_distances
 from mvcodec.dither_motion import DitherAligner
-from mvcodec.block_rdo import AUTO_BUDGET, MODES as BLOCK_MODES, BlockRDO
+from mvcodec.block_rdo import AUTO_BUDGET, BLOCK_ERROR_CAP, MODES as BLOCK_MODES, BlockRDO
 # 条件付き更新のしきい値 (RGB の距離)。前のブロックの色がこれ以内しか悪くならなければ変えない
 TEMPORAL_HYSTERESIS = 24.0
 # ブロックモードのレート歪み最適化の強さ (mvcodec/block_rdo.py。0 で無効)。auto はフレームごとに選ぶ
@@ -460,6 +460,9 @@ def parse_args(argv=None):
                              "データ形式は変わらない")
     parser.add_argument("--rdo-budget", type=float, default=AUTO_BUDGET,
                         help="--block-rdo auto で、1 画素あたりに増やしてよい色の誤差 (OkLab×100 の二乗、3×3 でぼかした差の平均)")
+    parser.add_argument("--rdo-block-cap", type=float, default=BLOCK_ERROR_CAP,
+                        help="ブロックモードの最適化で、1 つのブロックに増やしてよい色の誤差 (1 画素あたり、--rdo-budget と同じ単位)。"
+                             "小さいほど文字や白い面の 8×8 の崩れが減り、データが増える。0 で上限なし (v6.12.0 まで)")
     parser.add_argument("--dither-follow-motion", action=argparse.BooleanOptionalAction, default=False,
                         help="Blue Noise / Ordered のディザ模様を映像の全体の動き (パン) に合わせてずらす。"
                              "パンのデータは大きく減るが、模様が毎フレーム動くので置き直すブロックは増える (既定は無効)")
@@ -813,7 +816,7 @@ def main(argv=None):
     if args.block_rdo == "auto" or args.block_rdo > 0:
         modes = [mode for mode in BLOCK_MODES if args.motion or mode != "motion"]
         block_rdo = BlockRDO(args.block_rdo, modes=modes, hysteresis=args.temporal_hysteresis, mv_range=args.mv_range,
-                             budget=args.rdo_budget)
+                             budget=args.rdo_budget, block_cap=args.rdo_block_cap)
     source_frames = {}
 
     def tee_originals(frames):
