@@ -230,8 +230,12 @@ def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MA
     cache = {}
 
     def build(samples, first_frame):
-        # 同じ見た目で始まる GOP はパレットを使い回す (JS 側の容量節約)
-        thumb_hash = hashlib.md5(np.ascontiguousarray(first_frame[::8, ::8]).tobytes()).hexdigest()
+        # 同じ見た目の GOP はパレットを使い回す (JS 側の容量節約)。最初のコマだけで比べると、黒い画面から
+        # 始まる別々の場面が同じパレットになってしまうので、パレットを作るのに使うコマ全部で比べる
+        digest = hashlib.md5(np.ascontiguousarray(first_frame[::8, ::8]).tobytes())
+        for sample in samples:
+            digest.update(np.ascontiguousarray(sample[::8, ::8]).tobytes())
+        thumb_hash = digest.hexdigest()
         if thumb_hash not in cache:
             cache[thumb_hash] = generate_auto_palette(
                 samples, candidates, max_colors=max_colors, device=gpu.torch_device if gpu else None, sample_stride=1,
@@ -254,10 +258,14 @@ def iter_gop_ids(gop_boundaries):
 
 
 def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
-                        dither_method="none", apply_perceptual=True, gpu=None, dither_follow_motion=False):
-    """GPU (CUDA / ROCm / DirectML) で OkLab 色空間マッチング + RDO + 時間方向ディザを行い、フレームごとに (H, W) のパレット番号を返す。
+                        dither_method="none", apply_perceptual=True, gpu=None, dither_follow_motion=False,
+                        temporal_hysteresis=0.0):
+    """GPU (CUDA / ROCm / DirectML) で OkLab 色空間のマッチングとディザを行い、フレームごとに (H, W) のパレット番号を返す。
 
-    パレットが切り替わる GOP 境界では前フレーム参照 (RDO / 時間方向ディザ) をリセットする。
+    temporal_hysteresis > 0 なら CPU 版 (keep_previous_blocks) と同じく、前のフレームから色がほとんど変わらない
+    画素は前の番号のままにする。どのブロックを置き直すか (データ量・描画の手間とのかね合い) はブロックモードの
+    最適化 (mvcodec/block_rdo.py) が元の色と比べて決めるので、ここでは各フレームをできるだけ忠実に減色する。
+    パレットが切り替わる GOP 境界では前フレームの参照をリセットする。
     gpu が None の場合は PyTorch の CPU 実行になる (テスト用)。
     """
     import torch
@@ -271,7 +279,7 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
         return t, rgb_to_oklab_torch(t)
 
     dither_scale = {"ordered": 32.0, "blue_noise": 64.0}.get(dither_method)
-    # ディザ模様と前フレーム由来の状態を、映像の全体の動きに合わせてずらす (mvcodec/dither_motion.py)
+    # ディザ模様と前フレームの番号を、映像の全体の動きに合わせてずらす (mvcodec/dither_motion.py)
     aligner = DitherAligner(enabled=dither_follow_motion and dither_scale is not None)
     offset = (0, 0)
 
@@ -279,112 +287,43 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
         pattern = dither_pattern(dither_method, width, height, position) * dither_scale
         return torch.tensor(np.stack([pattern] * 3, axis=-1), dtype=torch.float32, device=device)
 
-    def analyze_scene(diff_ratio):
-        # フレーム変化率に基づいて (RDO閾値, ME閾値, 更新予算, 時間方向ディザ重み) を決定
-        if diff_ratio < 0.01:
-            return 40.0, 3.0, int(width * height * 0.05), 0.2
-        elif diff_ratio < 0.05:
-            return 25.0, 5.0, int(width * height * 0.10), 0.4
-        elif diff_ratio < 0.20:
-            return 15.0, 7.0, int(width * height * 0.20), 0.5
-        elif diff_ratio < 0.50:
-            return 8.0, 10.0, int(width * height * 0.35), 0.6
-        else:
-            return 0.0, 0.0, width * height, 0.8
-
     current_palette = None
     pal_tensor = pal_oklab = None
-    temporal_dither_weight = 0.5
+    prev_idx_tensor = None
 
     for i, (img_arr, gop_id) in enumerate(zip(frames, iter_gop_ids(gop_boundaries))):
         if gop_palettes_rgb[gop_id] is not current_palette:
             current_palette = gop_palettes_rgb[gop_id]
             pal_tensor, pal_oklab = get_pal_tensors(current_palette)
-            # パレット番号の意味が変わるので前フレーム由来の状態は全て破棄する
-            error_buffer = torch.zeros((height, width, 3), dtype=torch.float32, device=device)
-            importance_buffer = torch.zeros((height, width), dtype=torch.float32, device=device)
+            # パレット番号の意味が変わるので前フレームの番号は使わない
             prev_idx_tensor = None
-            prev_orig_img_tensor = None
 
         new_offset = aligner.update(img_arr)
         dx, dy = new_offset[0] - offset[0], new_offset[1] - offset[1]
         offset = new_offset
         if (dx or dy) and prev_idx_tensor is not None:
-            # 中身が (dx, dy) ずれたので、前フレーム由来の状態も同じだけずらす: 今[y][x] ← 前[y + dy][x + dx]
-            roll = lambda t: torch.roll(t, shifts=(-dy, -dx), dims=(0, 1))  # noqa: E731
-            error_buffer = roll(error_buffer)
-            importance_buffer = roll(importance_buffer)
-            prev_idx_tensor = roll(prev_idx_tensor)
-            prev_orig_img_tensor = roll(prev_orig_img_tensor)
+            # 中身が (dx, dy) ずれたので、前フレームの番号も同じだけずらす: 今[y][x] ← 前[y + dy][x + dx]
+            prev_idx_tensor = torch.roll(prev_idx_tensor, shifts=(-dy, -dx), dims=(0, 1))
 
         orig_img_tensor = torch.tensor(img_arr, dtype=torch.float32, device=device)
-        img_tensor = orig_img_tensor.clone()
-
-        # Temporal Dithering (前フレームからの誤差を加算)
-        img_tensor += error_buffer
-
+        img_tensor = orig_img_tensor
         if dither_scale is not None:
             dither_tensor = dither_tensor_at(offset)
             bias = dither_tensor * get_edge_mask_gpu(img_tensor) if apply_perceptual else dither_tensor
-            img_tensor += bias
-            img_tensor = torch.clamp(img_tensor, 0, 255)
+            img_tensor = torch.clamp(img_tensor + bias, 0, 255)
 
         # OkLab 知覚色空間でのカラーマッチング
         img_oklab = rgb_to_oklab_torch(img_tensor.view(-1, 3))
         idx_tensor = torch.argmin(squared_distances(img_oklab, pal_oklab), dim=1).view(height, width)
 
-        # Rate-Distortion Optimization (RDO) & Motion Estimation (ME)
-        if prev_idx_tensor is not None:
-            # シーン適応型圧縮: 変化ピクセル率を RGB 差分から大まかに計算
-            diff_orig = torch.abs(orig_img_tensor - prev_orig_img_tensor).mean(dim=-1)
-            diff_orig_pool = torch.nn.functional.avg_pool2d(
-                diff_orig.unsqueeze(0).unsqueeze(0), kernel_size=3, stride=1, padding=1
-            ).squeeze(0).squeeze(0)
-
-            diff_ratio = (diff_orig_pool > 5.0).float().mean().item()
-            rdo_threshold, me_threshold, max_update_pixels, temporal_dither_weight = analyze_scene(diff_ratio)
-
-            # 1. ME Mask (背景静止化 - RGBベース)
-            me_mask = diff_orig_pool < me_threshold
-
-            # 2. RDO (ディザリング抑制 - OkLabベース)
-            prev_colors_oklab = pal_oklab[prev_idx_tensor]
-            dist_to_prev_oklab = torch.norm(img_oklab.view(height, width, 3) - prev_colors_oklab, dim=-1)
-
-            # 局所分散に応じた知覚的 RDO (平坦部ほど閾値を上げる)
-            gray = orig_img_tensor.mean(dim=-1, keepdim=True).permute(2, 0, 1).unsqueeze(0)
-            mean_sq = torch.nn.functional.avg_pool2d(gray, 3, stride=1, padding=1)**2
-            sq_mean = torch.nn.functional.avg_pool2d(gray**2, 3, stride=1, padding=1)
-            variance = torch.clamp(sq_mean - mean_sq, min=0.0).squeeze()
-            norm_var = torch.clamp(variance / 500.0, 0.0, 1.0)
-            perceptual_scale = 1.0 + (1.0 - norm_var) * 2.0  # Edges=1x threshold, Flat=3x threshold
-
-            rdo_mask = dist_to_prev_oklab < (rdo_threshold / 255.0) * perceptual_scale
-
-            # 3. Budget (予算ベース描画)
-            want_to_update = ~(me_mask | rdo_mask)
-            importance_buffer += torch.where(want_to_update, dist_to_prev_oklab, torch.zeros_like(dist_to_prev_oklab))
-
-            # 更新希望数が予算を超える場合のみ、重要度上位だけを更新する
-            if want_to_update.sum().item() > max_update_pixels:
-                flat_importance = importance_buffer.view(-1)
-                _, topk_indices = torch.topk(flat_importance, max_update_pixels)
-                budget_mask = torch.zeros_like(flat_importance, dtype=torch.bool)
-                budget_mask[topk_indices] = True
-                reuse_mask = ~budget_mask.view(height, width)
-            else:
-                reuse_mask = ~want_to_update
-
-            idx_tensor = torch.where(reuse_mask, prev_idx_tensor, idx_tensor)
-            importance_buffer = torch.where(idx_tensor != prev_idx_tensor, torch.zeros_like(importance_buffer), importance_buffer)
-
-        # Temporal Dithering のための誤差計算 (蓄積しすぎないようクランプ)
-        selected_colors = pal_tensor[idx_tensor]
-        error_buffer = torch.clamp((img_tensor - selected_colors) * temporal_dither_weight, -32.0, 32.0)
+        if prev_idx_tensor is not None and temporal_hysteresis > 0:
+            # 条件付き更新 (keep_previous_blocks と同じ): 誤差は今のフレームの元の色と比べるので積み重ならない
+            new_error = ((pal_tensor[idx_tensor] - orig_img_tensor) ** 2).sum(-1)
+            old_error = ((pal_tensor[prev_idx_tensor] - orig_img_tensor) ** 2).sum(-1)
+            idx_tensor = torch.where(old_error <= new_error + temporal_hysteresis ** 2, prev_idx_tensor, idx_tensor)
 
         yield idx_tensor.cpu().numpy().astype(np.int32)
-        prev_idx_tensor = idx_tensor.clone()
-        prev_orig_img_tensor = orig_img_tensor.clone()
+        prev_idx_tensor = idx_tensor
 
         if i % 64 == 0:
             empty_cache(gpu)
@@ -503,7 +442,7 @@ def parse_args(argv=None):
     parser.add_argument("--palette-colors", type=palette_colors, default=AUTO_PALETTE_COLORS,
                         help=f"--palette auto で GOP ごとに選ぶブロックの色数の上限 (候補は {len(AUTO_PALETTE_CANDIDATES)} 色。"
                              "減らすとディザの粒・ちらつき・データが減るが、色の再現は粗くなる)。既定の auto はシーンごとに "
-                             "24 / 32 / 48 / 64 色から、色の誤差が 64 色のときの 1.05 倍以内に収まる一番少ない色数を選ぶ")
+                             "24〜127 色から、色の誤差が 127 色のときの 1.02 倍以内に収まる一番少ない色数を選ぶ")
     parser.add_argument("--dither-method", default="none", choices=["none", "floyd", "ordered", "blue_noise", "atkinson", "burkes", "sierra"])
     parser.add_argument("--temporal-hysteresis", type=float, default=TEMPORAL_HYSTERESIS,
                         help="前のフレームと同じブロックの色が、新しく選んだ色より RGB の距離でこの値以内しか悪くならないなら"
@@ -887,7 +826,8 @@ def main(argv=None):
     if gpu is not None and dither_method in GPU_DITHER_METHODS:
         quantized = quantize_frames_gpu(pass2_frames, gop_palettes_rgb, gop_boundaries, width, height,
                                         dither_method, apply_perceptual=args.perceptual, gpu=gpu,
-                                        dither_follow_motion=args.dither_follow_motion)
+                                        dither_follow_motion=args.dither_follow_motion,
+                                        temporal_hysteresis=args.temporal_hysteresis)
     else:
         quantized = quantize_frames_cpu(pass2_frames, gop_palettes, gop_boundaries, width, height,
                                         dither_method, args.perceptual, args.threads, args.dither_follow_motion,

@@ -69,3 +69,24 @@ def test_gpu_quantizer_runs_on_torch_cpu(dither):
     assert len(results) == 6
     for r in results:
         assert r.shape == (16, 24) and r.min() >= 0 and r.max() < len(pal_a)
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch が必要")
+def test_gpu_quantizer_follows_scene_changes():
+    """GPU の減色は、場面が大きく変わったフレームで前の映像の画素を残さない (v6.10.0 までは 1 フレームに置き直す
+    画素数に上限があり、上限を超えた分は前の映像のまま残っていた)。前のフレームとほぼ同じ色の画素だけを残す。"""
+    pal = np.array([item["rgb"] for item in PALETTES["full"]], dtype=np.float64)
+    rng = np.random.default_rng(1)
+    a = rng.integers(0, 256, size=(16, 24, 3), dtype=np.uint8)
+    b = rng.integers(0, 256, size=(16, 24, 3), dtype=np.uint8)
+    alone = next(convert.quantize_frames_gpu([b], [pal], [0, 1], 24, 16, "none", True, gpu=None))
+    first, second = list(convert.quantize_frames_gpu([a, b], [pal], [0, 2], 24, 16, "none", True, gpu=None,
+                                                     temporal_hysteresis=0.0))
+    assert np.array_equal(second, alone)
+    # 条件付き更新: 前の番号のままにした画素は、元の色との差が新しい番号より hysteresis 以内しか悪くならない
+    _, kept = list(convert.quantize_frames_gpu([a, b], [pal], [0, 2], 24, 16, "none", True, gpu=None,
+                                               temporal_hysteresis=24.0))
+    new_err = ((pal[alone] - b) ** 2).sum(-1)
+    kept_err = ((pal[kept] - b) ** 2).sum(-1)
+    assert np.all(kept_err <= new_err + 24.0 ** 2 + 1e-6)
+    assert (kept != alone).any()
