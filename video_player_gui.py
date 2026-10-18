@@ -52,6 +52,12 @@ def converter_command() -> list[str]:
     return [sys.executable, str(CONVERTER)]
 
 
+def default_output_path() -> Path:
+    """作るアドオンの既定の保存先。EXE 版は EXE と同じフォルダ (以前は中身の _internal フォルダになっていて見つけにくかった)。"""
+    folder = Path(sys.executable).parent if getattr(sys, "frozen", False) else APP_DIR
+    return folder / "VideoPlayer.mcaddon"
+
+
 def get_ffmpeg_path() -> str | None:
     # 1. PyInstaller 内部展開ディレクトリ
     if hasattr(sys, "_MEIPASS"):
@@ -318,7 +324,7 @@ class PackBuilderApp(tk.Tk):
         self.messages = queue.Queue()
         self.building = False
 
-        self.output_var = tk.StringVar(value=str(APP_DIR / "VideoPlayer.mcaddon"))
+        self.output_var = tk.StringVar(value=str(default_output_path()))
         self.pack_name_var = tk.StringVar(value="Block Video Player")
         self.namespace_var = tk.StringVar(value="badapple")
         self.width_var = tk.IntVar(value=64)

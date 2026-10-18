@@ -268,3 +268,15 @@ def test_probe_video_size_applies_rotation(tmp_path):
         pytest.skip("この ffmpeg は -display_rotation に対応していない")
     assert probe_video_size(rotated, ffmpeg) == (180, 320)
     assert suggest_size(180, 320, 128) == (72, 128)
+
+
+def test_default_output_is_next_to_the_exe(monkeypatch, tmp_path):
+    """EXE 版の既定の保存先は EXE と同じフォルダ (中身の _internal フォルダではない)。"""
+    import video_player_gui as gui
+
+    exe = tmp_path / "BlockVideoPlayer" / "BlockVideoPlayer.exe"
+    monkeypatch.setattr(gui.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(gui.sys, "executable", str(exe))
+    assert gui.default_output_path() == exe.parent / "VideoPlayer.mcaddon"
+    monkeypatch.setattr(gui.sys, "frozen", False)
+    assert gui.default_output_path().parent == gui.APP_DIR
