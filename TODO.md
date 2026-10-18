@@ -59,8 +59,11 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 
 ## 🟢 優先度: 低 (Low Priority / Research)
 
-### 8.8 実映像での評価
-- **概要**: 権利上公開できる実映像のデータセットで、データ量・呼び出し回数・ゲーム内の tick 時間 (MSPT)・ちらつき (時間方向の変化率) を CI で継続計測する。合成映像は辞書の再利用を多く (または少なく) 見積もるおそれがある。
+### ✅ 8.8 実映像での評価 (実装済み。詳細は docs/research/phase7x.md の 15 章)
+- **データ**: Blender Foundation のオープンムービー 3 本 (実写・CG・アニメ、CC-BY 3.0)。リポジトリには入れず、公式の配布元から取得する (`benchmark/datasets/real_videos.json`)。
+- **計測**: `benchmark/real_video_bench.py` でデータ量・画質・ちらつき・ゲーム内の描画時間の見積もり・変換時間。週 1 回の CI (`.github/workflows/real-video-bench.yml`) で最新のタグと比べる。
+- **結果** (v6.6.0 比、既定の設定): データ −34〜−49%、描画時間 −2〜−34%。実写では MS-SSIM が −0.04 と合成映像より大きく下がる。
+- **次の課題**: ゲーム内の実際の tick 時間 (MSPT) は実機の `stats` でしか測れない。実写向けに `--block-rdo` の強さを映像に合わせて決める。
 
 ### 可変パレットの精度向上 (Per-Video Custom K-Means Block Mapping)
 - **検証済み (Issue #3)**: OkLab でのクラスタリングを `--palette-space oklab` として実装し比較した ([docs/research/palette_space.md](docs/research/palette_space.md))。候補が 39 色しか無いため既定 (上限 64 色) では全ブロックが選ばれて差が出ず、16 色に絞ると映像によって良し悪しが分かれたので、既定は RGB のまま。

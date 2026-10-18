@@ -55,3 +55,16 @@ python benchmark/rdo_bench.py --out bench_out --strengths 0 16 32
 タイル辞書に回転・反転の参照を足したときの効果の見積もりは `tile_orientation_study.py` です (結果は docs/research/phase7x.md の 12 章)。
 
 `cloneBlocks` で動きベクトルのブロックをコピーしたときの得の見積もりは `clone_study.py` です (結果は docs/research/phase7x.md の 13 章)。
+
+## 実映像での評価 (`real_video_bench.py`、Phase 8.8)
+
+`benchmark/datasets/real_videos.json` の実映像で、データ量・画質 (ΔE2000・MS-SSIM)・ちらつき・ゲーム内の描画時間の見積もり・変換時間を測ります。映像はリポジトリに入れず、初回に公式の配布元から取得して `--cache` (既定 `<out>/videos`) に置きます。`--baseline` に git の版を渡すと並べて比べます。週 1 回の CI (`.github/workflows/real-video-bench.yml`) でも最新のタグと比べています。
+
+```bash
+python benchmark/real_video_bench.py --out bench_out --baseline v6.7.0
+```
+
+使っている映像 (どれも CC-BY 3.0):
+- Tears of Steel — (CC) Blender Foundation | mango.blender.org
+- Sintel (予告編) — © copyright Blender Foundation | durian.blender.org
+- Big Buck Bunny (予告編) — (c) copyright 2008, Blender Foundation | www.bigbuckbunny.org
