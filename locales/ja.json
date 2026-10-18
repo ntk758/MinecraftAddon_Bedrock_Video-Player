@@ -37,7 +37,7 @@
   "preset.detail": "高精細 (128×128 / 5fps)",
   "preset.ultra": "ウルトラ (256×256 / 5fps)",
   "preset.extreme": "極限 (512×512 / 2fps)",
-  "palette.auto": "自動 (おすすめ: 190 色の候補からシーンごとに最大 127 色)",
+  "palette.auto": "自動 (おすすめ: 191 色の候補からシーンごとに最大 127 色)",
   "palette.all": "全ブロック 127 色 (コンクリート・テラコッタ・羊毛・木材・石・光るブロックなど)",
   "palette.full": "全39色(concrete + terracotta + 自発光)",
   "palette.expanded": "拡張 33色（concrete + terracotta）",

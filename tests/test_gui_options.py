@@ -60,7 +60,7 @@ def test_dither_prefix_matching():
 def test_palette_options():
     """パレット選択肢の判定テスト"""
     expected = {
-        "自動 (おすすめ: 190 色の候補からシーンごとに最大 127 色)": "auto",
+        "自動 (おすすめ: 191 色の候補からシーンごとに最大 127 色)": "auto",
         "全ブロック 127 色 (コンクリート・テラコッタ・羊毛・木材・石・光るブロックなど)": "all",
         "全39色(concrete + terracotta + 自発光)": "full",
         "拡張 33色（concrete + terracotta）": "expanded",

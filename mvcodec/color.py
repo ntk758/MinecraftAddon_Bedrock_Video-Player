@@ -268,6 +268,8 @@ def process_single_frame_img(img, pal_img, width, height, num_colors, dither_met
             bn_tiled *= mask
         img_arr = np.array(img, dtype=np.float32) + bn_tiled
         img = Image.fromarray(np.clip(img_arr, 0, 255).astype(np.uint8))
+        if palette_rgb is not None:
+            return nearest_oklab_indices(np.asarray(img), palette_rgb)
         q = img.quantize(palette=pal_img, dither=Image.Dither.NONE)
         return np.array(q, dtype=np.int32) % num_colors
     elif dither_method == 'ordered':
@@ -276,6 +278,8 @@ def process_single_frame_img(img, pal_img, width, height, num_colors, dither_met
             bayer_tiled = bayer_tiled * get_edge_mask_cpu(img)
         img_arr = np.array(img, dtype=np.float32) + bayer_tiled
         img = Image.fromarray(np.clip(img_arr, 0, 255).astype(np.uint8))
+        if palette_rgb is not None:
+            return nearest_oklab_indices(np.asarray(img), palette_rgb)
         q = img.quantize(palette=pal_img, dither=Image.Dither.NONE)
         return np.array(q, dtype=np.int32) % num_colors
     elif dither_method in ('atkinson', 'burkes', 'sierra'):
@@ -286,8 +290,29 @@ def process_single_frame_img(img, pal_img, width, height, num_colors, dither_met
         q = img.quantize(palette=pal_img, dither=Image.Dither.FLOYDSTEINBERG)
         return np.array(q, dtype=np.int32) % num_colors
     else:
+        if palette_rgb is not None:
+            return nearest_oklab_indices(np.asarray(img), palette_rgb)
         q = img.quantize(palette=pal_img, dither=Image.Dither.NONE)
         return np.array(q, dtype=np.int32) % num_colors
+
+
+# 減色 (CPU / GPU) で、OkLab の色合い (a, b) の差に掛ける重み。1 だと暗い緑の木の葉・芝生が、明るさの近い茶色や
+# 青緑のブロックになっていた。実写 16 本でぼかした色差 −7%、評価用 8 本で −2%、データ −8〜12% (GPU)。
+# CPU は以前 Pillow の RGB の距離で選んでいて、同じ OkLab にしたことで実写のぼかした色差が −11%
+# (docs/research/phase7x.md の 18 章)
+CHROMA_WEIGHT = 2.0
+
+
+def nearest_oklab_indices(rgb, palette_rgb):
+    """各画素に一番近いパレットの色の番号 (OkLab、色合いの差を CHROMA_WEIGHT 倍に重く見る)。"""
+    from mvcodec.block_rdo import rgb_to_oklab
+
+    scale = np.array([1.0, CHROMA_WEIGHT, CHROMA_WEIGHT], np.float32)
+    lab = rgb_to_oklab(np.asarray(rgb, dtype=np.uint8)).reshape(-1, 3) * scale
+    pal = rgb_to_oklab(np.clip(np.asarray(palette_rgb), 0, 255).astype(np.uint8)) * scale
+    # |x - p|^2 = |x|^2 - 2 x.p + |p|^2 (|x|^2 は比較に要らない)
+    d = (pal ** 2).sum(1)[None] - 2.0 * lab @ pal.T
+    return d.argmin(1).astype(np.int32).reshape(np.asarray(rgb).shape[:2])
 
 def rgb_to_oklab_torch(rgb_tensor):
     import torch

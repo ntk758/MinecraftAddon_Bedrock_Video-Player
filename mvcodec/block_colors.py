@@ -1,7 +1,7 @@
 """ブロックの見た目の平均色 (自動生成: scripts/generate_block_colors.py。手で書き換えない)。
 
 出典: Mojang/bedrock-samples 1.26.50.4 のテクスチャの上面 (rgb) と側面 (side) を線形の明るさで平均した sRGB。
-1.21.80 (v1.21.80.3) にもあるブロックだけ。213 色 (うち半透明 16 色。alpha は平均の不透明度)。
+1.21.80 (v1.21.80.3) にもあるブロックだけ。214 色 (うち半透明 16 色。alpha は平均の不透明度)。
 """
 
 BLOCK_COLORS = [
@@ -165,6 +165,7 @@ BLOCK_COLORS = [
     {"group": "mineral", "block": "minecraft:deepslate_lapis_ore", "rgb": (87, 95, 128), "side": (87, 95, 128)},
     {"group": "mineral", "block": "minecraft:diamond_block", "rgb": (113, 238, 229), "side": (113, 238, 229)},
     {"group": "mineral", "block": "minecraft:diamond_ore", "rgb": (126, 147, 146), "side": (126, 147, 146)},
+    {"group": "other", "block": "minecraft:dried_kelp_block", "rgb": (64, 69, 51), "side": (48, 56, 39)},
     {"group": "mineral", "block": "minecraft:emerald_block", "rgb": (57, 206, 99), "side": (57, 206, 99)},
     {"group": "mineral", "block": "minecraft:emerald_ore", "rgb": (118, 143, 122), "side": (118, 143, 122)},
     {"group": "other", "block": "minecraft:fletching_table", "rgb": (200, 183, 140), "side": (197, 180, 147)},

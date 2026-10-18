@@ -59,6 +59,13 @@ def _srgb_to_linear(c):
 _LINEAR_LUT = _srgb_to_linear(np.arange(256))
 
 
+# 色の誤差を測るときに、OkLab の色合い (a, b) に掛ける重み。減色 (mvcodec/color.py の CHROMA_WEIGHT) と同じ考え方で、
+# 色合いの崩れ (緑の芝生が茶色の 8×8 になるなど) を重く見る。1.5 で実写 16 本のぼかした色差 −3%、評価用 8 本で −1〜−5%、
+# データ +3〜+19%。2 にすると木の映像の MS-SSIM が −0.05 と落ちた (docs/research/phase7x.md の 18 章)
+RDO_CHROMA_WEIGHT = 1.5
+_LAB_SCALE = np.array([1.0, RDO_CHROMA_WEIGHT, RDO_CHROMA_WEIGHT], np.float32)
+
+
 def rgb_to_oklab(rgb):
     """(..., 3) の sRGB (0〜255) を OkLab × 100 にする。"""
     rgb = np.asarray(rgb)
@@ -116,7 +123,7 @@ class BlockRDO:
         key = id(palette_rgb)
         if key != self._palette_key:
             self._palette_key = key
-            self._pal_lab = rgb_to_oklab(np.asarray(palette_rgb, dtype=np.float32))
+            self._pal_lab = rgb_to_oklab(np.asarray(palette_rgb, dtype=np.float32)) * _LAB_SCALE
         return self._pal_lab
 
     def __call__(self, indices, source_rgb, palette_rgb, reference=None, place_weight=None):
@@ -134,7 +141,7 @@ class BlockRDO:
         self._weight = None if place_weight is None else np.asarray(place_weight, dtype=np.float32).reshape(h, w)
         b = self.block
         pal_lab = self._palette_lab(palette_rgb)
-        src_lab = rgb_to_oklab(source_rgb).reshape(h, w, 3)
+        src_lab = rgb_to_oklab(source_rgb).reshape(h, w, 3) * _LAB_SCALE
         src_blur = _box_blur(src_lab)
         if reference is not None:
             reference = np.asarray(reference, dtype=np.int32).reshape(h, w)
