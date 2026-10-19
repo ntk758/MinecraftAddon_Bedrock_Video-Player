@@ -156,3 +156,34 @@ def test_block_cap_zero_restores_the_previous_behaviour():
     reference = np.zeros((64, 128), np.int32)
     out = BlockRDO(64, block_cap=0)(indices, source, palette, reference)
     assert (out == 1).sum() < (indices == 1).sum()  # 文字の画の一部が消える
+
+
+def test_smooth_gradient_is_not_painted_with_solid_blocks():
+    """なめらかなグラデーション (白い背景のぼかしなど) は 8×8 を単色で塗らない (まだらな四角になる)。
+    gradient_min=0 (v6.16.0 まで) では単色・2 色で塗るブロックが出る。"""
+    from mvcodec.color import knoll_dither_indices
+
+    palette = np.array([[249, 254, 254], [234, 237, 237], [225, 226, 222], [207, 213, 214], [193, 193, 193], [158, 158, 158]],
+                       np.float32)
+    ramp = np.linspace(170, 250, 128, dtype=np.float32)
+    source = np.repeat(np.repeat(ramp[None, :, None], 64, 0), 3, 2).astype(np.uint8)
+    noise = np.random.default_rng(1).random((64, 128))
+    indices = knoll_dither_indices(source, palette, noise).astype(np.int32)
+    flat = ("solid_mean", "solid_mode", "two")
+    old = BlockRDO(64, gradient_min=0)
+    old(indices, source, palette)
+    assert sum(old.stats[m] for m in flat) > 0
+    new = BlockRDO(64)
+    new(indices, source, palette)
+    assert sum(new.stats[m] for m in flat) == 0
+
+
+def test_flat_area_next_to_an_edge_can_still_be_one_block():
+    """輪郭 (差が大きい所) とまったく平らな所は、今までどおり単色で塗れる。"""
+    palette = np.array([[0, 0, 0], [250, 250, 250], [240, 240, 240]], np.float32)
+    source = np.full((64, 128, 3), 245, np.uint8)
+    source[:, 64:] = 0
+    indices = np.where(source[..., 0] == 0, 0, np.indices((64, 128)).sum(0) % 2 + 1).astype(np.int32)
+    rdo = BlockRDO(64)
+    rdo(indices, source, palette)
+    assert rdo.stats["solid_mean"] + rdo.stats["solid_mode"] + rdo.stats["two"] > 0

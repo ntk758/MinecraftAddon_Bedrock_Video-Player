@@ -37,7 +37,7 @@
   "preset.detail": "Detailed (128×128 / 5fps)",
   "preset.ultra": "Ultra (256×256 / 5fps)",
   "preset.extreme": "Extreme (512×512 / 2fps)",
-  "palette.auto": "Auto (recommended: up to 127 of 191 colors per scene)",
+  "palette.auto": "Auto (recommended: up to 127 of 214 colors per scene)",
   "palette.all": "All blocks, 127 colors (concrete, terracotta, wool, wood, stone, light blocks…)",
   "palette.full": "All 39 colors (concrete + terracotta + light blocks)",
   "palette.expanded": "Extended 33 colors (concrete + terracotta)",
