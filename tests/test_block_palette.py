@@ -257,3 +257,36 @@ def test_pattern_dither_gpu_version_matches_cpu():
     cpu = knoll_dither_indices(img, pal, noise)
     gpu = knoll_dither_torch(torch.tensor(img, dtype=torch.float32), torch.tensor(pal), torch.tensor(noise)).numpy()
     assert (cpu == gpu).mean() > 0.99
+
+
+def test_colour_without_a_close_block_gets_two_blocks_to_mix():
+    """近いブロックの無い色 (暗い舞台のズボンの暗いオリーブ色) には、混ぜると近くなる 2 つのブロックを選ぶ。
+    近いブロックがある色は、そのブロック 1 つ。"""
+    from mvcodec.auto_palette import MIX_THRESHOLD, _blocks_for_color
+    from mvcodec.block_rdo import _srgb_to_linear, rgb_to_oklab
+
+    olive = np.array([39, 37, 26], np.float32)
+    picked = _blocks_for_color(olive, AUTO_PALETTE_CANDIDATES, MIX_THRESHOLD)
+    assert len(picked) == 2
+    pair = _srgb_to_linear(np.array([AUTO_PALETTE_CANDIDATES[i]["rgb"] for i in picked], np.float32))
+    mixes = pair[0] * (1 - np.arange(1, 8)[:, None] / 8) + pair[1] * (np.arange(1, 8)[:, None] / 8)
+    mix_srgb = np.where(mixes <= 0.0031308, mixes * 12.92, 1.055 * mixes ** (1 / 2.4) - 0.055) * 255
+    best_mix = np.linalg.norm(rgb_to_oklab(mix_srgb.astype(np.float32)) - rgb_to_oklab(olive[None]), axis=1).min()
+    single = np.linalg.norm(rgb_to_oklab(np.array([b["rgb"] for b in AUTO_PALETTE_CANDIDATES], np.float32))
+                            - rgb_to_oklab(olive[None]), axis=1).min()
+    assert best_mix < single
+    white_wool = next(i for i, b in enumerate(AUTO_PALETTE_CANDIDATES) if b["block"] == "minecraft:white_wool")
+    assert _blocks_for_color(np.array(AUTO_PALETTE_CANDIDATES[white_wool]["rgb"], np.float32),
+                             AUTO_PALETTE_CANDIDATES, MIX_THRESHOLD) == [white_wool]
+
+
+def test_auto_palette_includes_the_mixing_pair():
+    pytest.importorskip("torch")
+    from mvcodec.auto_palette import MIX_THRESHOLD, _blocks_for_color, generate_auto_palette
+
+    frame = np.zeros((48, 64, 3), np.uint8)
+    frame[:, 32:] = (39, 37, 26)
+    palette = generate_auto_palette([frame], AUTO_PALETTE_CANDIDATES, max_colors=8, sample_stride=1)
+    pair = {AUTO_PALETTE_CANDIDATES[i]["block"] for i in _blocks_for_color(np.array([39, 37, 26], np.float32),
+                                                                             AUTO_PALETTE_CANDIDATES, MIX_THRESHOLD)}
+    assert pair <= {b["block"] for b in palette}

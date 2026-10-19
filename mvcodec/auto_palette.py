@@ -10,6 +10,13 @@ OKLAB_SCALE = 100.0
 # グラデーションが粗くなっていた。8 本の評価用映像でぼかした色差 −1〜−9%、データ +10〜15% (docs/research/phase7x.md の 17 章)
 AUTO_COLOR_COUNTS = (24, 32, 48, 64, 96, 127)
 AUTO_COLOR_TOLERANCE = 1.02
+# K-Means の代表色に一番近いブロックが OkLab × 100 でこれより遠いときは、パターンディザで混ぜてその色に一番近くなる
+# 2 つのブロックをパレットに入れる (近いブロックの無い暗いオリーブ色・鮮やかな青などを、混ぜて表せるように)。
+# 2 でジャンル 24 本の色差 −1.6%・実写 16 本で −3.9%、データ +0.2〜1.9% (docs/research/phase7x.md の 24 章)
+MIX_THRESHOLD = 2.0
+# 混ぜる 2 つは、代表色に近い順にこの数のブロックから選ぶ。割合はパターンディザと同じ 1/8 ずつ (線形の明るさ)
+MIX_NEIGHBORS = 24
+MIX_STEPS = 8
 
 
 def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, sample_stride=10, seed=0, warn=None,
@@ -150,10 +157,18 @@ def _kmeans_select(pixels, all_blocks, max_colors, device, seed, color_space="rg
         torch.tensor(np.array([b['rgb'] for b in all_blocks], dtype=np.float32), device=device), color_space)
     best = torch.argmin(squared_distances(centroids, all_rgb_tensor), dim=1).cpu().numpy()
 
+    # 大きいクラスタの代表色から順に、その色を表すブロック (1 つか、混ぜる 2 つ) を入れる
     selected_blocks = []
+    sizes = np.bincount(labels.cpu().numpy(), minlength=num_clusters)  # DirectML には bincount が無い
+    centroid_rgb = _centroids_to_rgb(centroids.cpu().numpy(), color_space)
+    for k in np.argsort(-sizes, kind="stable"):
+        for idx in _blocks_for_color(centroid_rgb[k], all_blocks, MIX_THRESHOLD):
+            block = all_blocks[idx]
+            if block not in selected_blocks and len(selected_blocks) < max_colors:
+                selected_blocks.append(block)
     for best_idx in best:
         block = all_blocks[int(best_idx)]
-        if block not in selected_blocks:
+        if block not in selected_blocks and len(selected_blocks) < max_colors:
             selected_blocks.append(block)
 
     # 指定数に満たない場合は、残りを順番に埋める
@@ -164,3 +179,42 @@ def _kmeans_select(pixels, all_blocks, max_colors, device, seed, color_space="rg
             selected_blocks.append(b)
 
     return selected_blocks
+
+
+def _centroids_to_rgb(centroids, color_space):
+    """K-Means の代表色 (color_space の座標) を sRGB (0〜255) に戻す。"""
+    if color_space == "rgb":
+        return np.clip(centroids, 0, 255)
+    lab = centroids / OKLAB_SCALE
+    m2_inv = np.linalg.inv(np.array([[0.2104542553, 0.7936177850, -0.0040720468], [1.9779984951, -2.4285922050, 0.4505937099],
+                                     [0.0259040371, 0.7827717662, -0.8086757660]]))
+    m1_inv = np.linalg.inv(np.array([[0.4122214708, 0.5363325363, 0.0514459929], [0.2119034982, 0.6806995451, 0.1073969566],
+                                     [0.0883024619, 0.2817188376, 0.6299787005]]))
+    lin = np.clip((lab @ m2_inv.T) ** 3 @ m1_inv.T, 0, 1)
+    srgb = np.where(lin <= 0.0031308, lin * 12.92, 1.055 * lin ** (1 / 2.4) - 0.055)
+    return srgb * 255
+
+
+
+def _blocks_for_color(rgb, all_blocks, threshold):
+    """色 rgb を表すブロックの番号: 一番近いブロックが OkLab × 100 で threshold 以内ならそれ 1 つ、遠ければ、
+    パターンディザで混ぜたとき (線形の明るさで 1/8 ずつの割合) に一番近くなる 2 つのブロック。"""
+    from mvcodec.block_rdo import rgb_to_oklab, _srgb_to_linear
+
+    block_rgb = np.array([b["rgb"] for b in all_blocks], dtype=np.float32)
+    target = rgb_to_oklab(np.asarray(rgb, np.float32)[None])[0]
+    block_lab = rgb_to_oklab(block_rgb)
+    dist = np.linalg.norm(block_lab - target, axis=1)
+    nearest = int(dist.argmin())
+    if dist[nearest] <= threshold:
+        return [nearest]
+    near = np.argsort(dist)[:MIX_NEIGHBORS]
+    lin = _srgb_to_linear(block_rgb[near])
+    t = np.arange(1, MIX_STEPS)[:, None, None, None] / MIX_STEPS
+    mixes = lin[None, :, None] * (1 - t) + lin[None, None, :] * t  # (steps, n, n, 3)
+    mix_srgb = np.where(mixes <= 0.0031308, mixes * 12.92, 1.055 * np.maximum(mixes, 0) ** (1 / 2.4) - 0.055) * 255
+    mix_dist = np.linalg.norm(rgb_to_oklab(mix_srgb.reshape(-1, 3)).reshape(mixes.shape) - target, axis=-1)
+    _, i, j = np.unravel_index(int(mix_dist.argmin()), mix_dist.shape)
+    if mix_dist.min() >= dist[nearest]:
+        return [nearest]
+    return [int(near[i]), int(near[j])]
