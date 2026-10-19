@@ -166,6 +166,7 @@
   "dialog.vox_files": "MagicaVoxel (.vox)",
   "build.vox_preview": "  立体アニメのプレビューを作成中…",
   "addon.tickingarea_partial": "§e常時読み込み範囲は %2 区画中 %1 区画しか登録できませんでした。再生中はスクリーンの近くにいてください",
+  "addon.place_failed": "§e%1 個のブロックを置けませんでした。前の場面のブロックが残ることがあります。理由: %2",
   "addon.setup_shifted": "§e建築できる高さに収まるよう、スクリーンを Y=%1 に移動しました",
   "addon.setup_aligned": "§e16 ブロックの区画にそろえるため、スクリーンを x に %1、z に %2 ブロック動かしました (またぐチャンク %3 -> %4 個)",
   "addon.bench_start": "§eベンチマーク: %1 ブロックを各方式で %2 回塗り替えます...",

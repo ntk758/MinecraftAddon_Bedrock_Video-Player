@@ -166,6 +166,7 @@
   "dialog.vox_files": "MagicaVoxel (.vox)",
   "build.vox_preview": "  正在生成立体动画的预览…",
   "addon.tickingarea_partial": "§e常加载区域只添加了 %2 个中的 %1 个。播放时请留在屏幕附近",
+  "addon.place_failed": "§e有 %1 个方块无法放置，可能会残留之前画面的方块。原因：%2",
   "addon.setup_shifted": "§e为了不超出建筑高度，已将屏幕移到 Y=%1",
   "addon.setup_aligned": "§e为对齐 16 格区块，屏幕沿 x 移动 %1 格、沿 z 移动 %2 格 (跨越的区块 %3 -> %4 个)",
   "addon.bench_start": "§e基准测试: 用每种方法将 %1 个方块重绘 %2 次...",
