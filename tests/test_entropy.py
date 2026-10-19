@@ -203,3 +203,31 @@ def test_huffman_coder_option_still_plays(tmp_path):
         result = subprocess.run(["node", str(ROOT / "tests" / "js" / "decode_frames.mjs"), str(p)],
                                 capture_output=True, text=True, check=True)
         assert json.loads(result.stdout)["frames"] == [b.reshape(-1).tolist() for b, _ in iter_decoded_frames(d)]
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node が必要")
+def test_scanning_a_large_relief_does_not_delay_playback(tmp_path):
+    """2.5D の 128×72×16 (14.7 万マス) は、変わったマスを探す走査だけで 1 フレームに 5〜14 回 yield する。
+    走査の yield を 1 tick の yield の回数の上限 (8 回) に数えると、置くブロックが少なくても 1 フレームが 2 tick 以上に
+    またがり、実機の録画で 10 fps の映像が 8 fps に落ちていた。走査は時間の予算だけで区切る。"""
+    from PIL import Image
+    from test_codec_v4 import run_convert
+    from test_main_js import run_addon
+
+    frames = tmp_path / "frames"
+    frames.mkdir()
+    yy, xx = np.mgrid[0:72, 0:128]
+    for t in range(60):
+        # ゆっくり動く明るさの山 (毎フレーム少しだけ変わる)
+        hill = 255 * np.exp(-((xx - 30 - t // 2) ** 2 + (yy - 36) ** 2) / 300.0)
+        Image.fromarray(np.repeat(hill[..., None], 3, 2).astype(np.uint8)).save(frames / f"frame_{t:04d}.png")
+    out = tmp_path / "relief.js"
+    data = run_convert(frames, out, "--width", "128", "--height", "72", "--fps", "10", "--mode", "relief", "--depth", "16",
+                       "--dither-method", "none", "--keyframe-interval", "0", "--no-adaptive-fps")
+    assert data["layout"] == "heightfield"
+    costs = '{"setBlock": 2.3, "fillCall": 15, "fillBlock": 0.55, "listCall": 15, "listBlock": 1.42}'
+    result = run_addon(tmp_path / "addon", out, "stats", f"costs={costs}")
+    load = next(part for m in result["statsMessages"] for part in m["rawtext"] if part.get("translate") == "bvp.stats_load")
+    late_frames, max_late_ticks = (int(load["with"]["rawtext"][i]["text"]) for i in (0, 1))
+    # 最初のフレーム (立体をすべて置く) は重いので遅れるが、その後は追いつく (以前は最後まで遅れ続けた)
+    assert late_frames <= 25, (late_frames, max_late_ticks)

@@ -78,8 +78,10 @@ const PIXELS_PER_SCAN_YIELD = 32768;
 // 何フレーム先の GOP を先読みするか
 // 次の GOP を何フレーム前から展開し始めるか。v6 (エントロピー符号化) は展開に時間がかかるので早めに始める
 const GOP_PREFETCH_FRAMES = 40;
-// GOP の展開の途中で出す yield の値。描画の yield と違い、1 tick の yield の回数の上限 (ブロック数の上限) には数えず、
-// 時間の予算だけで区切る (展開は何百回も yield するので、回数で区切ると何十 tick もかかる)
+// GOP の展開と、変わったマスを探す盤面の走査の途中で出す yield の値。ブロックを置いた後の yield と違い、1 tick の
+// yield の回数の上限 (ブロック数の上限) には数えず、時間の予算だけで区切る (展開は何百回も yield する。走査は
+// 2.5D の 128×72×16 で 1 フレーム 5〜14 回 yield し、回数に数えると上限 8 回の大半を使って、置くブロックが少なくても
+// 1 フレームが 3 tick 以上にまたがり、実機の録画で 10 fps の映像が 8 fps に落ちていた)
 const DECODE_YIELD = 1;
 const BLOCK_ID_ALIASES = {
   "minecraft:terracotta": "minecraft:hardened_clay",
@@ -615,7 +617,7 @@ class VideoPlayer {
       scanned += width;
       if (scanned >= PIXELS_PER_SCAN_YIELD) {
         scanned = 0;
-        yield;
+        yield DECODE_YIELD;
       }
     }
     }
@@ -722,7 +724,7 @@ class VideoPlayer {
       scanned += width;
       if (scanned >= PIXELS_PER_SCAN_YIELD) {
         scanned = 0;
-        yield;
+        yield DECODE_YIELD;
       }
     }
     if (changed === 0) return "none";
@@ -795,7 +797,7 @@ class VideoPlayer {
     // 立体では空気にするマスを最後に回す (rect 方式と同じく、描画の途中で穴が見えないように)
     const airCells = [];
     for (let p = 0; p < next.length; p++) {
-      if (p % PIXELS_PER_SCAN_YIELD === PIXELS_PER_SCAN_YIELD - 1) yield;
+      if (p % PIXELS_PER_SCAN_YIELD === PIXELS_PER_SCAN_YIELD - 1) yield DECODE_YIELD;
       const level = next[p];
       if (level === board[p] || level < 0) continue;
       if (level === airLevel) {
