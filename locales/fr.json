@@ -37,7 +37,7 @@
   "preset.detail": "Détaillée (128×128 / 5fps)",
   "preset.ultra": "Ultra (256×256 / 5fps)",
   "preset.extreme": "Extrême (512×512 / 2fps)",
-  "palette.auto": "Automatique (recommandé : jusqu'à 127 des 191 couleurs par scène)",
+  "palette.auto": "Automatique (recommandé : jusqu'à 127 des 214 couleurs par scène)",
   "palette.all": "Tous les blocs, 127 couleurs (béton, terre cuite, laine, bois, pierre, blocs lumineux…)",
   "palette.full": "39 couleurs (béton + terre cuite + blocs lumineux)",
   "palette.expanded": "33 couleurs (béton + terre cuite)",

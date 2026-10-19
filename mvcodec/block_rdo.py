@@ -47,6 +47,13 @@ AUTO_BUDGET = 3.0
 # (スライド・歌詞動画風・雪山・スポーツなど 24 本) で、5 だとスライドの文字が消えず、ぼかした色差 −5%・MS-SSIM +0.007、
 # 誤差の大きいマスの上位 0.1% が −10%。データ +12〜29%・描画時間 +6〜9% (docs/research/phase7x.md の 19 章)
 BLOCK_ERROR_CAP = 5.0
+# なめらかなグラデーション (元の映像の 8×8 の平均の色が、上下左右の 8×8 と GRADIENT_MIN〜GRADIENT_MAX 違う) では、
+# 単色・2 色で塗る候補 (solid_mean / solid_mode / two) を使わない。白い背景のぼかし (ビネット) や空のグラデーションで、
+# 8×8 ごとに違う白・灰色のブロックが並んで、まだらな四角が目立っていた (ディザなら混ざって見える)。差が大きい所は
+# 輪郭なので使ってよい。0.8 でジャンル 24 本の色差 −1.2%・データ +2%、実写 16 本で −1.1%・+0.8% (docs/research/phase7x.md の 23 章)
+GRADIENT_MIN = 0.8
+GRADIENT_MAX = 8.0
+FLAT_MODES = ("solid_mean", "solid_mode", "two")
 
 _M1 = np.array([[0.4122214708, 0.5363325363, 0.0514459929], [0.2119034982, 0.6806995451, 0.1073969566],
                 [0.0883024619, 0.2817188376, 0.6299787005]])
@@ -104,9 +111,11 @@ class BlockRDO:
     """フレームの列に順番にかける (前のフレームを覚えるのは呼び出し側: reference に符号化済みの盤面を渡す)。"""
 
     def __init__(self, strength, block=RDO_BLOCK, modes=MODES, hysteresis=24.0, mv_range=MV_RANGE,
-                 budget=AUTO_BUDGET, block_cap=BLOCK_ERROR_CAP):
+                 budget=AUTO_BUDGET, block_cap=BLOCK_ERROR_CAP, gradient_min=GRADIENT_MIN):
         # 1 ブロックで増えてよい色の誤差 (1 画素あたり)。0 なら上限なし (v6.12.0 まで)
         self.block_cap = float(block_cap)
+        # グラデーションで単色・2 色の候補を使わない境目。0 なら制限なし (v6.16.0 まで)
+        self.gradient_min = float(gradient_min)
         # "auto" はフレームごとに強さを選ぶ (AUTO_STRENGTHS の強い方から、色の誤差の増え方が budget 以内のもの)
         self.auto = strength == "auto"
         self.strength = AUTO_STRENGTHS[0] if self.auto else float(strength)
@@ -205,6 +214,11 @@ class BlockRDO:
         # 画面ほど、細い文字を白で塗りつぶす・白い壁や雪に灰色の 8×8 を残すといった局所的な崩れが平均に埋もれていた)
         if self.block_cap > 0:
             usable[1:] &= (distortion[1:] - distortion[0]) <= self.block_cap * b * b
+        if self.gradient_min > 0:
+            gradient = _gradient_blocks(src_lab, b, self.gradient_min, GRADIENT_MAX)
+            for name in FLAT_MODES:
+                if name in candidates:
+                    usable[names.index(name)] &= ~gradient
         # 未設置 (-1) のマスを含む skip / motion は使えない (前の盤面に描かれていない)
         for name in ("skip", "motion"):
             if name in candidates:
@@ -274,6 +288,18 @@ class BlockRDO:
             run_starts = _run_starts(recon, recon != predicted)
         runs = _block_sum(run_starts.astype(np.float32), b)
         return place, BYTE_WEIGHT_US * RUN_BYTES * runs
+
+
+def _gradient_blocks(src_lab, block, low, high):
+    """元の映像の 8×8 の平均の色 (OkLab) が、上下左右のどれかの 8×8 と low より大きく high より小さく違うブロック。"""
+    h, w = src_lab.shape[:2]
+    counts = _block_sum(np.ones((h, w), np.float32), block)
+    means = np.stack([_block_sum(src_lab[..., k], block) for k in range(3)], -1) / counts[..., None]
+    bh, bw = means.shape[:2]
+    padded = np.pad(means, ((1, 1), (1, 1), (0, 0)), mode="edge")
+    step = np.max([np.linalg.norm(means - padded[y:y + bh, x:x + bw], axis=-1)
+                   for y, x in ((0, 1), (2, 1), (1, 0), (1, 2))], axis=0)
+    return (step > low) & (step < high)
 
 
 def _run_starts(recon, changed):

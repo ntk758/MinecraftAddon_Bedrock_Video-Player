@@ -20,7 +20,8 @@
 - 光るブロック (group "light") は「全ブロック」には入れるが、自動パレットの候補には入れない (mvcodec/color.py)。
   雪のブロック (group "snow") は光るブロックの明かりで溶けるので、逆に自動パレットにだけ入れる (一番白いブロックなので)
 - アドオンの対応する一番古い版 (min_engine_version 1.21.80) に無いブロックは使わない (置けないと土になる)
-- 上面も側面も色がほとんど同じブロック (OkLab の距離 × 100 が DEDUPE_DISTANCE 未満) は、先に書いた方だけ残す
+- 上面も側面も色がほとんど同じブロック (OkLab の距離 × 100 が DEDUPE_DISTANCE 未満、色合いだけの距離も
+  DEDUPE_CHROMA_DISTANCE 未満) は、先に書いた方だけ残す
 - ステンドグラス (group "glass") は半透明なので、不透明な画素ほど重く (アルファで重みを付けて) 平均し、平均のアルファも書く。
   「全ブロック」や自動パレットには入れず、ホログラム用の「ステンドグラス」パレットだけで使う (mvcodec/color.py)。
   不透明なブロックと色が近くても別のものとして残す
@@ -39,6 +40,9 @@ ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "mvcodec" / "block_colors.py"
 MIN_VERSION_TAG = "v1.21.80.3"
 DEDUPE_DISTANCE = 2.0
+# 色合い (OkLab の a, b) だけの距離がこれ以上なら、明るさが近くても別の色として残す。白・灰色の場面で、無彩色の
+# 鉄ブロック・方解石が、わずかに赤みのある青白いオークの板材と同じ色として除かれ、白い面が赤み・青みのある 8×8 のまだらになっていた
+DEDUPE_CHROMA_DISTANCE = 1.0
 
 COLORS = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray", "light_gray", "cyan",
           "purple", "blue", "brown", "green", "red", "black"]
@@ -253,7 +257,9 @@ def main(argv=None):
         lab, side_lab = oklab(rgb) * 100, oklab(side_rgb) * 100
         twin = next((r for r in rows if (r["group"] in TRANSLUCENT_GROUPS) == translucent
                      and np.linalg.norm(r["lab"] - lab) < DEDUPE_DISTANCE
-                     and np.linalg.norm(r["side_lab"] - side_lab) < DEDUPE_DISTANCE), None)
+                     and np.linalg.norm(r["side_lab"] - side_lab) < DEDUPE_DISTANCE
+                     and np.linalg.norm(r["lab"][1:] - lab[1:]) < DEDUPE_CHROMA_DISTANCE
+                     and np.linalg.norm(r["side_lab"][1:] - side_lab[1:]) < DEDUPE_CHROMA_DISTANCE), None)
         if twin is not None:
             skipped.append(f"{block} ({twin['block']} とほぼ同じ色)")
             continue
