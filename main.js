@@ -445,6 +445,7 @@ class VideoPlayer {
     const loc = this.tempBlockLoc;
     let operations = 0;
     let failures = 0;
+    let lastError = null;
     cursor.pos = startOff;
 
     skipFrameHeader(bytes, cursor, endOff);
@@ -467,6 +468,7 @@ class VideoPlayer {
           this.dimension.setBlockPermutation(loc, permutation);
         } catch (e) {
           failures++;
+          lastError = e;
         }
         operations++;
         if (operations >= BLOCKS_PER_YIELD) {
@@ -478,9 +480,7 @@ class VideoPlayer {
         }
       }
     }
-    if (failures > 0) {
-      warnOnce("setBlock", `Failed to place ${failures} block(s). The screen may be outside the loaded area`);
-    }
+    this.reportPlaceFailures(failures, lastError);
   }
 
   /** 盤面を「不明」にして、次に描くフレームで全ブロックを置き直させる (盤面クリア後など)。 */
@@ -525,6 +525,20 @@ class VideoPlayer {
     yield* this.placeChangedBlocksAsRects(width, mode === "rect");
   }
 
+  /**
+   * 置けなかったブロックがあれば、再生ごとに 1 回だけチャットで知らせる (理由のエラーも)。置けなかったマスは盤面を
+   * 「不明」にして次のフレームで置き直すが、実機では置き直しも続けて失敗し、前の場面のブロックが残ることがあった。
+   */
+  reportPlaceFailures(count, error) {
+    if (count <= 0) return;
+    warnOnce("setBlock", `Failed to place ${count} block(s): ${error}`);
+    if (this.playStats) this.playStats.placeFailures = (this.playStats.placeFailures ?? 0) + count;
+    if (this.placeFailureNotified) return;
+    this.placeFailureNotified = true;
+    const reason = String(error?.message ?? error ?? "").replace(/\s+/g, " ").slice(0, 120);
+    notify("place_failed", String(count), reason);
+  }
+
   /** rect / block 方式 (useRects が false なら 1 個ずつ)。 */
   *placeChangedBlocksAsRects(width, useRects) {
     const video = this.videoData;
@@ -540,6 +554,7 @@ class VideoPlayer {
     let operations = 0;
     let scanned = 0;
     let failures = 0;
+    let lastError = null;
     // 立体では、新しいブロックを先に置き、空気にするのは最後にする。1 フレームが何 tick にもまたがったとき、
     // 途中の状態が「古い面が消えて新しい面がまだ無い穴」ではなく「一瞬厚い」に見える (実機の録画で穴が見えたため)
     const phases = airLevel >= 0 ? 2 : 1;
@@ -568,6 +583,7 @@ class VideoPlayer {
             this.dimension.fillBlocks(new BlockVolume(from, to), permutation);
           } catch (e) {
             failures += area;
+            lastError = e;
             this.fillBoxCells(board, width, contiguousRows, x, x1, r, r1, slices, -1);
             warnOnce("fill", `fillBlocks failed: ${e}`);
           }
@@ -581,6 +597,7 @@ class VideoPlayer {
               this.dimension.setBlockPermutation(cellToWorld(video, this.anchor, q, this.tempBlockLoc), permutation);
             } catch (e) {
               failures++;
+              lastError = e;
               board[q] = -1;
             }
             if (++operations >= BLOCKS_PER_YIELD) {
@@ -602,9 +619,7 @@ class VideoPlayer {
       }
     }
     }
-    if (failures > 0) {
-      warnOnce("setBlock", `Failed to place ${failures} block(s). The screen may be outside the loaded area`);
-    }
+    this.reportPlaceFailures(failures, lastError);
   }
 
   /**
@@ -746,6 +761,7 @@ class VideoPlayer {
     const airLevel = isVolume(video) ? video.air_level : -2;
     const groups = new Map();
     let failures = 0;
+    let lastError = null;
     const self = this;
 
     let placedSinceYield = 0;
@@ -758,6 +774,7 @@ class VideoPlayer {
           self.dimension.fillBlocks(new ListBlockVolume(group.locations), permutation);
         } catch (e) {
           failures += group.cells.length;
+          lastError = e;
           placedLevel = -1;
           warnOnce("fill-list", `fillBlocks(ListBlockVolume) failed: ${e}`);
         }
@@ -802,9 +819,7 @@ class VideoPlayer {
       if (airGroup.cells.length >= LIST_BATCH) yield* flush(airLevel, airGroup);
     }
     yield* flush(airLevel, airGroup);
-    if (failures > 0) {
-      warnOnce("setBlock", `Failed to place ${failures} block(s). The screen may be outside the loaded area`);
-    }
+    this.reportPlaceFailures(failures, lastError);
   }
 
   *applyFrameJob(frameIndex) {
@@ -994,6 +1009,7 @@ class VideoPlayer {
     this.elapsedTicks = 0;
     this.running = true;
     this.startDelayTicks = START_LOAD_DELAY_TICKS;
+    this.placeFailureNotified = false;
     this.resetPlayStats();
   }
 
@@ -1008,6 +1024,7 @@ class VideoPlayer {
     this.currentAudioChunk = -1;
     this.syncAudioForFrame(this.currentFrame);
     this.running = true;
+    this.placeFailureNotified = false;
     this.resetPlayStats();
   }
 

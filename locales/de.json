@@ -166,6 +166,7 @@
   "dialog.vox_files": "MagicaVoxel (.vox)",
   "build.vox_preview": "  Vorschau der Voxel-Animation wird erstellt…",
   "addon.tickingarea_partial": "§eNur %1 von %2 Ladebereichen konnten hinzugefügt werden. Bleib während der Wiedergabe in der Nähe des Bildschirms",
+  "addon.place_failed": "§e%1 Block/Blöcke konnten nicht platziert werden; Blöcke früherer Szenen können übrig bleiben. Grund: %2",
   "addon.setup_shifted": "§eDer Bildschirm wurde auf Y=%1 verschoben, damit er in die Bauhöhe passt",
   "addon.setup_aligned": "§eBildschirm um %1 (x) und %2 (z) verschoben, um ihn an 16-Block-Chunks auszurichten (Chunks: %3 -> %4)",
   "addon.bench_start": "§eBenchmark: %1 Blöcke werden mit jeder Methode %2-mal neu gesetzt...",

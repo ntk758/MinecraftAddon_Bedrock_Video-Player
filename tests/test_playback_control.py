@@ -177,3 +177,21 @@ def test_setup_align_lines_the_screen_up_with_chunks(scene, tmp_path, x, z):
     assert abs(anchor["x"] - x) <= 15
     assert any("bvp.setup_aligned" in m for m in out["messages"])
     assert final["board"] == frames[-1]
+
+
+def test_blocks_that_cannot_be_placed_are_reported_once_in_chat(tmp_path):
+    """置けなかったブロックは再生ごとに 1 回だけチャットで知らせる (理由のエラーも)。以前はコンテンツログだけで、
+    実機で前の場面のブロックが残ったときに原因が分からなかった。"""
+    (tmp_path / "frames").mkdir()
+    for i in range(20):
+        arr = np.zeros((HEIGHT, WIDTH, 3), np.uint8)
+        arr[:] = (255, 255, 255) if i % 2 else (230, 40, 40)
+        Image.fromarray(arr).save(tmp_path / "frames" / f"frame_{i:04d}.png")
+    data = run_convert(tmp_path / "frames", tmp_path / "f.js", "--keyframe-interval", "10", "--no-adaptive-fps")
+    steps = [{"event": "badapple:setup"}, {"failZ": 92}, {"event": "badapple:start"}, {"until": "bvp.playback_finished"},
+             {"failZ": None}, {"event": "badapple:start"}, {"until": "bvp.playback_finished"}]
+    out = drive(tmp_path / "addon", {"demo": tmp_path / "f.js"}, steps)
+    notices = [m for m in out["messages"] if "bvp.place_failed" in m]
+    assert len(notices) == 1
+    assert "UnloadedChunksError" in notices[0]
+    assert data["frame_count"] == 20
