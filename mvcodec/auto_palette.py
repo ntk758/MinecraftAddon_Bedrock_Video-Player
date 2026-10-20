@@ -50,9 +50,10 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, 
     try:
         import torch  # noqa: F401
     except ImportError:
-        # PyTorch が無いときは、各画素に一番近いブロックを数えて、多く使われる色から選ぶ (numpy だけ)
+        # PyTorch が無いとき (ブラウザ版の Pyodide など) は、同じ K-Means を numpy で計算する。以前は「一番近いブロックを
+        # 数えて多い順」に選んでいて、実写 16 本でぼかした色差が PyTorch の K-Means より平均 +5% (最大 +16%) 悪かった
         def select(count):
-            return _histogram_select(pixels, all_blocks, count)
+            return _kmeans_select_numpy(pixels, all_blocks, count, seed, color_space)
     else:
         state = {"device": device}
 
@@ -100,22 +101,15 @@ def _select_color_count(pixels, select):
     return largest
 
 
-def _histogram_select(pixels, all_blocks, max_colors):
-    """各画素に一番近いブロック (RGB の距離) を数え、多い順に max_colors 個を選ぶ。足りなければ候補の順に埋める。"""
-    block_rgb = np.array([b["rgb"] for b in all_blocks], dtype=np.float32)
-    counts = np.zeros(len(all_blocks), dtype=np.int64)
-    for start in range(0, len(pixels), 4096):
-        chunk = pixels[start:start + 4096]
-        nearest = ((chunk[:, None, :] - block_rgb[None]) ** 2).sum(axis=2).argmin(axis=1)
-        counts += np.bincount(nearest, minlength=len(all_blocks))
-    order = [int(i) for i in np.argsort(-counts, kind="stable") if counts[i] > 0][:max_colors]
-    selected = [all_blocks[i] for i in order]
-    for b in all_blocks:
-        if len(selected) >= max_colors:
-            break
-        if b not in selected:
-            selected.append(b)
-    return selected
+def _to_space_numpy(rgb, color_space):
+    """_to_space の numpy 版 ((N, 3) の RGB 0〜255)。"""
+    if color_space == "rgb":
+        return np.asarray(rgb, np.float32)
+    if color_space == "oklab":
+        from mvcodec.block_rdo import rgb_to_oklab
+
+        return rgb_to_oklab(np.asarray(rgb, np.float32)).astype(np.float32)
+    raise ValueError(f"未対応の色空間: {color_space}")
 
 
 def _to_space(rgb, color_space):
@@ -152,15 +146,39 @@ def _kmeans_select(pixels, all_blocks, max_colors, device, seed, color_space="rg
             break
         centroids = new_centroids
 
-    # centroids に最も近い Minecraft ブロックを選択
-    all_rgb_tensor = _to_space(
-        torch.tensor(np.array([b['rgb'] for b in all_blocks], dtype=np.float32), device=device), color_space)
-    best = torch.argmin(squared_distances(centroids, all_rgb_tensor), dim=1).cpu().numpy()
+    return _blocks_from_clusters(centroids.cpu().numpy(), labels.cpu().numpy(), all_blocks, max_colors, color_space)
 
-    # 大きいクラスタの代表色から順に、その色を表すブロック (1 つか、混ぜる 2 つ) を入れる
+
+def _kmeans_select_numpy(pixels, all_blocks, max_colors, seed, color_space="rgb"):
+    """_kmeans_select と同じ K-Means を numpy だけで計算する (PyTorch の無いブラウザ版の Pyodide 用)。"""
+    X = _to_space_numpy(np.asarray(pixels, np.float32), color_space)
+    num_clusters = min(max_colors, len(all_blocks), X.shape[0])
+    rng = np.random.default_rng(seed)
+    centroids = X[rng.permutation(X.shape[0])[:num_clusters]].copy()
+    x_sq = (X ** 2).sum(1)
+    labels = np.zeros(len(X), np.intp)
+    for _ in range(10):
+        dist = x_sq[:, None] - 2.0 * X @ centroids.T + (centroids ** 2).sum(1)[None]
+        labels = dist.argmin(1)
+        counts = np.bincount(labels, minlength=num_clusters)
+        sums = np.stack([np.bincount(labels, weights=X[:, c], minlength=num_clusters) for c in range(3)], 1)
+        new_centroids = np.where(counts[:, None] > 0, sums / np.maximum(counts, 1)[:, None], centroids)
+        if np.allclose(centroids, new_centroids, atol=1e-2):
+            break
+        centroids = new_centroids
+    return _blocks_from_clusters(centroids, labels, all_blocks, max_colors, color_space)
+
+
+def _blocks_from_clusters(centroids, labels, all_blocks, max_colors, color_space):
+    """K-Means の結果 (color_space の代表色と、各画素のクラスタ番号) からパレットのブロックを選ぶ:
+    大きいクラスタの代表色から順に、その色を表すブロック (1 つか、混ぜる 2 つ) を入れ、次に各代表色に一番近い
+    ブロック、足りなければ候補の順に埋める。"""
+    block_space = _to_space_numpy(np.array([b["rgb"] for b in all_blocks], dtype=np.float32), color_space)
+    dist = (centroids ** 2).sum(1)[:, None] - 2.0 * centroids @ block_space.T + (block_space ** 2).sum(1)[None]
+    best = dist.argmin(1)
     selected_blocks = []
-    sizes = np.bincount(labels.cpu().numpy(), minlength=num_clusters)  # DirectML には bincount が無い
-    centroid_rgb = _centroids_to_rgb(centroids.cpu().numpy(), color_space)
+    sizes = np.bincount(labels, minlength=len(centroids))
+    centroid_rgb = _centroids_to_rgb(centroids, color_space)
     for k in np.argsort(-sizes, kind="stable"):
         for idx in _blocks_for_color(centroid_rgb[k], all_blocks, MIX_THRESHOLD):
             block = all_blocks[idx]
@@ -170,14 +188,11 @@ def _kmeans_select(pixels, all_blocks, max_colors, device, seed, color_space="rg
         block = all_blocks[int(best_idx)]
         if block not in selected_blocks and len(selected_blocks) < max_colors:
             selected_blocks.append(block)
-
-    # 指定数に満たない場合は、残りを順番に埋める
     for b in all_blocks:
         if len(selected_blocks) >= max_colors:
             break
         if b not in selected_blocks:
             selected_blocks.append(b)
-
     return selected_blocks
 
 

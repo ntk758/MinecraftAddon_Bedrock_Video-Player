@@ -187,3 +187,17 @@ def test_base64_text_roundtrip_and_old_strings_still_decode():
         assert utf16_str_to_bytes(text) == data
         assert all(ord(ch) < 128 for ch in text)  # ASCII だけ (UTF-8 で 1 文字 1 バイト)
         assert utf16_str_to_bytes(bytearray_to_utf16_str(data)) == data
+
+
+def test_progress_hook_receives_the_final_count(tmp_path):
+    """convert.PROGRESS_HOOK (ブラウザ版が進み具合のバーに使う) は、最後に (全部, 全部) で呼ばれる。"""
+    import convert
+
+    make_scene_frames(tmp_path / "frames")
+    calls = []
+    convert.PROGRESS_HOOK = lambda done, total: calls.append((done, total))
+    try:
+        run_convert(tmp_path / "frames", tmp_path / "out.js")
+    finally:
+        convert.PROGRESS_HOOK = None
+    assert calls and calls[-1][0] == calls[-1][1]

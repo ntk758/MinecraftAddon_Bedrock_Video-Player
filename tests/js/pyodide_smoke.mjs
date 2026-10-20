@@ -12,6 +12,14 @@ for (const path of JSON.parse(readFileSync(join(site, "files.json"), "utf8"))) {
   pyodide.FS.mkdirTree("/app/" + path.split("/").slice(0, -1).join("/"));
   pyodide.FS.writeFile("/app/" + path, readFileSync(join(site, "app", path)));
 }
+// ブラウザ版と同じく、変換の進み具合を JS の関数で受け取る
+pyodide.runPython(`
+import sys
+sys.path.insert(0, "/app")
+import convert
+`);
+const progress = [];
+pyodide.globals.get("convert").PROGRESS_HOOK = (done, total) => progress.push([done, total]);
 const result = pyodide.runPython(`
 import sys, io, zipfile, json
 sys.path.insert(0, "/app")
@@ -59,3 +67,6 @@ json.dumps(counts)
 const counts = JSON.parse(result);
 console.log(JSON.stringify(counts));
 if (counts.screen !== 20 || counts.relief !== 20 || counts.vox !== 5) process.exit(1);
+// 最後の進み具合は「全部済んだ」(各変換の最後に必ず呼ばれる)
+console.log("progress calls", progress.length);
+if (progress.length === 0 || progress.some(([done, total]) => done > total)) process.exit(1);

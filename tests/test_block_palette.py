@@ -134,7 +134,7 @@ def test_gui_labels_show_the_current_color_count():
 
 
 def test_auto_palette_without_torch_picks_colors_from_the_video(monkeypatch):
-    """PyTorch が無くても、先頭の固定の色ではなく、映像に多い色のブロックを選ぶ。"""
+    """PyTorch が無くても (ブラウザ版)、先頭の固定の色ではなく、映像に多い色のブロックを選ぶ (numpy の K-Means)。"""
     import numpy as np
 
     from mvcodec.auto_palette import generate_auto_palette
@@ -284,6 +284,19 @@ def test_auto_palette_includes_the_mixing_pair():
     pytest.importorskip("torch")
     from mvcodec.auto_palette import MIX_THRESHOLD, _blocks_for_color, generate_auto_palette
 
+    frame = np.zeros((48, 64, 3), np.uint8)
+    frame[:, 32:] = (39, 37, 26)
+    palette = generate_auto_palette([frame], AUTO_PALETTE_CANDIDATES, max_colors=8, sample_stride=1)
+    pair = {AUTO_PALETTE_CANDIDATES[i]["block"] for i in _blocks_for_color(np.array([39, 37, 26], np.float32),
+                                                                             AUTO_PALETTE_CANDIDATES, MIX_THRESHOLD)}
+    assert pair <= {b["block"] for b in palette}
+
+
+def test_browser_palette_also_includes_the_mixing_pair(monkeypatch):
+    """PyTorch の無いブラウザ版 (numpy の K-Means) でも、近いブロックの無い色には混ぜる 2 つを選ぶ。"""
+    from mvcodec.auto_palette import MIX_THRESHOLD, _blocks_for_color, generate_auto_palette
+
+    monkeypatch.setitem(sys.modules, "torch", None)
     frame = np.zeros((48, 64, 3), np.uint8)
     frame[:, 32:] = (39, 37, 26)
     palette = generate_auto_palette([frame], AUTO_PALETTE_CANDIDATES, max_colors=8, sample_stride=1)
