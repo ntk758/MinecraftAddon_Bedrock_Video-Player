@@ -1,10 +1,10 @@
 {
   "format_version": 2,
   "header": {
-    "name": "Block Video Player v6.18.3",
-    "description": "Block Video Player v6.18.3 (GUI でビルドすると名前・UUID・バージョンが置き換わります)",
+    "name": "Block Video Player v6.19.0",
+    "description": "Block Video Player v6.19.0 (GUI でビルドすると名前・UUID・バージョンが置き換わります)",
     "uuid": "f20c8b97-b196-4382-b351-6f78b0799373",
-    "version": [6, 18, 3],
+    "version": [6, 19, 0],
     "min_engine_version": [1, 21, 80]
   },
   "modules": [
@@ -13,7 +13,7 @@
       "type": "script",
       "language": "javascript",
       "uuid": "910487e0-c963-4589-a1f4-833a0b94d996",
-      "version": [6, 18, 3],
+      "version": [6, 19, 0],
       "entry": "scripts/main.js"
     }
   ],
