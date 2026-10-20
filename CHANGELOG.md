@@ -2,7 +2,7 @@
 
 このプロジェクトの変更履歴です (新しい順)。各版のダウンロードは [GitHub Releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases) にあります。
 
-## 次の版 / Unreleased
+## v6.18.3
 
 - **お試し用アドオンの平面スクリーンの映像を、自作のアニメに**: テスト用の模様 (色の帯) から、曲付きの 15 秒のアニメ (夕焼け、夜の花火、虹と、オレンジ色の猫) にした。絵も音も `scripts/make_demo_video.py` で一から作っている。
 
