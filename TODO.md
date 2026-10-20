@@ -10,6 +10,23 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 - **リリースごと**: [docs/TESTING.md](docs/TESTING.md) の「リリースごとの記録」に自動テスト・モック・EXE・実機の結果を書く。手順は [docs/RELEASING.md](docs/RELEASING.md)。
 - **実機の計測を集める**: Windows 以外の端末での動作と、`/scriptevent <接頭辞>:stats` の結果を [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) と [docs/PERFORMANCE.md](docs/PERFORMANCE.md) に追記する (まだ Windows の `bench` しか無い)。
 
+## 🔴 優先度: 高 (Phase 11: 自分の動画を作る人を増やす)
+
+2026-10-20 の分析: CurseForge で 7 日に約 1,500 DL あるのに、変換ツール (Windows 版) の DL は数回だけ。お試し版で満足して
+帰るか、作り方で止まっている。説明文の先頭をブラウザ版への案内にしたので、ブラウザ版の質を Windows 版に近づける。
+
+### ✅ 11.1 ブラウザ版のパレットを Windows 版と同じ K-Means に (v6.19.0)
+- ブラウザ版 (Pyodide、PyTorch が無い) は、自動パレットを「一番近いブロックを数える」簡易な方法で選んでいた。
+  混ぜて表す色 (v6.18) も入っていなかった。numpy だけで同じ K-Means を計算する。
+  → 実写 16 本で色差 −4.5% (最大 −17%)、ジャンル 24 本で −1.2%。Windows 版 (CPU) との差は 0.1% 以内。
+
+### 11.2 ブラウザ版の変換の速さ・使いやすさ
+- ✅ 変換中に進み具合のバーが 40% で止まって見えていたのを、変換の進み具合に合わせて動くように (v6.19.0)。
+- Pyodide での変換時間を測る。
+
+### 11.3 効果の確認
+- 2 週間後に、変換ツールの DL 数・GitHub の閲覧数・CurseForge のコメントを比べる (`scripts/traffic_report.py`)。
+
 ## 🔴 優先度: 高 (Phase 10: 画質を保ったまま軽くする)
 
 v6.11〜v6.14 で、実機の録画・実写 16 本・新しいジャンル 24 本 (どれも手元だけで使う) を元の映像と比べて画質を上げた

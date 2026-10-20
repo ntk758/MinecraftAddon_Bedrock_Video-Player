@@ -65,12 +65,18 @@ self.onmessage = async (event) => {
         job.thumbnail = thumb.toJs();
         thumb.destroy();
       }
-      const code = pyodide.globals.get("convert").main(pyodide.toPy(args));
+      // 変換の進み具合 (数秒ごと) に合わせてバーを動かす (この動画の 40%〜95% の区間)
+      const convertModule = pyodide.globals.get("convert");
+      convertModule.PROGRESS_HOOK = (done, total) => {
+        post("progress", { value: (n + 0.4 + 0.55 * Math.min(1, done / total)) / jobs.length });
+      };
+      const code = convertModule.main(pyodide.toPy(args));
+      convertModule.PROGRESS_HOOK = null;
       if (code !== 0) throw new Error(`convert.py exit ${code}`);
       for (const name of pyodide.FS.readdir(dir)) if (/\.(ppm|vox)$/.test(name)) pyodide.FS.unlink(`${dir}/${name}`);
       videos.push({ id: job.id, title: job.title, frames_js: pyodide.FS.readFile(out, { encoding: "utf8" }),
                     thumbnail: job.thumbnail, sounds: job.sounds, width: s.width, height: s.height });
-      post("progress", { value: (n + 1) / jobs.length * 0.95 });
+      post("progress", { value: (n + 0.95) / jobs.length });
     }
     log("アドオンを組み立て中 / Assembling the add-on…");
     pyodide.globals.set("js_videos", pyodide.toPy(videos));

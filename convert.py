@@ -609,8 +609,13 @@ def _use_utf8_for_pipes():
             stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 
+# 進み具合を知らせる関数 (done, total)。ブラウザ版 (web/worker.js) が進み具合のバーを動かすために設定する
+PROGRESS_HOOK = None
+
+
 class Progress:
-    """変換の進み具合を、数秒ごとに 1 行ずつログへ出す (長い動画や立体は数十分かかることがあるため)。"""
+    """変換の進み具合を、数秒ごとに 1 行ずつログへ出す (長い動画や立体は数十分かかることがあるため)。
+    PROGRESS_HOOK があれば、ログと同じ間隔で (済んだ数, 全体) を渡して呼ぶ。"""
 
     def __init__(self, total, interval=3.0):
         self.total = max(1, total)
@@ -629,6 +634,8 @@ class Progress:
         minutes, seconds = divmod(int(remaining + 0.5), 60)
         print(_tr("convert.progress", done=done, total=self.total, percent=int(100 * done / self.total),
                   fps=f"{fps:.1f}", eta=f"{minutes}:{seconds:02d}"))
+        if PROGRESS_HOOK is not None:
+            PROGRESS_HOOK(done, self.total)
 
 
 def build_frame_data(args, width, height, gop_boundaries, palettes, adaptive, encoder, chunks, index, depth=None,
