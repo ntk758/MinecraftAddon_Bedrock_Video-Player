@@ -243,15 +243,20 @@ def build_converter_args(
     video: Path, output: Path, ffmpeg: str, width: int, height: int, fps: float,
     palette: str, dither_method: str, keyframe_interval: int, device: str,
     perceptual: bool, duration: float | None, language: str = "en",
-    mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH,
+    mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH, anamorphic: bool = False,
 ) -> list[str]:
-    """convert.py に渡す引数 (起動コマンド部分を除く)。.vox は立体アニメとして変換する。"""
+    """convert.py に渡す引数 (起動コマンド部分を除く)。.vox は立体アニメとして変換する。
+    anamorphic なら、立体 (立体のモードと .vox) を視点に合わせただまし絵で表示する (平面スクリーンには使わない)。"""
     if Path(video).suffix.lower() == VOX_SUFFIX:
         source = ["--input-vox", str(video), "--mode", "vox"]
+        three_d = True
     else:
         source = ["--input-video", str(video), "--mode", mode]
-        if mode != "screen":
+        three_d = mode != "screen"
+        if three_d:
             source += ["--depth", str(depth)]
+    if anamorphic and three_d:
+        source += ["--view", "anamorphic"]
     args = [
         *source,
         "--ffmpeg", ffmpeg,
@@ -342,6 +347,8 @@ class PackBuilderApp(tk.Tk):
         self.device_var = tk.StringVar()
         self.mode_var = tk.StringVar()
         self.depth_var = tk.IntVar(value=DEFAULT_DEPTH)
+        # 立体を、見ている人の目の位置に合わせて床と壁に描くだまし絵にする
+        self.anamorphic_var = tk.BooleanVar(value=False)
         self.preset_key = DEFAULT_PRESET
         self._set_option_labels(DEFAULT_PALETTE, DEFAULT_DITHER, DEFAULT_DEVICE, DEFAULT_MODE)
         self.namespace_var.trace_add("write", lambda *_: self._update_command_hint())
@@ -564,6 +571,9 @@ class PackBuilderApp(tk.Tk):
         ttk.Label(settings, text=tr("settings.depth")).grid(row=4, column=4, padx=(10, 4), pady=(0, 6))
         ttk.Spinbox(settings, from_=2, to=MAX_DEPTH, textvariable=self.depth_var, width=7).grid(
             row=4, column=5, padx=(0, 10), pady=(0, 6), sticky="w"
+        )
+        ttk.Checkbutton(settings, text=tr("settings.anamorphic"), variable=self.anamorphic_var).grid(
+            row=4, column=6, columnspan=2, padx=(0, 10), pady=(0, 6), sticky="w"
         )
         # 再生負荷の目安 (幅・高さ・fps・表示モード・奥行きを変えるたびに更新)
         self.load_label = ttk.Label(settings, wraplength=720)
@@ -805,7 +815,7 @@ class PackBuilderApp(tk.Tk):
         threading.Thread(
             target=self._build_pack,
             args=(video_entries, output, pack_name, namespace, width, height, fps, duration, palette, dither_method,
-                  device, mode, depth, self._addon_language()),
+                  device, mode, depth, self._addon_language(), self.anamorphic_var.get()),
             daemon=True,
         ).start()
 
@@ -825,6 +835,7 @@ class PackBuilderApp(tk.Tk):
         self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
         width: int, height: int, fps: float, duration: float | None, palette: str, dither_method: str,
         device: str, mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH, addon_language: str | None = None,
+        anamorphic: bool = False,
     ) -> None:
         try:
             ffmpeg = get_ffmpeg_path()
@@ -890,7 +901,7 @@ class PackBuilderApp(tk.Tk):
                         *build_converter_args(
                             video, generated_data, ffmpeg, width, height, fps, palette, dither_method,
                             self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
-                            self.tr.language, mode, depth,
+                            self.tr.language, mode, depth, anamorphic,
                         ),
                     ]
                     self._run(converter_args)

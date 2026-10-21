@@ -159,6 +159,7 @@
   "convert.palette_cpu_retry": "[MVCodec] Warning: the auto palette could not be computed on the GPU; retrying on the CPU: {error}",
   "settings.mode": "Display mode",
   "settings.depth": "Depth (blocks)",
+  "settings.anamorphic": "Trompe-l'oeil (follows the viewer)",
   "mode.screen": "Flat screen",
   "mode.relief": "3D relief (brightness = depth)",
   "mode.extrude": "3D silhouette (bright parts extruded)",

@@ -159,6 +159,7 @@
   "convert.palette_cpu_retry": "[MVCodec] 警告: 自動パレットを GPU で計算できないため CPU で再計算します: {error}",
   "settings.mode": "表示モード",
   "settings.depth": "奥行き (ブロック)",
+  "settings.anamorphic": "だまし絵 (目に合わせて床と壁に描く)",
   "mode.screen": "平面スクリーン",
   "mode.relief": "立体レリーフ (明るさ = 奥行き)",
   "mode.extrude": "立体シルエット (明るい部分を押し出し)",

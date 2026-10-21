@@ -98,6 +98,7 @@ Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを
 - 👑 **マイクラ実在ブロック 221 色** (コンクリート・テラコッタ・羊毛・木材・原木・石・レンガ・鉱石・鉱物・光るブロックなど。不透明な立方体で、重力で落ちず、時間で変化せず、まわりに作用しないブロックすべて) から、シーンごとに 24〜127 色を選ぶ自動パレット (既定、光るブロックは除く)。色は公式テクスチャの実測の平均色で、立体では側面の色で選ぶ (原木は樹皮の色) ([比較](docs/research/palette_space.md))
 - 🗜 **予測圧縮 (Phase 7.x)**: 変化したブロックだけを送る差分に、**動き補償** (平面は 8×8 ブロック、立体は 8×8×8 ブリック)・**タイル辞書** (一度出た模様を番号で再利用)・ランの位置の間隔符号化を組み合わせ、フレームごとに一番小さい方法を自動で選択。v5.4.0 よりデータ量が **47〜88% 減** (ディザなし。Blue Noise では約 43〜67% 減、[計測結果](#-ベンチマーク-phase-7x))。シーンごとのキーフレームで高速シーク
 - 🧊 **3D ホログラム再生**: 映像を立体 (明るさを奥行きにした **レリーフ**・明るい部分の **押し出し**・丸く **ふくらませた** 立体) にして再生。MagicaVoxel (`.vox`) の立体アニメもそのまま再生。レリーフ・押し出し・ふくらみは「色 + 高さ (厚み)」の 2 枚の 2D 映像で送ってゲーム内で組み立てるので、立体のデータが 54〜85% 小さい
+- 🪄 **視点に合わせただまし絵**: 立体をブロックで置かず、見ている人の目の位置から見たとおりに床と壁に描く。歩き回ると描き直すので、どこから見ても人物が立って見える (正しく見えるのは 1 人。[詳しく](#7-3d-ホログラム再生))
 - 🧱 **まとめ置き描画**: 同じ色の変化を箱 (`fillBlocks`) や色ごとの座標リストにまとめて置き、API 呼び出しを 1 フレーム数百〜千回 → **数回〜数百回** に。キーフレームでも変わったブロックだけを置き直す。実機で置き方の速さを計る `bench` と、再生の実効 fps・遅れたフレーム・映像の遅れを表示する `stats` コマンド付き ([性能](docs/PERFORMANCE.md))
 - 🎯 **かんたん設定**: 動画の縦横比に合わせた幅・高さをボタン 1 つで設定 (黒帯なし)、作る前に再生負荷の目安を表示、設定の誤りは項目ごとに説明
 - ⚡ **GPU 変換対応**: NVIDIA (CUDA)・AMD (ROCm / DirectML)・Intel (DirectML)。GPU が無くても CPU で変換可能
@@ -246,6 +247,11 @@ GUI の **表示モード** で立体の作り方を選び、**奥行き (ブロ
   python convert.py --input-video in.mp4 --depth-video depth.mp4 --output out.js --width 128 --height 72 --fps 10 --mode relief --depth 16
   ```
 
+**だまし絵 (視点に合わせた立体)**: GUI の「だまし絵」にチェックを入れる (ブラウザ版も同じ、コマンドラインは `--view anamorphic`) と、立体をブロックで置く代わりに、床と 3 枚の壁 (後ろ・左・右) の箱を作り、見ている人の目の位置から見たとおりに人物を描きます。歩いたり飛んだりすると描き直すので、正面からも横からも人物が立って見えます。
+- 正しく見えるのは、舞台の中央に一番近いプレイヤー 1 人の目からだけです (他の人には床と壁に描いた絵に見えます)。箱の中か手前から見てください。箱の外の横に回ると、描き直しを止めます。
+- 舞台は人物より大きくなります (例: 高さ 56・幅 32・奥行き 20 の人物で、幅 118・奥行き 51・壁の高さ 84 ブロック)。人物の高さは 64 くらいまでがおすすめです (実機で高さ 56 は 10 fps、96 は重すぎた)。
+- `scripts/make_demo_dancer.py` で、試しに使える踊る人物の `.vox` を作れます。
+
 コマンドラインでの例:
 ```bash
 # 明るさを奥行き 16 段にした立体レリーフ
@@ -254,6 +260,8 @@ python convert.py --input-video in.mp4 --output out.js --width 64 --height 48 --
 python convert.py --input-video badapple.mp4 --output out.js --width 64 --height 48 --mode inflate --depth 12
 # MagicaVoxel の立体アニメ (アニメーションの各フレームが 1 フレーム。古い形式は各モデルが 1 フレーム。.vox が並んだフォルダも可)
 python convert.py --input-vox anim.vox --output out.js --fps 10
+# 同じ立体アニメを、視点に合わせただまし絵で
+python convert.py --input-vox anim.vox --output out.js --fps 10 --view anamorphic
 ```
 
 #### スタンドアロン EXE (任意)
@@ -281,6 +289,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - 👑 **198 real block colors** (concrete, terracotta, wool, wood, logs, stone, bricks, ores, minerals, light blocks… — every opaque full block that doesn't fall, change over time or affect its surroundings) with a per-scene automatic palette of 24–127 colors (default, light blocks excluded). Colors are measured from the official textures; 3D holograms pick blocks by their side color (bark for logs)
 - 🗜 **Predictive compression (Phase 7.x)**: on top of sending only changed blocks, each frame picks the smallest of **motion compensation** (8×8 blocks on screens, 8×8×8 bricks in 3D), a **tile dictionary** (patterns seen before are reused by number) and gap-coded run positions — **47–88% less data** than v5.4.0 without dithering (roughly 43–67% with Blue Noise; [benchmarks](#-ベンチマーク-phase-7x)); per-scene keyframes for fast seeking
 - 🧊 **3D hologram playback**: turn a video into a volume (brightness-as-depth **relief**, **extruded** or rounded **inflated** silhouettes) or play MagicaVoxel (`.vox`) animations directly. Relief / extrude / inflate are sent as two 2D planes (colour + height/thickness) and rebuilt in-game, cutting 3D data by 54–85%
+- 🪄 **View-dependent trompe-l'oeil**: instead of placing a 3D figure, draw it on a floor and walls exactly as the viewer's eye would see it, redrawn as they walk around — the figure looks solid from wherever they stand (correct for one viewer)
 - 🧱 **Batched placement**: same-colour changes are placed as boxes (`fillBlocks`) or per-colour position lists, cutting API calls from hundreds–thousands per frame to **a few–a few hundred**; keyframes only re-place blocks that changed. `/scriptevent <prefix>:bench` measures the placement methods on your device and `:stats` reports playback fps, late frames and how far the video lags behind real time ([performance](docs/PERFORMANCE.md))
 - 🎯 **Easy setup**: one click sets a width × height matching the video's aspect ratio (no black bars); the GUI shows a playback load estimate and explains invalid settings field by field
 - ⚡ **GPU conversion** on NVIDIA (CUDA), AMD (ROCm / DirectML) and Intel (DirectML); CPU works too
