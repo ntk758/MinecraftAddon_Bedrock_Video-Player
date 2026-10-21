@@ -46,15 +46,21 @@ def run_node(script, args=(), stdin=None):
     return json.loads(result.stdout)
 
 
-@pytest.mark.parametrize("eye", [
-    {"x": 24, "y": 20, "z": 70},   # 正面
-    {"x": 24, "y": 45, "z": 60},   # 上から見下ろす
-    {"x": 5, "y": 30, "z": 40},    # 左斜め前の近く
-    {"x": 40, "y": 8, "z": 50},    # 右斜め前の低い所
-    {"x": 24, "y": 3, "z": 45},    # 床すれすれ
+def figure_eye(dx, y, dz):
+    """人物 (stage_view.mjs の 24×40×8) の足元の中心から横に dx・手前に dz、高さ y の目の位置 (舞台の内側の座標)。"""
+    g = run_node("stage_view.mjs", ["[]"])["geom"]
+    return {"x": g["side"] + 12 + dx, "y": y, "z": 1 + g["gap"] + 4 + dz}
+
+
+@pytest.mark.parametrize("offset", [
+    (6, 20, 61),    # 正面
+    (6, 45, 51),    # 上から見下ろす
+    (-13, 30, 31),  # 左斜め前の近く
+    (22, 8, 41),    # 右斜め前の低い所
+    (6, 3, 36),     # 床すれすれ
 ])
-def test_stage_looks_like_the_figure_from_the_eye(eye):
-    out = run_node("stage_view.mjs", [json.dumps([eye])])
+def test_stage_looks_like_the_figure_from_the_eye(offset):
+    out = run_node("stage_view.mjs", [json.dumps([figure_eye(*offset)])])
     r = out["results"][0]
     assert r["drawn"]
     total = r["figurePixels"]
@@ -67,13 +73,27 @@ def test_stage_looks_like_the_figure_from_the_eye(eye):
 
 
 def test_stage_layout_and_eye_outside_is_refused():
-    out = run_node("stage_view.mjs", [json.dumps([{"x": 24, "y": 20, "z": 0.5}, {"x": 24, "y": 0.5, "z": 40}])])
+    out = run_node("stage_view.mjs", [json.dumps([{"x": 24, "y": 20, "z": 0.5}, {"x": 24, "y": 0.5, "z": 40},
+                                                  {"x": -3, "y": 20, "z": 40}])])
     g = out["geom"]
-    # 盤面の 0 番は壁の左上 (一番高い所)、最後は床の手前の右端
-    assert out["wallTopLeft"] == {"x": 0, "y": g["wallHeight"], "z": 0}
-    assert out["floorLast"] == {"x": g["stageWidth"] - 1, "y": 0, "z": g["floorRows"]}
-    # 壁の後ろや床の下からは写せない
-    assert [r["drawn"] for r in out["results"]] == [False, False]
+    # 盤面の 0 番は後ろの壁の左上 (一番高い所)。左の壁が x = 0 の列なので、後ろの壁と床は x = 1 から
+    assert out["wallTopLeft"] == {"x": 1, "y": g["wallHeight"], "z": 0}
+    assert out["floorLast"] == {"x": g["stageWidth"], "y": 0, "z": g["floorRows"]}
+    assert out["leftFirst"] == {"x": 0, "y": g["wallHeight"], "z": 1}
+    assert out["rightLast"] == {"x": g["stageWidth"] + 1, "y": 1, "z": g["floorRows"]}
+    # 後ろの壁の後ろ、床の下、左右の壁の外からは写せない
+    assert [r["drawn"] for r in out["results"]] == [False, False, False]
+
+
+@pytest.mark.parametrize("offset", [
+    (28, 20, 2),    # 右の真横 (後ろの壁と床だけでは人物の上半分が写らない)
+    (-28, 30, 8),   # 左の真横、高い所
+])
+def test_side_walls_catch_side_views(offset):
+    r = run_node("stage_view.mjs", [json.dumps([figure_eye(*offset)])])["results"][0]
+    assert r["drawn"]
+    assert r["offStage"] / r["figurePixels"] < 0.03, r
+    assert r["matched"] / r["figurePixels"] > 0.85, r
 
 
 def expected_stage(data, volume, eye):
@@ -83,21 +103,33 @@ def expected_stage(data, volume, eye):
                                                           "eye": eye, "wall": WALL, "floor": FLOOR}))
     assert out["drawn"]
     blocks = [spec["block"] for spec in data["level_blocks"]]
-    names = {WALL: WALL_BLOCK, FLOOR: FLOOR_BLOCK}
-    return out["geom"], [names.get(v) or blocks[v] for v in out["board"]]
+    names = {WALL: WALL_BLOCK, FLOOR: FLOOR_BLOCK, -1: None}
+    return out["geom"], [names[v] if v in names else blocks[v] for v in out["board"]]
+
+
+def stage_offset(geom, p):
+    """codec.js の stageCellOffset と同じ規則で、盤面の p 番目のマスの舞台の原点からの位置 (区画の余りは None)。"""
+    row, column = divmod(p, geom["rowWidth"])
+    wall, floor = geom["wallHeight"], geom["floorRows"]
+    if row < wall + floor:
+        if column >= geom["stageWidth"]:
+            return None
+        return (1 + column, wall - row, 0) if row < wall else (1 + column, 0, 1 + row - wall)
+    if column >= floor:
+        return None
+    r = (row - wall - floor) % wall
+    x = 0 if row < 2 * wall + floor else geom["stageWidth"] + 1
+    return (x, wall - r, 1 + column)
 
 
 def placed_stage(out, geom, anchor):
-    """モックのワールドに置かれたブロックを、舞台の盤面の順 (壁の行 → 床の行) に読む。"""
+    """モックのワールドに置かれたブロックを、舞台の盤面の順に読む (区画の余りは None)。"""
     world = {(x, y, z): block for x, y, z, block in out["allBlocks"]}
     cells = []
-    for row in range(geom["rows"]):
-        for x in range(geom["stageWidth"]):
-            if row < geom["wallHeight"]:
-                key = (anchor["x"] + x, anchor["y"] + geom["wallHeight"] - row, anchor["z"])
-            else:
-                key = (anchor["x"] + x, anchor["y"], anchor["z"] + 1 + row - geom["wallHeight"])
-            cells.append(world.get(key))
+    for p in range(geom["cells"]):
+        offset = stage_offset(geom, p)
+        cells.append(None if offset is None else
+                     world.get((anchor["x"] + offset[0], anchor["y"] + offset[1], anchor["z"] + offset[2])))
     return cells, world
 
 
@@ -113,17 +145,17 @@ def check_playback(tmp_path, path, data):
     out = drive(tmp_path / "addon", {"stage": path}, steps)
     assert out["errors"] == []
     anchor = out["snaps"][0]["anchor"]
-    eye = {"x": moved["x"] - anchor["x"], "y": moved["y"] + EYE_HEIGHT - anchor["y"], "z": moved["z"] - anchor["z"]}
+    # 舞台の内側の座標は、左の壁の 1 列ぶん東から
+    eye = {"x": moved["x"] - anchor["x"] - 1, "y": moved["y"] + EYE_HEIGHT - anchor["y"], "z": moved["z"] - anchor["z"]}
     geom, expected = expected_stage(data, final, eye)
     placed, world = placed_stage(out, geom, anchor)
     assert placed == expected
-    # 人物そのもの (舞台の上の空間) には何も置かない: 置いたブロックはすべて壁か床
-    for (x, y, z) in world:
-        assert anchor["x"] <= x < anchor["x"] + geom["stageWidth"]
-        assert (z == anchor["z"] and 1 <= y - anchor["y"] <= geom["wallHeight"]) or \
-            (y == anchor["y"] and 1 <= z - anchor["z"] <= geom["floorRows"])
-    # 人物が壁と床に写っている
-    figure_cells = sum(1 for b in placed if b not in (WALL_BLOCK, FLOOR_BLOCK))
+    # 人物そのもの (舞台の上の空間) には何も置かない: 置いたブロックはすべて舞台 (床と 3 枚の壁) のマス
+    stage_cells = {tuple(a + o for a, o in zip((anchor["x"], anchor["y"], anchor["z"]), offset))
+                   for offset in (stage_offset(geom, p) for p in range(geom["cells"])) if offset is not None}
+    assert set(world) <= stage_cells
+    # 人物が舞台に写っている
+    figure_cells = sum(1 for b in placed if b not in (WALL_BLOCK, FLOOR_BLOCK, None))
     assert figure_cells > 20
     return out, geom
 

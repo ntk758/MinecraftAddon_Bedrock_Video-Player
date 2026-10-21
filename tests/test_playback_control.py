@@ -195,3 +195,19 @@ def test_blocks_that_cannot_be_placed_are_reported_once_in_chat(tmp_path):
     assert len(notices) == 1
     assert "UnloadedChunksError" in notices[0]
     assert data["frame_count"] == 20
+
+
+def test_stats_after_stop_and_clear_keep_the_real_drift(scene, tmp_path):
+    """停止・クリアで再生位置が 0 に戻った後に stats を見ても、映像の遅れは止めた時点で計算する
+    (実機で、クリアの後に見た遅れが再生時間ぶん (4.69 秒) と表示されていた)。モックの tick は一瞬で進むので、
+    遅れの値そのものではなく、止める前と後で同じになることを確かめる。"""
+    path, _ = scene
+    steps = [{"event": "badapple:setup"}, {"event": "badapple:start"}, {"tick": 60}, {"ui": [{"selection": 0}]},
+             {"event": "badapple:stats"}, {"event": "badapple:stop"}, {"until": "bvp.clear_done"},
+             {"event": "badapple:stats"}]
+    out = drive(tmp_path / "addon", {"demo": path}, steps)
+    assert out["errors"] == []
+    drifts = [float(json.loads(m)["rawtext"][1]["with"]["rawtext"][5]["text"])
+              for m in out["messages"] if "bvp.stats_play" in m]
+    assert len(drifts) == 2
+    assert abs(drifts[1] - drifts[0]) < 0.2

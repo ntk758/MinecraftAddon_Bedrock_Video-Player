@@ -1,7 +1,7 @@
 // だまし絵 (codec.js の projectToStage) を確かめる (tests/test_anamorphic.py から実行)。
 // 立体の人物を壁と床へ写し、同じ目の位置のカメラで「壁と床を見た絵」と「人物を直接見た絵」を描いて比べる。
 // 使い方: node stage_view.mjs '<目の位置の JSON 配列 [{x, y, z}, ...]>'  (座標は舞台の原点から)
-import { projectToStage, stageCellOffset, stageGeometry } from "./codec.js";
+import { createStageWork, projectToStage, stageCellOffset, stageGeometry } from "./codec.js";
 
 const AIR = 127;
 const WALL = 30000;
@@ -67,35 +67,43 @@ function castFigure(figure, geom, eye, dir) {
   return -1;
 }
 
-// 目から向き dir の視線が当たる壁か床のマスの値 (舞台の外なら -1)
+// 目から向き dir の視線が当たる床か壁 (後ろ・左・右) のマスの値 (舞台の外なら -1)
 function castStage(board, geom, eye, dir) {
-  const { stageWidth, wallHeight, floorRows } = geom;
+  const { stageWidth, wallHeight, floorRows, rowWidth } = geom;
   const tFloor = dir[1] < 0 ? (1 - eye.y) / dir[1] : Infinity;
-  const tWall = dir[2] < 0 ? (1 - eye.z) / dir[2] : Infinity;
-  const t = Math.min(tFloor, tWall);
+  const tBack = dir[2] < 0 ? (1 - eye.z) / dir[2] : Infinity;
+  const tSide = dir[0] < 0 ? -eye.x / dir[0] : dir[0] > 0 ? (stageWidth - eye.x) / dir[0] : Infinity;
+  const t = Math.min(tFloor, tBack, tSide);
   if (t === Infinity) return -1;
   const x = eye.x + dir[0] * t;
-  if (x < 0 || x >= stageWidth) return -1;
-  if (tFloor < tWall) {
-    const k = Math.floor(eye.z + dir[2] * t - 1);
-    if (k < 0 || k >= floorRows) return -1;
-    return board[(wallHeight + k) * stageWidth + Math.floor(x)];
-  }
   const y = eye.y + dir[1] * t;
+  const z = eye.z + dir[2] * t;
   const r = wallHeight - Math.floor(y);
+  if (t === tFloor) {
+    const k = Math.floor(z - 1);
+    if (k < 0 || k >= floorRows || x < 0 || x >= stageWidth) return -1;
+    return board[(wallHeight + k) * rowWidth + Math.floor(x)];
+  }
   if (r < 0 || r >= wallHeight) return -1;
-  return board[r * stageWidth + Math.floor(x)];
+  if (t === tBack) {
+    if (x < 0 || x >= stageWidth) return -1;
+    return board[r * rowWidth + Math.floor(x)];
+  }
+  const j = Math.floor(z - 1);
+  if (j < 0 || j >= floorRows) return -1;
+  const row0 = dir[0] < 0 ? wallHeight + floorRows : 2 * wallHeight + floorRows;
+  return board[(row0 + r) * rowWidth + j];
 }
 
 const eyes = JSON.parse(process.argv[2]);
 const geom = stageGeometry(video);
 const figure = makeFigure();
 const board = new Int16Array(geom.cells);
-const zbuf = new Float32Array(geom.cells);
+const work = createStageWork(geom, WALL, FLOOR);
 const results = [];
 for (const eye of eyes) {
   const started = performance.now();
-  const drawn = projectToStage(figure, video, geom, eye, board, zbuf, WALL, FLOOR);
+  const drawn = projectToStage(figure, video, geom, eye, board, work);
   const ms = performance.now() - started;
   // カメラは人物の中心を向く
   const target = [geom.side + video.width / 2, 1 + video.height / 2, 1 + geom.gap + video.depth / 2];
@@ -141,7 +149,11 @@ for (const eye of eyes) {
   }
   results.push({ eye, drawn, ms, figurePixels, matched, wrongColour, missing, extra, offStage, image, size });
 }
-// 盤面の位置の規則も返す (壁の左上・床の手前の右端)
+// 盤面の位置の規則も返す (後ろの壁の左上・床の手前の右端・左の壁の最初・右の壁の最後)
 const corner = (p) => stageCellOffset(geom, p, { x: 0, y: 0, z: 0 });
+const rowStart = (row) => row * geom.rowWidth;
 const stageBoard = process.argv.includes("images") ? [...board] : null;
-process.stdout.write(JSON.stringify({ geom, stageBoard, results, wallTopLeft: corner(0), floorLast: corner(geom.cells - 1) }));
+process.stdout.write(JSON.stringify({ geom, stageBoard, results, wallTopLeft: corner(0),
+  floorLast: corner(rowStart(geom.wallHeight + geom.floorRows - 1) + geom.stageWidth - 1),
+  leftFirst: corner(rowStart(geom.wallHeight + geom.floorRows)),
+  rightLast: corner(rowStart(geom.rows - 1) + geom.floorRows - 1) }));
