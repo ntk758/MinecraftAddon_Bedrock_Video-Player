@@ -96,18 +96,23 @@ def _subprocess_kwargs():
     return {}
 
 
-def build_video_filter(width, height, fps=None):
-    """アスペクト比を保って縮小し、余白を黒で中央に埋める FFmpeg フィルタ文字列。"""
+def build_video_filter(width, height, fps=None, fit="pad"):
+    """アスペクト比を保って width × height にする FFmpeg フィルタ文字列。
+    fit="pad" は全体を入れて余白を黒で中央に埋め、"cover" は画面を埋めるように拡大してはみ出した所を中央で切る。"""
     filters = []
     if fps is not None:
         filters.append(f"fps={fps}")
-    filters.append(f"scale={width}:{height}:force_original_aspect_ratio=decrease")
-    filters.append(f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black")
+    if fit == "cover":
+        filters.append(f"scale={width}:{height}:force_original_aspect_ratio=increase")
+        filters.append(f"crop={width}:{height}")
+    else:
+        filters.append(f"scale={width}:{height}:force_original_aspect_ratio=decrease")
+        filters.append(f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black")
     return ",".join(filters)
 
 
-def ffmpeg_frame_generator(video_path, width, height, fps, duration=None, ffmpeg="ffmpeg"):
-    cmd = [ffmpeg, "-v", "error", "-i", str(video_path), "-vf", build_video_filter(width, height, fps)]
+def ffmpeg_frame_generator(video_path, width, height, fps, duration=None, ffmpeg="ffmpeg", fit="pad"):
+    cmd = [ffmpeg, "-v", "error", "-i", str(video_path), "-vf", build_video_filter(width, height, fps, fit)]
     if duration is not None:
         cmd.extend(["-t", str(duration)])
     cmd.extend(["-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
@@ -133,11 +138,19 @@ def ffmpeg_frame_generator(video_path, width, height, fps, duration=None, ffmpeg
         raise RuntimeError(f"ffmpeg がエラー終了しました (code {returncode}): {stderr.strip()}")
 
 
-def letterbox_image(img, width, height):
-    """FFmpeg の scale(decrease)+pad と同じ規則で画像を収める。"""
+def letterbox_image(img, width, height, fit="pad"):
+    """FFmpeg の scale(decrease)+pad と同じ規則で画像を収める。fit="cover" なら scale(increase)+crop と同じく、
+    画面を埋めるように拡大してはみ出した所を中央で切る。"""
     img = img.convert("RGB")
     if img.size == (width, height):
         return img
+    if fit == "cover":
+        ratio = max(width / img.width, height / img.height)
+        new_size = (max(width, round(img.width * ratio)), max(height, round(img.height * ratio)))
+        resized = img.resize(new_size, Image.Resampling.LANCZOS)
+        left = (new_size[0] - width) // 2
+        top = (new_size[1] - height) // 2
+        return resized.crop((left, top, left + width, top + height))
     ratio = min(width / img.width, height / img.height)
     new_size = (max(1, round(img.width * ratio)), max(1, round(img.height * ratio)))
     resized = img.resize(new_size, Image.Resampling.LANCZOS)
@@ -146,20 +159,20 @@ def letterbox_image(img, width, height):
     return canvas
 
 
-def image_dir_frame_generator(frames_dir, width, height):
+def image_dir_frame_generator(frames_dir, width, height, fit="pad"):
     files = sorted(p for p in Path(frames_dir).iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS)
     for path in files:
         with Image.open(path) as img:
-            yield np.asarray(letterbox_image(img, width, height), dtype=np.uint8)
+            yield np.asarray(letterbox_image(img, width, height, fit), dtype=np.uint8)
 
 
 def make_frame_source(args):
     """呼ぶたびに先頭からフレームを流すイテレータを返す関数 (2 パス処理用)。"""
     if args.input_video:
         return lambda: ffmpeg_frame_generator(
-            args.input_video, args.width, args.height, args.fps, args.duration, args.ffmpeg
+            args.input_video, args.width, args.height, args.fps, args.duration, args.ffmpeg, args.fit
         )
-    return lambda: image_dir_frame_generator(args.frames_dir, args.width, args.height)
+    return lambda: image_dir_frame_generator(args.frames_dir, args.width, args.height, args.fit)
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +443,11 @@ def parse_args(argv=None):
     parser.add_argument("--view", default="blocks", choices=["blocks", "anamorphic"],
                         help="立体の見せ方。blocks: 立体をブロックで置く / anamorphic: 立体は置かず、見ている人の目の位置から"
                              "見たとおりに後ろの壁と足元の床へ描く (正しい位置から見ると立体に見えるだまし絵。見る人は 1 人)")
+    parser.add_argument("--stage-background", default=None, metavar="VIDEO_ID",
+                        help="だまし絵の後ろの壁に流す背景の映像の動画 ID (同じアドオンに、後ろの壁と同じ大きさの平面の"
+                             "動画として入れる。音声もその動画のものを鳴らす)")
+    parser.add_argument("--fit", default="pad", choices=["pad", "cover"],
+                        help="映像の縦横比が画面と違うとき。pad: 全体を入れて余白を黒く / cover: 画面を埋めるようにはみ出した所を切る")
     parser.add_argument("--depth-video", default=None,
                         help="relief で奥行きに使うグレースケール動画 (明るいほど手前)。省略時は各画素の明るさを使う")
     parser.add_argument("--extrude-threshold", type=float, default=0.5,
@@ -673,6 +691,8 @@ def build_frame_data(args, width, height, gop_boundaries, palettes, adaptive, en
         data["layout"] = "screen"
     if depth is not None and getattr(args, "view", "blocks") == "anamorphic":
         data["view"] = "anamorphic"
+        if getattr(args, "stage_background", None):
+            data["stage_background"] = args.stage_background
     return data
 
 

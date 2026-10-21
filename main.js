@@ -26,6 +26,7 @@ import {
   projectToStage,
   readVarint,
   skipFrameHeader,
+  STAGE_IMAGE_OFFSET,
   stageCellOffset,
   stageGeometry,
   streamSizeOf,
@@ -122,7 +123,9 @@ function currentCostModel() {
 }
 const activePlayers = new Map(); // key: "x,y,z"
 
-let globalSelectedVideoId = VIDEO_LIST.length > 0 ? VIDEO_LIST[0].id : null;
+// 一覧・リモコンの「次の動画」に出す動画。だまし絵の背景の映像 (hidden) は、人物の動画と一緒に再生するので出さない
+const LISTED_VIDEOS = VIDEO_LIST.filter((v) => !v.hidden);
+let globalSelectedVideoId = LISTED_VIDEOS.length > 0 ? LISTED_VIDEOS[0].id : null;
 
 // プレイヤーに見せる文字列はリソースパックの texts/*.lang にあり、各プレイヤーのゲーム言語で表示される。
 // 翻訳の元は locales/*.json の "addon.*" キー (GUI がビルド時に .lang を生成し、キー名は "bvp.*" になる)。
@@ -204,6 +207,22 @@ function stageOf(videoData) {
     stageGeometryCache.set(videoData, geom);
   }
   return geom;
+}
+
+/**
+ * だまし絵の後ろの壁に流す背景の映像 (同じアドオンの平面の動画) の ID。大きさが後ろの壁と同じ (幅 stageWidth ×
+ * 高さ wallHeight) でなければ使わない。無ければ null。
+ */
+function stageBackgroundOf(videoData) {
+  const id = isAnamorphic(videoData) ? videoData.stage_background : null;
+  const background = id ? VIDEOS[id] : null;
+  if (!background) return null;
+  const geom = stageOf(videoData);
+  if (isVolume(background) || background.width !== geom.stageWidth || background.height !== geom.wallHeight) {
+    warnOnce(`background:${id}`, `Background video ${id} must be a ${geom.stageWidth}x${geom.wallHeight} flat screen; ignored`);
+    return null;
+  }
+  return id;
 }
 
 /** 盤面を立体 (空気を含む箱) としてワールドに置くか。だまし絵は立体のデータでも、置くのは壁と床だけ。 */
@@ -289,6 +308,8 @@ class VideoPlayer {
     //   viewIterator はフレームの合間に目の動きに合わせて描き直す処理
     this.figure = null;
     this.stageWork = null;
+    // だまし絵の背景の映像を復元する役 (ブロックは置かない VideoPlayer)。無ければ null
+    this.background = null;
     this.stagePalettes = new Map();
     this.lastEye = null;
     this.viewDrawn = false;
@@ -305,6 +326,23 @@ class VideoPlayer {
     this.boardGopId = -1;
     // 再生の計測 (/scriptevent <接頭辞>:stats)。再生・再開のたびに測り直す
     this.playStats = null;
+  }
+
+  /**
+   * 再生するフレームの数。だまし絵で背景の映像の方が長ければ、背景の映像の長さ (人物のアニメは繰り返す)。
+   */
+  get frameCount() {
+    const video = this.videoData;
+    if (!video) return 0;
+    const backgroundId = stageBackgroundOf(video);
+    if (!backgroundId) return video.frame_count;
+    const background = VIDEOS[backgroundId];
+    return Math.max(video.frame_count, secondsToFrame(video, frameToSeconds(background, background.frame_count)));
+  }
+
+  /** 鳴らす音声の動画 ID。だまし絵に背景の映像があれば、その音声 (人物の .vox などには音声が無い)。 */
+  get audioVideoId() {
+    return (this.videoData && stageBackgroundOf(this.videoData)) ?? this.videoId;
   }
 
   /** 再生の計測を始め直す。実時間は最初のフレームを描く tick から数える (読み込み待ちの tick を含めない)。 */
@@ -375,6 +413,8 @@ class VideoPlayer {
       const { width, height, depth } = this.videoData;
       this.figure = anamorphic ? new Int16Array(width * height * depth).fill(this.videoData.air_level) : null;
       this.stageWork = anamorphic ? createStageWork(stageOf(this.videoData), STAGE_WALL_LEVEL, STAGE_FLOOR_LEVEL) : null;
+      const backgroundId = stageBackgroundOf(this.videoData);
+      this.background = backgroundId ? new VideoPlayer(this.anchor, this.dimension, backgroundId) : null;
       this.viewDrawn = false;
       this.stageRows = { lo: 0, hi: Infinity, left: 0, right: Infinity };
       if (isHeightfield(this.videoData)) {
@@ -926,44 +966,40 @@ class VideoPlayer {
     const width = boardWidthOf(this.videoData);
 
     if (this.board && this.decodedIndex) {
-      if (frameIndex < 0 || frameIndex >= this.decodedIndex.length) return;
-      const entry = this.decodedIndex[frameIndex];
-
-      // 先の GOP を先読みする。40 フレーム先までにある GOP をすべて (短い GOP が続いても取りこぼさない)。
-      // キャッシュは MAX_CACHED_GOPS 個なので、今の GOP の次から 2 個まで
-      const lookaheadFrame = Math.min(frameIndex + GOP_PREFETCH_FRAMES, this.decodedIndex.length - 1);
-      const lastGopId = Math.min(this.decodedIndex[lookaheadFrame].gopId, entry.gopId + 2);
-      for (let gopId = entry.gopId + 1; gopId <= lastGopId; gopId++) this.prefetchGop(gopId);
-      // decoded を frameIndex の状態にする。直前のフレームの続きでなければ (シークの中断・ベンチマーク・
-      // 描画途中での一時停止の後など)、直近のキーフレームから置かずに復元し直す
-      let resynced = false;
-      if (this.decodedFrame !== frameIndex) {
-        if (this.decodedFrame !== frameIndex - 1) {
-          resynced = true;
-          const start = findKeyframeAtOrBefore(this.decodedIndex, frameIndex);
-          for (let f = start; f < frameIndex; f++) {
-            if (!(yield* this.decodeOnlyJob(f))) return;
-            yield DECODE_YIELD;
-          }
-        }
-        if (!(yield* this.decodeOnlyJob(frameIndex))) return;
+      // だまし絵で背景の映像の方が長ければ、人物のアニメを繰り返す
+      const figureFrame = this.background ? frameIndex % this.decodedIndex.length : frameIndex;
+      const synced = yield* this.decodeTo(figureFrame);
+      if (!synced) return;
+      const entry = synced.entry;
+      // 背景の映像の、同じ時刻のフレーム
+      let backgroundSynced = null;
+      if (this.background) {
+        const background = this.background;
+        const seconds = frameToSeconds(this.videoData, frameIndex);
+        const backgroundFrame = Math.min(background.videoData.frame_count - 1, secondsToFrame(background.videoData, seconds));
+        backgroundSynced = yield* background.decodeTo(backgroundFrame);
       }
       // 省略フレームは盤面が変わらないので、順番どおりに来たときは何も置かない
-      if (entry.length === 0 && !resynced) return;
+      if (!synced.changed && !backgroundSynced?.changed) return;
 
-      this.currentGopId = entry.gopId;
       this.activePalette = this.videoData.adaptive_palette ? this.paletteCache[this.currentGopId] : this.paletteCache;
       const target = this.figure ?? this.nextBoard;
       if (this.expandedPlanes) expandPlanes(this.decoded, this.expandedPlanes, target, this.videoData);
       else target.set(this.decoded);
       if (this.figure) {
         this.stageWork.dirty = true;
-        this.activePalette = this.stagePalette(this.activePalette);
+        this.activePalette = this.stagePalette(this.activePalette, backgroundSynced ? this.background.framePalette() : null);
         this.drawStage();
+        // 背景の映像が変わったら、後ろの壁の全体から変わったマスを探す
+        if (backgroundSynced?.changed) this.extendStageRows(0, stageOf(this.videoData).wallHeight, 0, stageOf(this.videoData).stageWidth);
       }
       // 自動パレットで GOP が変わると同じ番号でも別のブロックになるので、表示中の盤面を「不明」にする
       if (this.videoData.adaptive_palette && entry.gopId !== this.boardGopId) this.invalidateForPaletteChange();
       this.boardGopId = entry.gopId;
+      if (backgroundSynced && this.background.videoData.adaptive_palette && this.background.currentGopId !== this.backgroundGopId) {
+        this.invalidateStageImage();
+      }
+      this.backgroundGopId = this.background?.currentGopId ?? -1;
       yield* this.placeChangedBlocks(width);
       if (this.figure) this.settleStageRows();
       return;
@@ -987,16 +1023,44 @@ class VideoPlayer {
     yield* this.applyBinarySlice(width, bytes, 0, bytes.length);
   }
 
-  /** だまし絵のパレット: 動画のパレットに壁と床のブロックを足したもの (元のパレットごとに 1 回だけ作る)。 */
-  stagePalette(base) {
-    let palette = this.stagePalettes.get(base);
+  /**
+   * だまし絵のパレット: 人物のパレットに、背景の映像のパレット (STAGE_IMAGE_OFFSET から) と壁と床のブロックを
+   * 足したもの (元のパレットの組ごとに 1 回だけ作る)。
+   */
+  stagePalette(base, backgroundBase = null) {
+    let byBackground = this.stagePalettes.get(base);
+    if (!byBackground) {
+      byBackground = new Map();
+      this.stagePalettes.set(base, byBackground);
+    }
+    let palette = byBackground.get(backgroundBase);
     if (!palette) {
       palette = base.slice();
+      if (backgroundBase) backgroundBase.forEach((permutation, level) => { palette[STAGE_IMAGE_OFFSET + level] = permutation; });
       palette[STAGE_WALL_LEVEL] = resolvePermutation({ block: this.videoData.stage_wall ?? DEFAULT_STAGE_WALL });
       palette[STAGE_FLOOR_LEVEL] = resolvePermutation({ block: this.videoData.stage_floor ?? DEFAULT_STAGE_FLOOR });
-      this.stagePalettes.set(base, palette);
+      byBackground.set(backgroundBase, palette);
     }
     return palette;
+  }
+
+  /** だまし絵: 変わったマスを探す範囲を広げる (行 [lo, hi)・列 [left, right))。 */
+  extendStageRows(lo, hi, left, right) {
+    const range = this.stageRows;
+    range.lo = Math.min(range.lo, lo);
+    range.hi = Math.max(range.hi, hi);
+    range.left = Math.min(range.left, left);
+    range.right = Math.max(range.right, right);
+  }
+
+  /** だまし絵: 背景の映像の自動パレットの GOP が変わったとき、背景の映像のマスを「不明」にして置き直させる。 */
+  invalidateStageImage() {
+    const board = this.board;
+    for (let p = 0; p < board.length; p++) {
+      if (board[p] >= STAGE_IMAGE_OFFSET && board[p] < STAGE_WALL_LEVEL) board[p] = -1;
+    }
+    const geom = stageOf(this.videoData);
+    this.extendStageRows(0, geom.wallHeight, 0, geom.stageWidth);
   }
 
   /**
@@ -1035,15 +1099,9 @@ class VideoPlayer {
     const geom = stageOf(this.videoData);
     const eye = this.viewerEye() ?? this.lastEye
       ?? { x: geom.stageWidth / 2, y: 1 + this.videoData.height / 2, z: 1 + geom.floorRows + this.videoData.height };
-    projectToStage(this.figure, this.videoData, geom, eye, this.nextBoard, this.stageWork);
+    projectToStage(this.figure, this.videoData, geom, eye, this.nextBoard, this.stageWork, this.background?.decoded ?? null);
     const work = this.stageWork;
-    if (work.rowMin <= work.rowMax) {
-      const range = this.stageRows;
-      range.lo = Math.min(range.lo, work.rowMin);
-      range.hi = Math.max(range.hi, work.rowMax + 1);
-      range.left = Math.min(range.left, work.colMin);
-      range.right = Math.max(range.right, work.colMax + 1);
-    }
+    if (work.rowMin <= work.rowMax) this.extendStageRows(work.rowMin, work.rowMax + 1, work.colMin, work.colMax + 1);
     this.lastEye = eye;
     this.viewDrawn = true;
   }
@@ -1089,6 +1147,42 @@ class VideoPlayer {
     return false;
   }
 
+  /**
+   * decoded を frameIndex の状態にする (ブロックは置かない)。直前のフレームの続きでなければ (シークの中断・
+   * ベンチマーク・描画途中での一時停止・だまし絵の人物のアニメの繰り返しの後など)、直近のキーフレームから復元し直す。
+   * 戻り値は { entry, changed } (changed: 置き直すべき変化があるか)。復元できなければ null。
+   */
+  *decodeTo(frameIndex) {
+    if (!this.ensureDecodedData() || !this.board || !this.decodedIndex) return null;
+    this.initPaletteCache();
+    if (frameIndex < 0 || frameIndex >= this.decodedIndex.length) return null;
+    const entry = this.decodedIndex[frameIndex];
+    // 先の GOP を先読みする。40 フレーム先までにある GOP をすべて (短い GOP が続いても取りこぼさない)。
+    // キャッシュは MAX_CACHED_GOPS 個なので、今の GOP の次から 2 個まで
+    const lookaheadFrame = Math.min(frameIndex + GOP_PREFETCH_FRAMES, this.decodedIndex.length - 1);
+    const lastGopId = Math.min(this.decodedIndex[lookaheadFrame].gopId, entry.gopId + 2);
+    for (let gopId = entry.gopId + 1; gopId <= lastGopId; gopId++) this.prefetchGop(gopId);
+    let resynced = false;
+    if (this.decodedFrame !== frameIndex) {
+      if (this.decodedFrame !== frameIndex - 1) {
+        resynced = true;
+        const start = findKeyframeAtOrBefore(this.decodedIndex, frameIndex);
+        for (let f = start; f < frameIndex; f++) {
+          if (!(yield* this.decodeOnlyJob(f))) return null;
+          yield DECODE_YIELD;
+        }
+      }
+      if (!(yield* this.decodeOnlyJob(frameIndex))) return null;
+    }
+    this.currentGopId = entry.gopId;
+    return { entry, changed: resynced || entry.length > 0 };
+  }
+
+  /** 今復元しているフレームのパレット (ブロックの一覧)。 */
+  framePalette() {
+    return this.videoData.adaptive_palette ? this.paletteCache[this.currentGopId] : this.paletteCache;
+  }
+
   /** frameIndex を decoded へ復元するだけで、ブロックは置かない (decoded は frameIndex - 1 の状態であること)。 */
   *decodeOnlyJob(frameIndex) {
     const entry = this.decodedIndex[frameIndex];
@@ -1109,7 +1203,7 @@ class VideoPlayer {
     const targetChunk = Math.floor(frameToSeconds(this.videoData, frameIndex) / AUDIO_CHUNK_SECONDS);
     if (targetChunk !== this.currentAudioChunk) {
       this.currentAudioChunk = targetChunk;
-      const trackId = `${EVENT_NAMESPACE}.${this.videoId}.chunk_${targetChunk}`;
+      const trackId = `${EVENT_NAMESPACE}.${this.audioVideoId}.chunk_${targetChunk}`;
       for (const p of world.getAllPlayers()) {
         try {
           p.stopMusic();
@@ -1144,7 +1238,7 @@ class VideoPlayer {
     this.elapsedTicks++;
 
     if (!this.frameIterator) {
-      if (this.currentFrame >= this.videoData.frame_count) {
+      if (this.currentFrame >= this.frameCount) {
         this.stopPlayback();
         notify("playback_finished", this.anchor.x, this.anchor.y, this.anchor.z);
         return;
@@ -1234,7 +1328,7 @@ class VideoPlayer {
 
   /** 一時停止・シーク位置から再生を続ける。 */
   resume() {
-    if (!this.videoData || this.currentFrame >= this.videoData.frame_count) {
+    if (!this.videoData || this.currentFrame >= this.frameCount) {
       this.restart();
       return;
     }
@@ -1248,7 +1342,7 @@ class VideoPlayer {
   }
 
   canResume() {
-    return !this.running && this.currentFrame > 0 && this.videoData && this.currentFrame < this.videoData.frame_count;
+    return !this.running && this.currentFrame > 0 && this.videoData && this.currentFrame < this.frameCount;
   }
 
   stopAndClear() {
@@ -1304,7 +1398,7 @@ class VideoPlayer {
 
   seekToFrame(targetFrame) {
     if (!this.videoData || !this.ensureDecodedData()) return;
-    targetFrame = Math.max(0, Math.min(targetFrame, this.videoData.frame_count - 1));
+    targetFrame = Math.max(0, Math.min(targetFrame, this.frameCount - 1));
 
     // 再生中のフレーム描画とシーク描画が混ざらないよう一旦止める
     this.stopPlayback();
@@ -1768,7 +1862,7 @@ function showRemoteControlGUI(player) {
   const masterVolume = vp ? vp.masterVolume : 1.0;
   
   const currentSec = videoData ? Math.floor(frameToSeconds(videoData, currentFrame)) : 0;
-  const totalSec = videoData ? Math.floor(frameToSeconds(videoData, videoData.frame_count)) : 0;
+  const totalSec = videoData ? Math.floor(frameToSeconds(videoData, vp && vp.videoId === currentVideoId ? vp.frameCount : videoData.frame_count)) : 0;
 
   const form = new ActionFormData()
     .title(tr("remote.title"))
@@ -1823,13 +1917,13 @@ function showRemoteControlGUI(player) {
 }
 
 function switchVideoIndex(direction, player) {
-  if (VIDEO_LIST.length === 0) return;
+  if (LISTED_VIDEOS.length === 0) return;
   const vp = getActivePlayer();
   const cvId = vp ? vp.videoId : globalSelectedVideoId;
-  let currentIdx = VIDEO_LIST.findIndex((v) => v.id === cvId);
+  let currentIdx = LISTED_VIDEOS.findIndex((v) => v.id === cvId);
   if (currentIdx === -1) currentIdx = 0;
-  let newIdx = (currentIdx + direction + VIDEO_LIST.length) % VIDEO_LIST.length;
-  globalSelectedVideoId = VIDEO_LIST[newIdx].id;
+  let newIdx = (currentIdx + direction + LISTED_VIDEOS.length) % LISTED_VIDEOS.length;
+  globalSelectedVideoId = LISTED_VIDEOS[newIdx].id;
   notify("next_video", globalSelectedVideoId);
   showRemoteControlGUI(player);
 }
@@ -1855,7 +1949,7 @@ function showVolumeGUI(player) {
 function showSeekGUI(player) {
   const vp = getActivePlayer();
   if (!vp || !vp.videoData) return;
-  const maxSec = Math.floor(frameToSeconds(vp.videoData, vp.videoData.frame_count));
+  const maxSec = Math.floor(frameToSeconds(vp.videoData, vp.frameCount));
   const currentSec = Math.floor(frameToSeconds(vp.videoData, vp.currentFrame));
 
   const form = new ModalFormData()
@@ -1874,7 +1968,7 @@ function showVideoSelectGUI(player) {
   const vp = getActivePlayer();
   const cvId = vp ? vp.videoId : globalSelectedVideoId;
   const form = new ActionFormData().title(tr("library.title")).body(tr("library.body"));
-  for (const v of VIDEO_LIST) {
+  for (const v of LISTED_VIDEOS) {
     const rawtext = [{ text: v.title }];
     if (v.id === cvId) rawtext.push({ text: " " }, tr("selected_tag"));
     rawtext.push({ text: "\n" }, tr("library.item", v.frame_count, videoSizeLabel(v)));
@@ -1883,7 +1977,7 @@ function showVideoSelectGUI(player) {
 
   form.show(player).then((response) => {
     if (response.canceled) return;
-    const selectedVideo = VIDEO_LIST[response.selection];
+    const selectedVideo = LISTED_VIDEOS[response.selection];
     if (selectedVideo) {
       globalSelectedVideoId = selectedVideo.id;
       notify("video_selected_hint", selectedVideo.id);
@@ -1933,11 +2027,11 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
       if (player) showRemoteControlGUI(player);
       break;
     case "list":
-      if (VIDEO_LIST.length === 0) {
+      if (LISTED_VIDEOS.length === 0) {
         notify("no_videos");
       } else {
         notify("video_list");
-        for (const v of VIDEO_LIST) {
+        for (const v of LISTED_VIDEOS) {
           const rawtext = [{ text: "  " }, tr("video_list_item", v.id, v.title, v.frame_count, videoSizeLabel(v))];
           if (v.id === globalSelectedVideoId) rawtext.push({ text: " " }, tr("selected_tag"));
           world.sendMessage({ rawtext });

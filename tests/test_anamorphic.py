@@ -189,3 +189,132 @@ def test_inflated_silhouette_is_drawn_on_wall_and_floor(tmp_path):
 def test_view_option_needs_a_3d_mode(tmp_path):
     with pytest.raises(SystemExit):
         convert.main(["--frames-dir", str(tmp_path), "--output", str(tmp_path / "x.js"), "--view", "anamorphic"])
+
+
+@pytest.mark.parametrize("dims", [(24, 40, 8), (32, 56, 20), (128, 72, 16), (9, 13, 31)])
+def test_python_stage_geometry_matches_codec_js(dims):
+    """変換ツール (背景の映像の大きさを決める) と codec.js の舞台の大きさが同じ。"""
+    from mvcodec.stage import stage_geometry
+    width, height, depth = dims
+    video = {"width": width, "height": height, "depth": depth, "air_level": 127}
+    out = run_node("project_stage.mjs", stdin=json.dumps({"video": video, "figure": [127] * (width * height * depth),
+                                                          "eye": {"x": 1, "y": 2, "z": 3}, "wall": WALL, "floor": FLOOR}))
+    js = out["geom"]
+    assert stage_geometry(width, height, depth) == {key: js[key] for key in stage_geometry(width, height, depth)}
+
+
+class _Var:
+    def __init__(self, value):
+        self.value = value
+
+    def get(self):
+        return self.value
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg が必要")
+@pytest.mark.parametrize("palette", ["full", "auto"])
+def test_background_video_plays_on_the_back_wall(tmp_path, palette):
+    """GUI の組み立て (画面なし) で、.vox の人物に背景の映像を付ける。背景の映像は後ろの壁の大きさの、一覧に出さない
+    動画になり、再生は背景の映像の長さ (人物は繰り返す)、音声は背景の映像のもの、後ろの壁は背景の映像の最後の
+    フレームの上に人物を描いたものになる。"""
+    import queue
+    import zipfile
+
+    import video_player_gui as gui
+    from gui_i18n import Translator
+
+    vox = make_depth_walk(tmp_path)  # 10 フレーム (10 fps で 1 秒)
+    background = tmp_path / "bg.mp4"
+    # 2.5 秒ごとに場面が変わる 5 秒の映像 (自動パレットが場面ごとに切り替わる。場面は 20 フレーム以上) と音声
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10:duration=2.5",
+                    "-f", "lavfi", "-i", "mandelbrot=size=320x180:rate=10", "-f", "lavfi", "-i", "sine=frequency=440:duration=5",
+                    "-filter_complex", "[1:v]trim=duration=2.5,setpts=PTS-STARTPTS[m];[0:v][m]concat=n=2:v=1[v]",
+                    "-map", "[v]", "-map", "2:a", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                    str(background)], check=True)
+
+    class Headless:
+        def __init__(self):
+            self.tr = Translator("ja")
+            self.messages = queue.Queue()
+            self.keyframe_interval_var = _Var(30)
+            self.perceptual_var = _Var(True)
+
+        def _run(self, command):
+            gui.PackBuilderApp._run(self, command)
+
+        def _extract_audio(self, *args):
+            return gui.PackBuilderApp._extract_audio(self, *args)
+
+        def _convert_stage_background(self, *args):
+            return gui.PackBuilderApp._convert_stage_background(self, *args)
+
+    app = Headless()
+    output = tmp_path / "stage.mcaddon"
+    gui.PackBuilderApp._build_pack(app, [{"file_path": str(vox), "video_id": "walk", "thumb_sec": 0}], output,
+                                   "Stage", "badapple", 64, 48, 10, None, palette, "none", "cpu", "screen", 16,
+                                   None, True, str(background))
+    log = []
+    while not app.messages.empty():
+        log.append(str(app.messages.get()))
+    assert output.is_file(), "\n".join(log)
+
+    scripts = tmp_path / "addon"
+    with zipfile.ZipFile(output) as z:
+        z.extractall(scripts / "pack")
+        names = z.namelist()
+    assert any("sounds/music/walk_bg/chunk_0" in n for n in names)
+    script_dir = next(p.parent for p in (scripts / "pack").rglob("main.js"))
+    videos_js = (script_dir / "videos.js").read_text(encoding="utf-8")
+    assert '"id":"walk_bg"' in videos_js and '"hidden":true' in videos_js
+    figure_data = load_frame_data(script_dir / "frames_walk.js")
+    background_data = load_frame_data(script_dir / "frames_walk_bg.js")
+    assert figure_data["stage_background"] == "walk_bg"
+    if palette == "auto":
+        assert background_data["adaptive_palette"] and len(background_data["level_blocks"]) > 1
+
+    # main.js をモックで動かす (videos.js はアドオンのもの)
+    work = tmp_path / "play"
+    shutil.copytree(script_dir, work)
+    shutil.copy(ROOT / "tests" / "js" / "drive_main.mjs", work / "drive_main.mjs")
+    for module, source in (("server", "server.js"), ("server-ui", "server-ui.js")):
+        target = work / "node_modules" / "@minecraft" / module
+        target.mkdir(parents=True)
+        (target / "package.json").write_text(json.dumps({"name": f"@minecraft/{module}", "type": "module", "main": "index.js"}))
+        shutil.copy(ROOT / "tests" / "js" / "minecraft_mock" / source, target / "index.js")
+    (work / "package.json").write_text(json.dumps({"type": "module"}))
+    steps = [{"event": "badapple:setup"}, {"event": "badapple:start"}, {"until": "bvp.playback_finished"},
+             {"snap": "end", "video": "walk"}, {"event": "badapple:list"}]
+    result = subprocess.run(["node", "drive_main.mjs", json.dumps(steps)], cwd=work, capture_output=True, text=True,
+                            encoding="utf-8", timeout=600)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["errors"] == []
+    # 一覧に背景の映像は出さない
+    listing = [m for m in out["messages"] if "bvp.video_list_item" in m]
+    assert len(listing) == 1 and "walk_bg" not in listing[0]
+    # 再生したのは背景の映像の長さ (50 フレーム)。人物 (10 フレーム) は繰り返した
+    assert background_data["frame_count"] == 50 and figure_data["frame_count"] == 10
+    assert out["stats"]["blocksPlaced"] > 0
+
+    # 後ろの壁 = 背景の映像の最後のフレームの上に、人物の最後のフレーム (49 % 10 = 9) を描いたもの
+    figures = [board for board, _ in iter_decoded_frames(figure_data)]
+    backgrounds = [board for board, _ in iter_decoded_frames(background_data)]
+    anchor = out["snaps"][0]["anchor"]
+    eye = {"x": 0 - anchor["x"] - 1, "y": 64 + EYE_HEIGHT - anchor["y"], "z": 100 - anchor["z"]}
+    video = {k: figure_data[k] for k in ("width", "height", "depth", "air_level")}
+    projected = run_node("project_stage.mjs", stdin=json.dumps({
+        "video": video, "figure": figures[49 % 10].reshape(-1).tolist(), "eye": eye, "wall": WALL, "floor": FLOOR,
+        "wallImage": backgrounds[49].reshape(-1).tolist()}))
+    geom = projected["geom"]
+    assert (background_data["width"], background_data["height"]) == (geom["stageWidth"], geom["wallHeight"])
+    # 自動パレットは GOP ごとにパレットが違う。最後のフレームは最後の GOP
+    last_palette = lambda data: data["level_blocks"][-1] if data.get("adaptive_palette") else data["level_blocks"]  # noqa: E731
+    figure_blocks = [spec["block"] for spec in last_palette(figure_data)]
+    background_blocks = [spec["block"] for spec in last_palette(background_data)]
+    names = {WALL: WALL_BLOCK, FLOOR: FLOOR_BLOCK, -1: None}
+    expected = [names[v] if v in names else background_blocks[v - 20000] if v >= 20000 else figure_blocks[v]
+                for v in projected["board"]]
+    placed, _world = placed_stage(out, geom, anchor)
+    assert placed == expected
+    wall_cells = geom["stageWidth"] * geom["wallHeight"]
+    assert len(set(expected[:wall_cells])) > 5  # 後ろの壁に背景の映像 (いろいろな色) が写っている

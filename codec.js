@@ -401,6 +401,10 @@ function orderByDistance(n, base, e, order, rank) {
   }
 }
 
+// だまし絵の後ろの壁に流す背景の映像の、盤面の値のずらし幅 (背景のパレット番号 + この値)。人物のパレット番号
+// (0〜127) とも、main.js の壁・床の値 (30000・30001) とも重ならない
+export const STAGE_IMAGE_OFFSET = 20000;
+
 // 舞台の面の番号 (projectToStage の写る範囲 box の 4 つずつの並び: u の最小・最大、v の最小・最大)。
 // 床は (x, z)、後ろの壁は (x, y)、左右の壁は (z, y) を u・v とする。角を通る視線がどの面にも当たらなければ NO_HIT
 const FLOOR = 0;
@@ -414,6 +418,9 @@ const NO_HIT = 4;
  * 見たとおりに床と 3 枚の壁へ写し、盤面 out (stageGeometry の cells マス) に書く。人物の当たらないマスは
  * work.background のまま。work は createStageWork で作った作業領域。
  *
+ * wallImage (stageWidth × wallHeight の平面の盤面、無ければ null) を渡すと、後ろの壁を背景の映像にする (値は
+ * パレット番号 + STAGE_IMAGE_OFFSET、負の数のマスは壁のまま)。人物はその上に描く。
+ *
  * 外から見える面のうち目の方を向いた面を持つブロックだけを、目に近い順に写す。各ブロックの写る範囲は 8 つの角を
  * 通る視線が最初に当たる面から求め (隣の面の範囲には、その点を境目の位置として足す)、範囲のまだ塗っていないマス
  * について、マスの中心から目への視線がそのブロックを通るかを確かめる。
@@ -421,11 +428,21 @@ const NO_HIT = 4;
  * あるブロックを隠すブロックは、どの軸でも目に近いか同じ = この順で先に来る。
  * 目が箱の中か手前 (左右の壁の間、後ろの壁の前、床の上) に無ければ写せないので false を返す (out は変えない)。
  */
-export function projectToStage(figure, video, geom, eye, out, work) {
+export function projectToStage(figure, video, geom, eye, out, work, wallImage = null) {
   const { width, height, depth, side, gap, stageWidth, wallHeight, floorRows, rowWidth } = geom;
   if (!(eye.z > 1 && eye.y > 1 && eye.x > 0 && eye.x < stageWidth)) return false;
   if (work.dirty) collectSurface(figure, video.air_level, geom, work);
   out.set(work.background);
+  if (wallImage) {
+    for (let r = 0; r < wallHeight; r++) {
+      const base = r * rowWidth;
+      const source = r * stageWidth;
+      for (let i = 0; i < stageWidth; i++) {
+        const level = wallImage[source + i];
+        if (level >= 0) out[base + i] = level + STAGE_IMAGE_OFFSET;
+      }
+    }
+  }
   const stamp = work.stamp;
   const pass = ++work.pass;
   const ex = eye.x;
