@@ -240,6 +240,402 @@ export function expandPlanes(planes, previous, volume, video) {
 }
 
 /**
+ * 視点に合わせた立体のだまし絵 (view: "anamorphic") で表示するデータか。立体の人物はワールドに置かず、
+ * 見ている人の目から人物を見たときの色を、後ろの壁と足元の床に塗る (正しい位置から見ると立体に見える)。
+ */
+export function isAnamorphic(video) {
+  return video.view === "anamorphic" && isVolume(video);
+}
+
+/**
+ * だまし絵の舞台 (床と、後ろ・左・右の 3 枚の壁でできた、手前と上の開いた箱) の大きさ。
+ * 写すときの座標 (内側の座標) は、床の北西の角を原点とするブロック単位 (x は東、y は上、z は南):
+ *  - 床: 上の面が y = 1、x は 0〜stageWidth、z は 1〜1 + floorRows (北の端で後ろの壁に接する)
+ *  - 後ろの壁: 南の面が z = 1、x は 0〜stageWidth、y は 1〜1 + wallHeight
+ *  - 左 (西) の壁: 東の面が x = 0、右 (東) の壁: 西の面が x = stageWidth。どちらも z は床と同じ、y は後ろの壁と同じ
+ *  - 人物 (幅 × 高さ × 奥行きの立体): 床の上 (y = 1 から)、左右中央、後ろの壁から gap ブロック離れた所に立つ
+ * 壁は人物より高くする (人物の上の方を通る視線は、人物より高い所で壁に当たる)。左右の壁は、横から見たときに人物の
+ * 向こう側の視線を受ける。見る人は箱の中か手前にいる必要があるので、左右は人物の高さの 0.75 倍 (幅の半分より
+ * 狭ければ幅の半分) ずつ広げ、真横から人物の高さほど離れて見られるようにする。床は手前にも広げる。
+ *
+ * ワールドでは左の壁のブロックが x = 0 の列になるよう、内側の座標を originX (= 1) だけずらして置く。
+ * 盤面は後ろの壁 (wallHeight 行、0 行目が一番上) → 床 (floorRows 行、0 行目が壁際) → 左の壁 → 右の壁 (どちらも
+ * wallHeight 行、各行は z の順) の順で、どの行も rowWidth 列 (行が短い区画の余りは使わない)。
+ */
+export function stageGeometry(video) {
+  const { width, height, depth } = video;
+  const side = Math.ceil(Math.max(width / 2, height * 0.75));
+  const gap = Math.max(4, Math.ceil(depth / 2));
+  const front = Math.max(4, depth);
+  const stageWidth = width + 2 * side;
+  const wallHeight = Math.ceil(height * 1.5);
+  const floorRows = gap + depth + front;
+  const rowWidth = Math.max(stageWidth, floorRows);
+  const rows = 3 * wallHeight + floorRows;
+  return {
+    width, height, depth, side, gap, front, stageWidth, wallHeight, floorRows, rowWidth, rows,
+    originX: 1,
+    cells: rowWidth * rows,
+    // 区画の境目の行 (rect 方式の箱はまたがない)
+    splits: [wallHeight, wallHeight + floorRows, 2 * wallHeight + floorRows],
+    // ワールドで占める範囲の x・z 方向の大きさ
+    sizeX: stageWidth + 2,
+    sizeZ: 1 + floorRows,
+  };
+}
+
+/** 盤面の p 番目のマスが、区画の余り (ワールドに置かないマス) か。 */
+export function isStagePadding(geom, p) {
+  const row = Math.floor(p / geom.rowWidth);
+  const column = p % geom.rowWidth;
+  return column >= (row < geom.wallHeight + geom.floorRows ? geom.stageWidth : geom.floorRows);
+}
+
+/**
+ * 盤面の p 番目のマスを、舞台の原点 (左の壁の北の端の床の高さ) からのブロックの位置にする。
+ * 後ろの壁は z = 0 の列、床は y = 0 の段、左の壁は x = 0 の列、右の壁は x = stageWidth + 1 の列。
+ */
+export function stageCellOffset(geom, p, out) {
+  const { rowWidth, wallHeight, floorRows } = geom;
+  const row = Math.floor(p / rowWidth);
+  const column = p % rowWidth;
+  if (row < wallHeight) {
+    out.x = geom.originX + column;
+    out.y = wallHeight - row;
+    out.z = 0;
+  } else if (row < wallHeight + floorRows) {
+    out.x = geom.originX + column;
+    out.y = 0;
+    out.z = 1 + row - wallHeight;
+  } else {
+    const r = (row - wallHeight - floorRows) % wallHeight;
+    out.x = row < 2 * wallHeight + floorRows ? 0 : geom.originX + geom.stageWidth;
+    out.y = wallHeight - r;
+    out.z = 1 + column;
+  }
+  return out;
+}
+
+/**
+ * projectToStage の作業領域。figure (立体の人物) を書き換えたら dirty = true にする (外側のブロックの一覧を作り直す)。
+ *  - background: 人物の写っていない盤面 (壁は wallLevel、床は floorLevel、区画の余りは -1 = 置かない)
+ *  - surface / faces: 外から見える面を持つブロックの番号と、空気に面している向き (ビット: 1 西 2 東 4 下 8 上 16 北 32 南)
+ *  - stamp: そのマスを何回目の写しで塗ったか (塗ったマスは後ろのブロックで調べ直さない)
+ *  - rowMin / rowMax・colMin / colMax: 直前の写しで人物を塗った盤面の行と列の範囲 (塗らなければ rowMin > rowMax)
+ */
+export function createStageWork(geom, wallLevel, floorLevel) {
+  const voxels = geom.width * geom.height * geom.depth;
+  const background = new Int16Array(geom.cells);
+  for (let p = 0; p < geom.cells; p++) {
+    const row = Math.floor(p / geom.rowWidth);
+    background[p] = isStagePadding(geom, p) ? -1
+      : row >= geom.wallHeight && row < geom.wallHeight + geom.floorRows ? floorLevel : wallLevel;
+  }
+  return {
+    dirty: true,
+    background,
+    surface: new Int32Array(voxels),
+    faces: new Uint8Array(voxels),
+    surfaceCount: 0,
+    keys: new Int32Array(voxels),
+    stamp: new Int32Array(geom.cells),
+    pass: 0,
+    rowMin: 0,
+    rowMax: -1,
+    box: new Float64Array(16),
+    // 1 つのブロックの 8 つの角を通る視線が最初に当たる面と、その点
+    cornerHit: new Uint8Array(8),
+    cornerX: new Float64Array(8), cornerY: new Float64Array(8), cornerZ: new Float64Array(8),
+    colMin: 0,
+    colMax: -1,
+    xOf: new Int32Array(geom.width), xRank: new Int32Array(geom.width),
+    rowOf: new Int32Array(geom.height), rowRank: new Int32Array(geom.height),
+    dOf: new Int32Array(geom.depth), dRank: new Int32Array(geom.depth),
+  };
+}
+
+/** 立体の外から見える面を持つブロックの一覧を作る (work.surface・faces・surfaceCount)。 */
+function collectSurface(figure, air, geom, work) {
+  const { width, height, depth } = geom;
+  const slice = width * height;
+  let n = 0;
+  for (let d = 0; d < depth; d++) {
+    for (let row = 0; row < height; row++) {
+      for (let x = 0; x < width; x++) {
+        const p = (d * height + row) * width + x;
+        const level = figure[p];
+        if (level === air || level < 0) continue;
+        // 立体の中の番号は空気か 0 以上 (負の数は使わない) なので、空気かどうかは air と比べるだけでよい
+        let mask = 0;
+        if (x === 0 || figure[p - 1] === air) mask |= 1;
+        if (x + 1 === width || figure[p + 1] === air) mask |= 2;
+        if (row + 1 === height || figure[p + width] === air) mask |= 4;
+        if (row === 0 || figure[p - width] === air) mask |= 8;
+        if (d === 0 || figure[p - slice] === air) mask |= 16;
+        if (d + 1 === depth || figure[p + slice] === air) mask |= 32;
+        if (mask === 0) continue;
+        work.surface[n] = p;
+        work.faces[n] = mask;
+        n++;
+      }
+    }
+  }
+  work.surfaceCount = n;
+  work.dirty = false;
+}
+
+/**
+ * 1 つの軸のマス (中心が base + i + 0.5) を、目の座標 e に近い順に並べる。order[k] = k 番目に近いマス、rank[i] = その逆。
+ */
+function orderByDistance(n, base, e, order, rank) {
+  let hi = Math.min(n - 1, Math.max(0, Math.floor(e - base)));
+  let lo = hi - 1;
+  for (let k = 0; k < n; k++) {
+    let i;
+    if (lo < 0) i = hi++;
+    else if (hi >= n) i = lo--;
+    else if (Math.abs(base + hi + 0.5 - e) <= Math.abs(base + lo + 0.5 - e)) i = hi++;
+    else i = lo--;
+    order[k] = i;
+    rank[i] = k;
+  }
+}
+
+// 舞台の面の番号 (projectToStage の写る範囲 box の 4 つずつの並び: u の最小・最大、v の最小・最大)。
+// 床は (x, z)、後ろの壁は (x, y)、左右の壁は (z, y) を u・v とする。角を通る視線がどの面にも当たらなければ NO_HIT
+const FLOOR = 0;
+const BACK = 1;
+const LEFT = 2;
+const RIGHT = 3;
+const NO_HIT = 4;
+
+/**
+ * 立体の人物 figure ((奥行き × 高さ) 行 × 幅 列、空気は video.air_level) を、目の位置 eye (舞台の内側の座標) から
+ * 見たとおりに床と 3 枚の壁へ写し、盤面 out (stageGeometry の cells マス) に書く。人物の当たらないマスは
+ * work.background のまま。work は createStageWork で作った作業領域。
+ *
+ * 外から見える面のうち目の方を向いた面を持つブロックだけを、目に近い順に写す。各ブロックの写る範囲は 8 つの角を
+ * 通る視線が最初に当たる面から求め (隣の面の範囲には、その点を境目の位置として足す)、範囲のまだ塗っていないマス
+ * について、マスの中心から目への視線がそのブロックを通るかを確かめる。
+ * 近い順は、軸ごとに目に近い順に並べた入れ子の順 (奥行き → 高さ → 幅)。目からの視線は各座標が単調に変わるので、
+ * あるブロックを隠すブロックは、どの軸でも目に近いか同じ = この順で先に来る。
+ * 目が箱の中か手前 (左右の壁の間、後ろの壁の前、床の上) に無ければ写せないので false を返す (out は変えない)。
+ */
+export function projectToStage(figure, video, geom, eye, out, work) {
+  const { width, height, depth, side, gap, stageWidth, wallHeight, floorRows, rowWidth } = geom;
+  if (!(eye.z > 1 && eye.y > 1 && eye.x > 0 && eye.x < stageWidth)) return false;
+  if (work.dirty) collectSurface(figure, video.air_level, geom, work);
+  out.set(work.background);
+  const stamp = work.stamp;
+  const pass = ++work.pass;
+  const ex = eye.x;
+  const ey = eye.y;
+  const ez = eye.z;
+  // 人物のブロック (x, row, d) の箱は x: side + x、y: height - row、z: 1 + gap + d から 1 ずつ
+  const { xOf, xRank, rowOf, rowRank, dOf, dRank, surface, faces, keys, box, cornerHit, cornerX, cornerY, cornerZ } = work;
+  orderByDistance(width, side, ex, xOf, xRank);
+  orderByDistance(depth, 1 + gap, ez, dOf, dRank);
+  // 行は上から数えるので、y の小さい方 (下の行) から並べてから行の番号に直す
+  orderByDistance(height, 1, ey, rowOf, rowRank);
+  for (let k = 0; k < height; k++) rowOf[k] = height - 1 - rowOf[k];
+  for (let k = 0; k < height; k++) rowRank[rowOf[k]] = k;
+  const slice = width * height;
+  let count = 0;
+  for (let n = 0; n < work.surfaceCount; n++) {
+    const p = surface[n];
+    const x = p % width;
+    const row = Math.floor(p / width) % height;
+    const d = Math.floor(p / slice);
+    const x0 = side + x;
+    const y0 = height - row;
+    const z0 = 1 + gap + d;
+    const mask = faces[n];
+    // 目の方を向いた、空気に面した面が無ければ見えない
+    if (!((mask & 1 && ex < x0) || (mask & 2 && ex > x0 + 1) || (mask & 4 && ey < y0) || (mask & 8 && ey > y0 + 1)
+      || (mask & 16 && ez < z0) || (mask & 32 && ez > z0 + 1))) continue;
+    keys[count++] = (dRank[d] * height + rowRank[row]) * width + xRank[x];
+  }
+  const sorted = keys.subarray(0, count).sort();
+  const leftRow0 = wallHeight + floorRows;
+  const rightRow0 = 2 * wallHeight + floorRows;
+  let rowMin = Infinity;
+  let rowMax = -1;
+  let colMin = Infinity;
+  let colMax = -1;
+  for (let n = 0; n < count; n++) {
+    const key = sorted[n];
+    const x = xOf[key % width];
+    const row = rowOf[Math.floor(key / width) % height];
+    const d = dOf[Math.floor(key / slice)];
+    const level = figure[(d * height + row) * width + x];
+    const x0 = side + x;
+    const y0 = height - row;
+    const z0 = 1 + gap + d;
+    let hits = 0;
+    // 角を通る視線が各面に当たるまでの長さ (角までを 1 とする)。当たらなければ Infinity。
+    // 床までは角の y だけ、後ろの壁までは z だけ、左右の壁までは x だけで決まるので、2 つずつ求めておく
+    const xLow = x0 - ex;
+    const yLow = y0 - ey;
+    const zNear = z0 - ez;
+    const sFloor0 = yLow < 0 ? (1 - ey) / yLow : Infinity;
+    const sFloor1 = yLow + 1 < 0 ? (1 - ey) / (yLow + 1) : Infinity;
+    const sBack0 = zNear < 0 ? (1 - ez) / zNear : Infinity;
+    const sBack1 = zNear + 1 < 0 ? (1 - ez) / (zNear + 1) : Infinity;
+    const sSide0 = xLow < 0 ? -ex / xLow : xLow > 0 ? (stageWidth - ex) / xLow : Infinity;
+    const sSide1 = xLow + 1 < 0 ? -ex / (xLow + 1) : xLow + 1 > 0 ? (stageWidth - ex) / (xLow + 1) : Infinity;
+    for (let c = 0; c < 8; c++) {
+      const cx = xLow + (c & 1);
+      const cy = yLow + ((c >> 1) & 1);
+      const cz = zNear + ((c >> 2) & 1);
+      let s = c & 2 ? sFloor1 : sFloor0;
+      let hit = FLOOR;
+      const sBack = c & 4 ? sBack1 : sBack0;
+      if (sBack < s) {
+        s = sBack;
+        hit = BACK;
+      }
+      const sSide = c & 1 ? sSide1 : sSide0;
+      if (sSide < s) {
+        s = sSide;
+        hit = cx < 0 ? LEFT : RIGHT;
+      }
+      if (s === Infinity) {
+        cornerHit[c] = NO_HIT;
+        continue;
+      }
+      cornerHit[c] = hit;
+      cornerX[c] = ex + cx * s;
+      cornerY[c] = ey + cy * s;
+      cornerZ[c] = ez + cz * s;
+      hits |= 1 << hit;
+    }
+    // 視線の当たった面ごとに、写る範囲を求める。当たった点のほか、隣の面 (向かい合う左右の壁どうしを除く) に
+    // 当たった点も、その面との境目の位置として範囲に入れる (隣の面の点の座標は、この面の縁の上にある)
+    for (let surface = FLOOR; surface <= RIGHT; surface++) {
+      if (!(hits & (1 << surface))) continue;
+      const opposite = surface === LEFT ? RIGHT : surface === RIGHT ? LEFT : NO_HIT;
+      let u0 = Infinity;
+      let u1 = -Infinity;
+      let v0 = Infinity;
+      let v1 = -Infinity;
+      for (let c = 0; c < 8; c++) {
+        const hit = cornerHit[c];
+        if (hit === NO_HIT || hit === opposite) continue;
+        const u = surface <= BACK ? cornerX[c] : cornerZ[c];
+        const v = surface === FLOOR ? cornerZ[c] : cornerY[c];
+        if (u < u0) u0 = u;
+        if (u > u1) u1 = u;
+        if (v < v0) v0 = v;
+        if (v > v1) v1 = v;
+      }
+      const k = surface * 4;
+      box[k] = u0;
+      box[k + 1] = u1;
+      box[k + 2] = v0;
+      box[k + 3] = v1;
+    }
+    if (hits & (1 << FLOOR)) {
+      const i0 = Math.max(0, Math.floor(box[0]));
+      const i1 = Math.min(stageWidth - 1, Math.ceil(box[1]) - 1);
+      const k0 = Math.max(0, Math.floor(box[2]) - 1);
+      const k1 = Math.min(floorRows - 1, Math.ceil(box[3]) - 2);
+      for (let k = k0; k <= k1; k++) {
+        const base = (wallHeight + k) * rowWidth;
+        for (let i = i0; i <= i1; i++) {
+          if (stamp[base + i] === pass) continue;
+          if (rayEntersBox(ex, ey, ez, i + 0.5 - ex, 1 - ey, k + 1.5 - ez, x0, y0, z0) <= 1) {
+            stamp[base + i] = pass;
+            out[base + i] = level;
+            if (wallHeight + k < rowMin) rowMin = wallHeight + k;
+            if (wallHeight + k > rowMax) rowMax = wallHeight + k;
+            if (i < colMin) colMin = i;
+            if (i > colMax) colMax = i;
+          }
+        }
+      }
+    }
+    // 壁の r 行目は y = wallHeight - r 〜 wallHeight - r + 1
+    if (hits & (1 << BACK)) {
+      const i0 = Math.max(0, Math.floor(box[4]));
+      const i1 = Math.min(stageWidth - 1, Math.ceil(box[5]) - 1);
+      const r0 = Math.max(0, wallHeight - Math.ceil(box[7]) + 1);
+      const r1 = Math.min(wallHeight - 1, wallHeight - Math.floor(box[6]));
+      for (let r = r0; r <= r1; r++) {
+        const base = r * rowWidth;
+        const cy = wallHeight - r + 0.5;
+        for (let i = i0; i <= i1; i++) {
+          if (stamp[base + i] === pass) continue;
+          if (rayEntersBox(ex, ey, ez, i + 0.5 - ex, cy - ey, 1 - ez, x0, y0, z0) <= 1) {
+            stamp[base + i] = pass;
+            out[base + i] = level;
+            if (r < rowMin) rowMin = r;
+            if (r > rowMax) rowMax = r;
+            if (i < colMin) colMin = i;
+            if (i > colMax) colMax = i;
+          }
+        }
+      }
+    }
+    for (let wall = LEFT; wall <= RIGHT; wall++) {
+      if (!(hits & (1 << wall))) continue;
+      const k = wall * 4;
+      const wx = wall === LEFT ? 0 : stageWidth;
+      const row0 = wall === LEFT ? leftRow0 : rightRow0;
+      const j0 = Math.max(0, Math.floor(box[k]) - 1);
+      const j1 = Math.min(floorRows - 1, Math.ceil(box[k + 1]) - 2);
+      const r0 = Math.max(0, wallHeight - Math.ceil(box[k + 3]) + 1);
+      const r1 = Math.min(wallHeight - 1, wallHeight - Math.floor(box[k + 2]));
+      for (let r = r0; r <= r1; r++) {
+        const base = (row0 + r) * rowWidth;
+        const cy = wallHeight - r + 0.5;
+        for (let j = j0; j <= j1; j++) {
+          if (stamp[base + j] === pass) continue;
+          if (rayEntersBox(ex, ey, ez, wx - ex, cy - ey, j + 1.5 - ez, x0, y0, z0) <= 1) {
+            stamp[base + j] = pass;
+            out[base + j] = level;
+            if (row0 + r < rowMin) rowMin = row0 + r;
+            if (row0 + r > rowMax) rowMax = row0 + r;
+            if (j < colMin) colMin = j;
+            if (j > colMax) colMax = j;
+          }
+        }
+      }
+    }
+  }
+  work.rowMin = rowMax < 0 ? 0 : rowMin;
+  work.rowMax = rowMax;
+  work.colMin = rowMax < 0 ? 0 : colMin;
+  work.colMax = colMax;
+  return true;
+}
+
+/**
+ * 目 (ox, oy, oz) からマスの中心まで (向き dx, dy, dz、長さ 1 まで) の視線が、1 辺 1 の箱 (x0, y0, z0 の角) に
+ * 入る位置 (0〜1)。通らなければ Infinity。
+ */
+function rayEntersBox(ox, oy, oz, dx, dy, dz, x0, y0, z0) {
+  let tmin = 0;
+  let tmax = 1;
+  let a = (x0 - ox) / dx;
+  let b = (x0 + 1 - ox) / dx;
+  if (a > b) { const s = a; a = b; b = s; }
+  if (a > tmin) tmin = a;
+  if (b < tmax) tmax = b;
+  a = (y0 - oy) / dy;
+  b = (y0 + 1 - oy) / dy;
+  if (a > b) { const s = a; a = b; b = s; }
+  if (a > tmin) tmin = a;
+  if (b < tmax) tmax = b;
+  a = (z0 - oz) / dz;
+  b = (z0 + 1 - oz) / dz;
+  if (a > b) { const s = a; a = b; b = s; }
+  if (a > tmin) tmin = a;
+  if (b < tmax) tmax = b;
+  // 向きが 0 の軸は割り算が ±Infinity か NaN になる。NaN は比べると false なので、箱の外なら下で外れる
+  return tmin <= tmax && tmin === tmin ? tmin : Infinity;
+}
+
+/**
  * タイル辞書 (mvcodec/tiles.py の TileDictionary と同じ規則)。
  *  - キーフレーム: 辞書を空にして、そのフレームの全タイルを登録
  *  - それ以外: 直前の盤面から内容が変わったタイルを行優先の順に登録

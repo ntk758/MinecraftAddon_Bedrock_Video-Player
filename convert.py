@@ -427,6 +427,9 @@ def parse_args(argv=None):
                              "inflate: 明るい部分を丸くふくらませた立体 / "
                              "vox: MagicaVoxel の立体アニメ (既定は入力に合わせて screen か vox)")
     parser.add_argument("--depth", type=int, default=16, help="立体モードの奥行き (ブロック数)")
+    parser.add_argument("--view", default="blocks", choices=["blocks", "anamorphic"],
+                        help="立体の見せ方。blocks: 立体をブロックで置く / anamorphic: 立体は置かず、見ている人の目の位置から"
+                             "見たとおりに後ろの壁と足元の床へ描く (正しい位置から見ると立体に見えるだまし絵。見る人は 1 人)")
     parser.add_argument("--depth-video", default=None,
                         help="relief で奥行きに使うグレースケール動画 (明るいほど手前)。省略時は各画素の明るさを使う")
     parser.add_argument("--extrude-threshold", type=float, default=0.5,
@@ -518,6 +521,8 @@ def parse_args(argv=None):
         parser.error("--mode vox には --input-vox を、--input-vox には --mode vox を指定してください")
     if not 2 <= args.depth <= 128:
         parser.error("--depth は 2〜128 にしてください")
+    if args.view == "anamorphic" and args.mode == "screen":
+        parser.error("--view anamorphic は立体のモード (relief / extrude / inflate / vox) で使えます")
     if args.depth_video and args.mode != "relief":
         parser.error("--depth-video は --mode relief でだけ使えます")
     if args.palette_colors != "auto" and args.palette_colors < 2:
@@ -666,6 +671,8 @@ def build_frame_data(args, width, height, gop_boundaries, palettes, adaptive, en
         data.update({"layout": "volume", "depth": depth, "air_level": AIR_LEVEL})
     else:
         data["layout"] = "screen"
+    if depth is not None and getattr(args, "view", "blocks") == "anamorphic":
+        data["view"] = "anamorphic"
     return data
 
 

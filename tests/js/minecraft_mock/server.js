@@ -95,6 +95,10 @@ export const dimension = {
 export const player = {
   location: { x: 0, y: 64, z: 100 },
   dimension,
+  // 目の高さ (実際の Minecraft と同じく足元から 1.62 ブロック上)
+  getHeadLocation() {
+    return { x: this.location.x, y: this.location.y + 1.62, z: this.location.z };
+  },
   stopMusic() {},
   playSound(id) {
     sounds.push(id);

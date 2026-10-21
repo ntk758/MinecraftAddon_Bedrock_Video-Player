@@ -167,6 +167,17 @@ def test_converter_args_for_3d_modes():
     assert screen.mode == "screen"
 
 
+def test_converter_args_for_anamorphic():
+    """だまし絵は立体のモードと .vox にだけ付け、平面スクリーンには付けない"""
+    common = ("ffmpeg", 64, 64, 10, "full", "none", 30, "cpu", True, None, "ja")
+    relief = convert.parse_args(build_converter_args(Path("in.mp4"), Path("out.js"), *common, "inflate", 16, True))
+    assert relief.view == "anamorphic"
+    vox = convert.parse_args(build_converter_args(Path("walk.vox"), Path("out.js"), *common, "screen", 16, True))
+    assert vox.view == "anamorphic"
+    screen = convert.parse_args(build_converter_args(Path("in.mp4"), Path("out.js"), *common, "screen", 16, True))
+    assert screen.view == "blocks"
+
+
 def test_device_options():
     assert resolve_device("自動 (GPU があれば使用)") == "auto"
     assert resolve_device("DirectML (Windows の AMD / Intel / NVIDIA)") == "directml"

@@ -159,6 +159,7 @@
   "convert.palette_cpu_retry": "[MVCodec] Aviso: no se pudo calcular la paleta automática en la GPU; se repite con la CPU: {error}",
   "settings.mode": "Modo de visualización",
   "settings.depth": "Profundidad (bloques)",
+  "settings.anamorphic": "Trampantojo (sigue al espectador)",
   "mode.screen": "Pantalla plana",
   "mode.relief": "Relieve 3D (brillo = profundidad)",
   "mode.extrude": "Silueta 3D (partes claras extruidas)",

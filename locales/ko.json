@@ -159,6 +159,7 @@
   "convert.palette_cpu_retry": "[MVCodec] 경고: GPU에서 자동 팔레트를 계산할 수 없어 CPU로 다시 계산합니다: {error}",
   "settings.mode": "표시 모드",
   "settings.depth": "깊이 (블록)",
+  "settings.anamorphic": "트릭아트 (보는 사람을 따라감)",
   "mode.screen": "평면 화면",
   "mode.relief": "입체 부조 (밝기 = 깊이)",
   "mode.extrude": "입체 실루엣 (밝은 부분 돌출)",

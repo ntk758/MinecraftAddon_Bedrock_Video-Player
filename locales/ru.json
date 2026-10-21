@@ -159,6 +159,7 @@
   "convert.palette_cpu_retry": "[MVCodec] Предупреждение: не удалось вычислить автопалитру на GPU; повторный расчёт на CPU: {error}",
   "settings.mode": "Режим отображения",
   "settings.depth": "Глубина (блоки)",
+  "settings.anamorphic": "Обманка (следует за зрителем)",
   "mode.screen": "Плоский экран",
   "mode.relief": "3D-рельеф (яркость = глубина)",
   "mode.extrude": "3D-силуэт (выдавливание светлых частей)",

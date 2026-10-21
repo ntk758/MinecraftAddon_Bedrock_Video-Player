@@ -33,15 +33,21 @@ import convert, pack_builder  # noqa: F401
 const ready = setup();
 
 // MagicaVoxel の立体アニメ: 大きさは .vox のまま、色は全ブロック (自動のとき) から一番近いものを選ぶ
+// だまし絵 (立体を、見ている人の目に合わせて床と壁に描く) は立体のときだけ。平面スクリーンには使わない
+function viewArgs(s, threeD) {
+  return s.anamorphic && threeD ? ["--view", "anamorphic"] : [];
+}
+
 function voxArgs(s, voxPath, out, lang) {
   return ["--input-vox", voxPath, "--mode", "vox", "--output", out, "--fps", String(s.fps), "--palette", s.palette,
-          "--device", "cpu", "--threads", "1", "--lang", lang];
+          "--device", "cpu", "--threads", "1", "--lang", lang, ...viewArgs(s, true)];
 }
 
 function convertArgs(s, framesDir, out, lang) {
   return ["--frames-dir", framesDir, "--output", out, "--width", String(s.width), "--height", String(s.height),
           "--fps", String(s.fps), "--palette", s.palette, "--dither-method", s.dither, "--device", "cpu",
-          "--threads", "1", "--mode", s.mode, "--depth", String(s.depth), "--lang", lang];
+          "--threads", "1", "--mode", s.mode, "--depth", String(s.depth), "--lang", lang,
+          ...viewArgs(s, s.mode !== "screen")];
 }
 
 self.onmessage = async (event) => {

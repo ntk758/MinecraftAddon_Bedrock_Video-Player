@@ -159,6 +159,7 @@
   "convert.palette_cpu_retry": "[MVCodec] 警告: 无法在 GPU 上计算自动调色板，改用 CPU 重新计算: {error}",
   "settings.mode": "显示模式",
   "settings.depth": "深度（方块）",
+  "settings.anamorphic": "错觉画（跟随观看者）",
   "mode.screen": "平面屏幕",
   "mode.relief": "立体浮雕（亮度 = 深度）",
   "mode.extrude": "立体剪影（挤出明亮部分）",

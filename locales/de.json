@@ -159,6 +159,7 @@
   "convert.palette_cpu_retry": "[MVCodec] Warnung: die automatische Palette konnte nicht auf der GPU berechnet werden; neuer Versuch auf der CPU: {error}",
   "settings.mode": "Anzeigemodus",
   "settings.depth": "Tiefe (Blöcke)",
+  "settings.anamorphic": "Trompe-l'oeil (folgt dem Betrachter)",
   "mode.screen": "Flacher Bildschirm",
   "mode.relief": "3D-Relief (Helligkeit = Tiefe)",
   "mode.extrude": "3D-Silhouette (helle Teile extrudiert)",

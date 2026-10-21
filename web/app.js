@@ -95,6 +95,7 @@ function settings() {
   return {
     width: Number($("width").value), height: Number($("height").value), fps: Number($("fps").value),
     duration: Number($("duration").value), mode: $("mode").value, depth: Number($("depth").value),
+    anamorphic: $("anamorphic").checked,
     palette: $("palette").value, dither: $("dither").value,
     packName: $("packName").value.trim() || "Block Video Player",
     namespace: ($("namespace").value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "") || "badapple"),
