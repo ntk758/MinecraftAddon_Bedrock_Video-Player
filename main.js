@@ -13,6 +13,7 @@ import {
   createTileDictionary,
   decodeFrameInto,
   decodeUTF16BinaryToBytes,
+  isAnamorphic,
   isVolume,
   decodeUTF16BinaryToBytesJob,
   expandPlanes,
@@ -20,8 +21,11 @@ import {
   isHeightfield,
   parseFrameIndexV3,
   parseFrameIndexV4,
+  projectToStage,
   readVarint,
   skipFrameHeader,
+  stageCellOffset,
+  stageGeometry,
   streamSizeOf,
   unpackGopJob,
   unpackRun,
@@ -83,6 +87,13 @@ const GOP_PREFETCH_FRAMES = 40;
 // 2.5D の 128×72×16 で 1 フレーム 5〜14 回 yield し、回数に数えると上限 8 回の大半を使って、置くブロックが少なくても
 // 1 フレームが 3 tick 以上にまたがり、実機の録画で 10 fps の映像が 8 fps に落ちていた)
 const DECODE_YIELD = 1;
+// だまし絵 (view: "anamorphic") の壁と床の盤面の値。パレット番号と重ならない大きな番号にし、activePalette に足す
+const STAGE_WALL_LEVEL = 30000;
+const STAGE_FLOOR_LEVEL = 30001;
+const DEFAULT_STAGE_WALL = "minecraft:light_gray_concrete";
+const DEFAULT_STAGE_FLOOR = "minecraft:black_concrete";
+// だまし絵: 見ている人の目がこれだけ (ブロック) 動いたら、フレームの合間にも描き直す
+const VIEW_REDRAW_DISTANCE = 0.25;
 const BLOCK_ID_ALIASES = {
   "minecraft:terracotta": "minecraft:hardened_clay",
 };
@@ -154,7 +165,15 @@ function resolvePermutation(spec) {
 // 盤面の 1 マス (p 番目) をワールド座標にする。
 //  平面スクリーン: 足元の高さに、x は東、行は南向き (z+)
 //  立体: x は東、高さは上向き (行 0 が一番上)、奥行き 0 が一番北 (プレイヤーから遠い側)
+//  だまし絵: 壁と床 (stageCellOffset。anchor は舞台の北西の角の床の高さ)
 function cellToWorld(videoData, anchor, p, loc) {
+  if (isAnamorphic(videoData)) {
+    stageCellOffset(stageOf(videoData), p, loc);
+    loc.x += anchor.x;
+    loc.y += anchor.y;
+    loc.z += anchor.z;
+    return loc;
+  }
   const width = videoData.width;
   const row = Math.floor(p / width);
   loc.x = anchor.x + (p % width);
@@ -174,12 +193,38 @@ function videoSizeLabel(v) {
   return v.depth ? `${v.width}x${v.height}x${v.depth}` : `${v.width}x${v.height}`;
 }
 
+const stageGeometryCache = new WeakMap();
+/** だまし絵の舞台の大きさ (動画ごとに 1 回だけ計算する)。 */
+function stageOf(videoData) {
+  let geom = stageGeometryCache.get(videoData);
+  if (!geom) {
+    geom = stageGeometry(videoData);
+    stageGeometryCache.set(videoData, geom);
+  }
+  return geom;
+}
+
+/** 盤面を立体 (空気を含む箱) としてワールドに置くか。だまし絵は立体のデータでも、置くのは壁と床だけ。 */
+function placesVolume(videoData) {
+  return isVolume(videoData) && !isAnamorphic(videoData);
+}
+
 function boardSizeOf(videoData) {
+  if (isAnamorphic(videoData)) return stageOf(videoData).cells;
   return videoData.width * videoData.height * (isVolume(videoData) ? videoData.depth : 1);
+}
+
+/** 盤面の 1 行のマスの数 (だまし絵は舞台の幅)。 */
+function boardWidthOf(videoData) {
+  return isAnamorphic(videoData) ? stageOf(videoData).stageWidth : videoData.width;
 }
 
 // ワールド上で占める範囲の x 方向・z 方向の大きさ
 function footprintOf(videoData) {
+  if (isAnamorphic(videoData)) {
+    const geom = stageOf(videoData);
+    return { sizeX: geom.stageWidth, sizeZ: 1 + geom.floorRows };
+  }
   return { sizeX: videoData.width, sizeZ: isVolume(videoData) ? videoData.depth : videoData.height };
 }
 
@@ -237,6 +282,15 @@ class VideoPlayer {
     //   decodeScratch は平面の復元の作業用、expandedPlanes は nextBoard を組み立てたときの平面 (変わった列だけ作り直す)
     // decodedFrame: decoded が何番のフレームまで復元した状態か (-1 = まだ何も無い)。
     //   一時停止・シークの中断・ベンチマークなどで順番が飛んでも、applyFrameJob が直近のキーフレームから復元し直す
+    // だまし絵 (view: "anamorphic") では、復元した立体 (人物) を figure に組み立て、nextBoard には人物を壁と床へ
+    //   写した盤面を作る (stageDepth は写すときの奥行きの作業用)。lastEye は最後に描いた目の位置 (舞台の原点から)、
+    //   viewIterator はフレームの合間に目の動きに合わせて描き直す処理
+    this.figure = null;
+    this.stageDepth = null;
+    this.stagePalettes = new Map();
+    this.lastEye = null;
+    this.viewDrawn = false;
+    this.viewIterator = null;
     this.board = null;
     this.decoded = null;
     this.nextBoard = null;
@@ -310,12 +364,17 @@ class VideoPlayer {
       this.board = new Int16Array(pixels).fill(-1);
       this.decoded = new Int16Array(streamPixels).fill(-1);
       this.nextBoard = new Int16Array(pixels);
+      const anamorphic = isAnamorphic(this.videoData);
+      const { width, height, depth } = this.videoData;
+      this.figure = anamorphic ? new Int16Array(width * height * depth).fill(this.videoData.air_level) : null;
+      this.stageDepth = anamorphic ? new Float32Array(pixels) : null;
+      this.viewDrawn = false;
       if (isHeightfield(this.videoData)) {
         this.decodeScratch = new Int16Array(streamPixels);
         // 平面の値には現れない値で埋めて、最初の組み立てで全部の列を作らせる
         this.expandedPlanes = new Int16Array(streamPixels).fill(-32768);
       } else {
-        this.decodeScratch = this.nextBoard;
+        this.decodeScratch = this.figure ?? this.nextBoard;
         this.expandedPlanes = null;
       }
       this.tiles = createTileDictionary(this.videoData);
@@ -497,6 +556,13 @@ class VideoPlayer {
    */
   invalidateForPaletteChange() {
     if (!this.board) return;
+    if (isAnamorphic(this.videoData)) {
+      // だまし絵の壁と床は GOP が変わっても同じブロックなので、人物が写っているマスだけ置き直す
+      for (let p = 0; p < this.board.length; p++) {
+        if (this.board[p] !== STAGE_WALL_LEVEL && this.board[p] !== STAGE_FLOOR_LEVEL) this.board[p] = -1;
+      }
+      return;
+    }
     if (!isVolume(this.videoData)) {
       this.board.fill(-1);
       return;
@@ -547,10 +613,10 @@ class VideoPlayer {
     const board = this.board;
     const next = this.nextBoard;
     const palette = this.activePalette;
-    const airLevel = isVolume(video) ? video.air_level : -2;
+    const airLevel = placesVolume(video) ? video.air_level : -2;
     const rows = next.length / width;
     // 縦に伸ばしてよい行のまとまり (平面は全行、立体は奥行き 1 段ぶんの高さ)
-    const contiguousRows = isVolume(video) ? video.height : rows;
+    const contiguousRows = placesVolume(video) ? video.height : rows;
     const from = { x: 0, y: 0, z: 0 };
     const to = { x: 0, y: 0, z: 0 };
     let operations = 0;
@@ -633,13 +699,16 @@ class VideoPlayer {
     const next = this.nextBoard;
     const board = this.board;
     const free = (q) => next[q] === level && board[q] !== level && !(claimed && claimed[q]);
+    // だまし絵の壁の行と床の行はワールドでつながっていないので、箱は境目をまたがない
+    const split = isAnamorphic(this.videoData) ? stageOf(this.videoData).wallHeight : -1;
     const p = r * width + x;
     let x1 = x;
     while (x1 + 1 < width && free(p + x1 + 1 - x)) x1++;
     if (useRects && x1 - x + 1 > MAX_FILL_BLOCKS) x1 = x + MAX_FILL_BLOCKS - 1;
     let r1 = r;
     if (useRects) {
-      while (r1 + 1 < rows && (r1 + 1) % contiguousRows !== 0 && (r1 + 2 - r) * (x1 - x + 1) <= MAX_FILL_BLOCKS) {
+      while (r1 + 1 < rows && (r1 + 1) % contiguousRows !== 0 && r1 + 1 !== split
+        && (r1 + 2 - r) * (x1 - x + 1) <= MAX_FILL_BLOCKS) {
         const base = (r1 + 1) * width;
         let sameRun = true;
         for (let k = x; k <= x1; k++) {
@@ -654,7 +723,7 @@ class VideoPlayer {
     }
     // 立体では、同じ長方形が奥の段でも全部同じ色の変更なら奥へも伸ばして 1 個の箱にする
     let slices = 1;
-    if (useRects && isVolume(this.videoData)) {
+    if (useRects && placesVolume(this.videoData)) {
       const sliceCells = contiguousRows * width;
       const faceArea = (x1 - x + 1) * (r1 - r + 1);
       while (r + slices * contiguousRows < rows && (slices + 1) * faceArea <= MAX_FILL_BLOCKS) {
@@ -689,7 +758,7 @@ class VideoPlayer {
     const board = this.board;
     const next = this.nextBoard;
     const rows = next.length / width;
-    const contiguousRows = isVolume(video) ? video.height : rows;
+    const contiguousRows = placesVolume(video) ? video.height : rows;
     if (!this.claimed || this.claimed.length !== next.length) this.claimed = new Uint8Array(next.length);
     const claimed = this.claimed;
     claimed.fill(0);
@@ -760,7 +829,7 @@ class VideoPlayer {
     const board = this.board;
     const next = this.nextBoard;
     const palette = this.activePalette;
-    const airLevel = isVolume(video) ? video.air_level : -2;
+    const airLevel = placesVolume(video) ? video.air_level : -2;
     const groups = new Map();
     let failures = 0;
     let lastError = null;
@@ -828,7 +897,7 @@ class VideoPlayer {
     if (!this.videoData) return;
     if (!this.ensureDecodedData()) return;
     this.initPaletteCache();
-    const width = this.videoData.width;
+    const width = boardWidthOf(this.videoData);
 
     if (this.board && this.decodedIndex) {
       if (frameIndex < 0 || frameIndex >= this.decodedIndex.length) return;
@@ -858,8 +927,13 @@ class VideoPlayer {
 
       this.currentGopId = entry.gopId;
       this.activePalette = this.videoData.adaptive_palette ? this.paletteCache[this.currentGopId] : this.paletteCache;
-      if (this.expandedPlanes) expandPlanes(this.decoded, this.expandedPlanes, this.nextBoard, this.videoData);
-      else this.nextBoard.set(this.decoded);
+      const target = this.figure ?? this.nextBoard;
+      if (this.expandedPlanes) expandPlanes(this.decoded, this.expandedPlanes, target, this.videoData);
+      else target.set(this.decoded);
+      if (this.figure) {
+        this.activePalette = this.stagePalette(this.activePalette);
+        this.drawStage();
+      }
       // 自動パレットで GOP が変わると同じ番号でも別のブロックになるので、表示中の盤面を「不明」にする
       if (this.videoData.adaptive_palette && entry.gopId !== this.boardGopId) this.invalidateForPaletteChange();
       this.boardGopId = entry.gopId;
@@ -883,6 +957,91 @@ class VideoPlayer {
     if (diffData.charCodeAt(diffData.startsWith("K:") ? 2 : 0) < 0x1000) return;
     const bytes = decodeUTF16BinaryToBytes(diffData);
     yield* this.applyBinarySlice(width, bytes, 0, bytes.length);
+  }
+
+  /** だまし絵のパレット: 動画のパレットに壁と床のブロックを足したもの (元のパレットごとに 1 回だけ作る)。 */
+  stagePalette(base) {
+    let palette = this.stagePalettes.get(base);
+    if (!palette) {
+      palette = base.slice();
+      palette[STAGE_WALL_LEVEL] = resolvePermutation({ block: this.videoData.stage_wall ?? DEFAULT_STAGE_WALL });
+      palette[STAGE_FLOOR_LEVEL] = resolvePermutation({ block: this.videoData.stage_floor ?? DEFAULT_STAGE_FLOOR });
+      this.stagePalettes.set(base, palette);
+    }
+    return palette;
+  }
+
+  /**
+   * だまし絵を見る人の目の位置 (舞台の原点から)。同じディメンションで、壁の前・床の上にいるプレイヤーのうち、
+   * 舞台の中央に一番近い人。いなければ null。
+   */
+  viewerEye() {
+    const geom = stageOf(this.videoData);
+    let best = null;
+    let bestDistance = Infinity;
+    for (const player of world.getAllPlayers()) {
+      if (player.dimension?.id !== this.dimension.id) continue;
+      let head;
+      try {
+        head = player.getHeadLocation();
+      } catch (e) {
+        continue;
+      }
+      const eye = { x: head.x - this.anchor.x, y: head.y - this.anchor.y, z: head.z - this.anchor.z };
+      if (!(eye.z > 1 && eye.y > 1)) continue;
+      const dx = eye.x - geom.stageWidth / 2;
+      const dz = eye.z - (1 + geom.floorRows / 2);
+      if (dx * dx + dz * dz < bestDistance) {
+        best = eye;
+        bestDistance = dx * dx + dz * dz;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * だまし絵: 人物 (figure) を、見ている人の目から見たとおりに壁と床へ写して nextBoard に書く。見ている人が
+   * いなければ前回の目の位置 (最初は舞台の正面、人物の高さぶん離れた所) から描く。
+   */
+  drawStage() {
+    const geom = stageOf(this.videoData);
+    const eye = this.viewerEye() ?? this.lastEye
+      ?? { x: geom.stageWidth / 2, y: 1 + this.videoData.height / 2, z: 1 + geom.floorRows + this.videoData.height };
+    projectToStage(this.figure, this.videoData, geom, eye, this.nextBoard, this.stageDepth, STAGE_WALL_LEVEL, STAGE_FLOOR_LEVEL);
+    this.lastEye = eye;
+    this.viewDrawn = true;
+  }
+
+  /** だまし絵: 見ている人の目が動いていれば、フレームの合間に描き直しを始める。 */
+  maybeStartViewRedraw() {
+    if (!this.figure || !this.viewDrawn || this.viewIterator || this.frameIterator || this.currentJobId !== null) return;
+    const eye = this.viewerEye();
+    const last = this.lastEye;
+    if (!eye || (last && Math.hypot(eye.x - last.x, eye.y - last.y, eye.z - last.z) < VIEW_REDRAW_DISTANCE)) return;
+    const self = this;
+    this.viewIterator = (function* () {
+      self.drawStage();
+      yield* self.placeChangedBlocks(boardWidthOf(self.videoData));
+    })();
+  }
+
+  /** 目が動いていれば描き直しを始め、この tick のうちに進める (次の tick に回すと、次のフレームが遅れる)。 */
+  startViewRedraw() {
+    this.maybeStartViewRedraw();
+    if (this.viewIterator && this.advanceJob(this.viewIterator)) this.viewIterator = null;
+  }
+
+  /** ジェネレータを 1 tick の予算 (ブロック数と時間) まで進める。終われば true。 */
+  advanceJob(iterator) {
+    const tickStart = Date.now();
+    let yields = 0;
+    while (yields < MAX_YIELDS_PER_TICK) {
+      const { done, value } = iterator.next();
+      if (done) return true;
+      if (value !== DECODE_YIELD) yields++;
+      if (Date.now() - tickStart > TICK_TIME_BUDGET_MS) break;
+    }
+    return false;
   }
 
   /** frameIndex を decoded へ復元するだけで、ブロックは置かない (decoded は frameIndex - 1 の状態であること)。 */
@@ -922,7 +1081,16 @@ class VideoPlayer {
   }
 
   tick() {
-    if (!this.running) return;
+    // だまし絵の描き直しの途中なら、それを先に進める (再生中は時計も進める)
+    if (this.viewIterator) {
+      if (this.running && this.startDelayTicks === 0) this.elapsedTicks++;
+      if (this.advanceJob(this.viewIterator)) this.viewIterator = null;
+      return;
+    }
+    if (!this.running) {
+      this.startViewRedraw();
+      return;
+    }
 
     if (this.startDelayTicks > 0) {
       this.startDelayTicks--;
@@ -937,7 +1105,10 @@ class VideoPlayer {
         return;
       }
       // 動画の fps に合わせて、表示時刻が来るまで次のフレームを始めない
-      if (this.currentFrame * this.ticksPerFrame >= this.elapsedTicks) return;
+      if (this.currentFrame * this.ticksPerFrame >= this.elapsedTicks) {
+        this.startViewRedraw();
+        return;
+      }
       this.frameIterator = this.applyFrameJob(this.currentFrame);
       const st = this.playStats;
       if (st) {
@@ -996,6 +1167,7 @@ class VideoPlayer {
   stopPlayback() {
     this.stopPlayStatsClock();
     this.running = false;
+    this.viewIterator = null;
     this.currentAudioChunk = -1;
     this.cancelJob();
     for (const p of world.getAllPlayers()) {
@@ -1039,6 +1211,7 @@ class VideoPlayer {
     this.frameIterator = null;
     this.currentFrame = 0;
     this.invalidateBoard();
+    this.viewDrawn = false;
     if (!this.videoData) return;
 
     this.initPaletteCache();
@@ -1057,7 +1230,9 @@ class VideoPlayer {
       // 塗った内容が分かっているマスは盤面に記録する (次の再生で置き直すマスが最小になる)。
       // 立体は空気、固定パレットの平面はパレット 0 番。自動パレットの平面は GOP ごとに番号の意味が違うので不明のまま。
       // 置けなかったマスは不明 (-1) のままにして、次の再生で必ず置き直す
-      const clearedLevel = volume ? self.videoData.air_level : self.videoData.adaptive_palette ? -1 : 0;
+      // だまし絵の舞台は空気にして片付ける (盤面の値は壁・床・人物の色なので、不明にする)
+      const clearedLevel = isAnamorphic(self.videoData) ? -1
+        : volume ? self.videoData.air_level : self.videoData.adaptive_palette ? -1 : 0;
       let operations = 0;
       for (let p = 0; p < cells; p++) {
         cellToWorld(self.videoData, self.anchor, p, loc);
@@ -1345,6 +1520,15 @@ function ensureTickingArea(dimension, anchor, videoData) {
  * 平面は足元から北東へ広がる。立体はプレイヤーの 2 ブロック北に、左右中央をそろえて立て、建築できる高さに収める。
  */
 function anchorForVideo(videoData, origin, dimension) {
+  if (isAnamorphic(videoData)) {
+    // だまし絵の舞台は、プレイヤーが床の手前から人物の高さの半分ほど離れて見る位置に、左右中央をそろえて置く
+    const { sizeX, sizeZ } = footprintOf(videoData);
+    const anchor = { x: origin.x - Math.floor(sizeX / 2), y: origin.y, z: origin.z - sizeZ - Math.ceil(videoData.height / 2) };
+    const fittedY = fitToBuildHeight(dimension, anchor.y, stageOf(videoData).wallHeight + 1);
+    const shifted = fittedY !== anchor.y;
+    anchor.y = fittedY;
+    return { anchor, shifted };
+  }
   const volume = isVolume(videoData);
   const anchor = {
     x: origin.x - (volume ? Math.floor(videoData.width / 2) : 0),

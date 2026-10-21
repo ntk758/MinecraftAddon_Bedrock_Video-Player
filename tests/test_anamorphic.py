@@ -1,0 +1,159 @@
+"""視点に合わせた立体のだまし絵 (--view anamorphic) のテスト。
+
+立体の人物はワールドに置かず、見ている人の目から人物を見たとおりに、後ろの壁と足元の床へ塗る。
+  - codec.js の projectToStage: 目から壁と床を見た絵が、目から人物を直接見た絵と一致する (tests/js/stage_view.mjs)
+  - main.js: 壁と床だけを置き、置いた色が「最後のフレームの人物を、プレイヤーの目から写した盤面」と一致する。
+    プレイヤーが動くと、再生が終わった後でも描き直す
+"""
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+from PIL import Image
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import convert  # noqa: E402
+from mvcodec.decode import iter_decoded_frames, load_frame_data  # noqa: E402
+from test_playback_control import drive  # noqa: E402
+from test_volume3d import convert_vox, make_depth_walk  # noqa: E402
+
+pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node が必要")
+
+WALL, FLOOR = 30000, 30001
+WALL_BLOCK, FLOOR_BLOCK = "minecraft:light_gray_concrete", "minecraft:black_concrete"
+EYE_HEIGHT = 1.62
+
+
+def run_node(script, args=(), stdin=None):
+    work = ROOT / "tests" / "js"
+    tmp = Path(subprocess.check_output(["node", "-e", "console.log(require('os').tmpdir())"], text=True).strip())
+    # codec.js と同じフォルダで動かす (import "./codec.js")
+    run_dir = tmp / f"bvp_stage_{script.replace('.', '_')}"
+    run_dir.mkdir(exist_ok=True)
+    shutil.copy(ROOT / "codec.js", run_dir / "codec.js")
+    shutil.copy(work / script, run_dir / script)
+    (run_dir / "package.json").write_text(json.dumps({"type": "module"}))
+    result = subprocess.run(["node", script, *args], cwd=run_dir, input=stdin, capture_output=True, text=True,
+                            encoding="utf-8", timeout=300)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("eye", [
+    {"x": 24, "y": 20, "z": 70},   # 正面
+    {"x": 24, "y": 45, "z": 60},   # 上から見下ろす
+    {"x": 5, "y": 30, "z": 40},    # 左斜め前の近く
+    {"x": 40, "y": 8, "z": 50},    # 右斜め前の低い所
+    {"x": 24, "y": 3, "z": 45},    # 床すれすれ
+])
+def test_stage_looks_like_the_figure_from_the_eye(eye):
+    out = run_node("stage_view.mjs", [json.dumps([eye])])
+    r = out["results"][0]
+    assert r["drawn"]
+    total = r["figurePixels"]
+    assert total > 500
+    # ずれるのはブロックの境目 (1 ブロック = 1 色) だけ
+    assert r["matched"] / total > 0.85, r
+    assert r["missing"] / total < 0.08, r
+    assert r["extra"] / total < 0.10, r
+    assert r["offStage"] / total < 0.03, r
+
+
+def test_stage_layout_and_eye_outside_is_refused():
+    out = run_node("stage_view.mjs", [json.dumps([{"x": 24, "y": 20, "z": 0.5}, {"x": 24, "y": 0.5, "z": 40}])])
+    g = out["geom"]
+    # 盤面の 0 番は壁の左上 (一番高い所)、最後は床の手前の右端
+    assert out["wallTopLeft"] == {"x": 0, "y": g["wallHeight"], "z": 0}
+    assert out["floorLast"] == {"x": g["stageWidth"] - 1, "y": 0, "z": g["floorRows"]}
+    # 壁の後ろや床の下からは写せない
+    assert [r["drawn"] for r in out["results"]] == [False, False]
+
+
+def expected_stage(data, volume, eye):
+    """最後のフレームの立体を、目 eye (舞台の原点から) から写した盤面のブロック名。"""
+    video = {k: data[k] for k in ("width", "height", "depth", "air_level")}
+    out = run_node("project_stage.mjs", stdin=json.dumps({"video": video, "figure": volume.reshape(-1).tolist(),
+                                                          "eye": eye, "wall": WALL, "floor": FLOOR}))
+    assert out["drawn"]
+    blocks = [spec["block"] for spec in data["level_blocks"]]
+    names = {WALL: WALL_BLOCK, FLOOR: FLOOR_BLOCK}
+    return out["geom"], [names.get(v) or blocks[v] for v in out["board"]]
+
+
+def placed_stage(out, geom, anchor):
+    """モックのワールドに置かれたブロックを、舞台の盤面の順 (壁の行 → 床の行) に読む。"""
+    world = {(x, y, z): block for x, y, z, block in out["allBlocks"]}
+    cells = []
+    for row in range(geom["rows"]):
+        for x in range(geom["stageWidth"]):
+            if row < geom["wallHeight"]:
+                key = (anchor["x"] + x, anchor["y"] + geom["wallHeight"] - row, anchor["z"])
+            else:
+                key = (anchor["x"] + x, anchor["y"], anchor["z"] + 1 + row - geom["wallHeight"])
+            cells.append(world.get(key))
+    return cells, world
+
+
+def check_playback(tmp_path, path, data):
+    final = [board for board, _ in iter_decoded_frames(data)][-1]
+    start = {"x": 0.5, "y": 64, "z": 100.5}
+    moved = {"x": -6.5, "y": 70, "z": 92.5}
+    steps = [{"x": start["x"], "y": start["y"], "z": start["z"]},
+             {"event": "badapple:setup"}, {"event": "badapple:start"}, {"until": "bvp.playback_finished"},
+             {"snap": "end"},
+             # 再生が終わった後でも、プレイヤーが動けば描き直す
+             {"x": moved["x"], "y": moved["y"], "z": moved["z"]}, {"tick": 20}]
+    out = drive(tmp_path / "addon", {"stage": path}, steps)
+    assert out["errors"] == []
+    anchor = out["snaps"][0]["anchor"]
+    eye = {"x": moved["x"] - anchor["x"], "y": moved["y"] + EYE_HEIGHT - anchor["y"], "z": moved["z"] - anchor["z"]}
+    geom, expected = expected_stage(data, final, eye)
+    placed, world = placed_stage(out, geom, anchor)
+    assert placed == expected
+    # 人物そのもの (舞台の上の空間) には何も置かない: 置いたブロックはすべて壁か床
+    for (x, y, z) in world:
+        assert anchor["x"] <= x < anchor["x"] + geom["stageWidth"]
+        assert (z == anchor["z"] and 1 <= y - anchor["y"] <= geom["wallHeight"]) or \
+            (y == anchor["y"] and 1 <= z - anchor["z"] <= geom["floorRows"])
+    # 人物が壁と床に写っている
+    figure_cells = sum(1 for b in placed if b not in (WALL_BLOCK, FLOOR_BLOCK))
+    assert figure_cells > 20
+    return out, geom
+
+
+def test_vox_animation_is_drawn_on_wall_and_floor(tmp_path):
+    path = make_depth_walk(tmp_path)
+    data = convert_vox(path, tmp_path / "walk.js", "--view", "anamorphic")
+    assert data["view"] == "anamorphic"
+    check_playback(tmp_path, tmp_path / "walk.js", data)
+
+
+def test_inflated_silhouette_is_drawn_on_wall_and_floor(tmp_path):
+    """2.5D (色と厚みの平面で送る inflate) でも、組み立てた立体を写す。"""
+    frames = tmp_path / "frames"
+    frames.mkdir()
+    for i in range(12):
+        arr = np.zeros((40, 32, 3), np.uint8)
+        arr[6:36, 10 + i // 3:20 + i // 3] = (240, 200, 60)
+        arr[2:8, 12 + i // 3:18 + i // 3] = (230, 60, 60)
+        Image.fromarray(arr).save(frames / f"frame_{i:04d}.png")
+    out = tmp_path / "inflate.js"
+    argv = ["--frames-dir", str(frames), "--output", str(out), "--width", "32", "--height", "40", "--fps", "10",
+            "--threads", "2", "--device", "cpu", "--mode", "inflate", "--depth", "8", "--view", "anamorphic",
+            "--no-adaptive-fps"]
+    assert convert.main(argv) == 0
+    data = load_frame_data(out)
+    assert data["layout"] == "heightfield" and data["view"] == "anamorphic"
+    check_playback(tmp_path, out, data)
+
+
+def test_view_option_needs_a_3d_mode(tmp_path):
+    with pytest.raises(SystemExit):
+        convert.main(["--frames-dir", str(tmp_path), "--output", str(tmp_path / "x.js"), "--view", "anamorphic"])

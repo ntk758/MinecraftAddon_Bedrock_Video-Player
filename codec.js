@@ -240,6 +240,195 @@ export function expandPlanes(planes, previous, volume, video) {
 }
 
 /**
+ * 視点に合わせた立体のだまし絵 (view: "anamorphic") で表示するデータか。立体の人物はワールドに置かず、
+ * 見ている人の目から人物を見たときの色を、後ろの壁と足元の床に塗る (正しい位置から見ると立体に見える)。
+ */
+export function isAnamorphic(video) {
+  return video.view === "anamorphic" && isVolume(video);
+}
+
+/**
+ * だまし絵の舞台 (壁と床) の大きさ。座標は舞台の北西の角を原点とするブロック単位 (x は東、y は上、z は南)。
+ *  - 床: 上の面が y = 1、z は 1〜1 + floorRows (北の端で壁に接する)
+ *  - 壁: 南の面が z = 1、y は 1〜1 + wallHeight
+ *  - 人物 (幅 × 高さ × 奥行きの立体): 床の上 (y = 1 から)、左右中央、壁から gap ブロック離れた所に立つ
+ * 壁は人物より高くする (人物の上の方を通る視線は、人物より高い所で壁に当たる)。壁と床は左右に人物の幅ずつ広げ、
+ * 床は手前にも広げる (斜めから見ると、人物は横へずれた所に写る)。
+ * 盤面は壁の行 (0 行目が一番上) の後に床の行 (0 行目が壁際) が続き、どちらも幅 stageWidth 列。
+ */
+export function stageGeometry(video) {
+  const { width, height, depth } = video;
+  const side = width;
+  const gap = Math.max(4, Math.ceil(depth / 2));
+  const front = Math.max(4, depth);
+  const stageWidth = width + 2 * side;
+  const wallHeight = Math.ceil(height * 1.5);
+  const floorRows = gap + depth + front;
+  return {
+    width, height, depth, side, gap, front, stageWidth, wallHeight, floorRows,
+    rows: wallHeight + floorRows,
+    cells: stageWidth * (wallHeight + floorRows),
+  };
+}
+
+/**
+ * 盤面の p 番目のマスを、舞台の原点からのブロックの位置にする (壁は z = 0 の列、床は y = 0 の段)。
+ */
+export function stageCellOffset(geom, p, out) {
+  const row = Math.floor(p / geom.stageWidth);
+  out.x = p % geom.stageWidth;
+  if (row < geom.wallHeight) {
+    out.y = geom.wallHeight - row;
+    out.z = 0;
+  } else {
+    out.y = 0;
+    out.z = 1 + row - geom.wallHeight;
+  }
+  return out;
+}
+
+/**
+ * 立体の人物 figure ((奥行き × 高さ) 行 × 幅 列、空気は video.air_level) を、目の位置 eye (舞台の原点からの
+ * 座標) から見たとおりに壁と床へ写し、盤面 out (stageGeometry の cells マス) に書く。人物の当たらないマスは
+ * 壁なら wallLevel、床なら floorLevel。
+ *
+ * 外から見える面を持つブロック (6 方向のどれかが空気か立体の外) ごとに、そのブロックが写る範囲を
+ * 8 つの角を壁と床へ投げて求め、範囲の各マスの中心から目への視線がそのブロックを通るかを確かめる。
+ * 同じマスに複数のブロックが写るときは、目に近い方を残す (zbuf: 視線の上の位置。0 が目、1 がマス)。
+ * 目が壁の前・床の上に無ければ写せないので false を返す (out は変えない)。
+ */
+export function projectToStage(figure, video, geom, eye, out, zbuf, wallLevel, floorLevel) {
+  if (!(eye.z > 1 && eye.y > 1)) return false;
+  const { width, height, depth, side, gap, stageWidth, wallHeight, floorRows } = geom;
+  const air = video.air_level;
+  const wallCells = stageWidth * wallHeight;
+  out.fill(wallLevel, 0, wallCells);
+  out.fill(floorLevel, wallCells);
+  zbuf.fill(2);
+  const ex = eye.x;
+  const ey = eye.y;
+  const ez = eye.z;
+  const slice = width * height;
+  // 角を投げた先の範囲 (床は x と z、壁は x と y)
+  let fx0, fx1, fz0, fz1, wx0, wx1, wy0, wy1;
+  for (let d = 0; d < depth; d++) {
+    const z0 = 1 + gap + d;
+    for (let row = 0; row < height; row++) {
+      const y0 = height - row;
+      for (let x = 0; x < width; x++) {
+        const p = (d * height + row) * width + x;
+        const level = figure[p];
+        if (level === air || level < 0) continue;
+        // 周りがすべて埋まっているブロックは外から見えない
+        if (x > 0 && x + 1 < width && row > 0 && row + 1 < height && d > 0 && d + 1 < depth
+          && figure[p - 1] !== air && figure[p + 1] !== air && figure[p - width] !== air
+          && figure[p + width] !== air && figure[p - slice] !== air && figure[p + slice] !== air) continue;
+        const x0 = side + x;
+        fx0 = wx0 = Infinity;
+        fx1 = wx1 = -Infinity;
+        fz0 = wy0 = Infinity;
+        fz1 = wy1 = -Infinity;
+        let hitsFloor = false;
+        let hitsWall = false;
+        for (let c = 0; c < 8; c++) {
+          const cx = x0 + (c & 1) - ex;
+          const cy = y0 + ((c >> 1) & 1) - ey;
+          const cz = z0 + ((c >> 2) & 1) - ez;
+          // 角を通る視線が床 (y = 1) と壁 (z = 1) に当たるまでの長さ (角までを 1 とする)。当たらなければ Infinity
+          const sFloor = cy < 0 ? (1 - ey) / cy : Infinity;
+          const sWall = cz < 0 ? (1 - ez) / cz : Infinity;
+          if (sFloor <= sWall && sFloor !== Infinity) {
+            // 先に床に当たる。壁の範囲には、壁の下の縁 (y = 1) の同じ x を入れる
+            const hx = ex + cx * sFloor;
+            const hz = ez + cz * sFloor;
+            hitsFloor = true;
+            if (hx < fx0) fx0 = hx;
+            if (hx > fx1) fx1 = hx;
+            if (hz < fz0) fz0 = hz;
+            if (hz > fz1) fz1 = hz;
+            if (hx < wx0) wx0 = hx;
+            if (hx > wx1) wx1 = hx;
+            if (1 < wy0) wy0 = 1;
+          } else if (sWall !== Infinity) {
+            const hx = ex + cx * sWall;
+            const hy = ey + cy * sWall;
+            hitsWall = true;
+            if (hx < wx0) wx0 = hx;
+            if (hx > wx1) wx1 = hx;
+            if (hy < wy0) wy0 = hy;
+            if (hy > wy1) wy1 = hy;
+            if (hx < fx0) fx0 = hx;
+            if (hx > fx1) fx1 = hx;
+            if (1 < fz0) fz0 = 1;
+          }
+        }
+        if (hitsFloor) {
+          const i0 = Math.max(0, Math.floor(fx0));
+          const i1 = Math.min(stageWidth - 1, Math.ceil(fx1) - 1);
+          const k0 = Math.max(0, Math.floor(fz0) - 1);
+          const k1 = Math.min(floorRows - 1, Math.ceil(fz1) - 2);
+          for (let k = k0; k <= k1; k++) {
+            const base = wallCells + k * stageWidth;
+            for (let i = i0; i <= i1; i++) {
+              const t = rayEntersBox(ex, ey, ez, i + 0.5 - ex, 1 - ey, k + 1.5 - ez, x0, y0, z0);
+              if (t < zbuf[base + i]) {
+                zbuf[base + i] = t;
+                out[base + i] = level;
+              }
+            }
+          }
+        }
+        if (hitsWall) {
+          const i0 = Math.max(0, Math.floor(wx0));
+          const i1 = Math.min(stageWidth - 1, Math.ceil(wx1) - 1);
+          // 壁の r 行目は y = wallHeight - r 〜 wallHeight - r + 1
+          const r0 = Math.max(0, wallHeight - Math.ceil(wy1) + 1);
+          const r1 = Math.min(wallHeight - 1, wallHeight - Math.floor(wy0));
+          for (let r = r0; r <= r1; r++) {
+            const base = r * stageWidth;
+            const cy = wallHeight - r + 0.5;
+            for (let i = i0; i <= i1; i++) {
+              const t = rayEntersBox(ex, ey, ez, i + 0.5 - ex, cy - ey, 1 - ez, x0, y0, z0);
+              if (t < zbuf[base + i]) {
+                zbuf[base + i] = t;
+                out[base + i] = level;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * 目 (ox, oy, oz) からマスの中心まで (向き dx, dy, dz、長さ 1 まで) の視線が、1 辺 1 の箱 (x0, y0, z0 の角) に
+ * 入る位置 (0〜1)。通らなければ Infinity。
+ */
+function rayEntersBox(ox, oy, oz, dx, dy, dz, x0, y0, z0) {
+  let tmin = 0;
+  let tmax = 1;
+  let a = (x0 - ox) / dx;
+  let b = (x0 + 1 - ox) / dx;
+  if (a > b) { const s = a; a = b; b = s; }
+  if (a > tmin) tmin = a;
+  if (b < tmax) tmax = b;
+  a = (y0 - oy) / dy;
+  b = (y0 + 1 - oy) / dy;
+  if (a > b) { const s = a; a = b; b = s; }
+  if (a > tmin) tmin = a;
+  if (b < tmax) tmax = b;
+  a = (z0 - oz) / dz;
+  b = (z0 + 1 - oz) / dz;
+  if (a > b) { const s = a; a = b; b = s; }
+  if (a > tmin) tmin = a;
+  if (b < tmax) tmax = b;
+  // 向きが 0 の軸は割り算が ±Infinity か NaN になる。NaN は比べると false なので、箱の外なら下で外れる
+  return tmin <= tmax && tmin === tmin ? tmin : Infinity;
+}
+
+/**
  * タイル辞書 (mvcodec/tiles.py の TileDictionary と同じ規則)。
  *  - キーフレーム: 辞書を空にして、そのフレームの全タイルを登録
  *  - それ以外: 直前の盤面から内容が変わったタイルを行優先の順に登録

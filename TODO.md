@@ -10,6 +10,24 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 - **リリースごと**: [docs/TESTING.md](docs/TESTING.md) の「リリースごとの記録」に自動テスト・モック・EXE・実機の結果を書く。手順は [docs/RELEASING.md](docs/RELEASING.md)。
 - **実機の計測を集める**: Windows 以外の端末での動作と、`/scriptevent <接頭辞>:stats` の結果を [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) と [docs/PERFORMANCE.md](docs/PERFORMANCE.md) に追記する (まだ Windows の `bench` しか無い)。
 
+## 🔴 優先度: 高 (Phase 12: 視点に合わせた立体のだまし絵)
+
+Java 版で「マップアートをプレイヤーの視点に合わせて描き直し、人物が立体に見える」動画がある (利用者が 2026-10-21 に
+共有。手元で見ただけで、リポジトリには入れない)。立体の人物はワールドに置かず、見ている人の目から見たとおりに
+後ろの壁と足元の床へ塗る。Bedrock では地図をスクリプトから塗れないので 1 ブロック = 1 点になり、正しく見えるのは 1 人だけ。
+
+### 12.1 試作 (`--view anamorphic`、main.js と codec.js の `projectToStage`)
+- ✅ 立体 (.vox・relief・extrude・inflate) を壁と床に写す。目から見た絵が、人物を直接見た絵と 9 割一致 (残りはブロックの境目)。
+- ✅ 再生中・一時停止中・再生後も、目が 0.25 ブロック動けば描き直す。モックで 1 フレームの計算は約 0.3 ms
+  (JIT なしで約 4〜5 ms)。
+- ✅ 見本: 自作の踊る人物 (`scripts/make_demo_dancer.py`)。
+- 実機で、描き直しの重さと見え方を確かめる (試験用アドオン: 手元の BVP-stage-test.mcaddon)。
+
+### 12.2 変換ツールへの追加
+- Windows 版・ブラウザ版の表示モードに「だまし絵」を足す (実機で確かめた後)。
+- 後ろの壁に背景の映像を流す (平面の映像と立体の人物を同時に再生)。
+- MMD などの 3D モデルの踊りから立体を作る手順。
+
 ## 🔴 優先度: 高 (Phase 11: 自分の動画を作る人を増やす)
 
 2026-10-20 の分析: CurseForge で 7 日に約 1,500 DL あるのに、変換ツール (Windows 版) の DL は数回だけ。お試し版で満足して
