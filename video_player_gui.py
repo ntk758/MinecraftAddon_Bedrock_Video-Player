@@ -936,16 +936,19 @@ class PackBuilderApp(tk.Tk):
 
                     sounds = [] if is_vox else self._extract_audio(ffmpeg, video, temp / "sounds" / video_id)
 
+                    # だまし絵と背景の映像は、動画ごとの指定 (サンプルを作るスクリプト用) があればそれを使う
+                    video_anamorphic = entry.get("anamorphic", anamorphic)
+                    video_background = entry.get("stage_background", stage_background)
                     # だまし絵の背景の映像 (立体のときだけ。人物の動画 ID + "_bg" の、一覧に出さない平面の動画にする)
                     three_d = is_vox or mode != "screen"
-                    background_id = f"{video_id}_bg" if anamorphic and three_d and stage_background else None
+                    background_id = f"{video_id}_bg" if video_anamorphic and three_d and video_background else None
 
                     # ブロックデータ変換
                     self.messages.put(self.tr("build.converting"))
                     argv = build_converter_args(
                         video, generated_data, ffmpeg, width, height, fps, palette, dither_method,
                         self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
-                        self.tr.language, mode, depth, anamorphic,
+                        self.tr.language, mode, depth, video_anamorphic,
                     )
                     if background_id:
                         argv += ["--stage-background", background_id]
@@ -957,7 +960,7 @@ class PackBuilderApp(tk.Tk):
                     })
                     if background_id:
                         videos.append(self._convert_stage_background(
-                            Path(stage_background), background_id, frames_js, temp, ffmpeg, fps, palette,
+                            Path(video_background), background_id, frames_js, temp, ffmpeg, fps, palette,
                             dither_method, device, duration,
                         ))
 

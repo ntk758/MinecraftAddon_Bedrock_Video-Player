@@ -93,6 +93,8 @@ const DECODE_YIELD = 1;
 // だまし絵 (view: "anamorphic") の壁と床の盤面の値。パレット番号と重ならない大きな番号にし、activePalette に足す
 const STAGE_WALL_LEVEL = 30000;
 const STAGE_FLOOR_LEVEL = 30001;
+// だまし絵の左右の壁の、人物の写らないマス (空気。見本のように、横には人物の写る所だけブロックを置く)
+const STAGE_AIR_LEVEL = 30002;
 const DEFAULT_STAGE_WALL = "minecraft:light_gray_concrete";
 const DEFAULT_STAGE_FLOOR = "minecraft:black_concrete";
 // だまし絵: 見ている人の目がこれだけ (ブロック) 動いたら、フレームの合間にも描き直す
@@ -412,7 +414,8 @@ class VideoPlayer {
       const anamorphic = isAnamorphic(this.videoData);
       const { width, height, depth } = this.videoData;
       this.figure = anamorphic ? new Int16Array(width * height * depth).fill(this.videoData.air_level) : null;
-      this.stageWork = anamorphic ? createStageWork(stageOf(this.videoData), STAGE_WALL_LEVEL, STAGE_FLOOR_LEVEL) : null;
+      this.stageWork = anamorphic
+        ? createStageWork(stageOf(this.videoData), STAGE_WALL_LEVEL, STAGE_FLOOR_LEVEL, STAGE_AIR_LEVEL) : null;
       const backgroundId = stageBackgroundOf(this.videoData);
       this.background = backgroundId ? new VideoPlayer(this.anchor, this.dimension, backgroundId) : null;
       this.viewDrawn = false;
@@ -615,7 +618,8 @@ class VideoPlayer {
     if (isAnamorphic(this.videoData)) {
       // だまし絵の壁と床は GOP が変わっても同じブロックなので、人物が写っているマスだけ置き直す
       for (let p = 0; p < this.board.length; p++) {
-        if (this.board[p] !== STAGE_WALL_LEVEL && this.board[p] !== STAGE_FLOOR_LEVEL) this.board[p] = -1;
+        const level = this.board[p];
+        if (level !== STAGE_WALL_LEVEL && level !== STAGE_FLOOR_LEVEL && level !== STAGE_AIR_LEVEL) this.board[p] = -1;
       }
       this.stageRows = { lo: 0, hi: Infinity, left: 0, right: Infinity };
       return;
@@ -1039,6 +1043,7 @@ class VideoPlayer {
       if (backgroundBase) backgroundBase.forEach((permutation, level) => { palette[STAGE_IMAGE_OFFSET + level] = permutation; });
       palette[STAGE_WALL_LEVEL] = resolvePermutation({ block: this.videoData.stage_wall ?? DEFAULT_STAGE_WALL });
       palette[STAGE_FLOOR_LEVEL] = resolvePermutation({ block: this.videoData.stage_floor ?? DEFAULT_STAGE_FLOOR });
+      palette[STAGE_AIR_LEVEL] = this.airPermutation;
       byBackground.set(backgroundBase, palette);
     }
     return palette;
@@ -1099,7 +1104,10 @@ class VideoPlayer {
     const geom = stageOf(this.videoData);
     const eye = this.viewerEye() ?? this.lastEye
       ?? { x: geom.stageWidth / 2, y: 1 + this.videoData.height / 2, z: 1 + geom.floorRows + this.videoData.height };
-    projectToStage(this.figure, this.videoData, geom, eye, this.nextBoard, this.stageWork, this.background?.decoded ?? null);
+    // 背景の映像のフレームが変わったときだけ後ろの壁を作り直す (decodedFrame を版にする)
+    const background = this.background;
+    projectToStage(this.figure, this.videoData, geom, eye, this.nextBoard, this.stageWork, background?.decoded ?? null,
+      background ? background.decodedFrame : 0);
     const work = this.stageWork;
     if (work.rowMin <= work.rowMax) this.extendStageRows(work.rowMin, work.rowMax + 1, work.colMin, work.colMax + 1);
     this.lastEye = eye;

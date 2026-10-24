@@ -318,22 +318,28 @@ export function stageCellOffset(geom, p, out) {
 
 /**
  * projectToStage の作業領域。figure (立体の人物) を書き換えたら dirty = true にする (外側のブロックの一覧を作り直す)。
- *  - background: 人物の写っていない盤面 (壁は wallLevel、床は floorLevel、区画の余りは -1 = 置かない)
+ *  - background: 人物の写っていない盤面 (後ろの壁は wallLevel、床は floorLevel、左右の壁は sideLevel (main.js は空気に
+ *    して、人物の写るマスだけブロックを置く)、区画の余りは -1 = 置かない)
  *  - surface / faces: 外から見える面を持つブロックの番号と、空気に面している向き (ビット: 1 西 2 東 4 下 8 上 16 北 32 南)
  *  - stamp: そのマスを何回目の写しで塗ったか (塗ったマスは後ろのブロックで調べ直さない)
  *  - rowMin / rowMax・colMin / colMax: 直前の写しで人物を塗った盤面の行と列の範囲 (塗らなければ rowMin > rowMax)
  */
-export function createStageWork(geom, wallLevel, floorLevel) {
+export function createStageWork(geom, wallLevel, floorLevel, sideLevel = wallLevel) {
   const voxels = geom.width * geom.height * geom.depth;
   const background = new Int16Array(geom.cells);
   for (let p = 0; p < geom.cells; p++) {
     const row = Math.floor(p / geom.rowWidth);
     background[p] = isStagePadding(geom, p) ? -1
-      : row >= geom.wallHeight && row < geom.wallHeight + geom.floorRows ? floorLevel : wallLevel;
+      : row < geom.wallHeight ? wallLevel
+        : row < geom.wallHeight + geom.floorRows ? floorLevel : sideLevel;
   }
   return {
     dirty: true,
     background,
+    // 後ろの壁の背景の映像 (STAGE_IMAGE_OFFSET を足した値、映像の無いマスは wallLevel)。wallVersion が変わったときだけ作り直す
+    wallLevel,
+    wallImage: new Int16Array(geom.stageWidth * geom.wallHeight),
+    wallVersion: -1,
     surface: new Int32Array(voxels),
     faces: new Uint8Array(voxels),
     surfaceCount: 0,
@@ -419,7 +425,8 @@ const NO_HIT = 4;
  * work.background のまま。work は createStageWork で作った作業領域。
  *
  * wallImage (stageWidth × wallHeight の平面の盤面、無ければ null) を渡すと、後ろの壁を背景の映像にする (値は
- * パレット番号 + STAGE_IMAGE_OFFSET、負の数のマスは壁のまま)。人物はその上に描く。
+ * パレット番号 + STAGE_IMAGE_OFFSET、負の数のマスは壁のまま)。人物はその上に描く。wallVersion は背景の映像の
+ * フレームが変わるたびに変える (同じなら前に作った後ろの壁を使い回す。目が動いただけの描き直しでは作り直さない)。
  *
  * 外から見える面のうち目の方を向いた面を持つブロックだけを、目に近い順に写す。各ブロックの写る範囲は 8 つの角を
  * 通る視線が最初に当たる面から求め (隣の面の範囲には、その点を境目の位置として足す)、範囲のまだ塗っていないマス
@@ -428,20 +435,22 @@ const NO_HIT = 4;
  * あるブロックを隠すブロックは、どの軸でも目に近いか同じ = この順で先に来る。
  * 目が箱の中か手前 (左右の壁の間、後ろの壁の前、床の上) に無ければ写せないので false を返す (out は変えない)。
  */
-export function projectToStage(figure, video, geom, eye, out, work, wallImage = null) {
+export function projectToStage(figure, video, geom, eye, out, work, wallImage = null, wallVersion = 0) {
   const { width, height, depth, side, gap, stageWidth, wallHeight, floorRows, rowWidth } = geom;
   if (!(eye.z > 1 && eye.y > 1 && eye.x > 0 && eye.x < stageWidth)) return false;
   if (work.dirty) collectSurface(figure, video.air_level, geom, work);
   out.set(work.background);
   if (wallImage) {
-    for (let r = 0; r < wallHeight; r++) {
-      const base = r * rowWidth;
-      const source = r * stageWidth;
-      for (let i = 0; i < stageWidth; i++) {
-        const level = wallImage[source + i];
-        if (level >= 0) out[base + i] = level + STAGE_IMAGE_OFFSET;
+    const wall = work.wallImage;
+    if (work.wallVersion !== wallVersion) {
+      for (let q = 0; q < wall.length; q++) {
+        const level = wallImage[q];
+        wall[q] = level >= 0 ? level + STAGE_IMAGE_OFFSET : work.wallLevel;
       }
+      work.wallVersion = wallVersion;
     }
+    if (rowWidth === stageWidth) out.set(wall);
+    else for (let r = 0; r < wallHeight; r++) out.set(wall.subarray(r * stageWidth, (r + 1) * stageWidth), r * rowWidth);
   }
   const stamp = work.stamp;
   const pass = ++work.pass;

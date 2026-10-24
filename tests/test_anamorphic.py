@@ -26,7 +26,7 @@ from test_volume3d import convert_vox, make_depth_walk  # noqa: E402
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node が必要")
 
-WALL, FLOOR = 30000, 30001
+WALL, FLOOR, SIDE = 30000, 30001, 30002
 WALL_BLOCK, FLOOR_BLOCK = "minecraft:light_gray_concrete", "minecraft:black_concrete"
 EYE_HEIGHT = 1.62
 
@@ -100,10 +100,11 @@ def expected_stage(data, volume, eye):
     """最後のフレームの立体を、目 eye (舞台の原点から) から写した盤面のブロック名。"""
     video = {k: data[k] for k in ("width", "height", "depth", "air_level")}
     out = run_node("project_stage.mjs", stdin=json.dumps({"video": video, "figure": volume.reshape(-1).tolist(),
-                                                          "eye": eye, "wall": WALL, "floor": FLOOR}))
+                                                          "eye": eye, "wall": WALL, "floor": FLOOR, "side": SIDE}))
     assert out["drawn"]
     blocks = [spec["block"] for spec in data["level_blocks"]]
-    names = {WALL: WALL_BLOCK, FLOOR: FLOOR_BLOCK, -1: None}
+    # 左右の壁の人物の写らないマスは空気
+    names = {WALL: WALL_BLOCK, FLOOR: FLOOR_BLOCK, SIDE: "minecraft:air", -1: None}
     return out["geom"], [names[v] if v in names else blocks[v] for v in out["board"]]
 
 
@@ -155,7 +156,7 @@ def check_playback(tmp_path, path, data):
                    for offset in (stage_offset(geom, p) for p in range(geom["cells"])) if offset is not None}
     assert set(world) <= stage_cells
     # 人物が舞台に写っている
-    figure_cells = sum(1 for b in placed if b not in (WALL_BLOCK, FLOOR_BLOCK, None))
+    figure_cells = sum(1 for b in placed if b not in (WALL_BLOCK, FLOOR_BLOCK, "minecraft:air", None))
     assert figure_cells > 20
     return out, geom
 
@@ -303,7 +304,7 @@ def test_background_video_plays_on_the_back_wall(tmp_path, palette):
     eye = {"x": 0 - anchor["x"] - 1, "y": 64 + EYE_HEIGHT - anchor["y"], "z": 100 - anchor["z"]}
     video = {k: figure_data[k] for k in ("width", "height", "depth", "air_level")}
     projected = run_node("project_stage.mjs", stdin=json.dumps({
-        "video": video, "figure": figures[49 % 10].reshape(-1).tolist(), "eye": eye, "wall": WALL, "floor": FLOOR,
+        "video": video, "figure": figures[49 % 10].reshape(-1).tolist(), "eye": eye, "wall": WALL, "floor": FLOOR, "side": SIDE,
         "wallImage": backgrounds[49].reshape(-1).tolist()}))
     geom = projected["geom"]
     assert (background_data["width"], background_data["height"]) == (geom["stageWidth"], geom["wallHeight"])
@@ -311,7 +312,7 @@ def test_background_video_plays_on_the_back_wall(tmp_path, palette):
     last_palette = lambda data: data["level_blocks"][-1] if data.get("adaptive_palette") else data["level_blocks"]  # noqa: E731
     figure_blocks = [spec["block"] for spec in last_palette(figure_data)]
     background_blocks = [spec["block"] for spec in last_palette(background_data)]
-    names = {WALL: WALL_BLOCK, FLOOR: FLOOR_BLOCK, -1: None}
+    names = {WALL: WALL_BLOCK, FLOOR: FLOOR_BLOCK, SIDE: "minecraft:air", -1: None}
     expected = [names[v] if v in names else background_blocks[v - 20000] if v >= 20000 else figure_blocks[v]
                 for v in projected["board"]]
     placed, _world = placed_stage(out, geom, anchor)
