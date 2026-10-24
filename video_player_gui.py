@@ -38,6 +38,8 @@ CODEC_SCRIPT = APP_DIR / "codec.js"
 CONVERTER = APP_DIR / "convert.py"
 # EXE 版で自分自身を変換器として起動するための引数
 RUN_CONVERTER_FLAG = "--run-converter"
+# EXE で人物の切り抜きだけを行う (mvcodec/person.py のコマンドライン。scripts/make_person_videos.py と同じ)
+RUN_PERSON_FLAG = "--run-person-split"
 
 
 def subprocess_kwargs() -> dict:
@@ -1087,4 +1089,10 @@ def run_converter_mode(argv: list[str]) -> int:
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == RUN_CONVERTER_FLAG:
         sys.exit(run_converter_mode(sys.argv[2:]))
+    if len(sys.argv) > 1 and sys.argv[1] == RUN_PERSON_FLAG:
+        if sys.stdout is None:  # windowed EXE で標準出力が無い場合
+            sys.stdout = open(os.devnull, "w", encoding="utf-8")
+            sys.stderr = sys.stdout
+        from mvcodec.person import main as person_main
+        sys.exit(person_main(sys.argv[2:]))
     PackBuilderApp().mainloop()
