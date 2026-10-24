@@ -22,9 +22,12 @@ def main(argv=None):
     parser.add_argument("--height", type=int, default=56, help="人物の高さ (ブロック)")
     parser.add_argument("--fps", type=float, default=10)
     parser.add_argument("--duration", type=float, default=None, help="長さの上限 (秒)")
+    parser.add_argument("--keep-travel", action="store_true",
+                        help="踊りの前後左右の移動を残す (既定はその場で踊らせる。範囲が広がり、だまし絵が重くなる)")
     args = parser.parse_args(argv)
     frames, size = mmd_to_vox(args.model, args.motion, args.output, args.height, args.fps, args.duration,
-                              progress=lambda done, total: print(f"\r{done} / {total}", end="", flush=True))
+                              progress=lambda done, total: print(f"\r{done} / {total}", end="", flush=True),
+                              in_place=not args.keep_travel)
     print(f"\n{args.output}: {frames} frames, {size[0]}x{size[1]}x{size[2]}")
 
 

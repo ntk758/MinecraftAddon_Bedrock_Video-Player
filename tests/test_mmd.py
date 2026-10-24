@@ -101,6 +101,24 @@ def test_mmd_to_vox_makes_a_front_facing_animation(doll, tmp_path):
     assert voxels[red, 1].mean() < voxels[head & ~red, 1].mean()
 
 
+def test_dances_in_place_unless_asked_to_travel(tmp_path):
+    """踊りがステージを歩き回っても、既定ではその場で踊らせる (立体の範囲が広がらない)。上下の動きは残す。"""
+    # 体 (センター) と両足 (IK) を一緒に、横へ 20、上へ 4、前へ 20 動かす
+    keys = [(name, frame, (20 * t, 4 * t, -20 * t), (0, 0, 0, 1))
+            for name in ("センター", "左足ＩＫ", "右足ＩＫ") for frame, t in ((0, 0), (30, 1))]
+    pmx, vmd = write_doll(tmp_path, keys)
+    _, still = mmd_to_vox(pmx, vmd, tmp_path / "still.vox", height=40, fps=10, in_place=True)
+    _, travel = mmd_to_vox(pmx, vmd, tmp_path / "travel.vox", height=40, fps=10, in_place=False)
+    (tmp_path / "rest").mkdir()
+    pmx, vmd = write_doll(tmp_path / "rest", keys[:1])
+    _, rest = mmd_to_vox(pmx, vmd, tmp_path / "rest.vox", height=40, fps=10)
+    # 横と奥行きは止まっているときと同じ、高さは跳んだ分だけ高い
+    assert still[0] == rest[0] and still[1] == rest[1]
+    assert still[2] > rest[2] + 5
+    # 移動を残すと、横と奥行きが 20 / 16.5 × 40 ≈ 48 ブロック広がる
+    assert travel[0] >= rest[0] + 40 and travel[1] >= rest[1] + 40
+
+
 def test_gui_builds_an_anamorphic_addon_from_mmd(doll, tmp_path):
     """GUI の組み立て (画面なし): 動画リストの .pmx を、選んだ踊り (.vmd) で立体にして、だまし絵のアドオンを作る。"""
     import json
@@ -148,6 +166,6 @@ def test_gui_builds_an_anamorphic_addon_from_mmd(doll, tmp_path):
         text = z.read("BP/scripts/frames_doll.js").decode("utf-8")
     data = json.loads(text[text.index("{"):text.rindex("}") + 1])
     assert data["view"] == "anamorphic" and data["frame_count"] == 11
-    # 高さの設定 (128) は上限の 64 ブロックにする (初期姿勢の頭の上が 64。この踊りは腕を頭より上へ上げるので、
-    # 立体の高さは 64 × 18.4 / 16.5 ≈ 72 + 余白)
-    assert 70 <= data["height"] <= 78
+    # 高さの設定 (128) は、だまし絵の上限の 40 ブロックにする (初期姿勢の頭の上が 40。この踊りは腕を頭より上へ
+    # 上げるので、立体の高さは 40 × 18.4 / 16.5 ≈ 45 + 余白)
+    assert 44 <= data["height"] <= 49

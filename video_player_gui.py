@@ -190,6 +190,9 @@ VOX_SUFFIX = ".vox"
 PMX_SUFFIX = ".pmx"
 # MMD の人物の高さ (ブロック) の上限。高すぎると重い (実機で高さ 56 は 10 fps、96 は重すぎた)
 MMD_MAX_HEIGHT = 64
+# だまし絵のときの上限。MMD のモデルは表面だけの殻で、髪やスカートの薄い板が多く、見える面が同じ高さの手作りの
+# 立体の約 2.6 倍ある (実在のモデルで、高さ 56 は実機で 1 フレーム約 90 ms の見込み。40 で約 42 ms)
+MMD_STAGE_MAX_HEIGHT = 40
 # 画質プリセット: キー -> (幅, 高さ, fps)
 QUALITY_PRESETS: dict[str, tuple[int, int, int]] = {
     "light": (64, 64, 20),
@@ -977,8 +980,9 @@ class PackBuilderApp(tk.Tk):
 
                     if video.suffix.lower() == PMX_SUFFIX:
                         # MMD: モデルと踊りから立体のアニメ (.vox) を作り、あとは .vox と同じに変換する
+                        limit = MMD_STAGE_MAX_HEIGHT if entry.get("anamorphic", anamorphic) else MMD_MAX_HEIGHT
                         video = self._mmd_to_vox(video, entry.get("motion"), temp / f"mmd_{video_id}.vox",
-                                                 min(height, MMD_MAX_HEIGHT), fps, duration)
+                                                 min(height, limit), fps, duration)
                     is_vox = video.suffix.lower() == VOX_SUFFIX
                     # サムネイル生成 (.vox は立体を正面から見た画像)
                     if is_vox:
