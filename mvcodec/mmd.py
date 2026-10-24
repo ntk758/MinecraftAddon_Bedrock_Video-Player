@@ -34,6 +34,8 @@ BONE_FIXED_AXIS = 0x0400
 BONE_LOCAL_AXIS = 0x0800
 BONE_AFTER_PHYSICS = 0x1000
 BONE_EXTERNAL_PARENT = 0x2000
+# 体全体を動かすボーン (その場で踊らせるとき、これの前後左右の移動を打ち消す)
+CENTRE_BONE = "センター"
 
 
 class _Reader:
@@ -539,8 +541,13 @@ def voxel_colours(model, materials, vertices, origin, scale, size):
     return out
 
 
-def mmd_to_vox(pmx_path, vmd_path, output, height=56, fps=10, duration=None, max_side=128, progress=None):
-    """PMX と VMD から .vox の立体アニメを作る。height は人物の高さ (ブロック)。戻り値は (フレームの数, 大きさ (x, y, z))。"""
+def mmd_to_vox(pmx_path, vmd_path, output, height=56, fps=10, duration=None, max_side=128, progress=None,
+               in_place=True):
+    """PMX と VMD から .vox の立体アニメを作る。height は人物の高さ (ブロック)。戻り値は (フレームの数, 大きさ (x, y, z))。
+
+    in_place は、その場で踊らせる (「センター」の前後左右の移動を打ち消す。上下 (跳ぶ・しゃがむ) は残す)。
+    踊りの多くはステージを歩き回るので、そのままだと立体の範囲が広がり、だまし絵の舞台が大きく重くなる
+    (実在のモデルと踊りで、範囲が幅 72 × 奥行き 56 から 38 × 39 になった)。"""
     from .volume import write_vox
 
     model = read_pmx(pmx_path)
@@ -554,11 +561,16 @@ def mmd_to_vox(pmx_path, vmd_path, output, height=56, fps=10, duration=None, max
     # 大きさ: 初期姿勢の高さを height ブロックにし、全フレームの動きが収まる範囲にする
     rest_height = float(model.positions[:, 1].max() - min(0.0, model.positions[:, 1].min()))
     scale = height / max(rest_height, 1e-6)
+    centre = poser.names.index(CENTRE_BONE) if CENTRE_BONE in poser.names else -1
     posed = []
     lo = np.full(3, np.inf)
     hi = np.full(3, -np.inf)
     for f in range(frames):
-        vertices = skin_vertices(model, poser.pose(tracks, f * 30 / fps))
+        skin = poser.pose(tracks, f * 30 / fps)
+        vertices = skin_vertices(model, skin)
+        if in_place and centre >= 0:
+            moved = skin[centre, :3, :3] @ poser.rest[centre] + skin[centre, :3, 3] - poser.rest[centre]
+            vertices -= np.array([moved[0], 0.0, moved[2]])
         posed.append(vertices)
         lo = np.minimum(lo, vertices.min(axis=0))
         hi = np.maximum(hi, vertices.max(axis=0))
