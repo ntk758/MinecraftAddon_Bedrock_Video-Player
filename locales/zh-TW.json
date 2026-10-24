@@ -98,6 +98,7 @@
   "build.converting": "  正在轉換為方塊資料（自動選擇 GPU/CPU）…",
   "build.stage_background": "  正在將錯視畫的背景影片轉換為後牆大小（{width}×{height}）…",
   "build.person": "  正在從影片中摳出人物（AI。第一次會下載約 42 MB 的模型）…",
+  "build.stage_size": "  錯視畫：將立體縮小為 {width} × {height}（長邊最多 {max}。太大會使舞台和背景影片變大、變卡）",
   "build.person_progress": "    {count} 格",
   "build.person_missing": "摳出人物需要 PyTorch（torchvision）：{error}",
   "build.mmd": "  正在把 MMD 模型和舞蹈做成立體（高 {height} 格。不使用物理和表情）…",

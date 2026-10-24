@@ -98,6 +98,7 @@
   "build.converting": "  Umwandlung in Blockdaten (GPU/CPU automatisch)…",
   "build.stage_background": "  Hintergrundvideo wird auf die Größe der Rückwand ({width}×{height}) umgewandelt…",
   "build.person": "  Person wird ausgeschnitten (KI; beim ersten Mal wird ein ca. 42 MB großes Modell geladen)…",
+  "build.stage_size": "  Trompe-l'oeil: Figur wird auf {width} × {height} verkleinert (längste Seite bis {max}; größere Figuren vergrößern Bühne und Hintergrundvideo und werden schwer)",
   "build.person_progress": "    {count} Bilder",
   "build.person_missing": "Zum Ausschneiden von Personen wird PyTorch (torchvision) benötigt: {error}",
   "build.mmd": "  MMD-Modell und Tanz werden zu 3D ({height} Blöcke hoch; Physik und Mimik werden nicht verwendet)…",

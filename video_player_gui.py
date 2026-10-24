@@ -144,13 +144,28 @@ LOAD_LEVELS = ((8.0, "light"), (25.0, "medium"))
 MAX_VOLUME_HEIGHT = 384
 
 
-def estimate_load(width: int, height: int, fps: int, mode: str = "screen", depth: int = 16) -> dict:
+def stage_figure_size(width: int, height: int) -> tuple[int, int]:
+    """だまし絵にする、動画から作る立体の大きさ (長い辺を STAGE_MAX_SIDE までに縮める。縦横比は保つ)。"""
+    scale = min(1.0, STAGE_MAX_SIDE / max(width, height, 1))
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
+def estimate_load(width: int, height: int, fps: int, mode: str = "screen", depth: int = 16,
+                  anamorphic: bool = False, background: bool = False) -> dict:
     """再生負荷の目安。全マスが毎フレーム変わる最悪の場合に、1 tick あたり何 ms ブロックを置くことになるか。
 
     実際に変わるのは多くの映像で 1〜3 割なので、普段の負荷はこれより小さい。立体は表面と側面が中心なので、
-    盤面全体ではなく奥行き 3 段ぶんを目安にする。
+    盤面全体ではなく奥行き 3 段ぶんを目安にする。だまし絵は立体を縮め (stage_figure_size)、背景の映像があれば
+    後ろの壁 (舞台の幅 × 壁の高さ) のマスも足す (人物の切り抜きは、人物を消した映像が背景になる)。
     """
-    cells = width * height * (min(depth, 3) if mode in VOLUME_MODES else 1)
+    three_d = mode in VOLUME_MODES
+    if anamorphic and three_d:
+        width, height = stage_figure_size(width, height)
+    cells = width * height * (min(depth, 3) if three_d else 1)
+    if anamorphic and three_d and (background or mode == "person"):
+        from mvcodec.stage import stage_geometry
+        geom = stage_geometry(width, height, depth)
+        cells += geom["stageWidth"] * geom["wallHeight"]
     blocks_per_second = cells * fps
     ms_per_tick = blocks_per_second * LOAD_US_PER_BLOCK / 1000 / 20
     level = next((name for limit, name in LOAD_LEVELS if ms_per_tick < limit), "heavy")
@@ -193,6 +208,10 @@ MMD_MAX_HEIGHT = 64
 # だまし絵のときの上限。MMD のモデルは表面だけの殻で、髪やスカートの薄い板が多く、見える面が同じ高さの手作りの
 # 立体の約 2.6 倍ある (実在のモデルで、高さ 56 は実機で 1 フレーム約 90 ms の見込み。40 で約 42 ms)
 MMD_STAGE_MAX_HEIGHT = 40
+# だまし絵にする、動画から作る立体 (レリーフ・押し出し・ふくらませ・人物) の長い辺の上限。舞台 (と背景の映像) は
+# 立体の大きさに比例して広がる (実機で人物 128 × 128 + 背景の映像 320 × 192 は 1 フレーム平均 238 ms、5 fps の
+# 目標に 3 fps)。80 × 45 なら背景は 160 × 68
+STAGE_MAX_SIDE = 80
 # 画質プリセット: キー -> (幅, 高さ, fps)
 QUALITY_PRESETS: dict[str, tuple[int, int, int]] = {
     "light": (64, 64, 20),
@@ -368,7 +387,8 @@ class PackBuilderApp(tk.Tk):
         self.preset_key = DEFAULT_PRESET
         self._set_option_labels(DEFAULT_PALETTE, DEFAULT_DITHER, DEFAULT_DEVICE, DEFAULT_MODE)
         self.namespace_var.trace_add("write", lambda *_: self._update_command_hint())
-        for variable in (self.width_var, self.height_var, self.depth_var):
+        for variable in (self.width_var, self.height_var, self.depth_var, self.anamorphic_var,
+                         self.stage_background_var):
             variable.trace_add("write", lambda *_: self._update_load_hint())
 
         self._build_ui()
@@ -753,7 +773,8 @@ class PackBuilderApp(tk.Tk):
             self.load_label.configure(text="")
             return
         mode = self._selected_values()[3]
-        load = estimate_load(width, height, fps, mode, depth)
+        load = estimate_load(width, height, fps, mode, depth, self.anamorphic_var.get(),
+                             bool(self.stage_background_var.get().strip()))
         self.load_label.configure(text=self.tr(
             "settings.load", blocks=f"{load['blocks_per_second']:,}", ms=f"{load['ms_per_tick']:.0f}",
             level=self.tr(f"load.{load['level']}"),
@@ -836,7 +857,8 @@ class PackBuilderApp(tk.Tk):
             messagebox.showerror(self.tr("error.settings_title"), text)
             return
         # 重い設定は、そのまま作るか確かめる (ゲームが重くなる・映像が遅れる)
-        load = estimate_load(width, height, fps, mode, depth)
+        load = estimate_load(width, height, fps, mode, depth, self.anamorphic_var.get(),
+                             bool(self.stage_background_var.get().strip()))
         if load["level"] == "heavy" and not messagebox.askyesno(
             self.tr("warn.heavy_title"), self.tr("warn.heavy", ms=f"{load['ms_per_tick']:.0f}")
         ):
@@ -1002,11 +1024,18 @@ class PackBuilderApp(tk.Tk):
                     video_anamorphic = entry.get("anamorphic", anamorphic)
                     video_background = entry.get("stage_background", stage_background)
 
+                    # だまし絵にする、動画から作る立体は縮める (舞台と背景の映像が立体に比例して広がり、重くなる)
+                    video_width, video_height = width, height
+                    if video_anamorphic and mode != "screen" and not is_vox:
+                        video_width, video_height = stage_figure_size(width, height)
+                        if (video_width, video_height) != (width, height):
+                            self.messages.put(self.tr("build.stage_size", width=video_width, height=video_height,
+                                                      max=STAGE_MAX_SIDE))
                     # 人物を切り抜く: 人物の範囲の動画を立体の形に使い、だまし絵なら人物を消した映像を背景にする
                     mask_video = None
                     if mode == "person" and not is_vox:
                         mask_video, person_background = self._split_person(
-                            video, temp / f"person_{video_id}", width, height, fps, duration, ffmpeg)
+                            video, temp / f"person_{video_id}", video_width, video_height, fps, duration, ffmpeg)
                         if video_anamorphic and not video_background:
                             video_background = str(person_background)
                     # だまし絵の背景の映像 (立体のときだけ。人物の動画 ID + "_bg" の、一覧に出さない平面の動画にする)
@@ -1019,7 +1048,7 @@ class PackBuilderApp(tk.Tk):
                     # ブロックデータ変換
                     self.messages.put(self.tr("build.converting"))
                     argv = build_converter_args(
-                        video, generated_data, ffmpeg, width, height, fps, palette, dither_method,
+                        video, generated_data, ffmpeg, video_width, video_height, fps, palette, dither_method,
                         self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
                         self.tr.language, mode, depth, video_anamorphic,
                     )
@@ -1031,7 +1060,8 @@ class PackBuilderApp(tk.Tk):
                     frames_js = generated_data.read_text(encoding="utf-8")
                     videos.append({
                         "id": video_id, "title": video.stem, "frames_js": frames_js,
-                        "thumbnail": thumbnail.read_bytes(), "sounds": sounds, "width": width, "height": height,
+                        "thumbnail": thumbnail.read_bytes(), "sounds": sounds, "width": video_width,
+                        "height": video_height,
                     })
                     if background_id:
                         videos.append(self._convert_stage_background(

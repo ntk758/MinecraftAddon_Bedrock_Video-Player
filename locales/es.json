@@ -98,6 +98,7 @@
   "build.converting": "  Convirtiendo a datos de bloques (GPU/CPU automático)…",
   "build.stage_background": "  Convirtiendo el vídeo de fondo al tamaño de la pared trasera ({width}×{height})…",
   "build.person": "  Recortando a la persona (IA; la primera vez descarga un modelo de unos 42 MB)…",
+  "build.stage_size": "  Trampantojo: la figura se reduce a {width} × {height} (lado mayor hasta {max}; una figura mayor agranda el escenario y el vídeo de fondo y pesa más)",
   "build.person_progress": "    {count} fotogramas",
   "build.person_missing": "Se necesita PyTorch (torchvision) para recortar personas: {error}",
   "build.mmd": "  Convirtiendo el modelo y el baile MMD en 3D ({height} bloques de alto; sin física ni expresiones)…",

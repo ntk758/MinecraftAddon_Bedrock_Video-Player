@@ -369,7 +369,7 @@ def test_person_mode_builds_figure_and_background(tmp_path, monkeypatch):
     app = Headless()
     output = tmp_path / "person.mcaddon"
     gui.PackBuilderApp._build_pack(app, [{"file_path": str(video), "video_id": "dance", "thumb_sec": 1}], output,
-                                   "Person", "badapple", 64, 36, 10, None, "full", "none", "cpu", "person", 8,
+                                   "Person", "badapple", 128, 72, 10, None, "full", "none", "cpu", "person", 8,
                                    None, True, None)
     log = []
     while not app.messages.empty():
@@ -383,6 +383,9 @@ def test_person_mode_builds_figure_and_background(tmp_path, monkeypatch):
     background_data = json.loads(background[background.index("{"):background.rindex("}") + 1])
     assert figure_data["view"] == "anamorphic" and figure_data["stage_background"] == "dance_bg"
     assert figure_data["layout"] == "heightfield" and figure_data["solid_rule"] == "span"
+    # 設定の 128 × 72 は、だまし絵の上限 (長い辺 80) に縮める (実機で 128 × 128 と背景 320 × 192 は重すぎた)
+    assert (figure_data["width"], figure_data["height"]) == (80, 45)
+    assert any("80 × 45" in line for line in log)
     # 音声は背景の映像のものだけ
     assert any("sounds/music/dance_bg/chunk_0" in n for n in names)
     assert not any("sounds/music/dance/" in n for n in names)

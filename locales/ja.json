@@ -98,6 +98,7 @@
   "build.converting": "  ブロックデータへ変換中 (GPU/CPU自動選択)…",
   "build.stage_background": "  だまし絵の背景の映像を、後ろの壁の大きさ ({width}×{height}) に変換中…",
   "build.person": "  動画から人物を切り抜き中 (AI。初回は約 42 MB のモデルをダウンロード)…",
+  "build.stage_size": "  だまし絵なので、立体を {width} × {height} に縮めます (長い辺 {max} まで。大きいと舞台と背景の映像が広がり、重くなります)",
   "build.person_progress": "    {count} フレーム",
   "build.person_missing": "人物の切り抜きに必要な PyTorch (torchvision) がありません: {error}",
   "build.mmd": "  MMD のモデルと踊りを立体にしています (人物の高さ {height} ブロック。物理と表情は使いません)…",

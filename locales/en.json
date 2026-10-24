@@ -98,6 +98,7 @@
   "build.converting": "  Converting to block data (GPU/CPU selected automatically)…",
   "build.stage_background": "  Converting the trompe-l'oeil background video to the back wall size ({width}×{height})…",
   "build.person": "  Cutting out the person (AI; the first time downloads a ~42 MB model)…",
+  "build.stage_size": "  Trompe-l'oeil: shrinking the figure to {width} × {height} (longest side up to {max}; a bigger figure widens the stage and the background video and gets heavy)",
   "build.person_progress": "    {count} frames",
   "build.person_missing": "PyTorch (torchvision) is needed to cut out people: {error}",
   "build.mmd": "  Turning the MMD model and dance into 3D ({height} blocks tall; physics and facial morphs are not used)…",
