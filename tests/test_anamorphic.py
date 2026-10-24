@@ -319,3 +319,77 @@ def test_background_video_plays_on_the_back_wall(tmp_path, palette):
     assert placed == expected
     wall_cells = geom["stageWidth"] * geom["wallHeight"]
     assert len(set(expected[:wall_cells])) > 5  # 後ろの壁に背景の映像 (いろいろな色) が写っている
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg が必要")
+def test_person_mode_builds_figure_and_background(tmp_path, monkeypatch):
+    """GUI の「人物を切り抜いて立体に (AI)」+ だまし絵: 人物の範囲をふくらませた立体と、人物を消した背景の映像
+    (元の音声付き) ができる。AI のモデルの代わりに、明るい四角を人物とする切り抜きを使う。"""
+    import queue
+    import zipfile
+
+    import numpy as np
+
+    import mvcodec.person as person
+    import video_player_gui as gui
+    from gui_i18n import Translator
+
+    class FakeSegmenter:
+        def __call__(self, rgb):
+            return (rgb.mean(axis=2) > 200).astype(np.float32)
+
+    monkeypatch.setattr(person, "PersonSegmenter", FakeSegmenter)
+    video = tmp_path / "dance.mp4"
+    # 暗い背景の前で、白い四角 (人物) が左右に動く 3 秒の映像と音声
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x203060:size=160x90:rate=10:duration=3",
+                    "-f", "lavfi", "-i", "sine=frequency=330:duration=3",
+                    "-vf", "drawbox=x='40+20*sin(t*3)':y=20:w=30:h=60:color=white:t=fill",
+                    "-c:v", "libx264", "-pix_fmt", "yuv444p", "-crf", "0", "-c:a", "aac", "-shortest", str(video)],
+                   check=True)
+
+    class Headless:
+        def __init__(self):
+            self.tr = Translator("ja")
+            self.messages = queue.Queue()
+            self.keyframe_interval_var = _Var(30)
+            self.perceptual_var = _Var(True)
+
+        def _run(self, command):
+            gui.PackBuilderApp._run(self, command)
+
+        def _extract_audio(self, *args):
+            return gui.PackBuilderApp._extract_audio(self, *args)
+
+        def _convert_stage_background(self, *args):
+            return gui.PackBuilderApp._convert_stage_background(self, *args)
+
+        def _split_person(self, *args):
+            return gui.PackBuilderApp._split_person(self, *args)
+
+    app = Headless()
+    output = tmp_path / "person.mcaddon"
+    gui.PackBuilderApp._build_pack(app, [{"file_path": str(video), "video_id": "dance", "thumb_sec": 1}], output,
+                                   "Person", "badapple", 64, 36, 10, None, "full", "none", "cpu", "person", 8,
+                                   None, True, None)
+    log = []
+    while not app.messages.empty():
+        log.append(str(app.messages.get()))
+    assert output.is_file(), "\n".join(log)
+    with zipfile.ZipFile(output) as z:
+        names = z.namelist()
+        figure = z.read("BP/scripts/frames_dance.js").decode("utf-8")
+        background = z.read("BP/scripts/frames_dance_bg.js").decode("utf-8")
+    figure_data = json.loads(figure[figure.index("{"):figure.rindex("}") + 1])
+    background_data = json.loads(background[background.index("{"):background.rindex("}") + 1])
+    assert figure_data["view"] == "anamorphic" and figure_data["stage_background"] == "dance_bg"
+    assert figure_data["layout"] == "heightfield" and figure_data["solid_rule"] == "span"
+    # 音声は背景の映像のものだけ
+    assert any("sounds/music/dance_bg/chunk_0" in n for n in names)
+    assert not any("sounds/music/dance/" in n for n in names)
+    # 立体になったのは人物 (白い四角) の所だけ
+    *_, (volume, _rgb) = iter_decoded_frames(figure_data)
+    columns = (volume != figure_data["air_level"]).any(axis=0)
+    assert 0.05 < columns.mean() < 0.4
+    # 背景の映像からは人物 (白) が消えている
+    *_, (_board, rgb) = iter_decoded_frames(background_data)
+    assert (rgb.reshape(-1, 3).mean(axis=1) > 200).mean() < 0.01
