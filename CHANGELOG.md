@@ -2,7 +2,7 @@
 
 このプロジェクトの変更履歴です (新しい順)。各版のダウンロードは [GitHub Releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases) にあります。
 
-## 次の版 / Unreleased
+## v6.22.0
 
 - **MMD のモデルと踊りから立体** (Windows 版: 動画リストに `.pmx` を追加して `.vmd` を選ぶ。`scripts/mmd_to_vox.py`): PMX (2.0 / 2.1) と VMD を読み、補間曲線・付与・IK (CCD、膝の角度の制限) で姿勢を求め、頂点を変形して、表面をテクスチャ (または材質) の色の立体にする。だまし絵にも使える。物理と表情 (モーフ) は使わない。
 - **動画の人物を AI で切り抜いて立体に** (Windows 版の表示モード「人物を切り抜いて立体に (AI)」、`scripts/make_person_videos.py`、`convert.py --mask-video`): torchvision の DeepLabV3 MobileNetV3-Large (初回に約 42 MB をダウンロード) で人物の範囲を求めて丸くふくらませた立体にし、だまし絵なら人物を消した映像 (同じ場面で人物がいなかったときの色か、まわりの色で埋める) を後ろの壁に流す。
