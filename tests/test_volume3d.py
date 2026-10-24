@@ -269,3 +269,71 @@ def test_vox_folder_uses_each_files_palette(tmp_path):
     red = BLOCK_RGB[blocks[second[second != AIR_LEVEL][0]]]
     assert min(white) > 200, white  # 白っぽいブロック
     assert red[0] > red[1] + 60 and red[0] > red[2] + 60, red  # 赤いブロック
+
+
+def _scene_change_frames(folder):
+    """1 場面目は色がたくさん、2 場面目は 2 色。明るい人型が場面をまたいで動き、最後は消える (空の列だけになる)。"""
+    from PIL import Image
+    folder.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(60):
+        if i < 30:
+            arr = rng.integers(0, 255, (24, 32, 3), dtype=np.uint8)
+        else:
+            arr = np.zeros((24, 32, 3), np.uint8)
+            arr[:] = (20, 20, 120)
+        arr[4:20, 8 + i % 10:16 + i % 10] = (250, 250, 250) if i < 45 else (250, 240, 200)
+        if i >= 50:
+            arr[:] = (20, 20, 120)
+        Image.fromarray(arr).save(folder / f"f_{i:04d}.png")
+    return folder
+
+
+def test_inflate_survives_palette_change_between_scenes(tmp_path):
+    """自動パレットで場面ごとに色の数が変わっても、2.5D の空の列の色に古いパレットの番号が残らない (以前は落ちた)。"""
+    frames = _scene_change_frames(tmp_path / "frames")
+    out = tmp_path / "out.js"
+    argv = ["--frames-dir", str(frames), "--output", str(out), "--width", "32", "--height", "24", "--fps", "10",
+            "--mode", "inflate", "--depth", "8", "--palette", "auto", "--device", "cpu", "--no-adaptive-fps"]
+    assert convert.main(argv) == 0
+    data = load_frame_data(out)
+    assert data["adaptive_palette"] and len(data["level_blocks"]) > 1
+    assert sum(1 for _ in iter_decoded_frames(data)) == 60
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg が必要")
+def test_mask_video_decides_the_inflated_shape(tmp_path):
+    """--mask-video の白い所だけを立体にする (明るさに関係なく、色は元の映像から)。"""
+    from PIL import Image
+    frames = tmp_path / "frames"
+    masks = tmp_path / "masks"
+    frames.mkdir()
+    masks.mkdir()
+    for i in range(10):
+        # 元の映像は全面が明るい (明るさで分けると全部が立体になる)
+        Image.fromarray(np.full((24, 32, 3), 230, np.uint8)).save(frames / f"f_{i:04d}.png")
+        mask = np.zeros((24, 32, 3), np.uint8)
+        mask[6:18, 10:20] = 255
+        Image.fromarray(mask).save(masks / f"m_{i:04d}.png")
+    video = tmp_path / "in.mp4"
+    mask_video = tmp_path / "mask.mp4"
+    for src, dst in ((frames / "f_%04d.png", video), (masks / "m_%04d.png", mask_video)):
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-framerate", "10", "-i", str(src), "-c:v", "libx264",
+                        "-pix_fmt", "yuv444p", "-crf", "0", str(dst)], check=True)
+    out = tmp_path / "out.js"
+    argv = ["--input-video", str(video), "--mask-video", str(mask_video), "--output", str(out), "--width", "32",
+            "--height", "24", "--fps", "10", "--mode", "inflate", "--depth", "8", "--palette", "full",
+            "--device", "cpu", "--no-adaptive-fps"]
+    assert convert.main(argv) == 0
+    data = load_frame_data(out)
+    *_, (volume, _rgb) = iter_decoded_frames(data)
+    columns = (volume != data["air_level"]).any(axis=0)
+    expected = np.zeros((24, 32), bool)
+    expected[6:18, 10:20] = True
+    assert np.array_equal(columns, expected)
+
+
+def test_mask_video_needs_extrude_or_inflate(tmp_path):
+    with pytest.raises(SystemExit):
+        convert.main(["--frames-dir", str(tmp_path), "--output", str(tmp_path / "x.js"), "--mode", "relief",
+                      "--mask-video", "m.mp4"])

@@ -450,6 +450,9 @@ def parse_args(argv=None):
                         help="映像の縦横比が画面と違うとき。pad: 全体を入れて余白を黒く / cover: 画面を埋めるようにはみ出した所を切る")
     parser.add_argument("--depth-video", default=None,
                         help="relief で奥行きに使うグレースケール動画 (明るいほど手前)。省略時は各画素の明るさを使う")
+    parser.add_argument("--mask-video", default=None,
+                        help="extrude / inflate で立体にする範囲の動画 (白い所を立体にする)。省略時は各画素の明るさを"
+                             "しきい値で分ける。scripts/make_person_videos.py で人物の範囲の動画を作れる")
     parser.add_argument("--extrude-threshold", type=float, default=0.5,
                         help="extrude / inflate で立体にする明るさのしきい値 (0〜1)")
     parser.add_argument("--extrude-invert", action="store_true", help="extrude / inflate で暗い部分を立体にする")
@@ -541,6 +544,8 @@ def parse_args(argv=None):
         parser.error("--depth は 2〜128 にしてください")
     if args.view == "anamorphic" and args.mode == "screen":
         parser.error("--view anamorphic は立体のモード (relief / extrude / inflate / vox) で使えます")
+    if args.mask_video and args.mode not in ("extrude", "inflate"):
+        parser.error("--mask-video は --mode extrude / inflate でだけ使えます")
     if args.depth_video and args.mode != "relief":
         parser.error("--depth-video は --mode relief でだけ使えます")
     if args.palette_colors != "auto" and args.palette_colors < 2:
@@ -854,7 +859,7 @@ def main(argv=None):
     # 立体の奥行き (relief) と立体にする範囲 (extrude / inflate) は、減色・ディザ前の元の明るさから決める。
     # ブロック色の明るさを使うと、ディザの粒が奥行きのノイズになり、境目もギザギザになるため
     source_heights = {}
-    use_source_heights = volume and not args.depth_video
+    use_source_heights = volume and not args.depth_video and not args.mask_video
     # ブロックモードの最適化は元の色と比べて選ぶので、元フレームを全部とっておく。平面スクリーンと、2.5D の立体の色の平面にかける
     # (2.5D でない立体 (--volume-encoding voxels / --hollow) にはかけない)
     block_rdo = None
@@ -886,9 +891,11 @@ def main(argv=None):
                                         dither_method, args.perceptual, args.threads, args.dither_follow_motion,
                                         args.temporal_hysteresis)
 
+    # 奥行き (relief) か立体にする範囲 (extrude / inflate) の動画。どちらも明るさを使う
     depth_frames = None
-    if args.depth_video:
-        depth_frames = ffmpeg_frame_generator(args.depth_video, width, height, args.fps, args.duration, args.ffmpeg)
+    guide_video = args.depth_video or args.mask_video
+    if guide_video:
+        depth_frames = ffmpeg_frame_generator(guide_video, width, height, args.fps, args.duration, args.ffmpeg)
 
     use_planes = volume and args.volume_encoding != "voxels" and planes_supported(args.mode, args.depth, args.hollow)
     if volume and not use_planes:
@@ -909,6 +916,7 @@ def main(argv=None):
     else:
         encoder = make_encoder(args, width, height, gop_boundaries, -1)
     previous_planes = None
+    previous_planes_gop = None
     ssim_pairs = []
     gif_frames = []
 
@@ -936,14 +944,20 @@ def main(argv=None):
             if depth_frames is not None:
                 depth_frame = next(depth_frames, None)
                 if depth_frame is None:
+                    option = "--depth-video" if args.depth_video else "--mask-video"
                     raise ValueError(
-                        f"--depth-video のフレームが足りません: {i} フレームしかありませんが、入力は {total_frames} フレームです "
-                        f"(どちらも {args.fps} fps で読み込みます)。同じ長さの深度動画を指定してください"
+                        f"{option} のフレームが足りません: {i} フレームしかありませんが、入力は {total_frames} フレームです "
+                        f"(どちらも {args.fps} fps で読み込みます)。同じ長さの動画を指定してください"
                     )
                 heights = luminance01(depth_frame)
             encoded_frame = lifter(screen, gop_palettes_rgb[gop_id], heights)
             if use_planes:
-                encoded_frame = volume_to_planes(encoded_frame, solid_rule, previous_planes)
+                # 空の列の色は直前の平面のままにするが、自動パレットで GOP が変わると番号の意味が変わり、新しい
+                # パレットに無い番号が残ることがある (人物の範囲の動画で、場面が変わって色が減ったときに起きた)
+                same_palette = (previous_planes_gop is not None
+                                and gop_palettes_rgb[gop_id] is gop_palettes_rgb[previous_planes_gop])
+                encoded_frame = volume_to_planes(encoded_frame, solid_rule, previous_planes if same_palette else None)
+                previous_planes_gop = gop_id
                 if block_rdo is not None:
                     encoded_frame = optimize_colour_plane(block_rdo, encoded_frame, source_frames.pop(i),
                                                           gop_palettes_rgb[gop_id], reference, args.depth, solid_rule)
@@ -956,7 +970,8 @@ def main(argv=None):
     if depth_frames is not None:
         extra = sum(1 for _ in depth_frames)
         if extra:
-            print(f"warning: --depth-video has {extra} more frame(s) than the input; they were ignored", file=sys.stderr)
+            option = "--depth-video" if args.depth_video else "--mask-video"
+            print(f"warning: {option} has {extra} more frame(s) than the input; they were ignored", file=sys.stderr)
     encoder = encoder.best()
     chunks, index = encoder.finish()
     if encoder.stats.total_frames != total_frames:

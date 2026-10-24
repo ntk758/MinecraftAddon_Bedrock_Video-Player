@@ -38,6 +38,8 @@ CODEC_SCRIPT = APP_DIR / "codec.js"
 CONVERTER = APP_DIR / "convert.py"
 # EXE 版で自分自身を変換器として起動するための引数
 RUN_CONVERTER_FLAG = "--run-converter"
+# EXE で人物の切り抜きだけを行う (mvcodec/person.py のコマンドライン。scripts/make_person_videos.py と同じ)
+RUN_PERSON_FLAG = "--run-person-split"
 
 
 def subprocess_kwargs() -> dict:
@@ -176,13 +178,18 @@ def validate_settings(width, height, fps, duration=None, mode="screen", depth=16
 PALETTE_VALUES = ("auto", "all", "full", "expanded", "concrete", "glass")
 DITHER_VALUES = ("none", "blue_noise", "ordered", "floyd", "atkinson", "burkes", "sierra")
 DEVICE_VALUES = ("auto", "cuda", "directml", "cpu")
-MODE_VALUES = ("screen", "relief", "extrude", "inflate")
-VOLUME_MODES = ("relief", "extrude", "inflate")
+# person: 動画の人物を AI で切り抜いて、丸くふくらませた立体にする (変換は inflate + 人物の範囲の動画)
+MODE_VALUES = ("screen", "relief", "extrude", "inflate", "person")
+VOLUME_MODES = ("relief", "extrude", "inflate", "person")
 MAX_SCREEN_SIZE = 512
 MAX_DEPTH = 64
 DEFAULT_MODE = "screen"
 DEFAULT_DEPTH = 16
 VOX_SUFFIX = ".vox"
+# MMD のモデル。追加するときに踊り (.vmd) も選び、作るときに立体のアニメ (.vox) にする
+PMX_SUFFIX = ".pmx"
+# MMD の人物の高さ (ブロック) の上限。高すぎると重い (実機で高さ 56 は 10 fps、96 は重すぎた)
+MMD_MAX_HEIGHT = 64
 # 画質プリセット: キー -> (幅, 高さ, fps)
 QUALITY_PRESETS: dict[str, tuple[int, int, int]] = {
     "light": (64, 64, 20),
@@ -253,7 +260,7 @@ def build_converter_args(
         source = ["--input-vox", str(video), "--mode", "vox"]
         three_d = True
     else:
-        source = ["--input-video", str(video), "--mode", mode]
+        source = ["--input-video", str(video), "--mode", "inflate" if mode == "person" else mode]
         three_d = mode != "screen"
         if three_d:
             source += ["--depth", str(depth)]
@@ -351,6 +358,8 @@ class PackBuilderApp(tk.Tk):
         self.depth_var = tk.IntVar(value=DEFAULT_DEPTH)
         # 立体を、見ている人の目の位置に合わせて床と壁に描くだまし絵にする
         self.anamorphic_var = tk.BooleanVar(value=False)
+        # MMD のモデル (.pmx のパス) → 踊り (.vmd のパス)
+        self.mmd_motions: dict[str, str] = {}
         # だまし絵の後ろの壁に流す背景の映像 (空なら壁は単色)
         self.stage_background_var = tk.StringVar(value="")
         self.preset_key = DEFAULT_PRESET
@@ -622,11 +631,21 @@ class PackBuilderApp(tk.Tk):
             filetypes=[
                 (self.tr("dialog.video_files"), "*.mp4 *.mkv *.avi *.mov *.webm"),
                 (self.tr("dialog.vox_files"), "*.vox"),
+                (self.tr("dialog.mmd_files"), "*.pmx"),
                 (self.tr("dialog.all_files"), "*.*"),
             ],
         )
         for path in paths:
             p = Path(path)
+            if p.suffix.lower() == PMX_SUFFIX:
+                # MMD のモデルには踊り (.vmd) が要る
+                motion = filedialog.askopenfilename(
+                    title=self.tr("dialog.select_motion", model=p.name),
+                    filetypes=[(self.tr("dialog.vmd_files"), "*.vmd"), (self.tr("dialog.all_files"), "*.*")],
+                )
+                if not motion:
+                    continue
+                self.mmd_motions[str(p)] = motion
             video_id = re.sub(r"[^a-z0-9_]", "_", p.stem.lower())
             existing_ids = [self.video_tree.item(iid)["values"][0] for iid in self.video_tree.get_children()]
             if video_id in existing_ids:
@@ -697,7 +716,7 @@ class PackBuilderApp(tk.Tk):
         items = list(self.video_tree.selection()) or list(self.video_tree.get_children())
         for iid in items:
             path = str(self.video_tree.item(iid)["values"][1])
-            if not path.lower().endswith(VOX_SUFFIX):
+            if not path.lower().endswith((VOX_SUFFIX, PMX_SUFFIX)):
                 return path
         return None
 
@@ -776,6 +795,8 @@ class PackBuilderApp(tk.Tk):
                 "file_path": str(vals[1]),
                 "thumb_sec": str(vals[2]),
             })
+            if str(vals[1]) in self.mmd_motions:
+                video_entries[-1]["motion"] = self.mmd_motions[str(vals[1])]
 
         if not video_entries:
             messagebox.showerror(self.tr("error.no_videos_title"), self.tr("error.no_videos"))
@@ -839,6 +860,41 @@ class PackBuilderApp(tk.Tk):
                   self.stage_background_var.get().strip() or None),
             daemon=True,
         ).start()
+
+    def _mmd_to_vox(self, model: Path, motion: str | None, output: Path, height: int, fps: float,
+                    duration: float | None) -> Path:
+        """MMD のモデル (.pmx) と踊り (.vmd) から、立体のアニメ (.vox) を作る (mvcodec/mmd.py)。"""
+        from mvcodec.mmd import mmd_to_vox
+        if not motion or not Path(motion).is_file():
+            raise RuntimeError(self.tr("build.mmd_no_motion", path=model))
+        self.messages.put(self.tr("build.mmd", height=height))
+
+        def progress(done, total):
+            if done % 50 == 0 or done == total:
+                self.messages.put(self.tr("build.mmd_progress", done=done, total=total))
+
+        mmd_to_vox(model, motion, output, height=height, fps=fps, duration=duration, progress=progress)
+        return output
+
+    def _split_person(self, video: Path, work: Path, width: int, height: int, fps: float, duration: float | None,
+                      ffmpeg: str) -> tuple[Path, Path]:
+        """動画から人物を AI で切り抜き、(人物の範囲の動画, 人物を消した背景の動画) を作る (mvcodec/person.py)。"""
+        try:
+            from mvcodec.person import PersonSegmenter, make_person_videos
+            segmenter = PersonSegmenter()
+        except ImportError as error:
+            raise RuntimeError(self.tr("build.person_missing", error=error)) from error
+        work.mkdir(parents=True, exist_ok=True)
+        mask, background = work / "mask.mp4", work / "background.mp4"
+        self.messages.put(self.tr("build.person"))
+
+        def progress(count):
+            if count % 50 == 0:
+                self.messages.put(self.tr("build.person_progress", count=count))
+
+        # 人物の範囲は変換と同じ大きさ・fps で作る (フレームの数と位置をそろえる)
+        make_person_videos(video, mask, background, width, height, fps, duration, ffmpeg, segmenter, progress)
+        return mask, background
 
     def _extract_audio(self, ffmpeg: str, video: Path, sounds_dir: Path) -> list[tuple[int, str, bytes]]:
         """音声を AUDIO_CHUNK_SECONDS 秒ごとの .ogg (44.1kHz ステレオ) に切り出す。無音の動画やエラーなら []。"""
@@ -919,6 +975,10 @@ class PackBuilderApp(tk.Tk):
                     generated_data = temp / f"frames_{video_id}.js"
                     thumbnail = temp / f"thumb_{video_id}.png"
 
+                    if video.suffix.lower() == PMX_SUFFIX:
+                        # MMD: モデルと踊りから立体のアニメ (.vox) を作り、あとは .vox と同じに変換する
+                        video = self._mmd_to_vox(video, entry.get("motion"), temp / f"mmd_{video_id}.vox",
+                                                 min(height, MMD_MAX_HEIGHT), fps, duration)
                     is_vox = video.suffix.lower() == VOX_SUFFIX
                     # サムネイル生成 (.vox は立体を正面から見た画像)
                     if is_vox:
@@ -934,14 +994,23 @@ class PackBuilderApp(tk.Tk):
                     if not thumbnail.is_file() or thumbnail.stat().st_size == 0:
                         raise RuntimeError(self.tr("build.thumbnail_failed", id=video_id))
 
-                    sounds = [] if is_vox else self._extract_audio(ffmpeg, video, temp / "sounds" / video_id)
-
                     # だまし絵と背景の映像は、動画ごとの指定 (サンプルを作るスクリプト用) があればそれを使う
                     video_anamorphic = entry.get("anamorphic", anamorphic)
                     video_background = entry.get("stage_background", stage_background)
+
+                    # 人物を切り抜く: 人物の範囲の動画を立体の形に使い、だまし絵なら人物を消した映像を背景にする
+                    mask_video = None
+                    if mode == "person" and not is_vox:
+                        mask_video, person_background = self._split_person(
+                            video, temp / f"person_{video_id}", width, height, fps, duration, ffmpeg)
+                        if video_anamorphic and not video_background:
+                            video_background = str(person_background)
                     # だまし絵の背景の映像 (立体のときだけ。人物の動画 ID + "_bg" の、一覧に出さない平面の動画にする)
                     three_d = is_vox or mode != "screen"
                     background_id = f"{video_id}_bg" if video_anamorphic and three_d and video_background else None
+                    # 背景の映像があれば、その音声を鳴らす (人物の動画の音声は入れない)
+                    sounds = [] if is_vox or background_id else self._extract_audio(
+                        ffmpeg, video, temp / "sounds" / video_id)
 
                     # ブロックデータ変換
                     self.messages.put(self.tr("build.converting"))
@@ -952,6 +1021,8 @@ class PackBuilderApp(tk.Tk):
                     )
                     if background_id:
                         argv += ["--stage-background", background_id]
+                    if mask_video:
+                        argv += ["--mask-video", str(mask_video)]
                     self._run([*converter_command(), *argv])
                     frames_js = generated_data.read_text(encoding="utf-8")
                     videos.append({
@@ -1018,4 +1089,10 @@ def run_converter_mode(argv: list[str]) -> int:
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == RUN_CONVERTER_FLAG:
         sys.exit(run_converter_mode(sys.argv[2:]))
+    if len(sys.argv) > 1 and sys.argv[1] == RUN_PERSON_FLAG:
+        if sys.stdout is None:  # windowed EXE で標準出力が無い場合
+            sys.stdout = open(os.devnull, "w", encoding="utf-8")
+            sys.stderr = sys.stdout
+        from mvcodec.person import main as person_main
+        sys.exit(person_main(sys.argv[2:]))
     PackBuilderApp().mainloop()
