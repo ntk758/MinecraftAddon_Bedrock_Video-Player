@@ -98,6 +98,7 @@
   "build.converting": "  Conversion en données de blocs (GPU/CPU automatique)…",
   "build.stage_background": "  Conversion de la vidéo de fond à la taille du mur du fond ({width}×{height})…",
   "build.person": "  Détourage de la personne (IA ; la première fois, un modèle d'environ 42 Mo est téléchargé)…",
+  "build.stage_size": "  Trompe-l'œil : la figure est réduite à {width} × {height} (plus grand côté jusqu'à {max} ; une figure plus grande agrandit la scène et la vidéo de fond et alourdit)",
   "build.person_progress": "    {count} images",
   "build.person_missing": "PyTorch (torchvision) est nécessaire pour détourer les personnes : {error}",
   "build.mmd": "  Conversion du modèle et de la danse MMD en 3D ({height} blocs de haut ; sans physique ni expressions)…",

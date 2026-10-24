@@ -247,6 +247,22 @@ def test_estimate_load_levels():
     assert volume["cells"] == 3 * flat["cells"]
 
 
+def test_estimate_load_counts_the_trompe_l_oeil_stage():
+    """だまし絵は立体を長い辺 80 までに縮め、背景の映像 (人物の切り抜きでは必ず) の壁のマスを足す。"""
+    from mvcodec.stage import stage_geometry
+    from video_player_gui import estimate_load, stage_figure_size
+
+    assert stage_figure_size(128, 128) == (80, 80)
+    assert stage_figure_size(160, 90) == (80, 45)
+    assert stage_figure_size(64, 36) == (64, 36)
+    plain = estimate_load(80, 45, 5, mode="inflate", depth=16, anamorphic=True)
+    assert plain["cells"] == 80 * 45 * 3
+    geom = stage_geometry(80, 45, 16)
+    wall = geom["stageWidth"] * geom["wallHeight"]
+    assert estimate_load(80, 45, 5, mode="inflate", depth=16, anamorphic=True, background=True)["cells"] == plain["cells"] + wall
+    assert estimate_load(160, 90, 5, mode="person", depth=16, anamorphic=True)["cells"] == plain["cells"] + wall
+
+
 def test_new_gui_texts_exist_in_every_language():
     import json
 

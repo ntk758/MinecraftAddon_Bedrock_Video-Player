@@ -43,8 +43,19 @@ function voxArgs(s, voxPath, out, lang) {
           "--device", "cpu", "--threads", "1", "--lang", lang, ...viewArgs(s, true)];
 }
 
+// だまし絵にする、動画から作る立体の長い辺の上限 (Windows 版の STAGE_MAX_SIDE と同じ。舞台と背景の映像が立体に
+// 比例して広がり、重くなる)
+const STAGE_MAX_SIDE = 80;
+
+function figureSize(s) {
+  if (!s.anamorphic || s.mode === "screen") return [s.width, s.height];
+  const scale = Math.min(1, STAGE_MAX_SIDE / Math.max(s.width, s.height, 1));
+  return [Math.max(1, Math.round(s.width * scale)), Math.max(1, Math.round(s.height * scale))];
+}
+
 function convertArgs(s, framesDir, out, lang) {
-  return ["--frames-dir", framesDir, "--output", out, "--width", String(s.width), "--height", String(s.height),
+  const [width, height] = figureSize(s);
+  return ["--frames-dir", framesDir, "--output", out, "--width", String(width), "--height", String(height),
           "--fps", String(s.fps), "--palette", s.palette, "--dither-method", s.dither, "--device", "cpu",
           "--threads", "1", "--mode", s.mode, "--depth", String(s.depth), "--lang", lang,
           ...viewArgs(s, s.mode !== "screen")];
@@ -104,7 +115,7 @@ self.onmessage = async (event) => {
       for (const name of pyodide.FS.readdir(dir)) if (/\.(ppm|vox)$/.test(name)) pyodide.FS.unlink(`${dir}/${name}`);
       const framesJs = pyodide.FS.readFile(out, { encoding: "utf8" });
       videos.push({ id: job.id, title: job.title, frames_js: framesJs,
-                    thumbnail: job.thumbnail, sounds: job.sounds, width: s.width, height: s.height });
+                    thumbnail: job.thumbnail, sounds: job.sounds, width: figureSize(s)[0], height: figureSize(s)[1] });
       if (backgroundId) videos.push(convertBackground(pyodide, s, background, backgroundId, framesJs, lang));
       post("progress", { value: (n + 0.95) / jobs.length });
     }

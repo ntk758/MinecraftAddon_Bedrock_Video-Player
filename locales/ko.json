@@ -98,6 +98,7 @@
   "build.converting": "  블록 데이터로 변환 중 (GPU/CPU 자동 선택)…",
   "build.stage_background": "  트릭아트 배경 영상을 뒷벽 크기({width}×{height})로 변환 중…",
   "build.person": "  동영상에서 인물을 잘라내는 중 (AI. 처음에는 약 42 MB의 모델을 다운로드)…",
+  "build.stage_size": "  트릭 아트이므로 입체를 {width} × {height}(으)로 줄입니다 (긴 변 {max}까지. 크면 무대와 배경 영상이 넓어져 무거워집니다)",
   "build.person_progress": "    {count} 프레임",
   "build.person_missing": "인물을 잘라내려면 PyTorch (torchvision)가 필요합니다: {error}",
   "build.mmd": "  MMD 모델과 춤을 입체로 만드는 중 (높이 {height} 블록. 물리와 표정은 쓰지 않음)…",
