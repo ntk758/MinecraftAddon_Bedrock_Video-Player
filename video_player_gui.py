@@ -23,9 +23,11 @@ from pack_builder import (  # noqa: F401 (stable_pack_uuid などは以前から
     MANIFEST_VERSION_MAX,
     build_addon,
     build_manifest_version,
+    frame_data_dims,
     stable_pack_uuid,
     vox_thumbnail_png,
 )
+from mvcodec.stage import stage_geometry
 from pack_metadata import PACK_VERSION, RELEASE_NOTES, version_text  # noqa: F401 (PACK_VERSION はテストが使う)
 
 
@@ -349,6 +351,8 @@ class PackBuilderApp(tk.Tk):
         self.depth_var = tk.IntVar(value=DEFAULT_DEPTH)
         # 立体を、見ている人の目の位置に合わせて床と壁に描くだまし絵にする
         self.anamorphic_var = tk.BooleanVar(value=False)
+        # だまし絵の後ろの壁に流す背景の映像 (空なら壁は単色)
+        self.stage_background_var = tk.StringVar(value="")
         self.preset_key = DEFAULT_PRESET
         self._set_option_labels(DEFAULT_PALETTE, DEFAULT_DITHER, DEFAULT_DEVICE, DEFAULT_MODE)
         self.namespace_var.trace_add("write", lambda *_: self._update_command_hint())
@@ -575,9 +579,17 @@ class PackBuilderApp(tk.Tk):
         ttk.Checkbutton(settings, text=tr("settings.anamorphic"), variable=self.anamorphic_var).grid(
             row=4, column=6, columnspan=2, padx=(0, 10), pady=(0, 6), sticky="w"
         )
+        # だまし絵の背景の映像
+        ttk.Label(settings, text=tr("settings.stage_background")).grid(row=5, column=0, padx=(10, 4), pady=(0, 6))
+        ttk.Entry(settings, textvariable=self.stage_background_var).grid(
+            row=5, column=1, columnspan=5, padx=(0, 6), pady=(0, 6), sticky="ew"
+        )
+        ttk.Button(settings, text=tr("settings.stage_background_browse"), command=self._select_stage_background).grid(
+            row=5, column=6, columnspan=2, padx=(0, 10), pady=(0, 6), sticky="w"
+        )
         # 再生負荷の目安 (幅・高さ・fps・表示モード・奥行きを変えるたびに更新)
         self.load_label = ttk.Label(settings, wraplength=720)
-        self.load_label.grid(row=5, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
+        self.load_label.grid(row=6, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         self._update_load_hint()
 
         # --- 説明文 ---
@@ -738,6 +750,14 @@ class PackBuilderApp(tk.Tk):
             self.fps_label.configure(text=self.tr("settings.fps_value", fps=fps))
         self._update_load_hint()
 
+    def _select_stage_background(self) -> None:
+        path = filedialog.askopenfilename(
+            title=self.tr("settings.stage_background"),
+            filetypes=[(self.tr("dialog.video_files"), "*.mp4 *.mkv *.avi *.mov *.webm"), (self.tr("dialog.all_files"), "*.*")],
+        )
+        if path:
+            self.stage_background_var.set(path)
+
     def _select_output(self) -> None:
         path = filedialog.asksaveasfilename(
             title=self.tr("dialog.save_title"),
@@ -815,9 +835,46 @@ class PackBuilderApp(tk.Tk):
         threading.Thread(
             target=self._build_pack,
             args=(video_entries, output, pack_name, namespace, width, height, fps, duration, palette, dither_method,
-                  device, mode, depth, self._addon_language(), self.anamorphic_var.get()),
+                  device, mode, depth, self._addon_language(), self.anamorphic_var.get(),
+                  self.stage_background_var.get().strip() or None),
             daemon=True,
         ).start()
+
+    def _extract_audio(self, ffmpeg: str, video: Path, sounds_dir: Path) -> list[tuple[int, str, bytes]]:
+        """音声を AUDIO_CHUNK_SECONDS 秒ごとの .ogg (44.1kHz ステレオ) に切り出す。無音の動画やエラーなら []。"""
+        sounds_dir.mkdir(parents=True, exist_ok=True)
+        self.messages.put(self.tr("build.audio", sec=AUDIO_CHUNK_SECONDS))
+        try:
+            self._run([
+                ffmpeg, "-y", "-i", str(video),
+                "-f", "segment", "-segment_time", str(AUDIO_CHUNK_SECONDS),
+                "-vn", "-acodec", "libvorbis",
+                "-ar", "44100", "-ac", "2", "-b:a", "192k",
+                str(sounds_dir / "chunk_%d.ogg")
+            ])
+        except Exception as e:
+            self.messages.put(self.tr("build.audio_skipped", error=e))
+        return [(int(f.stem.split("_")[1]), "ogg", f.read_bytes()) for f in sounds_dir.glob("chunk_*.ogg")]
+
+    def _convert_stage_background(
+        self, source: Path, background_id: str, figure_js: str, temp: Path, ffmpeg: str, fps: float, palette: str,
+        dither_method: str, device: str, duration: float | None,
+    ) -> dict:
+        """だまし絵の背景の映像を、後ろの壁と同じ大きさの平面の動画に変換する (画面を埋めるように切り取る)。"""
+        if not source.is_file():
+            raise RuntimeError(self.tr("build.missing_file", path=source))
+        dims = frame_data_dims(figure_js)
+        geom = stage_geometry(dims["width"], dims["height"], dims["depth"])
+        self.messages.put(self.tr("build.stage_background", width=geom["stageWidth"], height=geom["wallHeight"]))
+        sounds = self._extract_audio(ffmpeg, source, temp / "sounds" / background_id)
+        output = temp / f"frames_{background_id}.js"
+        argv = build_converter_args(
+            source, output, ffmpeg, geom["stageWidth"], geom["wallHeight"], fps, palette, dither_method,
+            self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration, self.tr.language,
+        )
+        self._run([*converter_command(), *argv, "--fit", "cover"])
+        return {"id": background_id, "title": source.stem, "frames_js": output.read_text(encoding="utf-8"),
+                "thumbnail": None, "sounds": sounds, "hidden": True}
 
     def _run(self, command: list[str]) -> None:
         self.messages.put("$ " + subprocess.list2cmdline(command))
@@ -835,7 +892,7 @@ class PackBuilderApp(tk.Tk):
         self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
         width: int, height: int, fps: float, duration: float | None, palette: str, dither_method: str,
         device: str, mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH, addon_language: str | None = None,
-        anamorphic: bool = False,
+        anamorphic: bool = False, stage_background: str | None = None,
     ) -> None:
         try:
             ffmpeg = get_ffmpeg_path()
@@ -877,38 +934,35 @@ class PackBuilderApp(tk.Tk):
                     if not thumbnail.is_file() or thumbnail.stat().st_size == 0:
                         raise RuntimeError(self.tr("build.thumbnail_failed", id=video_id))
 
-                    # 音声切り出し (10秒分割 .ogg, 44.1kHz ステレオ)
-                    sounds_dir = temp / "sounds" / video_id
-                    sounds_dir.mkdir(parents=True, exist_ok=True)
-                    if not is_vox:
-                        self.messages.put(self.tr("build.audio", sec=AUDIO_CHUNK_SECONDS))
-                        try:
-                            self._run([
-                                ffmpeg, "-y", "-i", str(video),
-                                "-f", "segment", "-segment_time", str(AUDIO_CHUNK_SECONDS),
-                                "-vn", "-acodec", "libvorbis",
-                                "-ar", "44100", "-ac", "2", "-b:a", "192k",
-                                str(sounds_dir / "chunk_%d.ogg")
-                            ])
-                        except Exception as e:
-                            self.messages.put(self.tr("build.audio_skipped", error=e))
-                    sounds = [(int(f.stem.split("_")[1]), "ogg", f.read_bytes()) for f in sounds_dir.glob("chunk_*.ogg")]
+                    sounds = [] if is_vox else self._extract_audio(ffmpeg, video, temp / "sounds" / video_id)
+
+                    # だまし絵と背景の映像は、動画ごとの指定 (サンプルを作るスクリプト用) があればそれを使う
+                    video_anamorphic = entry.get("anamorphic", anamorphic)
+                    video_background = entry.get("stage_background", stage_background)
+                    # だまし絵の背景の映像 (立体のときだけ。人物の動画 ID + "_bg" の、一覧に出さない平面の動画にする)
+                    three_d = is_vox or mode != "screen"
+                    background_id = f"{video_id}_bg" if video_anamorphic and three_d and video_background else None
 
                     # ブロックデータ変換
                     self.messages.put(self.tr("build.converting"))
-                    converter_args = [
-                        *converter_command(),
-                        *build_converter_args(
-                            video, generated_data, ffmpeg, width, height, fps, palette, dither_method,
-                            self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
-                            self.tr.language, mode, depth, anamorphic,
-                        ),
-                    ]
-                    self._run(converter_args)
+                    argv = build_converter_args(
+                        video, generated_data, ffmpeg, width, height, fps, palette, dither_method,
+                        self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
+                        self.tr.language, mode, depth, video_anamorphic,
+                    )
+                    if background_id:
+                        argv += ["--stage-background", background_id]
+                    self._run([*converter_command(), *argv])
+                    frames_js = generated_data.read_text(encoding="utf-8")
                     videos.append({
-                        "id": video_id, "title": video.stem, "frames_js": generated_data.read_text(encoding="utf-8"),
+                        "id": video_id, "title": video.stem, "frames_js": frames_js,
                         "thumbnail": thumbnail.read_bytes(), "sounds": sounds, "width": width, "height": height,
                     })
+                    if background_id:
+                        videos.append(self._convert_stage_background(
+                            Path(video_background), background_id, frames_js, temp, ffmpeg, fps, palette,
+                            dither_method, device, duration,
+                        ))
 
                 self.messages.put(self.tr("build.videos_index"))
                 video_index_entries = build_addon(output, videos, pack_name, namespace, addon_language)

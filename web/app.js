@@ -225,12 +225,33 @@ function finish(msg) {
   window.lastResult = msg; // テスト用
 }
 
+// だまし絵の背景の映像のコマ: 後ろの壁の大きさは人物を変換するまで分からないので、長い辺 256 で取り出し、
+// Python (convert.py --fit cover) で後ろの壁の大きさに切り取る
+const BACKGROUND_LONG_SIDE = 256;
+
+async function extractBackground(s) {
+  const file = $("stageBackground").files[0];
+  if (!s.anamorphic || !file || !videos.some((v) => v.vox || s.mode !== "screen")) return null;
+  log(`背景の映像 / background video: ${file.name}`);
+  const url = URL.createObjectURL(file);
+  const el = await loadVideoElement(url);
+  const scale = BACKGROUND_LONG_SIDE / Math.max(el.videoWidth, el.videoHeight);
+  const size = { ...s, width: Math.max(2, Math.round(el.videoWidth * scale)), height: Math.max(2, Math.round(el.videoHeight * scale)) };
+  const v = { file, url };
+  const { frames, length } = await extractFrames(v, size, () => {});
+  log(`  ${frames.length} frames`);
+  const sounds = await extractAudio(v, length);
+  URL.revokeObjectURL(url);
+  return { title: file.name.replace(/\.[^.]+$/, ""), frames, sounds };
+}
+
 async function build() {
   const s = settings();
   $("build").disabled = true;
   $("download").hidden = true;
   $("log").textContent = "";
   const w = startWorker();
+  const background = await extractBackground(s);
   const jobs = [];
   for (const [n, v] of videos.entries()) {
     if (v.vox) {
@@ -251,7 +272,12 @@ async function build() {
     if (job.vox) transfer.push(job.vox.buffer);
     for (const [, , bytes] of job.sounds) transfer.push(bytes.buffer);
   }
-  w.postMessage({ type: "build", settings: s, jobs, lang: navigator.language.startsWith("ja") ? "ja" : "en" }, transfer);
+  if (background) {
+    for (const f of background.frames) transfer.push(f.buffer);
+    for (const [, , bytes] of background.sounds) transfer.push(bytes.buffer);
+  }
+  w.postMessage({ type: "build", settings: s, jobs, background, lang: navigator.language.startsWith("ja") ? "ja" : "en" },
+    transfer);
 }
 
 $("files").addEventListener("change", (e) => addFiles(e.target.files));

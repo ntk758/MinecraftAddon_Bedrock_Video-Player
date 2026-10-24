@@ -50,8 +50,27 @@ function convertArgs(s, framesDir, out, lang) {
           ...viewArgs(s, s.mode !== "screen")];
 }
 
+// だまし絵の背景の映像を、後ろの壁の大きさ (人物の大きさから mvcodec/stage.py で求める) の平面の動画に変換する
+function convertBackground(pyodide, s, background, id, figureJs, lang) {
+  log(`  背景の映像 / background video: ${background.title}`);
+  const dims = pyodide.globals.get("pack_builder").frame_data_dims(figureJs).toJs();
+  const geom = pyodide.pyimport("mvcodec.stage").stage_geometry(dims.get("width"), dims.get("height"), dims.get("depth")).toJs();
+  const width = geom.get("stageWidth");
+  const height = geom.get("wallHeight");
+  const dir = `/work/${id}`;
+  try { pyodide.FS.mkdirTree(dir); } catch (e) { /* 既にある */ }
+  background.frames.forEach((ppm, i) => pyodide.FS.writeFile(`${dir}/frame_${String(i).padStart(6, "0")}.ppm`, ppm));
+  const out = `/work/frames_${id}.js`;
+  const args = [...convertArgs({ ...s, mode: "screen", width, height, anamorphic: false }, dir, out, lang), "--fit", "cover"];
+  const code = pyodide.globals.get("convert").main(pyodide.toPy(args));
+  if (code !== 0) throw new Error(`convert.py exit ${code}`);
+  for (const name of pyodide.FS.readdir(dir)) if (/\.ppm$/.test(name)) pyodide.FS.unlink(`${dir}/${name}`);
+  return { id, title: background.title, frames_js: pyodide.FS.readFile(out, { encoding: "utf8" }), thumbnail: null,
+           sounds: background.sounds, width, height, hidden: true };
+}
+
 self.onmessage = async (event) => {
-  const { settings: s, jobs, lang } = event.data;
+  const { settings: s, jobs, background, lang } = event.data;
   try {
     const pyodide = await ready;
     const videos = [];
@@ -71,6 +90,9 @@ self.onmessage = async (event) => {
         job.thumbnail = thumb.toJs();
         thumb.destroy();
       }
+      // だまし絵の背景の映像 (立体のときだけ。人物の動画 ID + "_bg" の、一覧に出さない平面の動画にする)
+      const backgroundId = background && s.anamorphic && (job.vox || s.mode !== "screen") ? `${job.id}_bg` : null;
+      if (backgroundId) args.push("--stage-background", backgroundId);
       // 変換の進み具合 (数秒ごと) に合わせてバーを動かす (この動画の 40%〜95% の区間)
       const convertModule = pyodide.globals.get("convert");
       convertModule.PROGRESS_HOOK = (done, total) => {
@@ -80,8 +102,10 @@ self.onmessage = async (event) => {
       convertModule.PROGRESS_HOOK = null;
       if (code !== 0) throw new Error(`convert.py exit ${code}`);
       for (const name of pyodide.FS.readdir(dir)) if (/\.(ppm|vox)$/.test(name)) pyodide.FS.unlink(`${dir}/${name}`);
-      videos.push({ id: job.id, title: job.title, frames_js: pyodide.FS.readFile(out, { encoding: "utf8" }),
+      const framesJs = pyodide.FS.readFile(out, { encoding: "utf8" });
+      videos.push({ id: job.id, title: job.title, frames_js: framesJs,
                     thumbnail: job.thumbnail, sounds: job.sounds, width: s.width, height: s.height });
+      if (backgroundId) videos.push(convertBackground(pyodide, s, background, backgroundId, framesJs, lang));
       post("progress", { value: (n + 0.95) / jobs.length });
     }
     log("アドオンを組み立て中 / Assembling the add-on…");
@@ -94,7 +118,7 @@ import json
 videos = []
 for v in js_videos:
     v = dict(v)
-    v["thumbnail"] = bytes(v["thumbnail"])
+    v["thumbnail"] = bytes(v["thumbnail"]) if v.get("thumbnail") is not None else None
     v["sounds"] = [(int(i), str(ext), bytes(data)) for i, ext, data in v["sounds"]]
     videos.append(v)
     # 確認: 変換したデータを Python の参照デコーダで最後まで復元できること

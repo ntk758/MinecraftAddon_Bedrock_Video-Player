@@ -113,6 +113,7 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
         thumbnail   サムネイルの PNG (bytes)。最初の動画のものをパックのアイコンにする。無ければ None
         sounds      [(チャンクの番号, 拡張子 ("ogg" / "wav"), bytes), ...] (AUDIO_CHUNK_SECONDS ごと)。無ければ []
         width / height  変換時の大きさ (frames_js に無いとき用)
+        hidden      True なら、ゲーム内の動画の一覧とリモコンの「次の動画」に出さない (だまし絵の背景の映像)
     """
     manifest_text = manifest_text if manifest_text is not None else MANIFEST.read_text(encoding="utf-8")
     main_text = main_text if main_text is not None else MAIN_SCRIPT.read_text(encoding="utf-8")
@@ -132,6 +133,9 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
                  "width": dims.get("width", video.get("width", 0)), "height": dims.get("height", video.get("height", 0))}
         if "depth" in dims:
             entry["depth"] = dims["depth"]
+        if video.get("hidden"):
+            # だまし絵の背景の映像など、人物の動画と一緒に再生するので一覧に出さない
+            entry["hidden"] = True
         entries.append(entry)
         put(f"BP/scripts/frames_{video_id}.js", video["frames_js"])
         if icon is None and video.get("thumbnail"):
