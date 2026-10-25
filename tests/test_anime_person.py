@@ -132,3 +132,55 @@ def test_fast_motion_leaves_no_ghost_but_small_noise_is_smoothed():
     splitter(rgb)
     mask, _ = splitter(rgb)
     assert 0.5 < mask.mean() < 0.6
+
+
+class _SalientSession:
+    """目立つ物の切り抜きの偽物: 赤の強い所と、青の強い所 (字幕や光の筋のつもり) の両方を「目立つ」とする。"""
+
+    def __init__(self, path, options=None, providers=None):
+        pass
+
+    def get_inputs(self):
+        return [types.SimpleNamespace(name="input_image")]
+
+    def run(self, _outputs, feeds):
+        image = feeds["input_image"]
+        assert image.shape == (1, 3, person.SALIENT_INPUT_SIZE, person.SALIENT_INPUT_SIZE)
+        strong = (image[:, :1] > 1.0) | (image[:, 2:3] > 1.0)
+        return [np.where(strong, 8.0, -8.0).astype(np.float32)]
+
+
+def test_salient_blobs_are_kept_only_where_the_photo_model_sees_a_person(tmp_path, monkeypatch):
+    module = types.SimpleNamespace(InferenceSession=_SalientSession, SessionOptions=lambda: types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "onnxruntime", module)
+    model = tmp_path / "salient.onnx"
+    model.write_bytes(b"x")
+    rgb = np.zeros((90, 160, 3), np.uint8)
+    rgb[20:70, 20:50, 0] = 255   # 人物 (赤)
+    rgb[20:70, 100:150, 2] = 255  # 光の筋 (青)
+    photo = lambda image: (image[..., 0] > 128).astype(np.float32) * 0.8  # 写真向けのモデルは赤だけを人物と見る
+    segmenter = person.SalientPersonSegmenter(photo, model_path=model)
+    mask = segmenter(rgb)
+    assert mask[25:65, 25:45].min() > 0.9      # 人物の塊は残る (縁まで)
+    assert mask[:, 95:].max() == 0              # 光の筋の塊は消える
+
+
+def test_fallback_uses_salient_cutout_only_with_a_gpu(tmp_path, monkeypatch, fake_onnxruntime):
+    model = tmp_path / "isnetis.onnx"
+    model.write_bytes(b"x")
+    made = []
+    monkeypatch.setattr(person, "PersonSegmenter", lambda: "photo")
+    monkeypatch.setattr(person, "SalientPersonSegmenter",
+                        lambda photo, providers=None, download_progress=None: made.append(photo) or "salient")
+    gpu = person.AnimeSegmenter(model_path=model, providers=["DmlExecutionProvider", "CPUExecutionProvider"])
+    assert gpu._make_fallback() == "salient" and made == ["photo"]
+    cpu = person.AnimeSegmenter(model_path=model, providers=["CPUExecutionProvider"])
+    assert cpu._make_fallback() == "photo"
+
+
+def test_components_are_labelled_separately():
+    mask = np.zeros((40, 60), bool)
+    mask[5:15, 5:15] = True
+    mask[25:35, 40:55] = True
+    labels = person._label(mask)
+    assert labels.max() == 2 and labels[10, 10] != labels[30, 45] and labels[0, 0] == 0

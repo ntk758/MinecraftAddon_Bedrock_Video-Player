@@ -101,7 +101,7 @@
   "build.stage_size": "  だまし絵なので、立体を {width} × {height} に縮めます (長い辺 {max} まで。大きいと舞台と背景の映像が広がり、重くなります)",
   "build.person_progress": "    {count} フレーム",
   "build.person_missing": "人物の切り抜きに必要な PyTorch (torchvision) がありません: {error}",
-  "build.person_anime": "  アニメ・イラストの人物を切り抜き中 (AI。初回は約 176 MB のモデルをダウンロード。GPU があれば使います)…",
+  "build.person_anime": "  アニメ・イラストの人物を切り抜き中 (AI。初回は約 176 MB のモデルをダウンロード。GPU があれば使い、人物が見つからない場面 (3DCG の強い照明など) 用に約 115 MB のモデルも追加でダウンロード)…",
   "build.model_download": "    モデルをダウンロード中: {done} / {total} MB",
   "build.person_anime_missing": "アニメの人物の切り抜きに必要な onnxruntime がありません: {error}",
   "build.mmd": "  MMD のモデルと踊りを立体にしています (人物の高さ {height} ブロック。物理と表情は使いません)…",
