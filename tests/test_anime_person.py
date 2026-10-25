@@ -103,3 +103,32 @@ def test_frames_without_an_anime_person_use_the_photo_model(tmp_path, fake_onnxr
     assert np.allclose(segmenter(dark), 0.75) and calls == [(90, 160, 3)]
     # 使わない設定なら、何も見つけなくてもそのまま
     assert person.AnimeSegmenter(model_path=model, fallback=None)(dark).max() < 0.1
+
+
+def test_fast_motion_leaves_no_ghost_but_small_noise_is_smoothed():
+    """人物の範囲は前のフレームとならすが、速く動いた所には前の位置の残像 (二重の影) を残さない。
+    小さな揺れ (確からしさの差が小さい所) は今まで通りならす。"""
+    frames = []
+
+    def segmenter(rgb):
+        return frames.pop(0)
+
+    splitter = person.PersonSplitter(segmenter)
+    rgb = np.full((40, 60, 3), 30, np.uint8)
+    left = np.zeros((40, 60), np.float32)
+    left[10:30, 5:20] = 1.0
+    right = np.zeros((40, 60), np.float32)
+    right[10:30, 35:50] = 1.0
+    frames += [left, right]
+    splitter(rgb)
+    mask, _ = splitter(rgb)
+    assert mask[10:30, 5:20].max() < 0.5  # 前の位置に残像が無い
+    assert mask[10:30, 35:50].min() > 0.9  # 今の位置はそのまま
+    # 小さな揺れはならす: 0.6 → 0.5 は、そのままより前の値に寄る
+    steady = np.full((40, 60), 0.6, np.float32)
+    wobble = np.full((40, 60), 0.5, np.float32)
+    splitter = person.PersonSplitter(segmenter)
+    frames += [steady, wobble]
+    splitter(rgb)
+    mask, _ = splitter(rgb)
+    assert 0.5 < mask.mean() < 0.6

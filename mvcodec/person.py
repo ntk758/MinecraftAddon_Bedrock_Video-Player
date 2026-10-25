@@ -28,6 +28,10 @@ PERSON_CLASS = 15
 SEGMENT_SHORT_SIDE = 520
 # 人物の範囲の時間方向のならし (前のフレームとの指数移動平均の重み。ちらつき (置き直し) を減らす)
 MASK_SMOOTHING = 0.4
+# 前のフレームとの確からしさの差が大きい画素ほど、ならす重みを減らす (差がこれ以上なら今のフレームの値そのもの)。
+# 全部の画素を同じ重みでならすと、速く動く腕や脚に前のフレームの残像 (二重の影) が残った (実写のダンスで確認)。
+# 差で重みを切り替えると境目が線になるので、重みは差に比例して減らす
+MASK_FOLLOW = 0.3
 # 場面の切り替わりとみなす、前のフレームとの平均の色の差 (0〜255)。切り替わったら背景の記憶を捨てる
 SCENE_CUT_DIFF = 40.0
 # 背景の記憶を新しい色へ寄せる重み
@@ -209,7 +213,8 @@ class PersonSplitter:
             self.background = frame.copy()
             self.known = np.zeros(prob.shape, bool)
         else:
-            self.mask = MASK_SMOOTHING * self.mask + (1 - MASK_SMOOTHING) * prob
+            keep = MASK_SMOOTHING * np.clip(1 - np.abs(prob - self.mask) / MASK_FOLLOW, 0, 1)
+            self.mask = keep * self.mask + (1 - keep) * prob
         self.previous = frame
         person = self.mask >= 0.5
         # 人物のまわりは少し広めに消す (縁の色が背景に残らないように)
