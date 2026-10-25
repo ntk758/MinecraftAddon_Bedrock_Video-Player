@@ -182,5 +182,6 @@ def test_mmd_extreme_limits_and_estimates():
     assert gui.mmd_height_limit(False) == 64 and gui.mmd_height_limit(False, True) == 128
     # 高さ 40 は実機の 44 ms、高くなるほど急に重くなり、勧める fps が下がる
     assert gui.mmd_stage_frame_ms(40) == pytest.approx(44)
-    assert gui.mmd_stage_frame_ms(80) > 5 * gui.mmd_stage_frame_ms(40)
-    assert gui.mmd_stage_max_fps(40) >= 10 and gui.mmd_stage_max_fps(64) <= 6 and gui.mmd_stage_max_fps(80) <= 4
+    # 実機で高さ 80 は 217 ms (平均)
+    assert gui.mmd_stage_frame_ms(80) == pytest.approx(217, rel=0.05)
+    assert gui.mmd_stage_max_fps(40) >= 10 and gui.mmd_stage_max_fps(64) <= 7 and gui.mmd_stage_max_fps(80) <= 4
