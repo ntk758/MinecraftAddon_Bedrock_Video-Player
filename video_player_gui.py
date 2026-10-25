@@ -162,7 +162,7 @@ def estimate_load(width: int, height: int, fps: int, mode: str = "screen", depth
     if anamorphic and three_d:
         width, height = stage_figure_size(width, height)
     cells = width * height * (min(depth, 3) if three_d else 1)
-    if anamorphic and three_d and (background or mode == "person"):
+    if anamorphic and three_d and (background or mode in PERSON_MODES):
         from mvcodec.stage import stage_geometry
         geom = stage_geometry(width, height, depth)
         cells += geom["stageWidth"] * geom["wallHeight"]
@@ -193,9 +193,12 @@ def validate_settings(width, height, fps, duration=None, mode="screen", depth=16
 PALETTE_VALUES = ("auto", "all", "full", "expanded", "concrete", "glass")
 DITHER_VALUES = ("none", "blue_noise", "ordered", "floyd", "atkinson", "burkes", "sierra")
 DEVICE_VALUES = ("auto", "cuda", "directml", "cpu")
-# person: 動画の人物を AI で切り抜いて、丸くふくらませた立体にする (変換は inflate + 人物の範囲の動画)
-MODE_VALUES = ("screen", "relief", "extrude", "inflate", "person")
-VOLUME_MODES = ("relief", "extrude", "inflate", "person")
+# person: 動画の人物を AI で切り抜いて、丸くふくらませた立体にする (変換は inflate + 人物の範囲の動画)。
+# person_anime は同じことをアニメ・イラスト向けのモデルで行う
+MODE_VALUES = ("screen", "relief", "extrude", "inflate", "person", "person_anime")
+VOLUME_MODES = ("relief", "extrude", "inflate", "person", "person_anime")
+# 人物を切り抜くモード → 切り抜きのモデル (mvcodec/person.py の SEGMENTERS)
+PERSON_MODES = {"person": "photo", "person_anime": "anime"}
 MAX_SCREEN_SIZE = 512
 MAX_DEPTH = 64
 DEFAULT_MODE = "screen"
@@ -282,7 +285,7 @@ def build_converter_args(
         source = ["--input-vox", str(video), "--mode", "vox"]
         three_d = True
     else:
-        source = ["--input-video", str(video), "--mode", "inflate" if mode == "person" else mode]
+        source = ["--input-video", str(video), "--mode", "inflate" if mode in PERSON_MODES else mode]
         three_d = mode != "screen"
         if three_d:
             source += ["--depth", str(depth)]
@@ -902,23 +905,31 @@ class PackBuilderApp(tk.Tk):
         return output
 
     def _split_person(self, video: Path, work: Path, width: int, height: int, fps: float, duration: float | None,
-                      ffmpeg: str) -> tuple[Path, Path]:
-        """動画から人物を AI で切り抜き、(人物の範囲の動画, 人物を消した背景の動画) を作る (mvcodec/person.py)。"""
+                      ffmpeg: str, model: str = "photo") -> tuple[Path, Path]:
+        """動画から人物を AI で切り抜き、(人物の範囲の動画, 人物を消した背景の動画) を作る (mvcodec/person.py)。
+        model は "photo" (実写向き) か "anime" (アニメ・イラスト向き)。"""
+        self.messages.put(self.tr("build.person_anime" if model == "anime" else "build.person"))
+
+        def downloading(done, total):
+            if total and (done == total or done % (16 << 20) < (1 << 20)):
+                self.messages.put(self.tr("build.model_download", done=done >> 20, total=total >> 20))
+
         try:
-            from mvcodec.person import PersonSegmenter, make_person_videos
-            segmenter = PersonSegmenter()
+            import mvcodec.person as person
+            segmenter = (person.AnimeSegmenter(download_progress=downloading) if model == "anime"
+                         else person.PersonSegmenter())
         except ImportError as error:
-            raise RuntimeError(self.tr("build.person_missing", error=error)) from error
+            key = "build.person_anime_missing" if model == "anime" else "build.person_missing"
+            raise RuntimeError(self.tr(key, error=error)) from error
         work.mkdir(parents=True, exist_ok=True)
         mask, background = work / "mask.mp4", work / "background.mp4"
-        self.messages.put(self.tr("build.person"))
 
         def progress(count):
             if count % 50 == 0:
                 self.messages.put(self.tr("build.person_progress", count=count))
 
         # 人物の範囲は変換と同じ大きさ・fps で作る (フレームの数と位置をそろえる)
-        make_person_videos(video, mask, background, width, height, fps, duration, ffmpeg, segmenter, progress)
+        person.make_person_videos(video, mask, background, fps, duration, ffmpeg, segmenter, progress)
         return mask, background
 
     def _extract_audio(self, ffmpeg: str, video: Path, sounds_dir: Path) -> list[tuple[int, str, bytes]]:
@@ -1033,9 +1044,10 @@ class PackBuilderApp(tk.Tk):
                                                       max=STAGE_MAX_SIDE))
                     # 人物を切り抜く: 人物の範囲の動画を立体の形に使い、だまし絵なら人物を消した映像を背景にする
                     mask_video = None
-                    if mode == "person" and not is_vox:
+                    if mode in PERSON_MODES and not is_vox:
                         mask_video, person_background = self._split_person(
-                            video, temp / f"person_{video_id}", video_width, video_height, fps, duration, ffmpeg)
+                            video, temp / f"person_{video_id}", video_width, video_height, fps, duration, ffmpeg,
+                            PERSON_MODES[mode])
                         if video_anamorphic and not video_background:
                             video_background = str(person_background)
                     # だまし絵の背景の映像 (立体のときだけ。人物の動画 ID + "_bg" の、一覧に出さない平面の動画にする)
