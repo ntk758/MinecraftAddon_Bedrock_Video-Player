@@ -2,7 +2,7 @@
 
 このプロジェクトの変更履歴です (新しい順)。各版のダウンロードは [GitHub Releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases) にあります。
 
-## 次の版 / Unreleased
+## v6.27.1
 
 - **MMD のエクストリームの重さの見込みを実機の値に** : 実機で高さ 80 のだまし絵は 1 フレーム平均 217 ms (5 fps の目標に 3.55 fps、TPS 15.4)。見込みの式を高さの 2.5 乗から 2.3 乗に直した (処理ログの勧める fps: 高さ 80 で 4 fps、64 で 7 fps)。
 
