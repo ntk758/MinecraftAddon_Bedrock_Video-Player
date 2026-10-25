@@ -27,6 +27,13 @@
   <b>Real in-game recording</b> (Windows 11, v6.5.0 3D sample). The brief holes in the relief are frames still being drawn across several ticks; fixed in v6.5.1 by placing new blocks before clearing old ones</sub>
 </p>
 
+<p align="center">
+  <img src="docs/images/ingame_trompe.gif" alt="ゲーム内の録画: 視点に合わせただまし絵。背景のアニメの前で人物が踊り、歩き回っても立って見える (In-game recording: view-dependent trompe-l'oeil dancer in front of an animated background)" width="640">
+  <br>
+  <sub><b>視点に合わせただまし絵</b> (ゲーム内の録画、Windows 11、v6.21.0 の試験用アドオン。自作の踊る人物と見本アニメ)。人物はブロックで置かず、見ている人の目から見たとおりに床と壁に描き、歩くと描き直すので、正面からも斜めからも立って見えます (正しく見えるのは 1 人。録画の色は OBS で白っぽくなっていたので明るさだけ補正) —
+  <b>View-dependent trompe-l'oeil</b> (real in-game recording): the dancer is not built from blocks but painted on the floor and walls exactly as the player's eye sees it, and repainted as they walk</sub>
+</p>
+
 **▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.26.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.26.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.26.0-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 
@@ -246,6 +253,12 @@ GUI の **表示モード** で立体の作り方を選び、**奥行き (ブロ
   python scripts/make_depth_video.py in.mp4 depth.mp4 --width 128 --height 72 --fps 10
   python convert.py --input-video in.mp4 --depth-video depth.mp4 --output out.js --width 128 --height 72 --fps 10 --mode relief --depth 16
   ```
+
+<p align="center">
+  <img src="docs/images/trompe_explained.gif" alt="左: プレイヤーの目から見た絵 (立体に見える) / 右: ほかの場所から見た同じブロック (床と壁に引き伸ばした絵) (Left: the player's eye, right: the same blocks seen from elsewhere)" width="646">
+  <br>
+  <sub>しくみ: 左はプレイヤーの目から見た絵 (人物が立って見える)、右は同じブロックをほかの場所から見た絵 (床と壁に引き伸ばして描いてある)。ゲーム内と同じ規則で描いた再現画像 — How it works: left, the player's eye; right, the same blocks seen from elsewhere</sub>
+</p>
 
 **だまし絵 (視点に合わせた立体)**: GUI の「だまし絵」にチェックを入れる (ブラウザ版も同じ、コマンドラインは `--view anamorphic`) と、立体をブロックで置く代わりに、床と後ろの壁を作り、見ている人の目の位置から見たとおりに人物を描きます (横から見たときは、左右の壁の位置にも人物の写る所だけブロックを置きます)。歩いたり飛んだりすると描き直すので、正面からも横からも人物が立って見えます。
 - 正しく見えるのは、舞台の中央に一番近いプレイヤー 1 人の目からだけです (他の人には床と壁に描いた絵に見えます)。箱の中か手前から見てください。箱の外の横に回ると、描き直しを止めます。
