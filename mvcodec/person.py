@@ -74,6 +74,20 @@ ANIME_INPUT_SIZE = 1024
 # 場面や、全身が小さく映った場面では何も返さないことがあるので、そのフレームだけ実写向きのモデルの結果を使う
 # (利用者のアニメ MV で、アニメ向けだけでは 12 場面中 6 場面で人物が消えた)
 ANIME_MIN_AREA = 0.005
+# アニメ向けのモデルが人物を見つけないフレームに、GPU があれば使う「目立つ物」の切り抜き (onnx-community の BiRefNet_lite、
+# MIT、fp16 で約 115 MB、GPU で 1 枚約 0.15 秒。CPU では約 6 秒かかるので使わない)。3DCG の MV の強い照明の場面や
+# 全身が小さい場面でも人物を切り抜けるが、字幕・光の筋なども拾うので、写真向けのモデルが人物らしいと見る塊だけ残す
+SALIENT_MODEL_URL = "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model_fp16.onnx"
+SALIENT_MODEL_SHA256 = "d39b897ceb16ae654c1731f3dba0cf9b368d9cae74b5a57459b455cc8bfec402"
+SALIENT_MODEL_FILE = "birefnet_lite_fp16.onnx"
+SALIENT_INPUT_SIZE = 1024
+# 塊を残す、写真向けのモデルの確からしさの平均の下限と、塊の大きさの下限 (画面の割合)。利用者のアニメ MV で、人物の塊は
+# 0.38〜0.71、字幕・光の筋・背景の塊は 0.01〜0.19 だった
+SALIENT_MIN_PERSON = 0.35
+SALIENT_MIN_AREA = 0.001
+# 塊を数えるときの画像の長い辺 (細かい所は塊の判定に要らない)
+COMPONENT_LONG_SIDE = 160
+GPU_PROVIDERS = ("DmlExecutionProvider", "CUDAExecutionProvider")
 
 
 def model_dir():
@@ -124,8 +138,10 @@ class AnimeSegmenter:
             download_model(ANIME_MODEL_URL, path, ANIME_MODEL_SHA256, download_progress)
         if providers is None:
             available = ort.get_available_providers()
-            providers = [p for p in ("DmlExecutionProvider", "CUDAExecutionProvider") if p in available]
+            providers = [p for p in GPU_PROVIDERS if p in available]
             providers.append("CPUExecutionProvider")
+        self.providers = providers
+        self.download_progress = download_progress
         self.session = ort.InferenceSession(str(path), providers=providers)
         self.input_name = self.session.get_inputs()[0].name
 
@@ -143,13 +159,107 @@ class AnimeSegmenter:
         mask = np.asarray(Image.fromarray(mask).resize((w, h), Image.Resampling.BILINEAR), np.float32)
         if (mask >= 0.5).mean() < ANIME_MIN_AREA and self.fallback is not None:
             if self.fallback == "auto":
-                try:
-                    self.fallback = PersonSegmenter()
-                except ImportError:
-                    self.fallback = None
+                self.fallback = self._make_fallback()
+                if self.fallback is None:
                     return mask
             return self.fallback(rgb)
         return mask
+
+    def _make_fallback(self):
+        """人物を見つけなかったフレームの切り抜き: GPU があれば目立つ物の切り抜き + 写真向けのモデル、無ければ写真向けだけ。
+        PyTorch が無ければ None (何もしない)。"""
+        try:
+            photo = PersonSegmenter()
+        except ImportError:
+            return None
+        if not any(p in GPU_PROVIDERS for p in self.providers):
+            return photo
+        try:
+            return SalientPersonSegmenter(photo, providers=self.providers, download_progress=self.download_progress)
+        except Exception as error:  # ダウンロードできない・GPU で動かないときは写真向けだけにする
+            print(f"[person] 目立つ物の切り抜きを使えないので、写真向けのモデルだけを使います: {error}")
+            return photo
+
+
+class SalientPersonSegmenter:
+    """目立つ物の切り抜き (BiRefNet_lite) の塊のうち、写真向けのモデル (photo) が人物らしいと見る塊だけを返す。"""
+
+    def __init__(self, photo, model_path=None, providers=None, download_progress=None):
+        import onnxruntime as ort
+
+        self.photo = photo
+        path = Path(model_path) if model_path else model_dir() / SALIENT_MODEL_FILE
+        if not path.is_file():
+            download_model(SALIENT_MODEL_URL, path, SALIENT_MODEL_SHA256, download_progress)
+        options = ort.SessionOptions()
+        options.log_severity_level = 3  # fp16 のモデルは読み込むときに大量の警告を出す
+        self.session = ort.InferenceSession(str(path), options, providers=providers or ["CPUExecutionProvider"])
+        self.input_name = self.session.get_inputs()[0].name
+        self.mean = np.array([0.485, 0.456, 0.406], np.float32)
+        self.std = np.array([0.229, 0.224, 0.225], np.float32)
+
+    def salient(self, rgb):
+        """目立つ物の確からしさ (0〜1)。画像は 1024 × 1024 に引き伸ばして渡す (BiRefNet の決まり)。"""
+        h, w = rgb.shape[:2]
+        size = SALIENT_INPUT_SIZE
+        image = np.asarray(Image.fromarray(rgb).resize((size, size), Image.Resampling.BILINEAR), np.float32) / 255
+        image = (image - self.mean) / self.std
+        logits = self.session.run(None, {self.input_name: image.transpose(2, 0, 1)[None]})[0]
+        prob = 1 / (1 + np.exp(-np.asarray(logits, np.float32).reshape(size, size)))
+        return np.asarray(Image.fromarray(prob).resize((w, h), Image.Resampling.BILINEAR), np.float32)
+
+    def __call__(self, rgb):
+        salient = self.salient(rgb)
+        person = self.photo(rgb)
+        keep = person_components(salient >= 0.5, person)
+        return np.where(keep, salient, 0).astype(np.float32)
+
+
+def person_components(mask, person):
+    """mask (真偽) のつながった塊のうち、person (確からしさ) の平均が SALIENT_MIN_PERSON 以上で、画面の SALIENT_MIN_AREA
+    以上の大きさの塊だけを真にした配列。塊は長い辺 COMPONENT_LONG_SIDE に縮めて数える。"""
+    h, w = mask.shape
+    step = max(1, -(-max(h, w) // COMPONENT_LONG_SIDE))
+    small = mask[::step, ::step]
+    small_person = person[::step, ::step]
+    labels = _label(small)
+    keep = np.zeros(int(labels.max()) + 1, bool)
+    if labels.max():
+        counts = np.bincount(labels.reshape(-1), minlength=len(keep))
+        sums = np.bincount(labels.reshape(-1), weights=small_person.reshape(-1), minlength=len(keep))
+        mean = sums / np.maximum(counts, 1)
+        keep = (mean >= SALIENT_MIN_PERSON) & (counts >= SALIENT_MIN_AREA * small.size)
+        keep[0] = False
+    # 縮めた画像で 1 マス広げてから元の大きさに戻す (塊の縁の画素が、縮めたときに抜けて四角く欠けないように)
+    small_keep = keep[labels]
+    grown = small_keep.copy()
+    grown[1:] |= small_keep[:-1]
+    grown[:-1] |= small_keep[1:]
+    grown[:, 1:] |= small_keep[:, :-1]
+    grown[:, :-1] |= small_keep[:, 1:]
+    big = np.repeat(np.repeat(grown, step, axis=0), step, axis=1)[:h, :w]
+    return big & mask
+
+
+def _label(mask):
+    """上下左右でつながった真の画素に、塊ごとの番号 (1 から) を付ける (0 は偽)。小さい画像用 (numpy だけで、番号を
+    隣どうしで小さい方にそろえることを変わらなくなるまで繰り返す)。"""
+    h, w = mask.shape
+    big = h * w + 1
+    labels = np.where(mask, np.arange(1, h * w + 1).reshape(h, w), big)
+    while True:
+        smallest = labels.copy()
+        smallest[1:] = np.minimum(smallest[1:], labels[:-1])
+        smallest[:-1] = np.minimum(smallest[:-1], labels[1:])
+        smallest[:, 1:] = np.minimum(smallest[:, 1:], labels[:, :-1])
+        smallest[:, :-1] = np.minimum(smallest[:, :-1], labels[:, 1:])
+        smallest = np.where(mask, smallest, big)
+        if np.array_equal(smallest, labels):
+            break
+        labels = smallest
+    labels = np.where(mask, labels, 0)
+    _, compact = np.unique(labels, return_inverse=True)
+    return compact.reshape(h, w)
 
 
 # 切り抜きのモデルの種類 → 作り方

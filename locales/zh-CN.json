@@ -101,7 +101,7 @@
   "build.stage_size": "  错视画：将立体缩小为 {width} × {height}（长边最多 {max}。太大会使舞台和背景视频变大、变卡）",
   "build.person_progress": "    {count} 帧",
   "build.person_missing": "抠出人物需要 PyTorch（torchvision）：{error}",
-  "build.person_anime": "  正在抠出动漫·插画人物（AI。首次会下载约 176 MB 的模型。有 GPU 时会使用）…",
+  "build.person_anime": "  正在抠出动漫·插画人物（AI。首次会下载约 176 MB 的模型。有 GPU 时会使用，并为找不到人物的场景（强光下的 3DCG 等）再下载约 115 MB 的模型）…",
   "build.model_download": "    正在下载模型：{done} / {total} MB",
   "build.person_anime_missing": "抠出动漫人物需要 onnxruntime：{error}",
   "build.mmd": "  正在把 MMD 模型和舞蹈做成立体（高 {height} 格。不使用物理和表情）…",

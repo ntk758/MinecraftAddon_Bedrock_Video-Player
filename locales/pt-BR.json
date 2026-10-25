@@ -101,7 +101,7 @@
   "build.stage_size": "  Trompe-l'oeil: reduzindo a figura para {width} × {height} (lado maior até {max}; figuras maiores aumentam o palco e o vídeo de fundo e pesam mais)",
   "build.person_progress": "    {count} quadros",
   "build.person_missing": "É preciso o PyTorch (torchvision) para recortar pessoas: {error}",
-  "build.person_anime": "  Recortando o personagem de anime ou ilustração (IA; na primeira vez baixa um modelo de cerca de 176 MB; usa a GPU se houver)…",
+  "build.person_anime": "  Recortando o personagem de anime ou ilustração (IA; na primeira vez baixa um modelo de cerca de 176 MB; com GPU, também um de cerca de 115 MB para cenas em que ninguém é encontrado, como 3D sob luzes de palco)…",
   "build.model_download": "    Baixando o modelo: {done} / {total} MB",
   "build.person_anime_missing": "É preciso o onnxruntime para recortar personagens de anime: {error}",
   "build.mmd": "  Transformando o modelo e a dança MMD em 3D ({height} blocos de altura; sem física nem expressões)…",

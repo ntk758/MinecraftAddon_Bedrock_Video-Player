@@ -101,7 +101,7 @@
   "build.stage_size": "  Trompe-l'oeil: shrinking the figure to {width} × {height} (longest side up to {max}; a bigger figure widens the stage and the background video and gets heavy)",
   "build.person_progress": "    {count} frames",
   "build.person_missing": "PyTorch (torchvision) is needed to cut out people: {error}",
-  "build.person_anime": "  Cutting out the anime / illustrated person (AI; the first time downloads a ~176 MB model; uses the GPU if available)…",
+  "build.person_anime": "  Cutting out the anime / illustrated person (AI; the first time downloads a ~176 MB model; with a GPU, also a ~115 MB model for scenes where no person is found, such as 3DCG under stage lights)…",
   "build.model_download": "    Downloading the model: {done} / {total} MB",
   "build.person_anime_missing": "onnxruntime is needed to cut out anime people: {error}",
   "build.mmd": "  Turning the MMD model and dance into 3D ({height} blocks tall; physics and facial morphs are not used)…",

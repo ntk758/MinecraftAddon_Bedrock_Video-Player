@@ -101,7 +101,7 @@
   "build.stage_size": "  Trompe-l'oeil: Figur wird auf {width} × {height} verkleinert (längste Seite bis {max}; größere Figuren vergrößern Bühne und Hintergrundvideo und werden schwer)",
   "build.person_progress": "    {count} Bilder",
   "build.person_missing": "Zum Ausschneiden von Personen wird PyTorch (torchvision) benötigt: {error}",
-  "build.person_anime": "  Anime-/Illustrationsfigur wird ausgeschnitten (KI; beim ersten Mal wird ein ca. 176 MB großes Modell geladen; nutzt die GPU, falls vorhanden)…",
+  "build.person_anime": "  Anime-/Illustrationsfigur wird ausgeschnitten (KI; beim ersten Mal wird ein ca. 176 MB großes Modell geladen; mit GPU zusätzlich ein ca. 115 MB großes Modell für Szenen ohne erkannte Person, z. B. 3D-Grafik im Bühnenlicht)…",
   "build.model_download": "    Modell wird geladen: {done} / {total} MB",
   "build.person_anime_missing": "Zum Ausschneiden von Anime-Figuren wird onnxruntime benötigt: {error}",
   "build.mmd": "  MMD-Modell und Tanz werden zu 3D ({height} Blöcke hoch; Physik und Mimik werden nicht verwendet)…",

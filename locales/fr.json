@@ -101,7 +101,7 @@
   "build.stage_size": "  Trompe-l'œil : la figure est réduite à {width} × {height} (plus grand côté jusqu'à {max} ; une figure plus grande agrandit la scène et la vidéo de fond et alourdit)",
   "build.person_progress": "    {count} images",
   "build.person_missing": "PyTorch (torchvision) est nécessaire pour détourer les personnes : {error}",
-  "build.person_anime": "  Détourage du personnage d'anime ou d'illustration (IA ; la première fois, un modèle d'environ 176 Mo est téléchargé ; utilise le GPU s'il y en a un)…",
+  "build.person_anime": "  Détourage du personnage d'anime ou d'illustration (IA ; la première fois, un modèle d'environ 176 Mo est téléchargé ; avec un GPU, aussi un modèle d'environ 115 Mo pour les scènes sans personne détectée, comme la 3D sous des projecteurs)…",
   "build.model_download": "    Téléchargement du modèle : {done} / {total} Mo",
   "build.person_anime_missing": "onnxruntime est nécessaire pour détourer les personnages d'anime : {error}",
   "build.mmd": "  Conversion du modèle et de la danse MMD en 3D ({height} blocs de haut ; sans physique ni expressions)…",
