@@ -211,6 +211,30 @@ MMD_MAX_HEIGHT = 64
 # だまし絵のときの上限。MMD のモデルは表面だけの殻で、髪やスカートの薄い板が多く、見える面が同じ高さの手作りの
 # 立体の約 2.6 倍ある (実在のモデルで、高さ 56 は実機で 1 フレーム約 90 ms の見込み。40 で約 42 ms)
 MMD_STAGE_MAX_HEIGHT = 40
+# 「MMD を高解像度で (エクストリーム)」のときの上限。重いので、作るときに 1 フレームの見込みと勧める fps を出す
+MMD_EXTREME_MAX_HEIGHT = 128
+MMD_EXTREME_STAGE_MAX_HEIGHT = 80
+# だまし絵の MMD の 1 フレームのスクリプト時間の見込み: 高さ 40 で実機 44 ms (2026-10-24)、モックで高さ 64 は 3.1 倍、
+# 80 は 5.6 倍だったので、高さの 2.5 乗に比例するとみなす
+MMD_STAGE_MS_AT_40 = 44.0
+MMD_STAGE_COST_EXPONENT = 2.5
+
+
+def mmd_height_limit(anamorphic: bool, extreme: bool = False) -> int:
+    """MMD の人物の高さ (ブロック) の上限。"""
+    if anamorphic:
+        return MMD_EXTREME_STAGE_MAX_HEIGHT if extreme else MMD_STAGE_MAX_HEIGHT
+    return MMD_EXTREME_MAX_HEIGHT if extreme else MMD_MAX_HEIGHT
+
+
+def mmd_stage_frame_ms(height: int) -> float:
+    """だまし絵の MMD の、1 フレームのスクリプト時間の見込み (ms)。"""
+    return MMD_STAGE_MS_AT_40 * (height / 40) ** MMD_STAGE_COST_EXPONENT
+
+
+def mmd_stage_max_fps(height: int) -> int:
+    """だまし絵の MMD が遅れずに再生できる fps の目安 (1 フレームの見込みの時間に 1 割の余裕を見る)。"""
+    return max(1, int(1000 / (mmd_stage_frame_ms(height) * 1.1)))
 # だまし絵にする、動画から作る立体 (レリーフ・押し出し・ふくらませ・人物) の長い辺の上限。舞台 (と背景の映像) は
 # 立体の大きさに比例して広がる (実機で人物 128 × 128 + 背景の映像 320 × 192 は 1 フレーム平均 238 ms、5 fps の
 # 目標に 3 fps)。80 × 45 なら背景は 160 × 68
@@ -383,6 +407,8 @@ class PackBuilderApp(tk.Tk):
         self.depth_var = tk.IntVar(value=DEFAULT_DEPTH)
         # 立体を、見ている人の目の位置に合わせて床と壁に描くだまし絵にする
         self.anamorphic_var = tk.BooleanVar(value=False)
+        # MMD を高解像度で (エクストリーム: 人物の高さの上限を上げる。重い)
+        self.mmd_extreme_var = tk.BooleanVar(value=False)
         # MMD のモデル (.pmx のパス) → 踊り (.vmd のパス)
         self.mmd_motions: dict[str, str] = {}
         # だまし絵の後ろの壁に流す背景の映像 (空なら壁は単色)
@@ -622,9 +648,13 @@ class PackBuilderApp(tk.Tk):
         ttk.Button(settings, text=tr("settings.stage_background_browse"), command=self._select_stage_background).grid(
             row=5, column=6, columnspan=2, padx=(0, 10), pady=(0, 6), sticky="w"
         )
+        ttk.Checkbutton(
+            settings, text=tr("settings.mmd_extreme", height=MMD_EXTREME_MAX_HEIGHT, stage=MMD_EXTREME_STAGE_MAX_HEIGHT),
+            variable=self.mmd_extreme_var,
+        ).grid(row=6, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         # 再生負荷の目安 (幅・高さ・fps・表示モード・奥行きを変えるたびに更新)
         self.load_label = ttk.Label(settings, wraplength=720)
-        self.load_label.grid(row=6, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
+        self.load_label.grid(row=7, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         self._update_load_hint()
 
         # --- 説明文 ---
@@ -885,7 +915,7 @@ class PackBuilderApp(tk.Tk):
             target=self._build_pack,
             args=(video_entries, output, pack_name, namespace, width, height, fps, duration, palette, dither_method,
                   device, mode, depth, self._addon_language(), self.anamorphic_var.get(),
-                  self.stage_background_var.get().strip() or None),
+                  self.stage_background_var.get().strip() or None, self.mmd_extreme_var.get()),
             daemon=True,
         ).start()
 
@@ -984,7 +1014,7 @@ class PackBuilderApp(tk.Tk):
         self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
         width: int, height: int, fps: float, duration: float | None, palette: str, dither_method: str,
         device: str, mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH, addon_language: str | None = None,
-        anamorphic: bool = False, stage_background: str | None = None,
+        anamorphic: bool = False, stage_background: str | None = None, mmd_extreme: bool = False,
     ) -> None:
         try:
             ffmpeg = get_ffmpeg_path()
@@ -1013,9 +1043,17 @@ class PackBuilderApp(tk.Tk):
 
                     if video.suffix.lower() == PMX_SUFFIX:
                         # MMD: モデルと踊りから立体のアニメ (.vox) を作り、あとは .vox と同じに変換する
-                        limit = MMD_STAGE_MAX_HEIGHT if entry.get("anamorphic", anamorphic) else MMD_MAX_HEIGHT
+                        on_stage = entry.get("anamorphic", anamorphic)
+                        extreme = entry.get("mmd_extreme", mmd_extreme)
+                        mmd_height = min(height, mmd_height_limit(on_stage, extreme))
+                        if extreme and on_stage:
+                            self.messages.put(self.tr("build.mmd_extreme_stage", height=mmd_height,
+                                                      ms=f"{mmd_stage_frame_ms(mmd_height):.0f}",
+                                                      fps=mmd_stage_max_fps(mmd_height)))
+                        elif extreme:
+                            self.messages.put(self.tr("build.mmd_extreme", height=mmd_height))
                         video = self._mmd_to_vox(video, entry.get("motion"), temp / f"mmd_{video_id}.vox",
-                                                 min(height, limit), fps, duration)
+                                                 mmd_height, fps, duration)
                     is_vox = video.suffix.lower() == VOX_SUFFIX
                     # サムネイル生成 (.vox は立体を正面から見た画像)
                     if is_vox:
