@@ -2,7 +2,7 @@
 
 このプロジェクトの変更履歴です (新しい順)。各版のダウンロードは [GitHub Releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases) にあります。
 
-## 次の版 / Unreleased
+## v6.24.0
 
 - **アニメの人物を切り抜いて立体に (AI)** (Windows 版の新しい表示モード、`scripts/make_person_videos.py --model anime`): アニメ・イラスト向けの切り抜きモデル (skytnt/anime-seg の ISNet、Apache-2.0、初回に約 176 MB をダウンロードして SHA-256 を確かめる) を onnxruntime で動かす (DirectML の GPU で 1 枚約 0.03 秒、CPU で約 0.75 秒)。写真向けの DeepLabV3 では丸くつぶれていた形が、髪や手の先まで切り抜ける。アニメ向けのモデルが人物を見つけないフレーム (3DCG の強い照明・全身が小さい場面) だけ、写真向けのモデルを使う。
 - **人物の切り抜きを元の縦横比・長い辺 640 で** (どちらのモードも): 以前はブロックの大きさ (80 × 45 など) で切り抜いていたので形が粗く、人物を消した映像も後ろの壁へ引き伸ばされてぼやけ、黒い帯も入っていた。
