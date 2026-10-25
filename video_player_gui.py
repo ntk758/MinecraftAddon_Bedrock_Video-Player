@@ -49,6 +49,13 @@ def subprocess_kwargs() -> dict:
     return {}
 
 
+def person_command() -> list[str]:
+    """人物の切り抜き (mvcodec/person.py のコマンドライン) を起動するコマンドの先頭部分。"""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, RUN_PERSON_FLAG]
+    return [sys.executable, str(APP_DIR / "scripts" / "make_person_videos.py")]
+
+
 def converter_command() -> list[str]:
     """convert.py を起動するコマンドの先頭部分。EXE 版では自分自身を変換モードで起動する。"""
     if getattr(sys, "frozen", False):
@@ -414,6 +421,10 @@ class PackBuilderApp(tk.Tk):
         # だまし絵の後ろの壁に流す背景の映像 (空なら壁は単色)
         self.stage_background_var = tk.StringVar(value="")
         self.preset_key = DEFAULT_PRESET
+        # 最後に作ったアドオン (保存先を開く・Minecraft に読み込むボタン用) と、はじめてガイドの画面
+        self.building_output: Path | None = None
+        self.last_output: Path | None = None
+        self.wizard = None
         self._set_option_labels(DEFAULT_PALETTE, DEFAULT_DITHER, DEFAULT_DEVICE, DEFAULT_MODE)
         self.namespace_var.trace_add("write", lambda *_: self._update_command_hint())
         for variable in (self.width_var, self.height_var, self.depth_var, self.anamorphic_var,
@@ -423,6 +434,11 @@ class PackBuilderApp(tk.Tk):
         self._build_ui()
         self._apply_quality_preset()
         self.after(100, self._drain_messages)
+        # 初めて起動したときは、はじめてガイドを開く
+        if not self.settings.get("wizard_shown"):
+            self.settings["wizard_shown"] = True
+            save_settings(self.settings)
+            self.after(300, self._open_wizard)
 
     # --- 言語 ---
     def _preset_labels(self) -> dict[str, str]:
@@ -497,6 +513,7 @@ class PackBuilderApp(tk.Tk):
         top_bar = ttk.Frame(self)
         top_bar.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
         top_bar.columnconfigure(0, weight=1)
+        ttk.Button(top_bar, text=tr("wizard.open"), command=self._open_wizard).grid(row=0, column=0, sticky="w")
         ttk.Label(top_bar, text=tr("language.label")).grid(row=0, column=1, padx=(0, 6))
         language_box = ttk.Combobox(
             top_bar, textvariable=self.language_var, state="readonly", width=20,
@@ -666,8 +683,19 @@ class PackBuilderApp(tk.Tk):
             version_info += "  |  " + " / ".join(RELEASE_NOTES[:2])
         ttk.Label(self, text=version_info, wraplength=740, foreground="#555555").grid(row=6, column=0, sticky="w", **pad)
 
-        self.build_button = ttk.Button(self, text=tr("build.button"), command=self._start_build)
-        self.build_button.grid(row=7, column=0, pady=6)
+        build_bar = ttk.Frame(self)
+        build_bar.grid(row=7, column=0, pady=6)
+        self.build_button = ttk.Button(build_bar, text=tr("build.button"), command=self._start_build)
+        self.build_button.grid(row=0, column=0, padx=(0, 12))
+        # できたアドオン: 保存先を開く・Minecraft に読み込む・再生のしかた (作り終わるまで押せない)
+        after_state = "normal" if self.last_output else "disabled"
+        self.after_buttons = [
+            ttk.Button(build_bar, text=tr("after.open_folder"), command=self.open_output_folder, state=after_state),
+            ttk.Button(build_bar, text=tr("after.import"), command=self.import_output, state=after_state),
+            ttk.Button(build_bar, text=tr("after.guide_button"), command=self._show_play_guide, state=after_state),
+        ]
+        for column, button in enumerate(self.after_buttons, start=1):
+            button.grid(row=0, column=column, padx=3)
         self.progress = ttk.Progressbar(self, mode="indeterminate")
         self.progress.grid(row=8, column=0, sticky="ew", padx=10, pady=4)
 
@@ -702,14 +730,23 @@ class PackBuilderApp(tk.Tk):
                 if not motion:
                     continue
                 self.mmd_motions[str(p)] = motion
-            video_id = re.sub(r"[^a-z0-9_]", "_", p.stem.lower())
-            existing_ids = [self.video_tree.item(iid)["values"][0] for iid in self.video_tree.get_children()]
-            if video_id in existing_ids:
-                suffix = 2
-                while f"{video_id}_{suffix}" in existing_ids:
-                    suffix += 1
-                video_id = f"{video_id}_{suffix}"
-            self.video_tree.insert("", "end", values=(video_id, str(p), "0"))
+            self.add_video_path(p)
+
+    def add_video_path(self, path: str | Path) -> str:
+        """動画リストに 1 本足し、付けた動画 ID を返す (はじめてガイドからも使う)。"""
+        p = Path(path)
+        video_id = re.sub(r"[^a-z0-9_]", "_", p.stem.lower())
+        existing_ids = [self.video_tree.item(iid)["values"][0] for iid in self.video_tree.get_children()]
+        if video_id in existing_ids:
+            suffix = 2
+            while f"{video_id}_{suffix}" in existing_ids:
+                suffix += 1
+            video_id = f"{video_id}_{suffix}"
+        self.video_tree.insert("", "end", values=(video_id, str(p), "0"))
+        # 最初の 1 本を選んでおく (「動画の縦横比に合わせる」がそのまま使える)
+        if len(self.video_tree.get_children()) == 1:
+            self.video_tree.selection_set(self.video_tree.get_children()[0])
+        return video_id
 
     def _remove_selected(self) -> None:
         selected = self.video_tree.selection()
@@ -908,6 +945,7 @@ class PackBuilderApp(tk.Tk):
             return
 
         self.building = True
+        self.building_output = output
         self.build_button.configure(state="disabled")
         self.language_box.configure(state="disabled")
         self.progress.start(12)
@@ -937,30 +975,67 @@ class PackBuilderApp(tk.Tk):
     def _split_person(self, video: Path, work: Path, width: int, height: int, fps: float, duration: float | None,
                       ffmpeg: str, model: str = "photo") -> tuple[Path, Path]:
         """動画から人物を AI で切り抜き、(人物の範囲の動画, 人物を消した背景の動画) を作る (mvcodec/person.py)。
-        model は "photo" (実写向き) か "anime" (アニメ・イラスト向き)。"""
+        model は "photo" (実写向き) か "anime" (アニメ・イラスト向き)。
+
+        切り抜きは別のプロセスで行う (AI のモデルは GPU のメモリと RAM を大きく使い、同じプロセスだと作り終わっても
+        解放されない。メモリ不足で落ちても GUI は止まらない)。空きメモリから一番重い段階を選び、メモリ不足で止まったら
+        軽い段階でやり直す (mvcodec/person.py の profile_ladder)。"""
+        from mvcodec.person import EXIT_OUT_OF_MEMORY, PROFILE_NEEDS, profile_ladder
+        from mvcodec.resources import GIB, gpu_memory, system_memory
+
         self.messages.put(self.tr("build.person_anime" if model == "anime" else "build.person"))
-
-        def downloading(done, total):
-            if total and (done == total or done % (16 << 20) < (1 << 20)):
-                self.messages.put(self.tr("build.model_download", done=done >> 20, total=total >> 20))
-
-        try:
-            import mvcodec.person as person
-            segmenter = (person.AnimeSegmenter(download_progress=downloading) if model == "anime"
-                         else person.PersonSegmenter())
-        except ImportError as error:
-            key = "build.person_anime_missing" if model == "anime" else "build.person_missing"
-            raise RuntimeError(self.tr(key, error=error)) from error
+        ram, vram = system_memory(), gpu_memory()
+        ladder = profile_ladder(model, ram and ram[1], vram and vram[1])
+        self.messages.put(self.tr(
+            "build.memory_check", ram=f"{ram[1] / GIB:.1f}" if ram else "?", vram=f"{vram[1] / GIB:.1f}" if vram else "?",
+            profile=self.tr(f"profile.{ladder[0]}")))
         work.mkdir(parents=True, exist_ok=True)
         mask, background = work / "mask.mp4", work / "background.mp4"
+        for step, profile in enumerate(ladder):
+            argv = [str(video), str(mask), str(background), "--fps", str(fps), "--ffmpeg", ffmpeg,
+                    "--model", model, "--profile", profile]
+            if duration is not None:
+                argv += ["--duration", str(duration)]
+            code, output = self._person_process(argv)
+            if code == 0:
+                return mask, background
+            if "No module named" in output or "ImportError" in output:
+                key = "build.person_anime_missing" if model == "anime" else "build.person_missing"
+                raise RuntimeError(self.tr(key, error=output.strip().splitlines()[-1] if output.strip() else code))
+            if step + 1 < len(ladder):
+                reason = "memory" if code == EXIT_OUT_OF_MEMORY else "crash"
+                self.messages.put(self.tr(f"build.person_retry_{reason}", profile=self.tr(f"profile.{ladder[step + 1]}")))
+        raise RuntimeError(self.tr("build.person_failed", detail=output.strip()[-400:]))
 
-        def progress(count):
-            if count % 50 == 0:
-                self.messages.put(self.tr("build.person_progress", count=count))
-
-        # 人物の範囲は変換と同じ大きさ・fps で作る (フレームの数と位置をそろえる)
-        person.make_person_videos(video, mask, background, fps, duration, ffmpeg, segmenter, progress)
-        return mask, background
+    def _person_process(self, argv: list[str]) -> tuple[int, str]:
+        """人物の切り抜きを別のプロセスで行い、(終了コード, 出力の最後の部分) を返す。進み具合を処理ログへ流す。"""
+        command = [*person_command(), *argv]
+        self.messages.put("$ " + subprocess.list2cmdline(command))
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            encoding="utf-8", errors="replace", **subprocess_kwargs(),
+        )
+        tail: list[str] = []
+        last_download = -1
+        for line in process.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            tail = (tail + [line])[-30:]
+            words = line.split()
+            if len(words) == 2 and words[1] == "frames" and words[0].isdigit():
+                if int(words[0]) % 50 == 0:
+                    self.messages.put(self.tr("build.person_progress", count=int(words[0])))
+            elif len(words) == 3 and words[0] == "download" and words[1].isdigit() and words[2].isdigit():
+                done, total = int(words[1]) >> 20, int(words[2]) >> 20
+                if done // 16 != last_download or done == total:
+                    last_download = done // 16
+                    self.messages.put(self.tr("build.model_download", done=done, total=total))
+            elif words[0] == "profile":
+                self.messages.put(self.tr("build.person_profile", profile=self.tr(f"profile.{words[1]}")))
+            elif "W:onnxruntime" not in line:
+                self.messages.put("  " + line)
+        return process.wait(), "\n".join(tail)
 
     def _extract_audio(self, ffmpeg: str, video: Path, sounds_dir: Path) -> list[tuple[int, str, bytes]]:
         """音声を AUDIO_CHUNK_SECONDS 秒ごとの .ogg (44.1kHz ステレオ) に切り出す。無音の動画やエラーなら []。"""
@@ -1140,17 +1215,86 @@ class PackBuilderApp(tk.Tk):
                     self.build_button.configure(state="normal")
                     self.language_box.configure(state="readonly")
                     kind, text = message
-                    if kind == "success":
+                    ok = kind == "success"
+                    if ok:
+                        self.last_output = self.building_output
+                        for button in self.after_buttons:
+                            button.configure(state="normal")
                         self._append_log(text)
-                        messagebox.showinfo(self.tr("build.done_title"), text + "\n" + self.tr("build.import_hint"))
+                        self._append_log(self.play_guide_text())
                     else:
                         self._append_log(self.tr("log.error_prefix") + text)
+                    if self.wizard is not None:
+                        self.wizard.build_finished(self.last_output, ok)
+                    if ok:
+                        messagebox.showinfo(self.tr("build.done_title"), text + "\n" + self.tr("build.import_hint"))
+                    else:
                         messagebox.showerror(self.tr("build.failed_title"), text)
                 else:
                     self._append_log(message)
         except queue.Empty:
             pass
         self.after(100, self._drain_messages)
+
+    # --- はじめてガイド・できたアドオン ---
+    def _open_wizard(self) -> None:
+        from gui_wizard import SetupWizard
+
+        if self.wizard is not None and self.wizard.window.winfo_exists():
+            self.wizard.window.lift()
+            return
+        self.wizard = SetupWizard(self)
+
+    def ffmpeg_path(self) -> str | None:
+        return get_ffmpeg_path()
+
+    def probe_size(self, path: str | Path) -> tuple[int, int] | None:
+        return probe_video_size(path)
+
+    def suggest_size(self, source_width: int, source_height: int, long_side: int) -> tuple[int, int]:
+        return suggest_size(source_width, source_height, long_side)
+
+    def apply_recommended(self, settings: dict) -> None:
+        """はじめてガイドの勧める設定 (幅・高さ・fps) にする。"""
+        self.width_var.set(settings["width"])
+        self.height_var.set(settings["height"])
+        self.fps_var.set(settings["fps"])
+        self._on_fps_changed()
+        self.messages.put(self.tr("wizard.applied", **settings))
+
+    def start_build_from_wizard(self) -> None:
+        if not self.building:
+            self._start_build()
+
+    def video_ids(self) -> list[str]:
+        return [str(self.video_tree.item(iid)["values"][0]) for iid in self.video_tree.get_children()]
+
+    def play_guide_text(self) -> str:
+        """作ったアドオンを Minecraft に入れて再生するまでの案内。"""
+        from gui_wizard import play_commands
+
+        namespace = self.namespace_var.get().strip() or "badapple"
+        commands = "\n".join("  " + command for command in play_commands(namespace, self.video_ids() or ["<ID>"]))
+        return self.tr("after.guide", output=self.last_output or "", commands=commands, ns=namespace)
+
+    def open_output_folder(self) -> None:
+        from gui_wizard import open_folder
+
+        if self.last_output is None:
+            return
+        target = self.last_output if self.last_output.exists() else self.last_output.parent
+        open_folder(target)
+
+    def import_output(self) -> None:
+        from gui_wizard import import_to_minecraft
+
+        if self.last_output is None:
+            return
+        if not import_to_minecraft(self.last_output):
+            messagebox.showwarning(self.tr("after.import"), self.tr("after.import_failed", path=self.last_output))
+
+    def _show_play_guide(self) -> None:
+        messagebox.showinfo(self.tr("after.guide_button"), self.play_guide_text())
 
     def _append_log(self, text: str) -> None:
         self.log.configure(state="normal")

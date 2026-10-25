@@ -184,3 +184,65 @@ def test_components_are_labelled_separately():
     mask[25:35, 40:55] = True
     labels = person._label(mask)
     assert labels.max() == 2 and labels[10, 10] != labels[30, 45] and labels[0, 0] == 0
+
+
+def test_gui_retries_the_cutout_with_lighter_profiles(tmp_path, monkeypatch):
+    """GUI は人物の切り抜きを別のプロセスで行い、メモリ不足 (終了コード 3) や落ちたときは軽い段階でやり直す。"""
+    import queue
+
+    import video_player_gui as gui
+    from gui_i18n import Translator
+    from mvcodec import resources
+
+    gib = 1 << 30
+    monkeypatch.setattr(resources, "system_memory", lambda: (32 * gib, 16 * gib))
+    monkeypatch.setattr(resources, "gpu_memory", lambda: (16 * gib, 12 * gib))
+
+    class Headless:
+        def __init__(self, codes):
+            self.tr = Translator("ja")
+            self.messages = queue.Queue()
+            self.codes = list(codes)
+            self.profiles = []
+
+        def _person_process(self, argv):
+            self.profiles.append(argv[argv.index("--profile") + 1])
+            return self.codes.pop(0), "out of memory: E_OUTOFMEMORY"
+
+    app = Headless([person.EXIT_OUT_OF_MEMORY, -1073741819, 0])
+    mask, background = gui.PackBuilderApp._split_person(app, tmp_path / "in.mp4", tmp_path / "work", 80, 45, 10, None,
+                                                        "ffmpeg", "anime")
+    # 空きメモリが多いので一番重い段階から始め、メモリ不足・落ちたときは 1 段ずつ軽くする
+    assert app.profiles == ["full", "gpu", "cpu"]
+    assert mask.name == "mask.mp4" and background.name == "background.mp4"
+    log = []
+    while not app.messages.empty():
+        log.append(str(app.messages.get()))
+    assert any("16.0" in line for line in log)  # 空きの RAM を知らせる
+
+    # 全部の段階でだめならエラー
+    app = Headless([person.EXIT_OUT_OF_MEMORY] * 4)
+    with pytest.raises(RuntimeError):
+        gui.PackBuilderApp._split_person(app, tmp_path / "in.mp4", tmp_path / "work", 80, 45, 10, None, "ffmpeg", "anime")
+    assert app.profiles == ["full", "gpu", "cpu", "photo"]
+
+
+def test_cutout_stops_when_ram_runs_low(monkeypatch):
+    from mvcodec import resources
+
+    monkeypatch.setattr(resources, "system_memory", lambda: (8 << 30, 100 << 20))
+    with pytest.raises(MemoryError):
+        person._check_free_ram()
+    assert person.is_out_of_memory(MemoryError())
+    assert person.is_out_of_memory(RuntimeError("[ONNXRuntimeError] DmlExecutionProvider 887A0005"))
+    assert not person.is_out_of_memory(ValueError("bad input"))
+
+
+def test_profiles_follow_free_memory():
+    gib = 1 << 30
+    assert person.profile_ladder("anime", 16 * gib, 12 * gib) == ["full", "gpu", "cpu", "photo"]
+    # 目立つ物の切り抜きは RAM を 5〜10 GB 使うので、空きが少なければ使わない
+    assert person.profile_ladder("anime", 6 * gib, 12 * gib)[0] == "gpu"
+    assert person.profile_ladder("anime", 6 * gib, gib // 2)[0] == "cpu"
+    assert person.profile_ladder("anime", None, None)[0] == "full"
+    assert person.profile_ladder("photo", 16 * gib, 12 * gib) == ["photo"]
