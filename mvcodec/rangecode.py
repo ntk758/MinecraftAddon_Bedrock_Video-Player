@@ -77,26 +77,32 @@ class _Encoder:
         self.low = (low & 0x00FFFFFF) << 8
 
     def tree(self, probs, value, nbits, move=MOVE_BITS):
-        """value の nbits ビットを上位から、ビット木 (probs[1..2^nbits-1]) で符号化する。"""
+        """value の nbits ビットを上位から、ビット木 (probs[1..2^nbits-1]) で符号化する。
+
+        いちばん多く呼ばれる所 (ブラウザ版の Pyodide で変換時間の約 1/4) なので、low と range をローカルに持ち、
+        桁上げを出すときだけ self に戻す。"""
         node = 1
         rng = self.range
+        low = self.low
         for k in range(nbits - 1, -1, -1):
-            bit = (value >> k) & 1
             p = probs[node]
-            bound = (rng >> PROB_BITS) * p
-            if bit:
-                self.low += bound
+            bound = (rng >> 11) * p  # PROB_BITS
+            if (value >> k) & 1:
+                low += bound
                 rng -= bound
                 probs[node] = p - (p >> move)
+                node = (node << 1) | 1
             else:
                 rng = bound
-                probs[node] = p + ((PROB_ONE - p) >> move)
-            while rng < TOP:
+                probs[node] = p + ((2048 - p) >> move)  # PROB_ONE
+                node <<= 1
+            while rng < 0x1000000:  # TOP
                 rng = (rng << 8) & 0xFFFFFFFF
-                self.range = rng
+                self.low = low
                 self._shift_low()
-            node = (node << 1) | bit
+                low = self.low
         self.range = rng
+        self.low = low
 
     def direct(self, value, nbits):
         """確率 1/2 のビットを上位から nbits 個。"""
@@ -234,9 +240,8 @@ def pack_gop_range(gop_bytes, frames):
         while pos < end:
             before = pos
             val, pos = _read_varint(gop_bytes, pos)
-            check = bytearray()
-            encode_varint(val, check)
-            if len(check) != pos - before:
+            # 最短の varint は、2 バイト以上なら最後のバイトが 0 でない (書き直して比べるより速い)
+            if pos - before > 1 and gop_bytes[pos - 1] == 0:
                 raise ValueError("最短でない varint のランは入れ物に入れられません")
             parsed += 1
             level = val & 0x7F

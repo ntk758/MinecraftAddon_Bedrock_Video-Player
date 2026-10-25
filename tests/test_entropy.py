@@ -177,6 +177,17 @@ def test_range_container_roundtrips_edge_values():
     assert unpack_gop(container) == gop
 
 
+def test_range_container_rejects_non_minimal_runs():
+    """最短でない varint のラン (0x85 0x00 = 5) は入れ物に入れられない (開くと 1 バイトのランになり、元に戻らない)。"""
+    from mvcodec.rangecode import pack_gop_range
+
+    gop, frames = make_gop([[(0, 0, 5)]])
+    assert pack_gop_range(gop, frames)[0] == 2
+    padded = gop[:-1] + bytes([0x85, 0x00])
+    with pytest.raises(ValueError):
+        pack_gop_range(padded, [(0, len(padded))])
+
+
 @pytest.mark.skipif(not HAS_NODE, reason="node が必要")
 def test_codec_js_unpacks_range_edge_values(tmp_path):
     gop, frames = make_gop(EDGE_RUNS)

@@ -59,14 +59,34 @@ def encode_frame_v5(frame_no, is_keyframe, frame, reference, width, height, vect
             encode_varint(tile_index - last - 1, encoded)
             encode_varint(recency, encoded)
             last = tile_index
-    chunks = extract_rle_chunks_fast(frame, reference, width, height)
-    encode_varint(len(chunks), encoded)
-    previous_end = 0
-    for start_x, y, length, color in chunks:
-        position = y * width + start_x
-        encode_varint(pack_run(position - previous_end, 0, length, color, width), encoded)
-        previous_end = position + length
+    positions, lengths, colors = _rle_runs(frame, reference, width)
+    encode_varint(len(positions), encoded)
+    # ランの値 (pack_run と同じ形) をまとめて作り、varint もまとめて書く (ランは 1 フレームに数千〜数万あり、
+    # 1 個ずつ書くとブラウザ版 (Pyodide) で変換時間の 1 割を超えていた)
+    previous_end = np.zeros_like(positions)
+    previous_end[1:] = positions[:-1] + lengths[:-1]
+    values = ((positions - previous_end) << 13) | ((lengths - 1) << 7) | (colors & 0x7f)
+    encoded += encode_varints(values)
     return encoded
+
+
+def encode_varints(values):
+    """0 以上の整数の並び (numpy) を、encode_varint を順に呼んだのと同じバイト列にする。"""
+    values = np.asarray(values, dtype=np.int64)
+    if len(values) == 0:
+        return b""
+    sizes = np.ones(len(values), dtype=np.int64)
+    rest = values >> 7
+    while rest.any():
+        sizes += rest > 0
+        rest >>= 7
+    starts = np.cumsum(sizes) - sizes
+    out = np.empty(int(sizes.sum()), dtype=np.uint8)
+    for k in range(int(sizes.max())):
+        has = sizes > k
+        byte = (values[has] >> (7 * k)) & 0x7F
+        out[starts[has] + k] = byte | np.where(sizes[has] > k + 1, 0x80, 0)
+    return out.tobytes()
 
 
 BASE64_PREFIX = "B:"
@@ -104,10 +124,18 @@ def extract_rle_chunks_fast(frame, prev_frame, width, height):
 
     位置の順 (行優先、左から右) に並ぶ。フレーム全体をまとめて numpy で計算する (立体では行が数千になるため)。
     """
+    positions, lengths, run_colors = _rle_runs(frame, prev_frame, width)
+    ys, xs = np.divmod(positions, width)
+    return list(zip(xs.tolist(), ys.tolist(), lengths.tolist(), run_colors.tolist()))
+
+
+def _rle_runs(frame, prev_frame, width):
+    """extract_rle_chunks_fast の中身: ランの (先頭の位置, 長さ, 色) を int64 の numpy 配列で返す。"""
     frame = np.asarray(frame).reshape(-1)
-    changed = np.flatnonzero(frame != np.asarray(prev_frame).reshape(-1))
+    changed = np.flatnonzero(frame != np.asarray(prev_frame).reshape(-1)).astype(np.int64)
     if len(changed) == 0:
-        return []
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty, empty
     colors = frame[changed]
     # 直前の変化画素と続いていない・行の先頭・色が変わる ところでランを区切る
     new_run = np.ones(len(changed), dtype=bool)
@@ -115,7 +143,7 @@ def extract_rle_chunks_fast(frame, prev_frame, width, height):
     starts = np.flatnonzero(new_run)
     lengths = np.diff(np.append(starts, len(changed)))
     positions = changed[starts]
-    run_colors = colors[starts]
+    run_colors = colors[starts].astype(np.int64)
     # RUN_LENGTH_MAX を超えるランは先頭から RUN_LENGTH_MAX ずつに分ける
     pieces = (lengths + RUN_LENGTH_MAX - 1) // RUN_LENGTH_MAX
     if pieces.max() > 1:
@@ -125,5 +153,4 @@ def extract_rle_chunks_fast(frame, prev_frame, width, height):
         positions = positions[run_index] + offsets
         lengths = np.minimum(lengths[run_index] - offsets, RUN_LENGTH_MAX)
         run_colors = run_colors[run_index]
-    ys, xs = np.divmod(positions, width)
-    return list(zip(xs.tolist(), ys.tolist(), lengths.tolist(), run_colors.tolist()))
+    return positions, lengths.astype(np.int64), run_colors
