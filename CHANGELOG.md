@@ -2,7 +2,7 @@
 
 このプロジェクトの変更履歴です (新しい順)。各版のダウンロードは [GitHub Releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases) にあります。
 
-## 次の版 / Unreleased
+## v6.26.0
 
 - **アニメの人物の切り抜きが、3DCG の MV の強い照明・全身が小さい場面でも人物を見つけるように** (Windows 版、GPU があるとき): アニメ向けのモデルが人物を見つけないフレームは、「目立つ物」を切り抜くモデル (onnx-community の BiRefNet_lite、MIT、fp16、初回に約 115 MB をダウンロード、GPU で 1 枚約 0.15 秒) で切り抜き、写真向けのモデルが人物らしいと見る塊だけを残す (字幕・光の筋・背景の塊は落とす)。利用者のアニメ MV の 30 秒で、人物が消えていた場面の多くが切り抜けた。GPU が無いときは今まで通り写真向けのモデル (BiRefNet は CPU で 1 枚約 6 秒)。
 
