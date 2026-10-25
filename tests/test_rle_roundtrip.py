@@ -108,3 +108,17 @@ if __name__ == "__main__":
     test_solid_frames()
     test_boundary_run_lengths()
     print("All tests passed successfully!")
+
+
+def test_encode_varints_matches_one_by_one():
+    """まとめて書く varint (encode_varints) は、encode_varint を順に呼んだのと同じバイト列 (2^35 を超える値も)。"""
+    import numpy as np
+
+    from mvcodec.encode import encode_varints
+
+    values = [0, 1, 127, 128, 16383, 16384, 2 ** 21 - 1, 2 ** 21, 2 ** 31 + 5, 2 ** 35 + 77, 300, 5]
+    expected = bytearray()
+    for v in values:
+        encode_varint(v, expected)
+    assert encode_varints(np.array(values, dtype=np.int64)) == bytes(expected)
+    assert encode_varints(np.zeros(0, dtype=np.int64)) == b""

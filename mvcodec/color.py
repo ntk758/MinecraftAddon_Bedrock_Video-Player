@@ -343,7 +343,13 @@ def knoll_dither_indices(rgb, palette_rgb, noise01, edge_mask=None, steps=KNOLL_
 
     shape = np.asarray(rgb).shape[:2]
     scale = np.array([1.0, CHROMA_WEIGHT, CHROMA_WEIGHT], np.float32)
-    src = np.asarray(rgb, dtype=np.uint8).reshape(-1, 3)
+    pixels = np.asarray(rgb, dtype=np.uint8).reshape(-1, 3)
+    # 候補はその画素の色だけで決まるので、同じ色の画素はまとめて 1 回だけ計算する (結果は同じ)。1 フレームの
+    # 違う色は、実写で画素の 2〜5 割、アニメ・CG で 1〜2 割。ブラウザ版 (Pyodide) では距離の計算が変換の 1/3 を占めていた
+    key = (pixels[:, 0].astype(np.int32) << 16) | (pixels[:, 1].astype(np.int32) << 8) | pixels[:, 2]
+    unique_keys, inverse = np.unique(key, return_inverse=True)
+    inverse = inverse.reshape(-1)
+    src = np.stack([(unique_keys >> 16) & 0xFF, (unique_keys >> 8) & 0xFF, unique_keys & 0xFF], 1).astype(np.uint8)
     pal_rgb = np.clip(np.asarray(palette_rgb, dtype=np.float32), 0, 255)
     pal_lab = rgb_to_oklab(pal_rgb.astype(np.uint8)) * scale
     pal_lin = _srgb_to_linear_np(pal_rgb)
@@ -357,12 +363,12 @@ def knoll_dither_indices(rgb, palette_rgb, noise01, edge_mask=None, steps=KNOLL_
         c = (pal_sq[None] - 2.0 * lab @ pal_lab.T).argmin(1)
         cands[i] = c
         err += goal - pal_lin[c]
-    first = cands[0].copy()
+    first = cands[0][inverse]
     order = np.argsort(pal_lab[:, 0][cands], axis=0, kind="stable")
     cands = np.take_along_axis(cands, order, 0)
     n = np.asarray(noise01, dtype=np.float32).reshape(-1)
     pick = np.clip((n * steps).astype(np.int32), 0, steps - 1)
-    out = cands[pick, np.arange(len(src))]
+    out = cands[pick, inverse]
     if edge_mask is not None:
         out = np.where(np.asarray(edge_mask, dtype=np.float32).reshape(-1) < 0.5, first, out)
     return out.astype(np.int32).reshape(shape)
