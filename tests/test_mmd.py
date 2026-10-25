@@ -119,8 +119,10 @@ def test_dances_in_place_unless_asked_to_travel(tmp_path):
     assert travel[0] >= rest[0] + 40 and travel[1] >= rest[1] + 40
 
 
-def test_gui_builds_an_anamorphic_addon_from_mmd(doll, tmp_path):
-    """GUI の組み立て (画面なし): 動画リストの .pmx を、選んだ踊り (.vmd) で立体にして、だまし絵のアドオンを作る。"""
+@pytest.mark.parametrize("extreme, low, high", [(False, 44, 49), (True, 86, 96)])
+def test_gui_builds_an_anamorphic_addon_from_mmd(doll, tmp_path, extreme, low, high):
+    """GUI の組み立て (画面なし): 動画リストの .pmx を、選んだ踊り (.vmd) で立体にして、だまし絵のアドオンを作る。
+    「MMD を高解像度で (エクストリーム)」なら、人物の高さの上限が 40 → 80 になる。"""
     import json
     import queue
     import zipfile
@@ -157,7 +159,7 @@ def test_gui_builds_an_anamorphic_addon_from_mmd(doll, tmp_path):
     output = tmp_path / "mmd.mcaddon"
     entry = {"file_path": str(pmx), "video_id": "doll", "thumb_sec": 0, "motion": str(vmd)}
     gui.PackBuilderApp._build_pack(app, [entry], output, "MMD", "badapple", 128, 128, 10, None, "auto", "none",
-                                   "cpu", "screen", 16, None, True, None)
+                                   "cpu", "screen", 16, None, True, None, extreme)
     log = []
     while not app.messages.empty():
         log.append(str(app.messages.get()))
@@ -166,6 +168,19 @@ def test_gui_builds_an_anamorphic_addon_from_mmd(doll, tmp_path):
         text = z.read("BP/scripts/frames_doll.js").decode("utf-8")
     data = json.loads(text[text.index("{"):text.rindex("}") + 1])
     assert data["view"] == "anamorphic" and data["frame_count"] == 11
-    # 高さの設定 (128) は、だまし絵の上限の 40 ブロックにする (初期姿勢の頭の上が 40。この踊りは腕を頭より上へ
-    # 上げるので、立体の高さは 40 × 18.4 / 16.5 ≈ 45 + 余白)
-    assert 44 <= data["height"] <= 49
+    # 高さの設定 (128) は、だまし絵の上限の 40 ブロック (エクストリームなら 80) にする (初期姿勢の頭の上が上限。この踊りは
+    # 腕を頭より上へ上げるので、立体の高さは 40 × 18.4 / 16.5 ≈ 45 (80 なら 89) + 余白)
+    assert low <= data["height"] <= high
+    # エクストリームのときは、1 フレームの見込みと勧める fps を知らせる
+    assert any("エクストリーム" in line for line in log) == extreme
+
+
+def test_mmd_extreme_limits_and_estimates():
+    import video_player_gui as gui
+
+    assert gui.mmd_height_limit(True) == 40 and gui.mmd_height_limit(True, True) == 80
+    assert gui.mmd_height_limit(False) == 64 and gui.mmd_height_limit(False, True) == 128
+    # 高さ 40 は実機の 44 ms、高くなるほど急に重くなり、勧める fps が下がる
+    assert gui.mmd_stage_frame_ms(40) == pytest.approx(44)
+    assert gui.mmd_stage_frame_ms(80) > 5 * gui.mmd_stage_frame_ms(40)
+    assert gui.mmd_stage_max_fps(40) >= 10 and gui.mmd_stage_max_fps(64) <= 6 and gui.mmd_stage_max_fps(80) <= 4
