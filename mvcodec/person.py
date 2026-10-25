@@ -65,6 +65,8 @@ class PersonSegmenter:
         return np.asarray(Image.fromarray(prob).resize((w, h), Image.Resampling.BILINEAR), np.float32)
 
 
+# 切り抜きと背景を作る大きさ (長い辺) の既定 (下の ANALYSIS_LONG_SIDE と同じ)
+ANALYSIS_LONG_SIDE_DEFAULT = 640
 # アニメ向けのモデル (skytnt/anime-seg、Apache-2.0)。入力は 1024 × 1024 の RGB (0〜1)、出力は人物の確からしさ
 ANIME_MODEL_URL = "https://huggingface.co/skytnt/anime-seg/resolve/main/isnetis.onnx"
 ANIME_MODEL_SHA256 = "f15622d853e8260172812b657053460e20806f04b9e05147d49af7bed31a6e99"
@@ -126,12 +128,14 @@ class AnimeSegmenter:
 
     画像は縦横比を保って 1024 × 1024 の真ん中に置き (余白は黒)、出力の同じ範囲を元の大きさに戻す。"""
 
-    def __init__(self, model_path=None, providers=None, download_progress=None, fallback="auto"):
+    def __init__(self, model_path=None, providers=None, download_progress=None, fallback="auto", salient=True):
         """fallback: 人物を見つけなかったフレームに使う切り抜き (既定は PersonSegmenter を最初に要るときに作る。
-        PyTorch が無ければ使わない)。None なら使わない。"""
+        PyTorch が無ければ使わない)。None なら使わない。salient が偽なら、GPU があっても目立つ物の切り抜き
+        (BiRefNet、RAM を 5〜10 GB 使う) は使わない。"""
         import onnxruntime as ort
 
         self.fallback = fallback
+        self.salient = salient
 
         path = Path(model_path) if model_path else model_dir() / ANIME_MODEL_FILE
         if not path.is_file():
@@ -172,7 +176,7 @@ class AnimeSegmenter:
             photo = PersonSegmenter()
         except ImportError:
             return None
-        if not any(p in GPU_PROVIDERS for p in self.providers):
+        if not self.salient or not any(p in GPU_PROVIDERS for p in self.providers):
             return photo
         try:
             return SalientPersonSegmenter(photo, providers=self.providers, download_progress=self.download_progress)
@@ -265,6 +269,67 @@ def _label(mask):
 # 切り抜きのモデルの種類 → 作り方
 SEGMENTERS = {"photo": PersonSegmenter, "anime": AnimeSegmenter}
 
+# メモリの使い方の段階 (重い順)。実測 (2026-10-25、RX 9070 XT): 写真向け (CPU) は RAM 0.4 GB、アニメ向けは RAM 0.9 GB・
+# VRAM 0.24 GB (GPU)、目立つ物の切り抜き (BiRefNet、fp16、DirectML) を足すと RAM 5.6〜10.4 GB・VRAM 1.8〜4.8 GB
+#   full: アニメ向け (GPU) + 見つけないフレームは目立つ物の切り抜き
+#   gpu: アニメ向け (GPU)、見つけないフレームは写真向け
+#   cpu: アニメ向けも CPU で (1 枚約 0.75 秒)
+#   photo: 写真向けだけ (アニメ向けが全部だめだったとき)
+PROFILES = {
+    "full": {"gpu": True, "salient": True, "long_side": ANALYSIS_LONG_SIDE_DEFAULT},
+    "gpu": {"gpu": True, "salient": False, "long_side": ANALYSIS_LONG_SIDE_DEFAULT},
+    "cpu": {"gpu": False, "salient": False, "long_side": 480},
+    "photo": {"gpu": False, "salient": False, "long_side": 480},
+}
+# 段階ごとに要る空きメモリ (バイト)。(RAM, VRAM)。目立つ物の切り抜きは読み込むときに RAM を大きく使う
+PROFILE_NEEDS = {
+    "full": (12 * (1 << 30), 3 * (1 << 30)),
+    "gpu": (2 * (1 << 30), 1 * (1 << 30)),
+    "cpu": (2 * (1 << 30), 0),
+    "photo": (1 * (1 << 30), 0),
+}
+# 処理中に空きの RAM がこれを下回ったら止める (PC 全体が固まる前に、軽い段階でやり直せるように)
+MIN_FREE_RAM = 400 * (1 << 20)
+# メモリ不足で止まったときの終了コード (GUI はこれを見て軽い段階でやり直す)
+EXIT_OUT_OF_MEMORY = 3
+
+
+def profile_ladder(model, ram_free=None, vram_free=None):
+    """model ("photo" / "anime") を、空きメモリ (分からなければ None) に収まる一番重い段階から、軽い段階へ順に並べる。
+    メモリ不足で止まったら次の段階でやり直す。"""
+    order = ["full", "gpu", "cpu", "photo"] if model == "anime" else ["photo"]
+    ladder = []
+    for name in order:
+        need_ram, need_vram = PROFILE_NEEDS[name]
+        if ram_free is not None and ram_free < need_ram and name != order[-1]:
+            continue
+        if vram_free is not None and vram_free < need_vram:
+            continue
+        ladder.append(name)
+    return ladder or [order[-1]]
+
+
+_OUT_OF_MEMORY_WORDS = ("out of memory", "outofmemory", "e_outofmemory", "8007000e", "not enough memory",
+                        "insufficient memory", "allocation failed", "failed to allocate", "887a0005",
+                        "device_removed", "device removed", "memoryerror", "bad_alloc")
+
+
+def is_out_of_memory(error):
+    """例外 (かその文字列) がメモリ不足 (GPU のメモリ不足・GPU の切り離しを含む) によるものか。"""
+    if isinstance(error, MemoryError):
+        return True
+    text = f"{type(error).__name__} {error}".lower()
+    return any(word in text for word in _OUT_OF_MEMORY_WORDS)
+
+
+def make_segmenter(model, profile, download_progress=None):
+    """段階に合わせた切り抜きを作る。"""
+    if model == "photo" or profile == "photo":
+        return PersonSegmenter()
+    settings = PROFILES[profile]
+    providers = None if settings["gpu"] else ["CPUExecutionProvider"]
+    return AnimeSegmenter(providers=providers, download_progress=download_progress, salient=settings["salient"])
+
 
 def _box_blur(a, size, axis):
     """axis の方向に幅 size の箱の平均をとる (端の外は 0)。"""
@@ -340,7 +405,7 @@ class PersonSplitter:
 
 # 切り抜きと背景を作る大きさ (長い辺)。ブロックの大きさ (80 × 45 など) で切り抜くと形が粗く、背景も後ろの壁
 # (200 × 120 など) へ引き伸ばされてぼやけるので、元の縦横比のままこの大きさで作る (元の方が小さければ元の大きさ)
-ANALYSIS_LONG_SIDE = 640
+ANALYSIS_LONG_SIDE = ANALYSIS_LONG_SIDE_DEFAULT
 
 
 def read_frames(path, fps, duration=None, ffmpeg="ffmpeg", long_side=ANALYSIS_LONG_SIDE):
@@ -404,6 +469,15 @@ def _writer(path, width, height, fps, ffmpeg, audio_from=None, duration=None):
     return subprocess.Popen(cmd, stdin=subprocess.PIPE, **_subprocess_kwargs())
 
 
+def _check_free_ram():
+    """空きの RAM が MIN_FREE_RAM を下回っていたら MemoryError (PC 全体が固まる前に止める)。"""
+    from mvcodec.resources import system_memory
+
+    memory = system_memory()
+    if memory is not None and memory[1] < MIN_FREE_RAM:
+        raise MemoryError(f"空きの RAM が少なくなりました ({memory[1] >> 20} MB)")
+
+
 def make_person_videos(source, mask_path, background_path, fps, duration=None, ffmpeg="ffmpeg", segmenter=None,
                        progress=None, long_side=ANALYSIS_LONG_SIDE):
     """source から、人物の範囲の動画 (mask_path) と、人物を消した背景の動画 (background_path、元の音声付き) を作る。
@@ -425,6 +499,8 @@ def make_person_videos(source, mask_path, background_path, fps, duration=None, f
             mask_writer.stdin.write(np.repeat(gray[..., None], 3, axis=2).tobytes())
             background_writer.stdin.write(background.tobytes())
             count += 1
+            if count % 10 == 0:
+                _check_free_ram()
             if progress:
                 progress(count)
     finally:
@@ -437,23 +513,44 @@ def make_person_videos(source, mask_path, background_path, fps, duration=None, f
 
 
 def main(argv=None):
-    """コマンドライン (scripts/make_person_videos.py と、EXE の --run-person-split)。"""
+    """コマンドライン (scripts/make_person_videos.py と、EXE の --run-person-split)。
+
+    GUI は別のプロセスとしてこれを起動し、標準出力の「<数> frames」「download <済み> <全体>」を読む。
+    メモリ不足で止まったら EXIT_OUT_OF_MEMORY で終わる (GUI は軽い段階でやり直す)。"""
     import argparse
     parser = argparse.ArgumentParser(description="動画から人物を切り抜き、人物の範囲の動画と、人物を消した背景の動画を作る")
     parser.add_argument("input")
     parser.add_argument("mask_output", help="人物の範囲の動画 (白 = 人物)")
     parser.add_argument("background_output", help="人物を消した背景の動画 (元の音声付き)")
-    parser.add_argument("--long-side", type=int, default=ANALYSIS_LONG_SIDE,
-                        help="切り抜く大きさ (長い辺)。元の縦横比のまま、これ以下に縮める")
+    parser.add_argument("--long-side", type=int, default=None,
+                        help="切り抜く大きさ (長い辺)。元の縦横比のまま、これ以下に縮める (既定は段階による)")
     parser.add_argument("--fps", type=float, default=10)
     parser.add_argument("--duration", type=float, default=None)
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--model", choices=sorted(SEGMENTERS), default="photo",
                         help="photo: 実写向き (DeepLabV3)、anime: アニメ・イラスト向き (anime-seg、初回に約 176 MB をダウンロード)")
+    parser.add_argument("--profile", choices=list(PROFILES), default=None,
+                        help="メモリの使い方 (full / gpu / cpu / photo)。既定は空きメモリから選ぶ")
     args = parser.parse_args(argv)
-    count = make_person_videos(args.input, args.mask_output, args.background_output, args.fps, args.duration,
-                               args.ffmpeg, segmenter=SEGMENTERS[args.model](),
-                               progress=lambda i: print(f"\r{i} frames", end="", flush=True) if i % 10 == 0 else None,
-                               long_side=args.long_side)
-    print(f"\n{count} frames -> {args.mask_output}, {args.background_output}")
+    profile = args.profile
+    if profile is None:
+        from mvcodec.resources import gpu_memory, system_memory
+
+        ram, vram = system_memory(), gpu_memory()
+        profile = profile_ladder(args.model, ram and ram[1], vram and vram[1])[0]
+    long_side = args.long_side or PROFILES[profile]["long_side"]
+    print(f"profile {profile}", flush=True)
+    try:
+        segmenter = make_segmenter(args.model, profile,
+                                   download_progress=lambda done, total: print(f"download {done} {total}", flush=True))
+        count = make_person_videos(args.input, args.mask_output, args.background_output, args.fps, args.duration,
+                                   args.ffmpeg, segmenter=segmenter,
+                                   progress=lambda i: print(f"{i} frames", flush=True) if i % 10 == 0 else None,
+                                   long_side=long_side)
+    except Exception as error:  # noqa: BLE001 (メモリ不足だけ、決まった終了コードで知らせる)
+        if is_out_of_memory(error):
+            print(f"out of memory: {error}", flush=True)
+            return EXIT_OUT_OF_MEMORY
+        raise
+    print(f"done {count} frames -> {args.mask_output}, {args.background_output}", flush=True)
     return 0

@@ -376,6 +376,10 @@ def test_person_mode_builds_figure_and_background(tmp_path, monkeypatch, mode, m
         def _split_person(self, *args):
             return gui.PackBuilderApp._split_person(self, *args)
 
+        def _person_process(self, argv):
+            # GUI は別のプロセスで切り抜くが、テストでは偽の切り抜きを使うため同じプロセスで動かす
+            return person.main(argv), ""
+
     app = Headless()
     output = tmp_path / "person.mcaddon"
     gui.PackBuilderApp._build_pack(app, [{"file_path": str(video), "video_id": "dance", "thumb_sec": 1}], output,
