@@ -173,9 +173,16 @@ def _blocks_from_clusters(centroids, labels, all_blocks, max_colors, color_space
     """K-Means の結果 (color_space の代表色と、各画素のクラスタ番号) からパレットのブロックを選ぶ:
     大きいクラスタの代表色から順に、その色を表すブロック (1 つか、混ぜる 2 つ) を入れ、次に各代表色に一番近い
     ブロック、足りなければ候補の順に埋める。"""
-    block_space = _to_space_numpy(np.array([b["rgb"] for b in all_blocks], dtype=np.float32), color_space)
-    dist = (centroids ** 2).sum(1)[:, None] - 2.0 * centroids @ block_space.T + (block_space ** 2).sum(1)[None]
-    best = dist.argmin(1)
+    # 代表色に一番近いブロックは、K-Means の色空間によらず、減色 (パターンディザ) と同じ測り方 (OkLab、色合いの差を
+    # CHROMA_WEIGHT 倍) で選ぶ。RGB の距離だと、暗い舞台の灰色の床 (32, 32, 31) に中立なブラックストーンより茶色の
+    # 黒のテラコッタが近く、床が錆びた色の粒になっていた (実写 16 本でぼかした色差 −1.0%、ジャンル 24 本は ±0)
+    from mvcodec.block_rdo import rgb_to_oklab
+    from mvcodec.color import CHROMA_WEIGHT
+
+    scale = np.array([1.0, CHROMA_WEIGHT, CHROMA_WEIGHT], np.float32)
+    centroid_lab = rgb_to_oklab(np.clip(_centroids_to_rgb(centroids, color_space), 0, 255).astype(np.uint8)) * scale
+    block_lab = rgb_to_oklab(np.array([b["rgb"] for b in all_blocks], dtype=np.uint8)) * scale
+    best = ((centroid_lab[:, None] - block_lab[None]) ** 2).sum(-1).argmin(1)
     selected_blocks = []
     sizes = np.bincount(labels, minlength=len(centroids))
     centroid_rgb = _centroids_to_rgb(centroids, color_space)
