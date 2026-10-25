@@ -322,9 +322,11 @@ def test_background_video_plays_on_the_back_wall(tmp_path, palette):
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg が必要")
-def test_person_mode_builds_figure_and_background(tmp_path, monkeypatch):
-    """GUI の「人物を切り抜いて立体に (AI)」+ だまし絵: 人物の範囲をふくらませた立体と、人物を消した背景の映像
-    (元の音声付き) ができる。AI のモデルの代わりに、明るい四角を人物とする切り抜きを使う。"""
+@pytest.mark.parametrize("mode, model_class, other_class", [("person", "PersonSegmenter", "AnimeSegmenter"),
+                                                            ("person_anime", "AnimeSegmenter", "PersonSegmenter")])
+def test_person_mode_builds_figure_and_background(tmp_path, monkeypatch, mode, model_class, other_class):
+    """GUI の「人物を切り抜いて立体に (AI)」(実写向き・アニメ向き) + だまし絵: 人物の範囲をふくらませた立体と、
+    人物を消した背景の映像 (元の音声付き) ができる。AI のモデルの代わりに、明るい四角を人物とする切り抜きを使う。"""
     import queue
     import zipfile
 
@@ -335,10 +337,18 @@ def test_person_mode_builds_figure_and_background(tmp_path, monkeypatch):
     from gui_i18n import Translator
 
     class FakeSegmenter:
+        def __init__(self, **_options):
+            pass
+
         def __call__(self, rgb):
             return (rgb.mean(axis=2) > 200).astype(np.float32)
 
-    monkeypatch.setattr(person, "PersonSegmenter", FakeSegmenter)
+    class WrongSegmenter:
+        def __init__(self, **_options):
+            raise AssertionError(f"{mode} で {other_class} を使った")
+
+    monkeypatch.setattr(person, model_class, FakeSegmenter)
+    monkeypatch.setattr(person, other_class, WrongSegmenter)
     video = tmp_path / "dance.mp4"
     # 暗い背景の前で、白い四角 (人物) が左右に動く 3 秒の映像と音声
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x203060:size=160x90:rate=10:duration=3",
@@ -369,7 +379,7 @@ def test_person_mode_builds_figure_and_background(tmp_path, monkeypatch):
     app = Headless()
     output = tmp_path / "person.mcaddon"
     gui.PackBuilderApp._build_pack(app, [{"file_path": str(video), "video_id": "dance", "thumb_sec": 1}], output,
-                                   "Person", "badapple", 128, 72, 10, None, "full", "none", "cpu", "person", 8,
+                                   "Person", "badapple", 128, 72, 10, None, "full", "none", "cpu", mode, 8,
                                    None, True, None)
     log = []
     while not app.messages.empty():

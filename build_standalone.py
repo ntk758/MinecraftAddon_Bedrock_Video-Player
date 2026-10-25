@@ -50,6 +50,13 @@ def build_standalone_exe():
         print("      torch-directml を同梱します")
     except ImportError:
         pass
+    # アニメの人物の切り抜き (mvcodec/person.py の AnimeSegmenter) に使う onnxruntime (DirectML 版なら GPU も使える)
+    try:
+        import onnxruntime  # noqa: F401
+        cmd[-1:-1] = ["--collect-all", "onnxruntime"]
+        print("      onnxruntime を同梱します")
+    except ImportError:
+        pass
 
     print("[2/3] 単体 EXE のビルドを開始します...")
     subprocess.check_call(cmd)

@@ -1,3 +1,5 @@
 # Windows で AMD / Intel GPU を使う場合 (DirectML)。torch-directml は Python 3.12 以下に対応
 -r requirements.txt
 torch-directml
+# アニメの人物の切り抜き (表示モード「アニメの人物を切り抜いて立体に」)。DirectML 版は AMD / Intel / NVIDIA の GPU で動く
+onnxruntime-directml
