@@ -2,6 +2,10 @@
 
 このプロジェクトの変更履歴です (新しい順)。各版のダウンロードは [GitHub Releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases) にあります。
 
+## 次の版 / Unreleased
+
+- **暗い場面の灰色が錆びた色の粒にならないように** (Windows 版・ブラウザ版の自動パレット): K-Means の代表色に一番近いブロックを、減色と同じ OkLab (色合いの差を 2 倍) で選ぶ (以前は RGB の距離で、暗い舞台の灰色の床に茶色の黒のテラコッタが選ばれていた。床の 13% → 3%)。実写 16 本でぼかした色差 −1.0% (最悪 +0.24%)、ジャンル 24 本で ±0、データ・描画の重さは同じ。
+
 ## v6.24.0
 
 - **アニメの人物を切り抜いて立体に (AI)** (Windows 版の新しい表示モード、`scripts/make_person_videos.py --model anime`): アニメ・イラスト向けの切り抜きモデル (skytnt/anime-seg の ISNet、Apache-2.0、初回に約 176 MB をダウンロードして SHA-256 を確かめる) を onnxruntime で動かす (DirectML の GPU で 1 枚約 0.03 秒、CPU で約 0.75 秒)。写真向けの DeepLabV3 では丸くつぶれていた形が、髪や手の先まで切り抜ける。アニメ向けのモデルが人物を見つけないフレーム (3DCG の強い照明・全身が小さい場面) だけ、写真向けのモデルを使う。
