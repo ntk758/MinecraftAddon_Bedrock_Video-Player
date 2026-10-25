@@ -214,10 +214,10 @@ MMD_STAGE_MAX_HEIGHT = 40
 # 「MMD を高解像度で (エクストリーム)」のときの上限。重いので、作るときに 1 フレームの見込みと勧める fps を出す
 MMD_EXTREME_MAX_HEIGHT = 128
 MMD_EXTREME_STAGE_MAX_HEIGHT = 80
-# だまし絵の MMD の 1 フレームのスクリプト時間の見込み: 高さ 40 で実機 44 ms (2026-10-24)、モックで高さ 64 は 3.1 倍、
-# 80 は 5.6 倍だったので、高さの 2.5 乗に比例するとみなす
+# だまし絵の MMD の 1 フレームのスクリプト時間の見込み: 実機で高さ 40 は 44 ms (2026-10-24)、80 は 217 ms (2026-10-25、
+# 4.9 倍) だったので、高さの 2.3 乗に比例するとみなす (モックでは 64 が 3.1 倍、80 が 5.6 倍)
 MMD_STAGE_MS_AT_40 = 44.0
-MMD_STAGE_COST_EXPONENT = 2.5
+MMD_STAGE_COST_EXPONENT = 2.3
 
 
 def mmd_height_limit(anamorphic: bool, extreme: bool = False) -> int:
