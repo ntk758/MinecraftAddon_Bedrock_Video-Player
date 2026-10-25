@@ -2,7 +2,7 @@
 
 このプロジェクトの変更履歴です (新しい順)。各版のダウンロードは [GitHub Releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases) にあります。
 
-## 次の版 / Unreleased
+## v6.23.0
 
 - **変換が速く** (ブラウザ版・Windows 版の CPU。結果は 1 バイトも変わらない): パターンディザ (Blue Noise) は同じ色の画素をまとめて 1 回だけ計算する (1 フレームの違う色は、実写で画素の 2〜5 割、アニメ・CG で 1〜2 割)。区間符号の内側のループを軽く、ランの varint を numpy でまとめて書く。ブラウザ版 (Pyodide) で 1 コマ 128 × 72 が 62 → 49 ms、256 × 144 が 225 → 126 ms、実写の 256 × 144 で −17%。Windows 版の CPU で −24%。計測は `benchmark/pyodide_speed.mjs`。
 
