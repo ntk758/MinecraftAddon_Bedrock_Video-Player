@@ -2,6 +2,8 @@
 
 本物のモデル (176 MB) は使わない。onnxruntime の代わりに、入力の画像をそのまま「人物の確からしさ」として返す
 偽物のセッションで、余白を付けて 1024 × 1024 に置き、出力を元の範囲・大きさに戻す計算を確かめる。
+後半は TemporalGuard (人物を見つけないフレームを、前後 6 フレームを見て直す): フレームごとに決めた確からしさを返す
+偽の切り抜きで、前後で埋める・面積と位置を合わせる・場面の切り替わりをまたがない、を確かめる。
 """
 import hashlib
 import sys
@@ -246,3 +248,426 @@ def test_profiles_follow_free_memory():
     assert person.profile_ladder("anime", 6 * gib, gib // 2)[0] == "cpu"
     assert person.profile_ladder("anime", None, None)[0] == "full"
     assert person.profile_ladder("photo", 16 * gib, 12 * gib) == ["photo"]
+
+
+# ---------------------------------------------------------------------------
+# 時間方向の安定化 (TemporalGuard): 偽の切り抜きで、アニメ向けが人物を見つけないフレームの扱いを確かめる
+# ---------------------------------------------------------------------------
+
+SHAPE = (90, 160)
+
+
+def _scene_images(layout, shape=SHAPE, seed=3):
+    """layout の数ずつ、場面ごとに違う大きな模様の画像を作る (場面の中は ±2 の細かい揺れだけ。場面の境目で構図が変わる)。"""
+    rng = np.random.default_rng(seed)
+    frames = []
+    for count in layout:
+        base = np.repeat(np.repeat(rng.integers(30, 220, (6, 8, 3)), shape[0] // 6, axis=0), shape[1] // 8, axis=1)
+        for _ in range(count):
+            frames.append(np.clip(base + rng.integers(-2, 3, base.shape), 0, 255).astype(np.uint8))
+    return frames
+
+
+def _rect(top, left, height, width, shape=SHAPE):
+    mask = np.zeros(shape, np.float32)
+    mask[top:top + height, left:left + width] = 1.0
+    return mask
+
+
+def _cone(center, radius, peak=1.0, shape=SHAPE):
+    """中心から外へ直線的に下がる確からしさ (本物のモデルの、縁がぼやけた出力のつもり)。"""
+    y, x = np.mgrid[:shape[0], :shape[1]]
+    return np.clip(peak * (1 - np.hypot(y - center[0], x - center[1]) / radius), 0, None).astype(np.float32)
+
+
+class _Scripted:
+    """フレームごとに決めた確からしさを返す偽の切り抜き。primary がアニメ向け、fallback_prob が予備 (呼んだフレームの番号を覚える)。"""
+
+    def __init__(self, frames, primary, fallback=None):
+        self.index = {id(frame): i for i, frame in enumerate(frames)}
+        self.primary_probs, self.fallback_probs = primary, fallback
+        self.fallback_calls = []
+
+    def primary(self, rgb):
+        return self.primary_probs[self.index[id(rgb)]]
+
+    def fallback_prob(self, rgb):
+        index = self.index[id(rgb)]
+        self.fallback_calls.append(index)
+        return None if self.fallback_probs is None else self.fallback_probs[index]
+
+
+def _settle_all(segmenter, frames, lookahead=person.PERSON_LOOKAHEAD):
+    guard = person.TemporalGuard(segmenter, lookahead)
+    settled = []
+    for frame in frames:
+        settled += guard.push(frame)
+    settled += guard.flush()
+    return guard, settled
+
+
+def _fraction(prob):
+    return float((prob >= 0.5).mean())
+
+
+def test_scene_images_make_cuts_only_between_scenes():
+    frames = _scene_images([4, 3, 5])
+    features = [person.scene_features(frame) for frame in frames]
+    cuts = [i for i in range(1, len(frames)) if person.is_scene_cut(features[i - 1], features[i])]
+    assert cuts == [4, 7]
+
+
+def test_scene_cut_rule_uses_the_histogram_only_when_the_structure_is_somewhat_different():
+    def features(correlation, histogram_distance):
+        luma = (np.array([1.0, 0.0]), np.array([correlation, np.sqrt(1 - correlation ** 2)]))
+        histogram = (np.array([1.0, 0.0]), np.array([1.0 - histogram_distance, histogram_distance]))
+        return (luma[0], histogram[0]), (luma[1], histogram[1])
+
+    assert person.is_scene_cut(*features(0.4, 0.0))        # 構図が大きく違えば、色が同じでも切り替わり
+    assert not person.is_scene_cut(*features(0.9, 1.0))    # 構図が近ければ、色が全く違っても切り替わりでない
+    assert person.is_scene_cut(*features(0.6, 0.9))        # 中間: 色のヒストグラムが大きく違えば切り替わり
+    assert not person.is_scene_cut(*features(0.6, 0.2))    # 中間でも、色が近ければ切り替わりでない
+    # ヒストグラムは各色 3 ビット (512 ビン)。赤 224 と赤 96 (上位 3 ビットが 7 と 3) は別のビン
+    dark_red, light_red = np.zeros((16, 16, 3), np.uint8), np.zeros((16, 16, 3), np.uint8)
+    dark_red[..., 0], light_red[..., 0] = 96, 224
+    histograms = [person.scene_features(image)[1] for image in (dark_red, light_red)]
+    assert histograms[0].shape == (512,) and np.isclose(histograms[0].sum(), 1) and np.isclose(histograms[1].sum(), 1)
+    assert np.isclose(0.5 * np.abs(histograms[0] - histograms[1]).sum(), 1.0)
+
+
+def test_a_short_gap_inside_a_scene_is_filled_from_the_neighbours_without_the_fallback_model():
+    frames = _scene_images([12])
+    people = [_rect(30, 20 + 4 * t, 36, 20) for t in range(12)]
+    empty = np.zeros(SHAPE, np.float32)
+    people[4], people[5], people[9] = empty, empty, empty
+    segmenter = _Scripted(frames, people, fallback=[_cone((50, 80), 30)] * 12)
+    guard, settled = _settle_all(segmenter, frames)
+    assert segmenter.fallback_calls == []
+    # 2 フレームの欠け: それぞれ近い方 (4 は 3、5 は 6)。1 フレームの欠けは距離が同じなので前 (8)
+    assert np.array_equal(settled[4][1], people[3]) and np.array_equal(settled[5][1], people[6])
+    assert np.array_equal(settled[9][1], people[8])
+    assert guard.counts == {"anime": 9, "filled": 3, "matched": 0, "fallback": 0, "flagged": 3}
+
+
+def test_a_gap_of_three_frames_is_not_filled():
+    frames = _scene_images([12])
+    people = [_rect(30, 20 + 4 * t, 36, 20) for t in range(12)]
+    for t in (4, 5, 6):
+        people[t] = np.zeros(SHAPE, np.float32)
+    segmenter = _Scripted(frames, people, fallback=[_cone((50, 80), 30)] * 12)
+    guard, _ = _settle_all(segmenter, frames)
+    assert segmenter.fallback_calls == [4, 5, 6]
+    assert guard.counts["filled"] == 0 and guard.counts["matched"] == 3
+
+
+def test_a_long_gap_takes_the_size_of_the_nearby_people_and_drops_distant_blobs():
+    frames = _scene_images([16])
+    person_box = lambda t: _rect(30, 20 + 4 * t, 36, 20)   # 36 × 20 = 720 画素 (画面の 5%)
+    people = [person_box(t) for t in range(16)]
+    # 5 フレーム (5〜9) は何も見つからず、予備は 3 倍の大きさの塊 (縁がなだらかに下がる) と、離れた所の塊 (字幕や光の筋のつもり)
+    for t in range(5, 10):
+        people[t] = np.zeros(SHAPE, np.float32)
+    fallback = [np.maximum(_cone((48, 30 + 4 * t), 52.4), _cone((5, 150), 8, 0.9)) for t in range(16)]
+    target = _fraction(person_box(0))
+    assert 2.5 * target < _fraction(fallback[5]) < 3.5 * target   # そのままでは人物の 3 倍の面積
+    segmenter = _Scripted(frames, people, fallback)
+    guard, settled = _settle_all(segmenter, frames)
+    assert segmenter.fallback_calls == [5, 6, 7, 8, 9]
+    assert guard.counts["matched"] == 5 and guard.counts["fallback"] == 0
+    for t in range(5, 10):
+        prob = settled[t][1]
+        assert abs(_fraction(prob) - target) <= 0.2 * target, t
+        assert prob[:25, 120:].max() == 0                             # 離れた塊は消える
+        assert (prob[44:52, 26 + 4 * t:34 + 4 * t] >= 0.5).all()       # 人物の位置は残る
+
+
+def test_nothing_is_filled_or_matched_across_a_scene_cut():
+    # 場面 A (4 フレーム、左に小さい人物) → 場面 B (6 フレーム、右に大きい人物)。
+    frames = _scene_images([4, 6])
+    left, right = _rect(30, 10, 30, 16), _rect(10, 100, 60, 40)   # 面積は 480 と 2400 画素
+    people = [left] * 4 + [right] * 6
+    empty = np.zeros(SHAPE, np.float32)
+    # 予備は、場面 A では左の人物のまわり、場面 B では右の人物のまわりに、どちらも人物より大きな塊を返す
+    fallback = [_cone((45, 18), 50)] * 4 + [_cone((40, 120), 50)] * 6
+    # 場面 A の最後 (3) が見つからない: 場面 B の最初のフレーム (4) で埋めない。A の小さい人物に合わせる
+    people[3] = empty
+    segmenter = _Scripted(frames, people, fallback)
+    guard, settled = _settle_all(segmenter, frames)
+    assert segmenter.fallback_calls == [3] and guard.counts["matched"] == 1 and guard.counts["filled"] == 0
+    assert abs(_fraction(settled[3][1]) - _fraction(left)) <= 0.2 * _fraction(left)
+    assert [cut for _, _, cut in settled] == [False, False, False, False, True, False, False, False, False, False]
+    # 場面 B の最初 (4) が見つからない: 前の場面 A の人物では埋めず、B の大きい人物に合わせる
+    people[3], people[4] = left, empty
+    segmenter = _Scripted(frames, people, fallback)
+    _, settled = _settle_all(segmenter, frames)
+    assert segmenter.fallback_calls == [4]
+    assert settled[4][1][:, :80].max() == 0
+    assert abs(_fraction(settled[4][1]) - _fraction(right)) <= 0.2 * _fraction(right)
+    # 場面 B の 2 フレーム (4, 5) が見つからない: すぐ前に A の正常なフレームがあっても埋めない
+    people[4], people[5] = empty, empty
+    segmenter = _Scripted(frames, people, fallback)
+    guard, settled = _settle_all(segmenter, frames)
+    assert segmenter.fallback_calls == [4, 5] and guard.counts["filled"] == 0
+    # 場面 B が全部見つからない: 合わせる相手がいないので、予備の結果をそのまま使う (A に合わせない)
+    people = [left] * 4 + [empty] * 6
+    segmenter = _Scripted(frames, people, fallback)
+    guard, settled = _settle_all(segmenter, frames)
+    assert all(np.array_equal(settled[t][1], fallback[t]) for t in range(4, 10))
+    assert guard.counts["fallback"] == 6 and guard.counts["matched"] == 0
+
+
+def test_a_brightness_change_is_not_a_scene_cut_for_the_new_rule():
+    rng = np.random.default_rng(5)
+    dim = np.clip(np.repeat(np.repeat(rng.integers(40, 160, (6, 8, 1)), 15, axis=0), 20, axis=1)
+                  + rng.integers(-3, 4, (90, 160, 3)), 0, 255).astype(np.uint8)
+    bright = np.clip(dim.astype(np.float32) * 1.5, 0, 255).astype(np.uint8)
+    # 前のフレームとの平均の色の差が大きいので、今までの規則 (SCENE_CUT_DIFF) なら場面の切り替わりになる
+    assert np.abs(bright.astype(np.float32) - dim).mean() > person.SCENE_CUT_DIFF
+    assert not person.is_scene_cut(person.scene_features(dim), person.scene_features(bright))
+    other = _scene_images([1], seed=9)[0]
+    assert person.is_scene_cut(person.scene_features(dim), person.scene_features(other))
+    # ならしと背景の記憶を消すかどうかは、渡された cut に従う (人物は左上の四角。確からしさ 0.6 → 0.5 の小さな揺れ)
+    inside = _rect(10, 10, 30, 30) > 0
+    steady, wobble = np.where(inside, 0.6, 0.0).astype(np.float32), np.where(inside, 0.5, 0.0).astype(np.float32)
+    splitter = person.PersonSplitter(None)
+    splitter(dim, steady, False)
+    mask, _ = splitter(bright, wobble, False)
+    assert 0.5 < mask[inside].mean() < 0.6                        # 切り替わりではないので、前とならす
+    assert not np.array_equal(splitter.background[80, 150], bright[80, 150])   # 背景の記憶も残る (前の色と混ざる)
+    splitter = person.PersonSplitter(None)
+    splitter(dim, steady, False)
+    mask, _ = splitter(bright, wobble, True)
+    assert np.allclose(mask[inside], 0.5)                         # 切り替わりなら、今のフレームそのまま
+    assert np.array_equal(splitter.background[80, 150], bright[80, 150].astype(np.float32))   # 背景の記憶も捨てる
+
+
+def test_photo_path_is_unchanged_by_the_new_splitter_arguments():
+    """切り抜きが写真向け (primary が無い) なら今まで通り: PersonSplitter は平均の色の差で場面の切り替わりを決める。
+    元の実装 (版 6.28.0) をそのまま写した基準と、マスクも背景もバイト単位で同じ。"""
+
+    class OldSplitter:
+        def __init__(self, segmenter):
+            self.segmenter = segmenter
+            self.mask = None
+            self.previous = None
+            self.background = None
+            self.known = None
+
+        def __call__(self, rgb):
+            from PIL import Image, ImageFilter
+            prob = self.segmenter(rgb)
+            frame = rgb.astype(np.float32)
+            cut = self.previous is None or np.abs(frame - self.previous).mean() > person.SCENE_CUT_DIFF
+            if cut or self.mask is None:
+                self.mask = prob
+                self.background = frame.copy()
+                self.known = np.zeros(prob.shape, bool)
+            else:
+                keep = person.MASK_SMOOTHING * np.clip(1 - np.abs(prob - self.mask) / person.MASK_FOLLOW, 0, 1)
+                self.mask = keep * self.mask + (1 - keep) * prob
+            self.previous = frame
+            hole = np.asarray(Image.fromarray((self.mask >= 0.5).astype(np.uint8) * 255).filter(ImageFilter.MaxFilter(5))) > 0
+            visible = ~hole
+            self.background[visible] = ((1 - person.BACKGROUND_LEARNING) * self.background[visible]
+                                        + person.BACKGROUND_LEARNING * frame[visible])
+            self.background[visible & ~self.known] = frame[visible & ~self.known]
+            self.known |= visible
+            filled = person.fill_masked(rgb, hole, max(2, min(rgb.shape[:2]) // 8))
+            background = np.where((hole & self.known)[..., None], self.background, filled).astype(np.uint8)
+            return self.mask, background
+
+    frames = _scene_images([5, 5], seed=11)
+    # 平均の色の差で切り替わりになるのは、5 → 6 枚目 (番号 4 → 5) だけ
+    assert [i for i in range(1, 10) if np.abs(frames[i].astype(np.float32) - frames[i - 1]).mean() > person.SCENE_CUT_DIFF] == [5]
+    rng = np.random.default_rng(2)
+    probs = [np.clip(_cone((45, 20 + 10 * i), 25) + rng.normal(0, 0.05, SHAPE), 0, 1).astype(np.float32) for i in range(10)]
+    expected = []
+    old = OldSplitter(lambda rgb, it=iter(probs): next(it))
+    for frame in frames:
+        expected.append(old(frame))
+    new = person.PersonSplitter(lambda rgb, it=iter(probs): next(it))
+    for frame, (mask, background) in zip(frames, expected):
+        got_mask, got_background = new(frame)
+        assert got_mask.tobytes() == mask.tobytes() and got_background.tobytes() == background.tobytes()
+
+
+def test_only_the_anime_model_gets_the_temporal_guard(monkeypatch, capsys):
+    """TemporalGuard を通すのは primary と fallback_prob を持つ切り抜き (AnimeSegmenter) だけ。写真向けは今まで通り 1 枚ずつ。"""
+    import shutil
+    import subprocess
+    import tempfile
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg が必要")
+    with tempfile.TemporaryDirectory() as folder:
+        video = Path(folder) / "in.mp4"
+        # 傾きのある暗い背景 (平らだと構図の相関が出ない) の前を、白い四角が動く 2 秒 (10 fps)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x203060:size=160x90:rate=10:duration=2",
+                        "-vf", "format=rgb24,geq=r='20+X':g='40+Y':b='96',drawbox=x='40+20*sin(t*3)':y=20:w=30:h=60:color=white:t=fill",
+                        "-c:v", "libx264", "-pix_fmt", "yuv444p", "-crf", "0", str(video)], check=True)
+        bright = lambda rgb: (rgb.mean(axis=2) > 200).astype(np.float32)
+
+        def photo(rgb):
+            return bright(rgb)
+
+        class Anime:
+            """アニメ向けの偽物: 10 枚目と 11 枚目 (番号 10, 11) だけ、四角があっても何も見つけない。"""
+
+            def __init__(self):
+                self.reads = 0
+                self.fallback_calls = 0
+
+            def primary(self, rgb):
+                self.reads += 1
+                return np.zeros(rgb.shape[:2], np.float32) if self.reads in (11, 12) else bright(rgb)
+
+            def fallback_prob(self, rgb):
+                self.fallback_calls += 1
+                return np.full(rgb.shape[:2], 0.1, np.float32)
+
+        made = []
+        real_guard = person.TemporalGuard
+        monkeypatch.setattr(person, "TemporalGuard", lambda *args, **kwargs: made.append(real_guard(*args, **kwargs)) or made[-1])
+        stats = {}
+        count = person.make_person_videos(video, Path(folder) / "m1.mp4", Path(folder) / "b1.mp4", 10, segmenter=photo,
+                                          stats=stats)
+        assert count == 20 and made == [] and stats == {}
+        seen = []
+        anime = Anime()
+        count = person.make_person_videos(video, Path(folder) / "m2.mp4", Path(folder) / "b2.mp4", 10, segmenter=anime,
+                                          progress=seen.append, stats=stats)
+        # 6 フレーム遅れるが、動画の終わりで残りを全部書き出す: フレームの数は同じ。2 フレームの欠けは前後で埋めるので、予備は呼ばない
+        assert count == 20 and len(made) == 1 and seen == list(range(1, 21))
+        assert stats == {"anime": 18, "filled": 2, "matched": 0, "fallback": 0, "flagged": 2} and anime.fallback_calls == 0
+        masks = [frame[..., 0].mean() / 255 for frame in person.read_frames(Path(folder) / "m2.mp4", 10, None, "ffmpeg", 640)]
+        assert len(masks) == 20 and min(masks) > 0.1   # 見つけなかった 2 枚にも、前後と同じ四角 (面積 12.5%) が入っている
+
+        # コマンドラインは、出所ごとのフレーム数を 1 行で知らせる (写真向けのときは知らせない)
+        monkeypatch.setattr(person, "make_segmenter", lambda model, profile, download_progress=None: Anime())
+        argv = [str(video), str(Path(folder) / "m3.mp4"), str(Path(folder) / "b3.mp4"), "--fps", "10", "--model", "anime",
+                "--profile", "gpu"]
+        assert person.main(argv) == 0
+        lines = capsys.readouterr().out.splitlines()
+        assert "sources anime=18 filled=2 matched=0 fallback=0 flagged=2" in lines and lines[-1].startswith("done 20 frames")
+        monkeypatch.setattr(person, "make_segmenter", lambda model, profile, download_progress=None: photo)
+        assert person.main(argv[:-4] + ["--model", "photo", "--profile", "photo"]) == 0
+        assert not [line for line in capsys.readouterr().out.splitlines() if line.startswith("sources")]
+
+
+def test_guard_output_equals_a_direct_reading_of_the_rules():
+    """乱数で作った見つけない連なり・場面の切り替わりで、窓を持って 1 枚ずつ確定する TemporalGuard が、動画全体を見て
+    規則どおりに決めた結果 (先行の試作と同じ式) と同じになる。始まり・終わり・場面の境目をまたぐ連なりも含む。"""
+    shape = (48, 64)
+    min_area = person.ANIME_MIN_AREA
+
+    def rescale(prob, tau):
+        return np.where(prob >= tau, 0.5 + 0.5 * (prob - tau) / (1 - tau), 0.5 * prob / tau).astype(np.float32)
+
+    def expanded_box(mask):
+        ys, xs = np.nonzero(mask)
+        y0, y1, x0, x1 = ys.min(), ys.max(), xs.min(), xs.max()
+        dy, dx = int((y1 - y0 + 1) * 0.3) + 8, int((x1 - x0 + 1) * 0.3) + 8
+        out = np.zeros(mask.shape, bool)
+        out[max(0, y0 - dy):y1 + dy + 1, max(0, x0 - dx):x1 + dx + 1] = True
+        return out
+
+    for seed in range(8):
+        rng = np.random.default_rng(seed)
+        layout = [int(n) for n in rng.integers(3, 16, rng.integers(2, 5))]
+        frames = _scene_images(layout, shape, seed=seed)
+        n = len(frames)
+        scene = np.repeat(np.arange(len(layout)), layout)
+        primary = []
+        for t in range(n):
+            top, left = rng.integers(2, 20), rng.integers(2, 40)
+            primary.append(_rect(top, left, rng.integers(10, 26), rng.integers(8, 20), shape))
+        for _ in range(int(rng.integers(2, 6))):    # 見つけない連なり (長さ 1〜8)。何も無いか、しきい値未満の小さな点だけ
+            start = int(rng.integers(0, n))
+            for t in range(start, min(n, start + int(rng.integers(1, 9)))):
+                primary[t] = _rect(5, 5, 3, 3, shape) if rng.random() < 0.4 else np.zeros(shape, np.float32)
+        primary[int(rng.integers(0, n))] = _rect(5, 5, 4, 4, shape)   # しきい値のすぐ上 (16 / 3072 = 0.0052) は、見つけたことになる
+        fallback = [np.maximum(_cone((rng.integers(15, 35), rng.integers(10, 54)), float(rng.integers(8, 30)), 1.0, shape),
+                               _cone((rng.integers(0, 48), rng.integers(0, 64)), 6, 0.9, shape)) for _ in range(n)]
+        segmenter = _Scripted(frames, primary, fallback)
+        guard, settled = _settle_all(segmenter, frames)
+        assert len(settled) == n
+        assert [cut for _, _, cut in settled] == [t > 0 and scene[t] != scene[t - 1] for t in range(n)]
+        area = np.array([_fraction(p) for p in primary])
+        flag = area < min_area
+        for t in range(n):
+            expected = primary[t]
+            if flag[t]:
+                first = last = t
+                while first > 0 and flag[first - 1] and scene[first - 1] == scene[t]:
+                    first -= 1
+                while last + 1 < n and flag[last + 1] and scene[last + 1] == scene[t]:
+                    last += 1
+                before = first - 1 if first > 0 and scene[first - 1] == scene[t] else None
+                after = last + 1 if last + 1 < n and scene[last + 1] == scene[t] else None
+                if last - first + 1 <= 2 and before is not None and after is not None:
+                    expected = primary[before if t - before <= after - t else after]
+                else:
+                    expected = fallback[t]
+                    near = [u for u in range(max(0, t - 6), min(n, t + 7)) if not flag[u] and scene[u] == scene[t]]
+                    if near:
+                        tau = float(np.clip(np.quantile(expected, 1 - float(np.median(area[near]))), 0.3, 0.8))
+                        box = expanded_box(primary[near[0]] >= 0.5) | expanded_box(primary[near[-1]] >= 0.5)
+                        expected = np.where(box, rescale(expected, tau), 0).astype(np.float32)
+            assert np.array_equal(settled[t][1], expected), (seed, t)
+            assert settled[t][0] is frames[t]
+        assert sum(guard.counts[k] for k in ("anime", "filled", "matched", "fallback")) == n
+        assert guard.counts["flagged"] == int(flag.sum())
+
+
+def test_guard_keeps_a_small_window_and_delays_by_the_lookahead():
+    frames = _scene_images([40])
+    people = [_rect(30, 20 + t, 36, 20) for t in range(40)]
+    segmenter = _Scripted(frames, people)
+    guard = person.TemporalGuard(segmenter)
+    outputs = []
+    for i, frame in enumerate(frames):
+        settled = guard.push(frame)
+        outputs.append(len(settled))
+        assert len(guard.window) <= 2 * person.PERSON_LOOKAHEAD + 1
+    assert outputs == [0] * person.PERSON_LOOKAHEAD + [1] * (40 - person.PERSON_LOOKAHEAD)
+    rest = guard.flush()
+    assert len(rest) == person.PERSON_LOOKAHEAD and guard.flush() == []
+    # 1 フレームだけの動画でも、終わりで確定する
+    guard = person.TemporalGuard(_Scripted(frames[:1], people[:1]))
+    assert guard.push(frames[0]) == [] and len(guard.flush()) == 1
+
+
+def test_anime_segmenter_primary_does_not_use_the_fallback(tmp_path, fake_onnxruntime):
+    model = tmp_path / "isnetis.onnx"
+    model.write_bytes(b"x")
+    calls = []
+
+    def photo(rgb):
+        calls.append(1)
+        return np.full(rgb.shape[:2], 0.75, np.float32)
+
+    segmenter = person.AnimeSegmenter(model_path=model, fallback=photo)
+    dark = np.zeros((90, 160, 3), np.uint8)
+    assert segmenter.primary(dark).max() < 0.1 and not calls
+    assert np.allclose(segmenter.fallback_prob(dark), 0.75) and len(calls) == 1
+    assert np.allclose(segmenter(dark), 0.75) and len(calls) == 2
+    # 予備を使わない設定なら None。予備を作れなければ (PyTorch が無いなど) 最初の 1 回で None になり、primary のまま
+    assert person.AnimeSegmenter(model_path=model, fallback=None).fallback_prob(dark) is None
+    segmenter = person.AnimeSegmenter(model_path=model)
+    segmenter._make_fallback = lambda: None
+    assert segmenter.fallback_prob(dark) is None and segmenter.fallback is None
+    assert segmenter(dark).max() < 0.1
+
+
+def test_salient_cutout_without_an_approved_blob_returns_the_photo_probability(tmp_path, monkeypatch):
+    module = types.SimpleNamespace(InferenceSession=_SalientSession, SessionOptions=lambda: types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "onnxruntime", module)
+    model = tmp_path / "salient.onnx"
+    model.write_bytes(b"x")
+    rgb = np.zeros((90, 160, 3), np.uint8)
+    rgb[20:70, 100:150, 2] = 255   # 光の筋 (青): 目立つ物だが、写真向けのモデルは人物と見ない
+    rgb[10:40, 10:30, 1] = 200     # 目立つ物には入らないが、写真向けのモデルは人物と見る所 (緑)
+    photo = lambda image: np.where(image[..., 1] > 128, 0.8, 0.0).astype(np.float32)
+    mask = person.SalientPersonSegmenter(photo, model_path=model)(rgb)
+    # 承認された塊が 1 つも無い: 空ではなく写真向けの結果
+    assert mask.dtype == np.float32 and np.array_equal(mask, photo(rgb))

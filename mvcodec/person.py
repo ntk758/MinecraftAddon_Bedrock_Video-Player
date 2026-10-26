@@ -4,7 +4,8 @@ AI の切り抜きモデルで各フレームの人物の範囲を求める。�
   - photo: torchvision の DeepLabV3 MobileNetV3-Large (BSD-3、約 42 MB、初回にダウンロード)。写真で学習したので、
     実写向き。アニメ・3DCG では形が丸くつぶれ、強い光を人物と取り違える
   - anime: skytnt/anime-seg の ISNet (Apache-2.0、約 176 MB、初回にダウンロード。onnxruntime で動かし、
-    DirectML / CUDA の GPU があれば使う)。アニメ・イラストの人物を、髪や手の先まで切り抜く
+    DirectML / CUDA の GPU があれば使う)。アニメ・イラストの人物を、髪や手の先まで切り抜く。人物を見つけないフレーム
+    だけ別のモデルになってちらつくので、前後 6 フレームを先読みして直す (TemporalGuard)
 次の 2 本の動画を作る:
   - 人物の範囲の動画 (白 = 人物): convert.py の --mask-video に渡すと、その形をふくらませた立体 (inflate) になる
   - 人物を消した背景の動画: だまし絵の後ろの壁に流す (--stage-background)。消した所は、同じ場面で人物がいなかった
@@ -16,6 +17,7 @@ import hashlib
 import os
 import subprocess
 import urllib.request
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -149,7 +151,8 @@ class AnimeSegmenter:
         self.session = ort.InferenceSession(str(path), providers=providers)
         self.input_name = self.session.get_inputs()[0].name
 
-    def __call__(self, rgb):
+    def primary(self, rgb):
+        """アニメ向けのモデルだけで求めた人物の確からしさ (予備の切り抜きは使わない)。"""
         h, w = rgb.shape[:2]
         size = ANIME_INPUT_SIZE
         scale = size / max(h, w)
@@ -160,13 +163,23 @@ class AnimeSegmenter:
             Image.fromarray(rgb).resize((nw, nh), Image.Resampling.BILINEAR), np.float32) / 255
         mask = self.session.run(None, {self.input_name: image.transpose(2, 0, 1)[None]})[0]
         mask = np.asarray(mask, np.float32).reshape(size, size)[top:top + nh, left:left + nw]
-        mask = np.asarray(Image.fromarray(mask).resize((w, h), Image.Resampling.BILINEAR), np.float32)
-        if (mask >= 0.5).mean() < ANIME_MIN_AREA and self.fallback is not None:
-            if self.fallback == "auto":
-                self.fallback = self._make_fallback()
-                if self.fallback is None:
-                    return mask
-            return self.fallback(rgb)
+        return np.asarray(Image.fromarray(mask).resize((w, h), Image.Resampling.BILINEAR), np.float32)
+
+    def fallback_prob(self, rgb):
+        """予備の切り抜きで求めた人物の確からしさ。予備を使わない設定 (None)・作れないときは None。
+        予備のモデルは、最初に要るときに作る。"""
+        if self.fallback == "auto":
+            self.fallback = self._make_fallback()
+        if self.fallback is None:
+            return None
+        return self.fallback(rgb)
+
+    def __call__(self, rgb):
+        mask = self.primary(rgb)
+        if (mask >= 0.5).mean() < ANIME_MIN_AREA:
+            prob = self.fallback_prob(rgb)
+            if prob is not None:
+                return prob
         return mask
 
     def _make_fallback(self):
@@ -216,6 +229,10 @@ class SalientPersonSegmenter:
         salient = self.salient(rgb)
         person = self.photo(rgb)
         keep = person_components(salient >= 0.5, person)
+        if not keep.any():
+            # 人物らしい塊が 1 つも無いときは、空にせず、計算済みの写真向けのモデルの結果を返す (アニメ MV の 30 秒で、
+            # 人物が消えるフレームが 80 → 31 に減った)。形は粗く大きさが跳ぶので、TemporalGuard が大きさと位置を合わせる
+            return np.asarray(person, np.float32)
         return np.where(keep, salient, 0).astype(np.float32)
 
 
@@ -369,6 +386,176 @@ def fill_masked(rgb, hole, radius):
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
+# 先読みするフレームの数。フレームの結果を確定するのは、これだけ後のフレームを読んでからにする (出力はこれだけ遅れる)
+PERSON_LOOKAHEAD = 6
+# アニメ向けのモデルが人物を見つけないフレームの連なりがこの長さ以下なら、前後のフレームの結果で埋める (長ければ予備の切り抜き)
+HOLD_MAX_RUN = 2
+# 場面の切り替わりを構図で決める: 明るさを 32 × 18 に縮めて平均を引き、長さを 1 にそろえた絵の相関が CUT_CORRELATION 未満、
+# または CUT_CORRELATION_SOFT 未満で、色のヒストグラム (各色 3 ビット) の差 (0〜1) が CUT_HISTOGRAM_DISTANCE を超えたら切り替わり。
+# 明るさが変わっただけ (照明・フラッシュ) では相関が下がらないので、平均の色の差 (SCENE_CUT_DIFF) と違って切り替わりにならない
+# (アニメ MV の 30 秒で、隣り合う 299 組のうち、平均の色の差だと 95 組、構図だと 24 組が切り替わり。構図の 24 組は全部、色の差でも切り替わり)
+CUT_LUMA_SIZE = (32, 18)
+CUT_CORRELATION = 0.5
+CUT_CORRELATION_SOFT = 0.75
+CUT_HISTOGRAM_DISTANCE = 0.5
+# 予備の切り抜きの確からしさを写し直すしきい値 tau の範囲と、人物の外接箱を広げる割合・余白 (画素)
+MATCH_TAU_MIN = 0.3
+MATCH_TAU_MAX = 0.8
+MATCH_BOX_GROW = 0.3
+MATCH_BOX_MARGIN = 8
+
+
+def scene_features(rgb):
+    """場面の切り替わりを決める画像の特徴: 32 × 18 の明るさ (平均を引いて長さ 1 にそろえたもの) と、色のヒストグラム。"""
+    luma = np.asarray(Image.fromarray(rgb).convert("L").resize(CUT_LUMA_SIZE, Image.Resampling.BOX), np.float32)
+    luma = luma - luma.mean()
+    luma /= np.linalg.norm(luma) + 1e-6
+    bins = (rgb[::4, ::4].reshape(-1, 3) >> 5).astype(np.int64)
+    histogram = np.bincount(bins[:, 0] * 64 + bins[:, 1] * 8 + bins[:, 2], minlength=512).astype(np.float32)
+    return luma, histogram / histogram.sum()
+
+
+def is_scene_cut(previous, current):
+    """scene_features を 2 つ (前のフレームと今のフレーム) 比べて、場面が切り替わったか。"""
+    correlation = float((previous[0] * current[0]).sum())
+    distance = 0.5 * float(np.abs(previous[1] - current[1]).sum())
+    return correlation < CUT_CORRELATION or (correlation < CUT_CORRELATION_SOFT and distance > CUT_HISTOGRAM_DISTANCE)
+
+
+def bounding_box(mask):
+    """mask (真偽、1 画素以上は真) の真の画素の外接箱 (上, 下, 左, 右。端を含む)。"""
+    rows, columns = np.flatnonzero(mask.any(axis=1)), np.flatnonzero(mask.any(axis=0))
+    return int(rows[0]), int(rows[-1]), int(columns[0]), int(columns[-1])
+
+
+def match_to_found(prob, found):
+    """予備の切り抜きの確からしさ prob を、近くで人物を見つけたフレーム found (番号順、箱と面積を持つ) に合わせる。
+    人物の面積が found の面積の中央値になるように、確からしさを単調に写し直し (確からしさの高い方から、その割合の画素だけが
+    0.5 以上になる)、found の最初と最後の人物の外接箱を広げた範囲の外 (離れた所の塊) は 0 にする。"""
+    target = float(np.median([f.area for f in found]))
+    tau = float(np.clip(np.quantile(prob, 1 - target), MATCH_TAU_MIN, MATCH_TAU_MAX))
+    matched = np.where(prob >= tau, 0.5 + 0.5 * (prob - tau) / (1 - tau), 0.5 * prob / tau).astype(np.float32)
+    inside = np.zeros(prob.shape, bool)
+    for f in (found[0], found[-1]):
+        top, bottom, left, right = f.box
+        grow_y = int((bottom - top + 1) * MATCH_BOX_GROW) + MATCH_BOX_MARGIN
+        grow_x = int((right - left + 1) * MATCH_BOX_GROW) + MATCH_BOX_MARGIN
+        inside[max(0, top - grow_y):bottom + grow_y + 1, max(0, left - grow_x):right + grow_x + 1] = True
+    return np.where(inside, matched, 0).astype(np.float32)
+
+
+class _GuardFrame:
+    """TemporalGuard の窓に入れる 1 フレーム。area は確からしさ 0.5 以上の画素の割合、box はその外接箱 (見つけなかったら None)。"""
+    __slots__ = ("index", "rgb", "prob", "area", "box", "flagged", "cut", "scene")
+
+    def __init__(self, index, rgb, prob, area, box, cut, scene):
+        self.index, self.rgb, self.prob, self.area, self.box = index, rgb, prob, area, box
+        self.flagged = area < ANIME_MIN_AREA
+        self.cut, self.scene = cut, scene
+
+
+class TemporalGuard:
+    """アニメ向けの切り抜き (AnimeSegmenter) の、フレームごとのばらつきを前後のフレームで直す。
+
+    アニメ向けのモデルが人物を見つけない (確からしさ 0.5 以上の画素が ANIME_MIN_AREA 未満の) フレームは、そのフレームだけ
+    別の予備のモデルの結果になり、形も大きさも違うものが 1 枚だけ混ざって立体がちらついた。フレームを PERSON_LOOKAHEAD 枚
+    先まで読んでから確定し、見つけなかったフレームを次のように直す (見つけたフレームはそのまま):
+      - 同じ場面で、見つけない連なりが HOLD_MAX_RUN 以下で、すぐ前とすぐ後に見つけたフレームがあれば、近い方 (同じ距離なら
+        前) の結果をそのまま使う (予備のモデルは呼ばない。形がその間止まる)
+      - それ以外は予備の結果を使う。前後 PERSON_LOOKAHEAD 枚の同じ場面に見つけたフレームがあれば、match_to_found で
+        その面積と位置に合わせる。無ければ予備の結果のまま
+    場面の切り替わりは構図で決め (scene_features)、切り替わりをまたいでは前後のフレームを使わない。窓に持つのは最大
+    2 * PERSON_LOOKAHEAD + 1 フレーム (640 × 360 で約 20 MB)。counts に出所ごとのフレーム数を数える:
+    anime (そのまま)・filled (前後で埋めた)・matched (合わせた予備)・fallback (そのままの予備)・flagged (見つけなかった数)。
+
+        guard = TemporalGuard(segmenter)  # segmenter は primary(rgb) と fallback_prob(rgb) を持つ (AnimeSegmenter)
+        for frame in frames:
+            for rgb, prob, cut in guard.push(frame):  # 確定したフレーム (PERSON_LOOKAHEAD 枚遅れる)
+                ...
+        for rgb, prob, cut in guard.flush():  # 動画の終わりで残りを確定
+            ...
+    """
+
+    def __init__(self, segmenter, lookahead=PERSON_LOOKAHEAD):
+        self.segmenter = segmenter
+        self.lookahead = lookahead
+        self.window = deque()   # 窓の中のフレーム (番号は続いている)
+        self.read = 0           # 読んだフレームの数
+        self.settled = 0        # 確定したフレームの数 (次に確定するフレームの番号)
+        self.scene = 0
+        self.features = None    # 前のフレームの scene_features
+        self.counts = dict.fromkeys(("anime", "filled", "matched", "fallback", "flagged"), 0)
+
+    def push(self, rgb):
+        """フレームを 1 枚読み、確定したフレームの (rgb, 人物の確からしさ, 前のフレームから場面が切り替わったか) の並びを返す。"""
+        prob = self.segmenter.primary(rgb)
+        mask = prob >= 0.5
+        area = float(mask.mean())
+        features = scene_features(rgb)
+        cut = self.features is not None and is_scene_cut(self.features, features)
+        self.features = features
+        self.scene += cut
+        self.window.append(_GuardFrame(self.read, rgb, prob, area, bounding_box(mask) if area >= ANIME_MIN_AREA else None,
+                                       cut, self.scene))
+        self.read += 1
+        ready = []
+        while self.settled + self.lookahead < self.read:
+            ready.append(self._settle())
+        return ready
+
+    def flush(self):
+        """動画の終わりで、確定していない残りのフレームを確定して返す。"""
+        ready = []
+        while self.settled < self.read:
+            ready.append(self._settle())
+        return ready
+
+    def _at(self, index):
+        """窓の中のフレーム。窓に無ければ None。"""
+        offset = index - self.window[0].index
+        return self.window[offset] if 0 <= offset < len(self.window) else None
+
+    def _settle(self):
+        frame = self._at(self.settled)
+        if frame.flagged:
+            self.counts["flagged"] += 1
+            prob, source = self._repair(frame)
+        else:
+            prob, source = frame.prob, "anime"
+        self.counts[source] += 1
+        self.settled += 1
+        while self.window and self.window[0].index < self.settled - self.lookahead:
+            self.window.popleft()
+        return frame.rgb, prob, frame.cut
+
+    def _repair(self, frame):
+        """人物を見つけなかったフレームの確からしさと、出所 (counts のキー) を返す。"""
+        t, scene = frame.index, frame.scene
+
+        def lost(index):
+            other = self._at(index)
+            return other is not None and other.scene == scene and other.flagged
+
+        def found(other):
+            return other is not None and other.scene == scene and not other.flagged
+
+        first = last = t
+        while lost(first - 1):
+            first -= 1
+        while lost(last + 1):
+            last += 1
+        before, after = self._at(first - 1), self._at(last + 1)
+        if last - first + 1 <= HOLD_MAX_RUN and found(before) and found(after):
+            return (before if t - before.index <= after.index - t else after).prob, "filled"
+        prob = self.segmenter.fallback_prob(frame.rgb)
+        if prob is None:  # 予備の切り抜きを使えない
+            return frame.prob, "anime"
+        near = [other for other in self.window if found(other) and abs(other.index - t) <= self.lookahead]
+        if not near:
+            return prob, "fallback"
+        return match_to_found(prob, near), "matched"
+
+
 class PersonSplitter:
     """フレームを順に受け取り、(人物の範囲 0〜1、人物を消した背景) を返す。"""
 
@@ -379,10 +566,14 @@ class PersonSplitter:
         self.background = None   # 人物がいなかったときの色の記憶 (場面ごと)
         self.known = None        # 記憶のある画素
 
-    def __call__(self, rgb):
-        prob = self.segmenter(rgb)
+    def __call__(self, rgb, prob=None, cut=None):
+        """prob は人物の確からしさ (省くと segmenter で求める)。cut は前のフレームから場面が切り替わったか (省くと、
+        平均の色の差が SCENE_CUT_DIFF を超えたかで決める)。切り替わりでは、ならしと背景の記憶を捨てる。"""
+        if prob is None:
+            prob = self.segmenter(rgb)
         frame = rgb.astype(np.float32)
-        cut = self.previous is None or np.abs(frame - self.previous).mean() > SCENE_CUT_DIFF
+        if cut is None:
+            cut = self.previous is None or np.abs(frame - self.previous).mean() > SCENE_CUT_DIFF
         if cut or self.mask is None:
             self.mask = prob
             self.background = frame.copy()
@@ -479,22 +670,26 @@ def _check_free_ram():
 
 
 def make_person_videos(source, mask_path, background_path, fps, duration=None, ffmpeg="ffmpeg", segmenter=None,
-                       progress=None, long_side=ANALYSIS_LONG_SIDE):
+                       progress=None, long_side=ANALYSIS_LONG_SIDE, stats=None):
     """source から、人物の範囲の動画 (mask_path) と、人物を消した背景の動画 (background_path、元の音声付き) を作る。
     どちらも元の縦横比で、長い辺 long_side 以下 (convert.py は人物の範囲を元の動画と同じように縮めるので位置がそろう)。
-    戻り値はフレームの数。progress(i) をフレームごとに呼ぶ。"""
+    戻り値はフレームの数。progress(i) を書き出したフレームごとに呼ぶ。
+
+    アニメ向けの切り抜き (primary と fallback_prob を持つもの) は TemporalGuard を通すので、書き出しは PERSON_LOOKAHEAD
+    フレーム遅れる (動画の終わりで全部書き出す。フレームの数・音声・背景の動画は変わらない)。stats (dict) を渡すと、そのとき
+    だけ TemporalGuard.counts (出所ごとのフレーム数) を入れる。"""
     segmenter = segmenter or PersonSegmenter()
     splitter = PersonSplitter(segmenter)
+    guard = TemporalGuard(segmenter) if all(callable(getattr(segmenter, name, None))
+                                           for name in ("primary", "fallback_prob")) else None
     writers = []
     count = 0
-    try:
-        for frame in read_frames(source, fps, duration, ffmpeg, long_side):
-            if not writers:
-                height, width = frame.shape[:2]
-                writers = [_writer(mask_path, width, height, fps, ffmpeg),
-                           _writer(background_path, width, height, fps, ffmpeg, audio_from=source, duration=duration)]
+
+    def write(settled):
+        nonlocal count
+        for rgb, prob, cut in settled:
             mask_writer, background_writer = writers
-            mask, background = splitter(frame)
+            mask, background = splitter(rgb, prob, cut)
             gray = (np.clip(mask, 0, 1) * 255).astype(np.uint8)
             mask_writer.stdin.write(np.repeat(gray[..., None], 3, axis=2).tobytes())
             background_writer.stdin.write(background.tobytes())
@@ -503,12 +698,24 @@ def make_person_videos(source, mask_path, background_path, fps, duration=None, f
                 _check_free_ram()
             if progress:
                 progress(count)
+
+    try:
+        for frame in read_frames(source, fps, duration, ffmpeg, long_side):
+            if not writers:
+                height, width = frame.shape[:2]
+                writers = [_writer(mask_path, width, height, fps, ffmpeg),
+                           _writer(background_path, width, height, fps, ffmpeg, audio_from=source, duration=duration)]
+            write(guard.push(frame) if guard else [(frame, None, None)])
+        if guard:
+            write(guard.flush())
     finally:
         for writer in writers:
             writer.stdin.close()
             writer.wait()
     if count == 0:
         raise RuntimeError(f"動画を読めませんでした: {source}")
+    if guard and stats is not None:
+        stats.update(guard.counts)
     return count
 
 
@@ -540,17 +747,20 @@ def main(argv=None):
         profile = profile_ladder(args.model, ram and ram[1], vram and vram[1])[0]
     long_side = args.long_side or PROFILES[profile]["long_side"]
     print(f"profile {profile}", flush=True)
+    stats = {}
     try:
         segmenter = make_segmenter(args.model, profile,
                                    download_progress=lambda done, total: print(f"download {done} {total}", flush=True))
         count = make_person_videos(args.input, args.mask_output, args.background_output, args.fps, args.duration,
                                    args.ffmpeg, segmenter=segmenter,
                                    progress=lambda i: print(f"{i} frames", flush=True) if i % 10 == 0 else None,
-                                   long_side=long_side)
+                                   long_side=long_side, stats=stats)
     except Exception as error:  # noqa: BLE001 (メモリ不足だけ、決まった終了コードで知らせる)
         if is_out_of_memory(error):
             print(f"out of memory: {error}", flush=True)
             return EXIT_OUT_OF_MEMORY
         raise
+    if stats:  # 出所ごとのフレーム数 (anime=そのまま filled=前後で埋めた matched=合わせた予備 fallback=そのままの予備)
+        print("sources " + " ".join(f"{key}={value}" for key, value in stats.items()), flush=True)
     print(f"done {count} frames -> {args.mask_output}, {args.background_output}", flush=True)
     return 0
