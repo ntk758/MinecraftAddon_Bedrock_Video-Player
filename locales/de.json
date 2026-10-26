@@ -109,6 +109,8 @@
   "build.person_retry_memory": "  Speicher reicht nicht; neuer Versuch mit der leichteren Einstellung „{profile}“",
   "build.person_retry_crash": "  Das Ausschneiden ist abgestürzt; neuer Versuch mit „{profile}“",
   "build.person_failed": "Das Ausschneiden ist auch mit der leichtesten Einstellung fehlgeschlagen: {detail}",
+  "build.person_input_error": "Das Ausschneiden konnte das Video nicht lesen (Datei beschädigt oder ffmpeg lässt sich nicht starten). Eine leichtere Einstellung hilft nicht, daher kein neuer Versuch: {detail}",
+  "build.person_model_error": "Das KI-Modell zum Ausschneiden von Personen konnte nicht heruntergeladen werden oder ist beschädigt (Netzwerkverbindung prüfen). Eine leichtere Einstellung hilft nicht, daher kein neuer Versuch: {detail}",
   "profile.full": "Beste (GPU + Hilfsmodell für 3D-Grafik)",
   "profile.gpu": "GPU",
   "profile.cpu": "CPU (ohne GPU)",

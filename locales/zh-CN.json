@@ -109,6 +109,8 @@
   "build.person_retry_memory": "  内存不足而中止，改用较轻的设置「{profile}」重试",
   "build.person_retry_crash": "  抠图中途崩溃，改用较轻的设置「{profile}」重试",
   "build.person_failed": "即使用最轻的设置也无法抠出人物：{detail}",
+  "build.person_input_error": "人物抠图无法读取视频（文件已损坏，或无法启动 ffmpeg）。换用较轻的设置也无法解决，因此不再重试：{detail}",
+  "build.person_model_error": "无法下载人物抠图所需的 AI 模型，或模型已损坏（请检查网络连接）。换用较轻的设置也无法解决，因此不再重试：{detail}",
   "profile.full": "最高（GPU + 3DCG 用辅助模型）",
   "profile.gpu": "GPU",
   "profile.cpu": "CPU（不用 GPU）",

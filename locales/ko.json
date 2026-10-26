@@ -109,6 +109,8 @@
   "build.person_retry_memory": "  메모리가 부족해 멈췄으므로 가벼운 설정 「{profile}」로 다시 합니다",
   "build.person_retry_crash": "  잘라내기가 도중에 멈췄으므로 가벼운 설정 「{profile}」로 다시 합니다",
   "build.person_failed": "가장 가벼운 설정으로도 인물을 잘라내지 못했습니다: {detail}",
+  "build.person_input_error": "인물 잘라내기에서 동영상을 읽지 못했습니다(파일이 손상되었거나 ffmpeg를 실행할 수 없습니다). 더 가벼운 설정으로 바꿔도 해결되지 않으므로 다시 시도하지 않습니다: {detail}",
+  "build.person_model_error": "인물 잘라내기용 AI 모델을 다운로드하지 못했거나 모델이 손상되었습니다(네트워크 연결을 확인하세요). 더 가벼운 설정으로 바꿔도 해결되지 않으므로 다시 시도하지 않습니다: {detail}",
   "profile.full": "최고 (GPU + 3DCG용 보조 모델)",
   "profile.gpu": "GPU",
   "profile.cpu": "CPU (GPU 사용 안 함)",

@@ -109,6 +109,8 @@
   "build.person_retry_memory": "  メモリが足りずに止まったので、軽い設定「{profile}」でやり直します",
   "build.person_retry_crash": "  切り抜きが途中で落ちたので、軽い設定「{profile}」でやり直します",
   "build.person_failed": "人物の切り抜きが、いちばん軽い設定でもできませんでした: {detail}",
+  "build.person_input_error": "人物の切り抜きで動画を読めませんでした (ファイルが壊れているか、ffmpeg を起動できません)。軽い設定にしても直らないので、やり直しません: {detail}",
+  "build.person_model_error": "人物の切り抜きの AI モデルをダウンロードできないか、壊れています (ネットワークを確認してください)。軽い設定にしても直らないので、やり直しません: {detail}",
   "profile.full": "最高 (GPU + 3DCG 用の補助モデル)",
   "profile.gpu": "GPU",
   "profile.cpu": "CPU (GPU を使わない)",

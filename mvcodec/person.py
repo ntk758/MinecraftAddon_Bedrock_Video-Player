@@ -6,6 +6,8 @@ AI の切り抜きモデルで各フレームの人物の範囲を求める。�
   - anime: skytnt/anime-seg の ISNet (Apache-2.0、約 176 MB、初回にダウンロード。onnxruntime で動かし、
     DirectML / CUDA の GPU があれば使う)。アニメ・イラストの人物を、髪や手の先まで切り抜く。人物を見つけないフレーム
     だけ別のモデルになってちらつくので、前後 6 フレームを先読みして直す (TemporalGuard)
+アニメ向けのモデルが人物を見つけないフレームは、GPU があれば目立つ物の切り抜き (BiRefNet) を使うが、GPU のメモリが足りないときは
+その場で写真向けのモデルだけに替える (動画の途中で替えたフレームの番号は「salient dropped at frame N」で知らせる)
 次の 2 本の動画を作る:
   - 人物の範囲の動画 (白 = 人物): convert.py の --mask-video に渡すと、その形をふくらませた立体 (inflate) になる
   - 人物を消した背景の動画: だまし絵の後ろの壁に流す (--stage-background)。消した所は、同じ場面で人物がいなかった
@@ -13,9 +15,13 @@ AI の切り抜きモデルで各フレームの人物の範囲を求める。�
 
     python scripts/make_person_videos.py in.mp4 mask.mp4 background.mp4 --fps 10 [--model anime]
 """
+import gc
 import hashlib
+import http.client
 import os
 import subprocess
+import time
+import urllib.error
 import urllib.request
 from collections import deque
 from pathlib import Path
@@ -50,7 +56,10 @@ class PersonSegmenter:
         self.torch = torch
         self.device = torch.device(device)
         weights = DeepLabV3_MobileNet_V3_Large_Weights.DEFAULT
-        self.model = deeplabv3_mobilenet_v3_large(weights=weights).eval().to(self.device)
+        try:
+            self.model = deeplabv3_mobilenet_v3_large(weights=weights).eval().to(self.device)
+        except urllib.error.URLError as error:  # 初回の重みのダウンロードに失敗した
+            raise ModelError(f"実写向きのモデルをダウンロードできませんでした: {error}") from error
         self.mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
         self.std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
@@ -92,6 +101,20 @@ SALIENT_MIN_AREA = 0.001
 # 塊を数えるときの画像の長い辺 (細かい所は塊の判定に要らない)
 COMPONENT_LONG_SIDE = 160
 GPU_PROVIDERS = ("DmlExecutionProvider", "CUDAExecutionProvider")
+# 目立つ物の切り抜き (BiRefNet) の推論が、直近 SALIENT_SLOW_WINDOW 回の中央値でこの ms を超えたら、写真向けのモデルだけに替える。
+# DirectML は VRAM が足りないと、例外を出さずに共有メモリへ退避して遅くなる (この PC の RX 9070 XT で、普段は 81〜115 ms、
+# VRAM 10 GiB を別に確保して足りなくしたときは 1021〜2410 ms)。遅いだけで正常な GPU (内蔵 GPU など) では誤って外れるので、
+# コマンドラインの --salient-slow-ms で変えられる (外れたときは、フレームの番号と中央値を必ず知らせる)
+SALIENT_SLOW_MS = 600.0
+SALIENT_SLOW_WINDOW = 5
+
+
+class InputError(RuntimeError):
+    """入力の動画を読めない・ffmpeg を起動できない (別の段階でやり直しても直らない)。"""
+
+
+class ModelError(RuntimeError):
+    """モデルをダウンロードできない・壊れている (別の段階でやり直しても直らない)。"""
 
 
 def model_dir():
@@ -100,29 +123,45 @@ def model_dir():
 
 
 def download_model(url, path, sha256, progress=None):
-    """url を path にダウンロードし、SHA-256 を確かめる (違えば消してエラー)。progress(読んだバイト数, 全体) を呼ぶ。"""
+    """url を path にダウンロードし、SHA-256 を確かめる (違えば消してエラー)。progress(読んだバイト数, 全体) を呼ぶ。
+    通信や書き込みに失敗したときも、SHA-256 が違うときも ModelError。"""
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     partial = path.with_suffix(path.suffix + ".part")
     digest = hashlib.sha256()
-    request = urllib.request.Request(url, headers={"User-Agent": "BlockVideoPlayer"})
-    with urllib.request.urlopen(request, timeout=60) as response, open(partial, "wb") as out:
-        total = int(response.headers.get("Content-Length") or 0)
-        done = 0
-        while True:
-            chunk = response.read(1 << 20)
-            if not chunk:
-                break
-            out.write(chunk)
-            digest.update(chunk)
-            done += len(chunk)
-            if progress:
-                progress(done, total)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        request = urllib.request.Request(url, headers={"User-Agent": "BlockVideoPlayer"})
+        with urllib.request.urlopen(request, timeout=60) as response, open(partial, "wb") as out:
+            total = int(response.headers.get("Content-Length") or 0)
+            done = 0
+            while True:
+                chunk = response.read(1 << 20)
+                if not chunk:
+                    break
+                out.write(chunk)
+                digest.update(chunk)
+                done += len(chunk)
+                if progress:
+                    progress(done, total)
+    except (OSError, http.client.HTTPException) as error:  # 接続できない・404・途中で切れた・書き込めない
+        _remove(partial)
+        raise ModelError(f"モデルをダウンロードできませんでした: {url} ({error})") from error
     if digest.hexdigest() != sha256:
         partial.unlink()
-        raise RuntimeError(f"ダウンロードしたモデルが壊れています (SHA-256 が違います): {url}")
-    partial.replace(path)
+        raise ModelError(f"ダウンロードしたモデルが壊れています (SHA-256 が違います): {url}")
+    try:
+        partial.replace(path)
+    except OSError as error:
+        _remove(partial)
+        raise ModelError(f"ダウンロードしたモデルを保存できませんでした: {path} ({error})") from error
     return path
+
+
+def _remove(path):
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 class AnimeSegmenter:
@@ -130,14 +169,20 @@ class AnimeSegmenter:
 
     画像は縦横比を保って 1024 × 1024 の真ん中に置き (余白は黒)、出力の同じ範囲を元の大きさに戻す。"""
 
-    def __init__(self, model_path=None, providers=None, download_progress=None, fallback="auto", salient=True):
+    def __init__(self, model_path=None, providers=None, download_progress=None, fallback="auto", salient=True,
+                 salient_slow_ms=SALIENT_SLOW_MS):
         """fallback: 人物を見つけなかったフレームに使う切り抜き (既定は PersonSegmenter を最初に要るときに作る。
         PyTorch が無ければ使わない)。None なら使わない。salient が偽なら、GPU があっても目立つ物の切り抜き
-        (BiRefNet、RAM を 5〜10 GB 使う) は使わない。"""
+        (BiRefNet、RAM を 5〜10 GB 使う) は使わない。salient_slow_ms: 目立つ物の切り抜きの推論の直近 5 回の中央値がこれを
+        超えたら外す (SALIENT_SLOW_MS)。"""
         import onnxruntime as ort
 
         self.fallback = fallback
         self.salient = salient
+        self.salient_slow_ms = salient_slow_ms
+        self.salient_dropped = None   # 目立つ物の切り抜きを外したら (フレームの番号, "oom" か "slow")
+        self.frame = None             # 予備を呼んでいるフレームの番号 (外したときの知らせに使う)
+        self.calls = 0
 
         path = Path(model_path) if model_path else model_dir() / ANIME_MODEL_FILE
         if not path.is_file():
@@ -165,46 +210,106 @@ class AnimeSegmenter:
         mask = np.asarray(mask, np.float32).reshape(size, size)[top:top + nh, left:left + nw]
         return np.asarray(Image.fromarray(mask).resize((w, h), Image.Resampling.BILINEAR), np.float32)
 
-    def fallback_prob(self, rgb):
+    def fallback_prob(self, rgb, index=None):
         """予備の切り抜きで求めた人物の確からしさ。予備を使わない設定 (None)・作れないときは None。
-        予備のモデルは、最初に要るときに作る。"""
+        予備のモデルは、最初に要るときに作る。index は今のフレームの番号 (目立つ物の切り抜きを外したときの知らせに使う)。
+
+        目立つ物の切り抜きがメモリ不足で動かなくなったときは、写真向けのモデルだけに替えてそのフレームをやり直す。
+        推論が遅くなったとき (VRAM が足りずに共有メモリへ退避した) は、そのフレームはそのままで、次から写真向けだけにする。"""
+        self.frame = index
         if self.fallback == "auto":
             self.fallback = self._make_fallback()
-        if self.fallback is None:
+        fallback = self.fallback
+        if fallback is None:
             return None
-        return self.fallback(rgb)
+        if not isinstance(fallback, SalientPersonSegmenter):
+            return fallback(rgb)
+        reason = None
+        try:
+            prob = fallback(rgb)
+        except Exception as error:  # noqa: BLE001 (メモリ不足だけ受ける。例外の中の画面の参照を残さないよう、外で外す)
+            if not is_out_of_memory(error):
+                raise
+            reason = ("oom", str(error))
+        if reason is not None:
+            # 写真向けのモデル (DeepLab、CPU) のメモリ不足も同じに扱う: 目立つ物の切り抜きを外せば、そのぶんのメモリが空く
+            self._drop_salient(*reason)
+            return self.fallback(rgb)
+        if fallback.is_slow():
+            self._drop_salient("slow", f"median of the last {SALIENT_SLOW_WINDOW} runs {fallback.median_ms():.0f} ms "
+                                       f"> {self.salient_slow_ms:.0f} ms")
+        return prob
 
     def __call__(self, rgb):
+        index, self.calls = self.calls, self.calls + 1
         mask = self.primary(rgb)
         if (mask >= 0.5).mean() < ANIME_MIN_AREA:
-            prob = self.fallback_prob(rgb)
+            prob = self.fallback_prob(rgb, index)
             if prob is not None:
                 return prob
         return mask
 
     def _make_fallback(self):
         """人物を見つけなかったフレームの切り抜き: GPU があれば目立つ物の切り抜き + 写真向けのモデル、無ければ写真向けだけ。
-        PyTorch が無ければ None (何もしない)。"""
+        PyTorch が無ければ None (何もしない)。
+
+        目立つ物の切り抜きは GPU のメモリを最初の推論で確保する (BiRefNet_lite fp16 で約 11 GB) ので、作った直後に 1 回
+        推論して (試しの推論)、メモリ不足がここで起きるようにする。動かなければ写真向けのモデルだけにする。"""
         try:
             photo = PersonSegmenter()
         except ImportError:
             return None
         if not self.salient or not any(p in GPU_PROVIDERS for p in self.providers):
             return photo
+        salient = None
+        failure = None
         try:
-            return SalientPersonSegmenter(photo, providers=self.providers, download_progress=self.download_progress)
-        except Exception as error:  # ダウンロードできない・GPU で動かないときは写真向けだけにする
-            print(f"[person] 目立つ物の切り抜きを使えないので、写真向けのモデルだけを使います: {error}")
-            return photo
+            salient = SalientPersonSegmenter(photo, providers=self.providers, download_progress=self.download_progress,
+                                             slow_ms=self.salient_slow_ms)
+            salient.warm_up()
+            return salient
+        except Exception as error:  # ダウンロードできない・GPU で動かない・メモリが足りないときは写真向けだけにする
+            failure = error
+        # 例外が持つ画面の参照 (推論の中のセッション) を手放してから解放する
+        out_of_memory = is_out_of_memory(failure)
+        message = str(failure)
+        failure = None
+        if salient is not None:
+            salient.release()
+            salient = None
+            gc.collect()
+        if out_of_memory:
+            self._report_dropped("oom", message)
+        else:
+            print(f"[person] 目立つ物の切り抜きを使えないので、写真向けのモデルだけを使います: {message}", flush=True)
+        return photo
+
+    def _drop_salient(self, reason, detail):
+        """目立つ物の切り抜きを外して写真向けのモデルだけにし、GPU のメモリを返す。"""
+        salient = self.fallback
+        self.fallback = salient.photo
+        salient.release()
+        del salient
+        gc.collect()
+        self._report_dropped(reason, detail)
+
+    def _report_dropped(self, reason, detail):
+        """外した理由を 1 行で知らせ、salient_dropped に残す (動画の途中で替えるとマスクの形が変わるので、フレームの番号を出す)。"""
+        self.salient_dropped = (self.frame, reason)
+        detail = " ".join(detail.split())
+        print(f"salient dropped at frame {self.frame if self.frame is not None else '?'}: {reason}"
+              f"{f' ({detail[:160]})' if detail else ''}", flush=True)
 
 
 class SalientPersonSegmenter:
     """目立つ物の切り抜き (BiRefNet_lite) の塊のうち、写真向けのモデル (photo) が人物らしいと見る塊だけを返す。"""
 
-    def __init__(self, photo, model_path=None, providers=None, download_progress=None):
+    def __init__(self, photo, model_path=None, providers=None, download_progress=None, slow_ms=SALIENT_SLOW_MS):
         import onnxruntime as ort
 
         self.photo = photo
+        self.slow_ms = slow_ms
+        self.times = deque(maxlen=SALIENT_SLOW_WINDOW)   # 直近の推論 (session.run) の ms。試しの推論は入れない
         path = Path(model_path) if model_path else model_dir() / SALIENT_MODEL_FILE
         if not path.is_file():
             download_model(SALIENT_MODEL_URL, path, SALIENT_MODEL_SHA256, download_progress)
@@ -215,13 +320,35 @@ class SalientPersonSegmenter:
         self.mean = np.array([0.485, 0.456, 0.406], np.float32)
         self.std = np.array([0.229, 0.224, 0.225], np.float32)
 
+    def warm_up(self):
+        """0 の画像で 1 回推論する (試しの推論)。GPU のメモリは最初の推論で確保される (BiRefNet_lite fp16 で約 11 GB) ので、
+        足りなければここで例外になる。時間は記録しない (最初の 1 回は、確保のぶん普段の 10 倍ほどかかる)。"""
+        size = SALIENT_INPUT_SIZE
+        self.session.run(None, {self.input_name: np.zeros((1, 3, size, size), np.float32)})
+
+    def release(self):
+        """ORT のセッションを手放す (GPU のメモリと RAM が返る)。これ以後は使えない。"""
+        self.session = None
+
+    def median_ms(self):
+        """直近の推論の ms の中央値 (記録が SALIENT_SLOW_WINDOW 回に満たなければ 0)。"""
+        if len(self.times) < SALIENT_SLOW_WINDOW:
+            return 0.0
+        return sorted(self.times)[SALIENT_SLOW_WINDOW // 2]
+
+    def is_slow(self):
+        """直近 SALIENT_SLOW_WINDOW 回の推論の中央値が slow_ms を超えたか (VRAM が足りずに共有メモリへ退避した)。"""
+        return self.median_ms() > self.slow_ms
+
     def salient(self, rgb):
         """目立つ物の確からしさ (0〜1)。画像は 1024 × 1024 に引き伸ばして渡す (BiRefNet の決まり)。"""
         h, w = rgb.shape[:2]
         size = SALIENT_INPUT_SIZE
         image = np.asarray(Image.fromarray(rgb).resize((size, size), Image.Resampling.BILINEAR), np.float32) / 255
         image = (image - self.mean) / self.std
+        start = time.perf_counter()
         logits = self.session.run(None, {self.input_name: image.transpose(2, 0, 1)[None]})[0]
+        self.times.append((time.perf_counter() - start) * 1000)
         prob = 1 / (1 + np.exp(-np.asarray(logits, np.float32).reshape(size, size)))
         return np.asarray(Image.fromarray(prob).resize((w, h), Image.Resampling.BILINEAR), np.float32)
 
@@ -286,8 +413,12 @@ def _label(mask):
 # 切り抜きのモデルの種類 → 作り方
 SEGMENTERS = {"photo": PersonSegmenter, "anime": AnimeSegmenter}
 
-# メモリの使い方の段階 (重い順)。実測 (2026-10-25、RX 9070 XT): 写真向け (CPU) は RAM 0.4 GB、アニメ向けは RAM 0.9 GB・
-# VRAM 0.24 GB (GPU)、目立つ物の切り抜き (BiRefNet、fp16、DirectML) を足すと RAM 5.6〜10.4 GB・VRAM 1.8〜4.8 GB
+# メモリの使い方の段階 (重い順)。実測 (RX 9070 XT 16 GB、onnxruntime 1.24.4、DirectML): 写真向け (CPU) は RAM 0.4 GB、
+# アニメ向け (ISNet) は VRAM 0.75 GB・確保済みメモリ (commit) +0.55 GB。目立つ物の切り抜き (BiRefNet_lite、fp16) は、読み込みでは
+# VRAM 0.23 GB・commit 1.3 GB だが、最初の推論で VRAM 11.3 GB (11321 MiB)・commit 12.4 GB (12426 MiB) を確保する (入力は
+# 1024 × 1024 で固定、セッションの設定を変えても同じ。解放すると 0.06 GB・1.1 GB に戻る。ISNet と合わせた full の VRAM は 12.0 GB
+# (12022 MiB))。VRAM が足りないと DirectML は例外を出さず共有メモリへ退避し、1 枚 81〜115 ms が 1021〜2410 ms に遅くなる
+# (SalientPersonSegmenter が見張る)
 #   full: アニメ向け (GPU) + 見つけないフレームは目立つ物の切り抜き
 #   gpu: アニメ向け (GPU)、見つけないフレームは写真向け
 #   cpu: アニメ向けも CPU で (1 枚約 0.75 秒)
@@ -298,9 +429,10 @@ PROFILES = {
     "cpu": {"gpu": False, "salient": False, "long_side": 480},
     "photo": {"gpu": False, "salient": False, "long_side": 480},
 }
-# 段階ごとに要る空きメモリ (バイト)。(RAM, VRAM)。目立つ物の切り抜きは読み込むときに RAM を大きく使う
+# 段階ごとに要る空きメモリ (バイト)。(RAM, VRAM)。目立つ物の切り抜きは最初の推論で RAM と VRAM を大きく使う
+# (上の実測。1 機種で測った値なので、足りないときは SALIENT_SLOW_MS の見張りで外れる)
 PROFILE_NEEDS = {
-    "full": (12 * (1 << 30), 3 * (1 << 30)),
+    "full": (12 * (1 << 30), 12 * (1 << 30)),
     "gpu": (2 * (1 << 30), 1 * (1 << 30)),
     "cpu": (2 * (1 << 30), 0),
     "photo": (1 * (1 << 30), 0),
@@ -309,6 +441,10 @@ PROFILE_NEEDS = {
 MIN_FREE_RAM = 400 * (1 << 20)
 # メモリ不足で止まったときの終了コード (GUI はこれを見て軽い段階でやり直す)
 EXIT_OUT_OF_MEMORY = 3
+# 入力の動画を読めない・ffmpeg を起動できないときと、モデルをダウンロードできないときの終了コード
+# (軽い段階でやり直しても直らないので、GUI は次の段階へ進まずに知らせる)
+EXIT_INPUT_ERROR = 4
+EXIT_MODEL_ERROR = 5
 
 
 def profile_ladder(model, ram_free=None, vram_free=None):
@@ -339,13 +475,14 @@ def is_out_of_memory(error):
     return any(word in text for word in _OUT_OF_MEMORY_WORDS)
 
 
-def make_segmenter(model, profile, download_progress=None):
+def make_segmenter(model, profile, download_progress=None, salient_slow_ms=SALIENT_SLOW_MS):
     """段階に合わせた切り抜きを作る。"""
     if model == "photo" or profile == "photo":
         return PersonSegmenter()
     settings = PROFILES[profile]
     providers = None if settings["gpu"] else ["CPUExecutionProvider"]
-    return AnimeSegmenter(providers=providers, download_progress=download_progress, salient=settings["salient"])
+    return AnimeSegmenter(providers=providers, download_progress=download_progress, salient=settings["salient"],
+                          salient_slow_ms=salient_slow_ms)
 
 
 def _box_blur(a, size, axis):
@@ -547,7 +684,7 @@ class TemporalGuard:
         before, after = self._at(first - 1), self._at(last + 1)
         if last - first + 1 <= HOLD_MAX_RUN and found(before) and found(after):
             return (before if t - before.index <= after.index - t else after).prob, "filled"
-        prob = self.segmenter.fallback_prob(frame.rgb)
+        prob = self.segmenter.fallback_prob(frame.rgb, frame.index)
         if prob is None:  # 予備の切り抜きを使えない
             return frame.prob, "anime"
         near = [other for other in self.window if found(other) and abs(other.index - t) <= self.lookahead]
@@ -608,7 +745,7 @@ def read_frames(path, fps, duration=None, ffmpeg="ffmpeg", long_side=ANALYSIS_LO
     if duration is not None:
         cmd += ["-t", str(duration)]
     cmd += ["-f", "image2pipe", "-c:v", "ppm", "-"]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, **_subprocess_kwargs())
+    proc = _start_ffmpeg(cmd, ffmpeg, stdout=subprocess.PIPE)
     try:
         while True:
             fields = []
@@ -648,6 +785,14 @@ def _subprocess_kwargs():
     return {}
 
 
+def _start_ffmpeg(cmd, ffmpeg, **kwargs):
+    """ffmpeg を起動する。起動できなければ (見つからない・実行できない) InputError。"""
+    try:
+        return subprocess.Popen(cmd, **kwargs, **_subprocess_kwargs())
+    except OSError as error:
+        raise InputError(f"ffmpeg を起動できませんでした: {ffmpeg} ({error})") from error
+
+
 def _writer(path, width, height, fps, ffmpeg, audio_from=None, duration=None):
     cmd = [ffmpeg, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
            "-r", str(fps), "-i", "-"]
@@ -657,7 +802,7 @@ def _writer(path, width, height, fps, ffmpeg, audio_from=None, duration=None):
             cmd += ["-t", str(duration)]
     # 色を正確に残す (人物の範囲は白黒、背景はブロックの色を選ぶ元になる)
     cmd += ["-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv444p", str(path)]
-    return subprocess.Popen(cmd, stdin=subprocess.PIPE, **_subprocess_kwargs())
+    return _start_ffmpeg(cmd, ffmpeg, stdin=subprocess.PIPE)
 
 
 def _check_free_ram():
@@ -713,7 +858,7 @@ def make_person_videos(source, mask_path, background_path, fps, duration=None, f
             writer.stdin.close()
             writer.wait()
     if count == 0:
-        raise RuntimeError(f"動画を読めませんでした: {source}")
+        raise InputError(f"動画を読めませんでした: {source}")
     if guard and stats is not None:
         stats.update(guard.counts)
     return count
@@ -723,8 +868,14 @@ def main(argv=None):
     """コマンドライン (scripts/make_person_videos.py と、EXE の --run-person-split)。
 
     GUI は別のプロセスとしてこれを起動し、標準出力の「<数> frames」「download <済み> <全体>」を読む。
-    メモリ不足で止まったら EXIT_OUT_OF_MEMORY で終わる (GUI は軽い段階でやり直す)。"""
+    メモリ不足で止まったら EXIT_OUT_OF_MEMORY で終わる (GUI は軽い段階でやり直す)。入力を読めない・ffmpeg を起動できない
+    ときは EXIT_INPUT_ERROR、モデルをダウンロードできないときは EXIT_MODEL_ERROR で終わる (どちらも 1 行の知らせ付き。軽い段階では
+    直らないので、GUI はやり直さない)。目立つ物の切り抜きを外したときは「salient dropped at frame <番号>: oom|slow」を出す。"""
     import argparse
+
+    from mvcodec.resources import use_utf8_for_pipes
+
+    use_utf8_for_pipes()
     parser = argparse.ArgumentParser(description="動画から人物を切り抜き、人物の範囲の動画と、人物を消した背景の動画を作る")
     parser.add_argument("input")
     parser.add_argument("mask_output", help="人物の範囲の動画 (白 = 人物)")
@@ -738,6 +889,9 @@ def main(argv=None):
                         help="photo: 実写向き (DeepLabV3)、anime: アニメ・イラスト向き (anime-seg、初回に約 176 MB をダウンロード)")
     parser.add_argument("--profile", choices=list(PROFILES), default=None,
                         help="メモリの使い方 (full / gpu / cpu / photo)。既定は空きメモリから選ぶ")
+    parser.add_argument("--salient-slow-ms", type=float, default=SALIENT_SLOW_MS,
+                        help=f"目立つ物の切り抜き (BiRefNet) の推論の直近 {SALIENT_SLOW_WINDOW} 回の中央値がこの ms を超えたら、"
+                             f"写真向けのモデルだけにする (既定 {SALIENT_SLOW_MS:.0f}。遅いが正常な GPU では大きくする)")
     args = parser.parse_args(argv)
     profile = args.profile
     if profile is None:
@@ -750,11 +904,18 @@ def main(argv=None):
     stats = {}
     try:
         segmenter = make_segmenter(args.model, profile,
-                                   download_progress=lambda done, total: print(f"download {done} {total}", flush=True))
+                                   download_progress=lambda done, total: print(f"download {done} {total}", flush=True),
+                                   salient_slow_ms=args.salient_slow_ms)
         count = make_person_videos(args.input, args.mask_output, args.background_output, args.fps, args.duration,
                                    args.ffmpeg, segmenter=segmenter,
                                    progress=lambda i: print(f"{i} frames", flush=True) if i % 10 == 0 else None,
                                    long_side=long_side, stats=stats)
+    except InputError as error:
+        print(f"input error: {' '.join(str(error).split())}", flush=True)
+        return EXIT_INPUT_ERROR
+    except ModelError as error:
+        print(f"model error: {' '.join(str(error).split())}", flush=True)
+        return EXIT_MODEL_ERROR
     except Exception as error:  # noqa: BLE001 (メモリ不足だけ、決まった終了コードで知らせる)
         if is_out_of_memory(error):
             print(f"out of memory: {error}", flush=True)

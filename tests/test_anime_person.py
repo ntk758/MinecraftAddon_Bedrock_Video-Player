@@ -7,6 +7,7 @@
 """
 import hashlib
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -171,11 +172,18 @@ def test_fallback_uses_salient_cutout_only_with_a_gpu(tmp_path, monkeypatch, fak
     model = tmp_path / "isnetis.onnx"
     model.write_bytes(b"x")
     made = []
+
+    class Salient:
+        def __init__(self, photo, providers=None, download_progress=None, slow_ms=None):
+            made.append(photo)
+
+        def warm_up(self):
+            pass
+
     monkeypatch.setattr(person, "PersonSegmenter", lambda: "photo")
-    monkeypatch.setattr(person, "SalientPersonSegmenter",
-                        lambda photo, providers=None, download_progress=None: made.append(photo) or "salient")
+    monkeypatch.setattr(person, "SalientPersonSegmenter", Salient)
     gpu = person.AnimeSegmenter(model_path=model, providers=["DmlExecutionProvider", "CPUExecutionProvider"])
-    assert gpu._make_fallback() == "salient" and made == ["photo"]
+    assert isinstance(gpu._make_fallback(), Salient) and made == ["photo"]
     cpu = person.AnimeSegmenter(model_path=model, providers=["CPUExecutionProvider"])
     assert cpu._make_fallback() == "photo"
 
@@ -242,7 +250,13 @@ def test_cutout_stops_when_ram_runs_low(monkeypatch):
 
 def test_profiles_follow_free_memory():
     gib = 1 << 30
-    assert person.profile_ladder("anime", 16 * gib, 12 * gib) == ["full", "gpu", "cpu", "photo"]
+    assert person.profile_ladder("anime", 16 * gib, 14 * gib) == ["full", "gpu", "cpu", "photo"]
+    # 目立つ物の切り抜き (BiRefNet) は最初の推論で VRAM を約 11.3 GB、確保済みメモリを約 12.4 GB 使う (RX 9070 XT の実測):
+    # 空きの VRAM が 8 GiB なら gpu から、14 GiB なら full から
+    assert person.PROFILE_NEEDS["full"] == (12 * gib, 12 * gib)
+    assert person.profile_ladder("anime", 16 * gib, 8 * gib) == ["gpu", "cpu", "photo"]
+    assert person.profile_ladder("anime", 16 * gib, 12 * gib)[0] == "full"
+    assert person.profile_ladder("anime", 16 * gib, 12 * gib - 1)[0] == "gpu"
     # 目立つ物の切り抜きは RAM を 5〜10 GB 使うので、空きが少なければ使わない
     assert person.profile_ladder("anime", 6 * gib, 12 * gib)[0] == "gpu"
     assert person.profile_ladder("anime", 6 * gib, gib // 2)[0] == "cpu"
@@ -291,8 +305,9 @@ class _Scripted:
     def primary(self, rgb):
         return self.primary_probs[self.index[id(rgb)]]
 
-    def fallback_prob(self, rgb):
+    def fallback_prob(self, rgb, frame=None):
         index = self.index[id(rgb)]
+        assert frame in (None, index)   # TemporalGuard は今のフレームの番号を渡す
         self.fallback_calls.append(index)
         return None if self.fallback_probs is None else self.fallback_probs[index]
 
@@ -521,7 +536,7 @@ def test_only_the_anime_model_gets_the_temporal_guard(monkeypatch, capsys):
                 self.reads += 1
                 return np.zeros(rgb.shape[:2], np.float32) if self.reads in (11, 12) else bright(rgb)
 
-            def fallback_prob(self, rgb):
+            def fallback_prob(self, rgb, frame=None):
                 self.fallback_calls += 1
                 return np.full(rgb.shape[:2], 0.1, np.float32)
 
@@ -543,13 +558,13 @@ def test_only_the_anime_model_gets_the_temporal_guard(monkeypatch, capsys):
         assert len(masks) == 20 and min(masks) > 0.1   # 見つけなかった 2 枚にも、前後と同じ四角 (面積 12.5%) が入っている
 
         # コマンドラインは、出所ごとのフレーム数を 1 行で知らせる (写真向けのときは知らせない)
-        monkeypatch.setattr(person, "make_segmenter", lambda model, profile, download_progress=None: Anime())
+        monkeypatch.setattr(person, "make_segmenter", lambda model, profile, download_progress=None, **_: Anime())
         argv = [str(video), str(Path(folder) / "m3.mp4"), str(Path(folder) / "b3.mp4"), "--fps", "10", "--model", "anime",
                 "--profile", "gpu"]
         assert person.main(argv) == 0
         lines = capsys.readouterr().out.splitlines()
         assert "sources anime=18 filled=2 matched=0 fallback=0 flagged=2" in lines and lines[-1].startswith("done 20 frames")
-        monkeypatch.setattr(person, "make_segmenter", lambda model, profile, download_progress=None: photo)
+        monkeypatch.setattr(person, "make_segmenter", lambda model, profile, download_progress=None, **_: photo)
         assert person.main(argv[:-4] + ["--model", "photo", "--profile", "photo"]) == 0
         assert not [line for line in capsys.readouterr().out.splitlines() if line.startswith("sources")]
 
@@ -671,3 +686,455 @@ def test_salient_cutout_without_an_approved_blob_returns_the_photo_probability(t
     mask = person.SalientPersonSegmenter(photo, model_path=model)(rgb)
     # 承認された塊が 1 つも無い: 空ではなく写真向けの結果
     assert mask.dtype == np.float32 and np.array_equal(mask, photo(rgb))
+
+
+# ---------------------------------------------------------------------------
+# 失敗の扱い: UTF-8 の出力、原因ごとの終了コード、メモリが足りないときに BiRefNet をその場で外す
+# ---------------------------------------------------------------------------
+
+# 子プロセスの代わりに person.main を動かす小さなスクリプト: onnxruntime を偽物にして、本物のモデルもダウンロードも使わない
+_DRIVER = '''
+import os, sys, types
+sys.path.insert(0, os.environ["DRIVER_ROOT"])
+
+
+class Session:
+    def __init__(self, path, options=None, providers=None):
+        pass
+
+    def get_inputs(self):
+        return [types.SimpleNamespace(name="img")]
+
+    def run(self, outputs, feeds):
+        return [feeds["img"][:, :1]]
+
+
+sys.modules["onnxruntime"] = types.SimpleNamespace(
+    InferenceSession=Session, SessionOptions=lambda: types.SimpleNamespace(), get_available_providers=lambda: ["CPUExecutionProvider"])
+from mvcodec import person
+if os.environ.get("DRIVER_MODEL_URL"):
+    person.ANIME_MODEL_URL = os.environ["DRIVER_MODEL_URL"]
+sys.exit(person.main(sys.argv[1:]))
+'''
+
+
+def _run_person_cli(tmp_path, args, model_url=None, model_dir=None):
+    """GUI と同じく、標準出力をパイプにして person.main を別のプロセスで動かす。(終了コード, utf-8 で読んだ出力)。"""
+    import os
+    import subprocess
+
+    driver = tmp_path / "driver.py"
+    driver.write_text(_DRIVER, encoding="utf-8")
+    model_dir = model_dir or tmp_path / "models"
+    model_dir.mkdir(exist_ok=True)
+    env = {key: value for key, value in os.environ.items() if key not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+    env.update(DRIVER_ROOT=str(ROOT), BVP_MODEL_DIR=str(model_dir))
+    if model_url:
+        env["DRIVER_MODEL_URL"] = model_url
+    result = subprocess.run([sys.executable, str(driver), *map(str, args)], capture_output=True, env=env, timeout=120)
+    return result.returncode, (result.stdout + result.stderr).decode("utf-8", errors="replace")
+
+
+def _model_dir_with_isnet(tmp_path):
+    folder = tmp_path / "models"
+    folder.mkdir(exist_ok=True)
+    (folder / person.ANIME_MODEL_FILE).write_bytes(b"x")
+    return folder
+
+
+def test_pipe_output_is_utf8_and_an_unreadable_input_exits_with_4(tmp_path):
+    import shutil
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg が必要")
+    text = tmp_path / "not_a_video.txt"
+    text.write_text("this is not a video", encoding="utf-8")
+    code, output = _run_person_cli(tmp_path, [text, tmp_path / "m.mp4", tmp_path / "b.mp4", "--model", "anime", "--profile", "gpu"],
+                                   model_dir=_model_dir_with_isnet(tmp_path))
+    # 日本語の知らせがパイプ越しにそのまま届く (cp932 で書くと GUI の読み方 (utf-8) では文字化けする)
+    assert "�" not in output and "動画を読めませんでした" in output
+    assert code == person.EXIT_INPUT_ERROR == 4
+    # 1 行の知らせで終わる (トレースバックは出さない)
+    assert "Traceback" not in output
+    assert [line for line in output.splitlines() if line.startswith("input error: 動画を読めませんでした")]
+
+
+def test_a_missing_ffmpeg_exits_with_4(tmp_path):
+    video = tmp_path / "in.mp4"
+    video.write_bytes(b"x")
+    code, output = _run_person_cli(
+        tmp_path, [video, tmp_path / "m.mp4", tmp_path / "b.mp4", "--model", "anime", "--profile", "gpu",
+                   "--ffmpeg", tmp_path / "no-such-ffmpeg"], model_dir=_model_dir_with_isnet(tmp_path))
+    assert code == person.EXIT_INPUT_ERROR and "�" not in output
+    assert "input error: ffmpeg を起動できませんでした" in output and "Traceback" not in output
+    # 読み取りも書き出しも、起動できないのは同じ InputError (FileNotFoundError はそのまま出さない)
+    with pytest.raises(person.InputError):
+        list(person.read_frames(video, 10, ffmpeg=str(tmp_path / "no-such-ffmpeg")))
+    with pytest.raises(person.InputError):
+        person._writer(tmp_path / "x.mp4", 16, 16, 10, str(tmp_path / "no-such-ffmpeg"))
+
+
+@pytest.mark.parametrize("problem", ["wrong_bytes", "unreachable"])
+def test_a_failed_model_download_exits_with_5(tmp_path, problem):
+    """SHA-256 が合わないモデルも、ダウンロードできないモデルも、終了コード 5 (軽い段階にしても直らない)。"""
+    wrong = tmp_path / "wrong.onnx"
+    wrong.write_bytes(b"not the real model")
+    url = wrong.as_uri() if problem == "wrong_bytes" else (tmp_path / "missing.onnx").as_uri()
+    models = tmp_path / "empty_models"
+    code, output = _run_person_cli(tmp_path, [tmp_path / "in.mp4", tmp_path / "m.mp4", tmp_path / "b.mp4", "--model", "anime",
+                                              "--profile", "gpu"], model_url=url, model_dir=models)
+    assert code == person.EXIT_MODEL_ERROR == 5 and "Traceback" not in output
+    line = output.strip().splitlines()[-1]
+    assert line.startswith("model error: ") and ("SHA-256" in line if problem == "wrong_bytes" else "ダウンロードできませんでした" in line)
+    assert not list(models.glob("*"))   # 壊れたモデルも、書きかけの .part も残さない
+
+
+def test_download_failures_are_all_model_errors(tmp_path):
+    """404・途中で切れた・合わない中身は、どれも ModelError (RuntimeError の一種)。書きかけのファイルは残さない。"""
+    import http.server
+    import socket
+    import struct
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            if self.path == "/404":
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", "1000" if self.path == "/reset" else "11")
+            self.end_headers()
+            self.wfile.write(b"wrong bytes" if self.path == "/wrong" else b"partial")
+            self.wfile.flush()
+            if self.path == "/reset":   # 途中で RST を返して切る
+                self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                self.connection.close()
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        for path in ("/404", "/wrong", "/reset"):
+            target = tmp_path / "cache" / "model.onnx"
+            with pytest.raises(person.ModelError) as caught:
+                person.download_model(f"http://127.0.0.1:{server.server_address[1]}{path}", target, "0" * 64)
+            assert isinstance(caught.value, RuntimeError)
+            assert not target.exists() and not list(target.parent.glob("*.part")), path
+        # つながらない (閉じたポート) もそう
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        closed_port = sock.getsockname()[1]
+        sock.close()
+        with pytest.raises(person.ModelError):
+            person.download_model(f"http://127.0.0.1:{closed_port}/x", tmp_path / "cache" / "model.onnx", "0" * 64)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_pipe_output_is_switched_to_utf8_in_one_shared_place(monkeypatch):
+    import io
+
+    import convert
+    from mvcodec import resources
+
+    assert convert.use_utf8_for_pipes is resources.use_utf8_for_pipes   # convert.py は共通の場所の関数を使う
+
+    class Tty(io.TextIOWrapper):
+        def isatty(self):
+            return True
+
+    pipe_out = io.TextIOWrapper(io.BytesIO(), encoding="cp932")
+    pipe_err = io.TextIOWrapper(io.BytesIO(), encoding="cp932")
+    monkeypatch.setattr(sys, "stdout", pipe_out)
+    monkeypatch.setattr(sys, "stderr", pipe_err)
+    resources.use_utf8_for_pipes()
+    assert pipe_out.encoding == pipe_err.encoding == "utf-8" and pipe_out.line_buffering
+    # 端末はそのまま。標準出力が無い (windowed EXE) ときも落ちない
+    terminal = Tty(io.BytesIO(), encoding="cp932")
+    monkeypatch.setattr(sys, "stdout", terminal)
+    monkeypatch.setattr(sys, "stderr", None)
+    resources.use_utf8_for_pipes()
+    assert terminal.encoding == "cp932"
+
+
+def test_gui_stops_at_once_when_the_input_or_the_model_is_the_problem(tmp_path, monkeypatch):
+    """終了コード 4・5 は軽い段階にしても直らない: 1 段だけ試して、その理由を知らせる。3 とそれ以外の異常は今までどおり次の段階へ。"""
+    import queue
+
+    import video_player_gui as gui
+    from gui_i18n import Translator
+    from mvcodec import resources
+
+    gib = 1 << 30
+    monkeypatch.setattr(resources, "system_memory", lambda: (32 * gib, 16 * gib))
+    monkeypatch.setattr(resources, "gpu_memory", lambda: (16 * gib, 14 * gib))
+
+    class Headless:
+        def __init__(self, codes, output):
+            self.tr = Translator("ja")
+            self.messages = queue.Queue()
+            self.codes = list(codes)
+            self.output = output
+            self.profiles = []
+
+        def _person_process(self, argv):
+            self.profiles.append(argv[argv.index("--profile") + 1])
+            return self.codes.pop(0), self.output
+
+    def split(app):
+        return gui.PackBuilderApp._split_person(app, tmp_path / "in.mp4", tmp_path / "work", 80, 45, 10, None, "ffmpeg", "anime")
+
+    for code, key, line in ((person.EXIT_INPUT_ERROR, "build.person_input_error", "input error: 動画を読めませんでした: in.mp4"),
+                            (person.EXIT_MODEL_ERROR, "build.person_model_error", "model error: モデルをダウンロードできませんでした: u")):
+        app = Headless([code, 0, 0, 0], "profile full\n" + line)
+        with pytest.raises(RuntimeError) as caught:
+            split(app)
+        assert app.profiles == ["full"]   # 次の段階を試さない
+        assert str(caught.value) == app.tr(key, detail=line.split(": ", 1)[1])
+        retry_texts = [str(app.messages.get()) for _ in range(app.messages.qsize())]
+        assert not [text for text in retry_texts if "やり直します" in text]   # 「軽い設定でやり直します」は出さない
+    # 3 (メモリ不足)・落ちた (-1073741819)・ほかの 0 でないコード (1) は、今までどおり次の段階へ進む
+    app = Headless([person.EXIT_OUT_OF_MEMORY, -1073741819, 1, 0], "something happened")
+    split(app)
+    assert app.profiles == ["full", "gpu", "cpu", "photo"]
+    app = Headless([1, 0], "Traceback (most recent call last): ...")
+    split(app)
+    assert app.profiles == ["full", "gpu"]
+    # 4 の知らせの後ろに別の行 (警告など) が続いても、知らせの行を理由にする
+    app = Headless([person.EXIT_INPUT_ERROR], "input error: 動画を読めませんでした: in.mp4\nW: late warning")
+    with pytest.raises(RuntimeError) as caught:
+        split(app)
+    assert "動画を読めませんでした: in.mp4" in str(caught.value) and "late warning" not in str(caught.value)
+
+
+# ---- BiRefNet (目立つ物の切り抜き) をその場で外す ----
+
+class _Photo:
+    """写真向けのモデルの偽物 (呼ばれた回数を数える)。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, rgb):
+        self.calls += 1
+        return np.full(rgb.shape[:2], 0.8, np.float32)
+
+
+class _BiRefNetLog:
+    """onnxruntime の偽物。ISNet (何も見つけない) と BiRefNet (全面を「目立つ」とする) の偽のセッションを作り分ける。
+    BiRefNet の run は、失敗させる番号 (fail_at、試しの推論が 1 回目) で例外を投げ、sleep 秒止まる (試しの推論は止まらない)。"""
+
+    def __init__(self, fail_at=None, error="[ONNXRuntimeError] : 1 : FAIL : DmlExecutionProvider 887A0005", sleep=0.0):
+        import weakref
+
+        self.fail_at, self.error, self.sleep = fail_at, error, sleep
+        self.runs = 0
+        self.sessions = []
+        self.weakref = weakref
+        self.module = types.SimpleNamespace(
+            InferenceSession=self.create, SessionOptions=lambda: types.SimpleNamespace(),
+            get_available_providers=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"])
+
+    def create(self, path, options=None, providers=None):
+        if Path(path).name == person.SALIENT_MODEL_FILE:
+            session = _BiRefNetSession(self)
+            self.sessions.append(self.weakref.ref(session))
+            return session
+        return _IsnetSession()
+
+    def released(self):
+        import gc
+
+        gc.collect()
+        return all(ref() is None for ref in self.sessions)
+
+
+class _IsnetSession:
+    def get_inputs(self):
+        return [types.SimpleNamespace(name="img")]
+
+    def run(self, _outputs, feeds):
+        return [np.zeros((1, 1, person.ANIME_INPUT_SIZE, person.ANIME_INPUT_SIZE), np.float32)]   # 人物を見つけない
+
+
+class _BiRefNetSession:
+    def __init__(self, log):
+        self.log = log
+
+    def get_inputs(self):
+        return [types.SimpleNamespace(name="input_image")]
+
+    def run(self, _outputs, feeds):
+        log = self.log
+        log.runs += 1
+        assert feeds["input_image"].shape == (1, 3, person.SALIENT_INPUT_SIZE, person.SALIENT_INPUT_SIZE)
+        if log.sleep and log.runs > 1:
+            time.sleep(log.sleep)
+        if log.runs == log.fail_at:
+            raise RuntimeError(log.error)
+        return [np.full((1, 1, person.SALIENT_INPUT_SIZE, person.SALIENT_INPUT_SIZE), 8.0, np.float32)]
+
+
+@pytest.fixture
+def birefnet(tmp_path, monkeypatch):
+    """GPU 付きの偽の環境: モデルのファイルがあり (ダウンロードしない)、写真向けのモデルは偽物。"""
+    folder = tmp_path / "models"
+    folder.mkdir()
+    (folder / person.ANIME_MODEL_FILE).write_bytes(b"x")
+    (folder / person.SALIENT_MODEL_FILE).write_bytes(b"x")
+    monkeypatch.setenv("BVP_MODEL_DIR", str(folder))
+    photo = _Photo()
+    monkeypatch.setattr(person, "PersonSegmenter", lambda: photo)
+
+    def install(**options):
+        log = _BiRefNetLog(**options)
+        monkeypatch.setitem(sys.modules, "onnxruntime", log.module)
+        return log, photo
+
+    return install
+
+
+FRAME = np.zeros((90, 160, 3), np.uint8)
+
+
+def _released_when_reported(monkeypatch, log):
+    """外したと知らせる時点で、BiRefNet のセッションがもう解放されているかを集める (知らせの後ではなく、外す処理の中で手放す)。"""
+    seen = []
+    report = person.AnimeSegmenter._report_dropped
+    monkeypatch.setattr(person.AnimeSegmenter, "_report_dropped",
+                        lambda self, *args: (seen.append(log.released()), report(self, *args))[1])
+    return seen
+
+
+def test_a_birefnet_that_runs_out_of_memory_is_dropped_and_the_frame_is_redone(birefnet, capsys, monkeypatch):
+    log, photo = birefnet(fail_at=3)   # 1 回目は試しの推論、2 回目はフレーム 0、3 回目 (フレーム 1) で DirectML のメモリ不足
+    released = _released_when_reported(monkeypatch, log)
+    segmenter = person.AnimeSegmenter()
+    assert isinstance(segmenter.fallback_prob(FRAME, 0), np.ndarray) and segmenter.salient_dropped is None
+    assert isinstance(segmenter.fallback, person.SalientPersonSegmenter) and log.runs == 2
+    prob = segmenter.fallback_prob(FRAME, 1)
+    assert segmenter.salient_dropped == (1, "oom") and log.runs == 3
+    assert segmenter.fallback is photo   # 写真向けのモデルだけになる
+    assert np.allclose(prob, 0.8)        # そのフレームは写真向けのモデルでやり直した
+    before = photo.calls
+    for index in range(2, 6):
+        assert np.allclose(segmenter.fallback_prob(FRAME, index), 0.8)
+    assert log.runs == 3 and photo.calls == before + 4   # 以後は BiRefNet を呼ばない
+    # 1 行で知らせる: フレームの番号と理由
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("salient dropped")]
+    assert len(lines) == 1 and lines[0].startswith("salient dropped at frame 1: oom") and "887A0005" in lines[0]
+    # BiRefNet のセッションを手放した (gc の後で弱い参照が切れている。知らせる時点でもう手放している)
+    assert len(log.sessions) == 1 and log.released() and released == [True]
+
+
+def test_the_trial_inference_catches_the_out_of_memory_at_creation(birefnet, capsys, monkeypatch):
+    log, photo = birefnet(fail_at=1)   # 試しの推論で失敗
+    released = _released_when_reported(monkeypatch, log)
+    segmenter = person.AnimeSegmenter()
+    assert np.allclose(segmenter.fallback_prob(FRAME, 7), 0.8)
+    assert segmenter.fallback is photo and segmenter.salient_dropped == (7, "oom") and log.runs == 1
+    assert "salient dropped at frame 7: oom" in capsys.readouterr().out
+    assert log.released() and released == [True]
+    # メモリ不足以外で動かないとき (GPU が使えないなど) は、今までどおりの知らせで写真向けだけにする
+    log, photo = birefnet(fail_at=1, error="something else is wrong")
+    segmenter = person.AnimeSegmenter()
+    assert np.allclose(segmenter.fallback_prob(FRAME, 0), 0.8) and segmenter.salient_dropped is None
+    out = capsys.readouterr().out
+    assert "写真向けのモデルだけを使います: something else is wrong" in out and "salient dropped" not in out
+    assert log.released()
+    # 試しの推論が通れば、そのまま使う
+    log, photo = birefnet()
+    segmenter = person.AnimeSegmenter()
+    segmenter.fallback_prob(FRAME, 0)
+    assert isinstance(segmenter.fallback, person.SalientPersonSegmenter) and log.runs == 2
+
+
+def test_other_errors_of_the_birefnet_are_not_swallowed(birefnet):
+    log, photo = birefnet(fail_at=2, error="invalid argument")
+    segmenter = person.AnimeSegmenter()
+    with pytest.raises(RuntimeError, match="invalid argument"):
+        segmenter.fallback_prob(FRAME, 0)
+    assert isinstance(segmenter.fallback, person.SalientPersonSegmenter) and segmenter.salient_dropped is None
+
+
+def test_a_birefnet_that_slows_down_is_dropped_within_six_frames(birefnet, capsys):
+    """VRAM が足りずに共有メモリへ退避すると、例外にならず 1 枚が 10 倍以上遅くなる。0.7 秒かかる偽のセッションは 6 回目までに外れる。"""
+    log, photo = birefnet(sleep=0.7)
+    segmenter = person.AnimeSegmenter()
+    for index in range(6):
+        prob = segmenter.fallback_prob(FRAME, index)
+        assert prob is not None
+        if segmenter.salient_dropped:
+            break
+    assert segmenter.salient_dropped == (4, "slow")   # 試しの推論を除く 5 回の中央値が 600 ms を超えた (5 枚目)
+    assert segmenter.fallback is photo
+    runs = log.runs
+    assert runs == 6   # 試しの推論 + 5 枚。そのフレームの結果はそのまま使う (やり直さない)
+    segmenter.fallback_prob(FRAME, 5)
+    assert log.runs == runs
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("salient dropped")]
+    assert len(lines) == 1 and lines[0].startswith("salient dropped at frame 4: slow")
+    assert "> 600 ms" in lines[0]   # しきい値を必ず知らせる
+    assert log.released()
+
+
+def test_the_slow_check_uses_the_median_of_the_last_five_runs(tmp_path, monkeypatch):
+    model = tmp_path / "salient.onnx"
+    model.write_bytes(b"x")
+    monkeypatch.setitem(sys.modules, "onnxruntime",
+                        types.SimpleNamespace(InferenceSession=_SalientSession, SessionOptions=lambda: types.SimpleNamespace()))
+    salient = person.SalientPersonSegmenter(lambda image: image, model_path=model)
+    assert salient.slow_ms == person.SALIENT_SLOW_MS == 600
+    salient.times.extend([90, 95, 1000, 92])
+    assert not salient.is_slow() and salient.median_ms() == 0     # 5 回に満たない間は決めない
+    salient.times.append(91)
+    assert not salient.is_slow() and salient.median_ms() == 92    # 1 回だけ飛び抜けて遅い (読み込みの直後など) だけでは外さない
+    salient.times.extend([700, 800])
+    assert list(salient.times) == [1000, 92, 91, 700, 800] and salient.is_slow() and salient.median_ms() == 700   # 直近 5 回
+    # しきい値は引数で変えられる (遅いが正常な GPU では大きくする)
+    relaxed = person.SalientPersonSegmenter(lambda image: image, model_path=model, slow_ms=1000)
+    relaxed.times.extend([700] * 5)
+    assert not relaxed.is_slow()
+    relaxed.times.extend([1100] * 3)
+    assert relaxed.is_slow()
+
+
+def test_the_salient_slow_limit_comes_from_the_command_line(monkeypatch):
+    seen = {}
+
+    def make_segmenter(model, profile, download_progress=None, salient_slow_ms=None):
+        seen[(model, profile)] = salient_slow_ms
+        return None
+
+    monkeypatch.setattr(person, "make_segmenter", make_segmenter)
+    monkeypatch.setattr(person, "make_person_videos", lambda *args, **kwargs: 1)
+    assert person.main(["in.mp4", "m.mp4", "b.mp4", "--model", "anime", "--profile", "full"]) == 0
+    assert person.main(["in.mp4", "m.mp4", "b.mp4", "--model", "anime", "--profile", "gpu", "--salient-slow-ms", "1500"]) == 0
+    assert seen == {("anime", "full"): 600.0, ("anime", "gpu"): 1500.0}
+
+
+def test_a_full_cutout_continues_with_the_photo_model_after_the_birefnet_is_dropped(birefnet, tmp_path, capsys):
+    """BiRefNet が途中で 'DmlExecutionProvider 887A0005' を投げても、動画は最後まで作られて終了コード 0。以後は写真向けのモデルを使う。"""
+    import shutil
+    import subprocess
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg が必要")
+    video = tmp_path / "in.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10:duration=1.5",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)], check=True)
+    log, photo = birefnet(fail_at=3)
+    code = person.main([str(video), str(tmp_path / "m.mp4"), str(tmp_path / "b.mp4"), "--fps", "10", "--model", "anime",
+                        "--profile", "full"])
+    lines = capsys.readouterr().out.splitlines()
+    assert code == 0 and lines[-1].startswith("done 15 frames")
+    # アニメ向けが何も見つけないので 15 フレームとも予備。フレーム 1 で外れ、以後は写真向けだけ (BiRefNet の run は 3 回で止まる)
+    assert "salient dropped at frame 1: oom" in " ".join(lines) and log.runs == 3
+    assert "sources anime=0 filled=0 matched=0 fallback=15 flagged=15" in lines
+    assert photo.calls == 15 and log.released()
+    masks = list(person.read_frames(tmp_path / "m.mp4", 10, None, "ffmpeg", 640))
+    assert len(masks) == 15 and all(frame[..., 0].mean() > 100 for frame in masks)

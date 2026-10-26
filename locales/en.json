@@ -109,6 +109,8 @@
   "build.person_retry_memory": "  Ran out of memory; retrying with the lighter setting “{profile}”",
   "build.person_retry_crash": "  The cutout crashed; retrying with the lighter setting “{profile}”",
   "build.person_failed": "The person cutout failed even with the lightest setting: {detail}",
+  "build.person_input_error": "The person cutout could not read the video (the file is broken, or ffmpeg cannot be started). A lighter setting would not help, so it was not retried: {detail}",
+  "build.person_model_error": "The AI model for the person cutout could not be downloaded, or it is damaged (check your network connection). A lighter setting would not help, so it was not retried: {detail}",
   "profile.full": "Best (GPU + helper model for 3DCG)",
   "profile.gpu": "GPU",
   "profile.cpu": "CPU (no GPU)",

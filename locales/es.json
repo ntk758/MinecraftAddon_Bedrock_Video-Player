@@ -109,6 +109,8 @@
   "build.person_retry_memory": "  Sin memoria suficiente; reintentando con el ajuste más ligero «{profile}»",
   "build.person_retry_crash": "  El recorte falló; reintentando con el ajuste más ligero «{profile}»",
   "build.person_failed": "El recorte de personas falló incluso con el ajuste más ligero: {detail}",
+  "build.person_input_error": "El recorte de personas no pudo leer el vídeo (el archivo está dañado o no se puede iniciar ffmpeg). Un ajuste más ligero no lo arreglaría, así que no se reintenta: {detail}",
+  "build.person_model_error": "No se pudo descargar el modelo de IA para recortar personas, o está dañado (revisa la conexión de red). Un ajuste más ligero no lo arreglaría, así que no se reintenta: {detail}",
   "profile.full": "Máximo (GPU + modelo auxiliar para 3D)",
   "profile.gpu": "GPU",
   "profile.cpu": "CPU (sin GPU)",

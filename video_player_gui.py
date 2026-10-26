@@ -979,8 +979,9 @@ class PackBuilderApp(tk.Tk):
 
         切り抜きは別のプロセスで行う (AI のモデルは GPU のメモリと RAM を大きく使い、同じプロセスだと作り終わっても
         解放されない。メモリ不足で落ちても GUI は止まらない)。空きメモリから一番重い段階を選び、メモリ不足で止まったら
-        軽い段階でやり直す (mvcodec/person.py の profile_ladder)。"""
-        from mvcodec.person import EXIT_OUT_OF_MEMORY, PROFILE_NEEDS, profile_ladder
+        軽い段階でやり直す (mvcodec/person.py の profile_ladder)。入力の動画を読めない・モデルをダウンロードできない
+        (終了コード 4・5) ときは、軽い段階にしても直らないので、やり直さずにその理由を知らせる。"""
+        from mvcodec.person import EXIT_INPUT_ERROR, EXIT_MODEL_ERROR, EXIT_OUT_OF_MEMORY, PROFILE_NEEDS, profile_ladder
         from mvcodec.resources import GIB, gpu_memory, system_memory
 
         self.messages.put(self.tr("build.person_anime" if model == "anime" else "build.person"))
@@ -1002,6 +1003,12 @@ class PackBuilderApp(tk.Tk):
             if "No module named" in output or "ImportError" in output:
                 key = "build.person_anime_missing" if model == "anime" else "build.person_missing"
                 raise RuntimeError(self.tr(key, error=output.strip().splitlines()[-1] if output.strip() else code))
+            if code in (EXIT_INPUT_ERROR, EXIT_MODEL_ERROR):
+                key = "build.person_input_error" if code == EXIT_INPUT_ERROR else "build.person_model_error"
+                prefix = "input error: " if code == EXIT_INPUT_ERROR else "model error: "
+                lines = [line for line in output.splitlines() if line.startswith(prefix)]
+                detail = lines[-1][len(prefix):] if lines else output.strip()[-400:]
+                raise RuntimeError(self.tr(key, detail=detail))
             if step + 1 < len(ladder):
                 reason = "memory" if code == EXIT_OUT_OF_MEMORY else "crash"
                 self.messages.put(self.tr(f"build.person_retry_{reason}", profile=self.tr(f"profile.{ladder[step + 1]}")))

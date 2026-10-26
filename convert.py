@@ -48,6 +48,7 @@ from mvcodec.planes import (
     volume_change_ratio,
     volume_to_planes,
 )
+from mvcodec.resources import use_utf8_for_pipes
 from mvcodec.volume import (
     AIR_LEVEL,
     RELIEF_HYSTERESIS,
@@ -630,14 +631,6 @@ def level_block_specs(palette):
     return specs
 
 
-def _use_utf8_for_pipes():
-    """GUI などからパイプ経由で起動された時、ログの日本語を UTF-8 で書き出す (cp932 で化けるのを防ぐ)。"""
-    for stream in (sys.stdout, sys.stderr):
-        if stream is not None and hasattr(stream, "reconfigure") and not stream.isatty():
-            # 行ごとに書き出す (GUI のログに進み具合がすぐ出るように。既定ではパイプ先へはまとめて書かれる)
-            stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-
-
 # 進み具合を知らせる関数 (done, total)。ブラウザ版 (web/worker.js) が進み具合のバーを動かすために設定する
 PROGRESS_HOOK = None
 
@@ -819,7 +812,7 @@ def convert_vox(args):
 
 def main(argv=None):
     global _tr
-    _use_utf8_for_pipes()
+    use_utf8_for_pipes()
     args = parse_args(argv)
     _tr = Translator(args.lang or detect_system_language())
     if args.mode == "vox":

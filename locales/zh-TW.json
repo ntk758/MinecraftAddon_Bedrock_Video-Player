@@ -109,6 +109,8 @@
   "build.person_retry_memory": "  記憶體不足而中止，改用較輕的設定「{profile}」重試",
   "build.person_retry_crash": "  摳圖中途當掉，改用較輕的設定「{profile}」重試",
   "build.person_failed": "即使用最輕的設定也無法摳出人物：{detail}",
+  "build.person_input_error": "人物摳圖無法讀取影片（檔案已損毀，或無法啟動 ffmpeg）。改用較輕的設定也無法解決，因此不再重試：{detail}",
+  "build.person_model_error": "無法下載人物摳圖所需的 AI 模型，或模型已損毀（請檢查網路連線）。改用較輕的設定也無法解決，因此不再重試：{detail}",
   "profile.full": "最高（GPU + 3DCG 用輔助模型）",
   "profile.gpu": "GPU",
   "profile.cpu": "CPU（不用 GPU）",
