@@ -766,6 +766,10 @@ function rayEntersBox(ox, oy, oz, dx, dy, dz, x0, y0, z0) {
  *  - それ以外: 直前の盤面から内容が変わったタイルを行優先の順に登録
  *  - 端からはみ出すタイルは対象外、tile_dict_max 個に達したら次のキーフレームまで登録しない
  * 参照は「新しい方から何番目か」(0 が最新)。
+ *
+ * 立体 (3D の盤面は大きい) では、フレームごとにすべてのタイルを比べずに済ませるため、decodeFrameInto がそのフレームで
+ * 書いたかもしれないタイルに dirty の印を付ける。印の無いタイルは out.set(board) のまま前のフレームと同じなので、
+ * 比べなくても辞書の中身と順番は変わらない (update の onlyMarked)。印の付け漏れは辞書をずらし、以後のフレームをすべて壊す。
  */
 export class TileDictionary {
   constructor(video) {
@@ -775,6 +779,38 @@ export class TileDictionary {
     this.tilesY = Math.floor(boardRows(video) / this.tile);
     this.maxEntries = video.tile_dict_max;
     this.entries = [];
+    this.dirty = new Uint8Array(this.tilesX * this.tilesY);
+  }
+
+  /** 盤面の行 [r0, r1) × 列 [c0, c1) に重なるタイルに印を付ける (盤面の端からはみ出す部分は無視)。 */
+  markRect(r0, r1, c0, c1) {
+    if (r1 <= r0 || c1 <= c0) return;
+    const s = this.tile;
+    const ty1 = Math.min(this.tilesY, Math.ceil(r1 / s));
+    const tx1 = Math.min(this.tilesX, Math.ceil(c1 / s));
+    const tx0 = Math.floor(c0 / s);
+    const dirty = this.dirty;
+    for (let ty = Math.floor(r0 / s); ty < ty1; ty++) {
+      const row = ty * this.tilesX;
+      for (let tx = tx0; tx < tx1; tx++) dirty[row + tx] = 1;
+    }
+  }
+
+  /** 盤面を 1 次元に並べたときの範囲 [start, end) に重なるタイルに印を付ける (複数の行にまたがるなら、最初と最後の行は部分、間の行は全幅)。 */
+  markRange(start, end) {
+    if (end <= start) return;
+    const w = this.width;
+    const r0 = Math.floor(start / w);
+    const r1 = Math.floor((end - 1) / w);
+    const c0 = start - r0 * w;
+    const c1 = end - r1 * w;
+    if (r0 === r1) {
+      this.markRect(r0, r0 + 1, c0, c1);
+      return;
+    }
+    this.markRect(r0, r0 + 1, c0, w);
+    if (r1 > r0 + 1) this.markRect(r0 + 1, r1, 0, w);
+    this.markRect(r1, r1 + 1, 0, c1);
   }
 
   tileOrigin(t) {
@@ -805,17 +841,29 @@ export class TileDictionary {
     return false;
   }
 
-  /** フレームを復元した後に呼ぶ。prev は直前の盤面。 */
-  update(prev, next, isKeyframe) {
+  /**
+   * フレームを復元した後に呼ぶ。prev は直前の盤面。
+   * onlyMarked なら、印の付いたタイルだけを比べて印を消す (立体。印の無いタイルは prev と同じであること)。
+   */
+  update(prev, next, isKeyframe, onlyMarked = false) {
     const count = this.tilesX * this.tilesY;
     if (isKeyframe) this.entries.length = 0;
-    for (let t = 0; t < count; t++) {
-      if (isKeyframe || this.differs(prev, next, t)) this.add(next, t);
+    if (onlyMarked && !isKeyframe) {
+      const dirty = this.dirty;
+      for (let t = 0; t < count; t++) {
+        if (dirty[t] === 1 && this.differs(prev, next, t)) this.add(next, t);
+      }
+    } else {
+      for (let t = 0; t < count; t++) {
+        if (isKeyframe || this.differs(prev, next, t)) this.add(next, t);
+      }
     }
+    if (onlyMarked || isKeyframe) this.dirty.fill(0);
   }
 
-  /** out のタイル t に、辞書の新しい方から recency 番目を貼る。 */
+  /** out のタイル t に、辞書の新しい方から recency 番目を貼る (貼ったタイルには印を付ける)。 */
   apply(out, t, recency) {
+    this.dirty[t] = 1;
     const content = this.entries[this.entries.length - 1 - recency];
     const s = this.tile;
     const origin = this.tileOrigin(t);
@@ -1257,6 +1305,8 @@ export function unpackGop(container) {
  *    (立体は mv_block³ のブリックごとに 3 成分のベクトル。decodeMotion3d)
  *  - 続けてタイル辞書の参照を貼り、最後に差分ランを上書きする (v5 のランの位置は直前のランの終わりからの距離)
  *  - tiles (createTileDictionary の戻り値) を渡すと、復元後に辞書も更新する
+ *    (立体のキーフレーム以外は、out へ書いた場所に印を付けて、印の付いたタイルだけを比べる。
+ *    out へ書く場所を足したら、必ず印を付けること。付け漏れは辞書をずらして以後のフレームを壊す)
  * out と board は width*height の Int16Array などを使い回す (GC を避ける)。
  */
 export function decodeFrameInto(bytes, start, end, board, out, video, tiles = null) {
@@ -1269,11 +1319,14 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
   const hasMotion = isV5 && Math.floor(header / 2) % 2 === 1;
   const hasTiles = isV5 && Math.floor(header / 4) % 2 === 1;
 
+  // 立体のキーフレーム以外は、書いたタイルだけを辞書の更新で比べる (out.set(board) のままのタイルは前と同じ)
+  const track = tiles !== null && video.layout === "volume" && !isKeyframe;
+
   if (isKeyframe) out.fill(emptyLevel(video));
   else out.set(board);
 
   if (hasMotion && video.layout === "volume") {
-    decodeMotion3d(bytes, cursor, end, board, out, video);
+    decodeMotion3d(bytes, cursor, end, board, out, video, track ? tiles : null);
   } else if (hasMotion) {
     const block = video.mv_block;
     const span = 2 * video.mv_range + 1;
@@ -1316,9 +1369,10 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
     // v5 の位置は直前のランの終わりからの距離、v4 は絶対位置
     const start = isV5 ? previousEnd + run.position : run.position;
     out.fill(run.level, start, start + run.length);
+    if (track) tiles.markRange(start, start + run.length);
     previousEnd = start + run.length;
   }
-  if (tiles) tiles.update(board, out, isKeyframe);
+  if (tiles) tiles.update(board, out, isKeyframe, track);
   return isKeyframe;
 }
 
@@ -1327,8 +1381,9 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
  * mv_block³ のブリックごとに、board[clamp(z+dz)][clamp(y+dy)][clamp(x+dx)] を out にコピーする。
  * ブリック番号は (bz * ブリックの行数 + by) * ブリックの列数 + bx、
  * ベクトルは ((dz + r) * span + (dy + r)) * span + (dx + r) (r = mv_range)。
+ * tiles を渡すと、書いたブリックの範囲 (z ごとの行 × x の列) に重なるタイルに印を付ける。
  */
-function decodeMotion3d(bytes, cursor, end, board, out, video) {
+function decodeMotion3d(bytes, cursor, end, board, out, video, tiles = null) {
   const { width, height, depth } = video;
   const block = video.mv_block;
   const range = video.mv_range;
@@ -1359,6 +1414,7 @@ function decodeMotion3d(bytes, cursor, end, board, out, video) {
           out[dst + x] = board[src + Math.min(Math.max(x + dx, 0), width - 1)];
         }
       }
+      if (tiles !== null) tiles.markRect(z * height + y0, z * height + y1, x0, x1);
     }
   }
 }

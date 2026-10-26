@@ -135,3 +135,18 @@ def _frames_dir(tmp_path, frames):
         for t, frame in enumerate(frames):
             Image.fromarray(frame).save(directory / f"frame_{t:04d}.png")
     return directory
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node が必要")
+def test_codec_js_volume_dictionary_marks_every_written_tile():
+    """立体は、そのフレームで書いたタイルだけを辞書の更新で比べる。印の付け漏れは辞書をずらして以後のフレームをすべて壊すので、
+    乱数のフレーム列 (動きのブリック・タイル参照・行をまたぐランの組み合わせ) を、全タイルを比べる素直な実装と照らす。"""
+    result = subprocess.run(["node", str(ROOT / "tests" / "js" / "tile_dirty.mjs"), "40"],
+                            capture_output=True, text=True, check=True)
+    report = json.loads(result.stdout)
+    assert report["marks"]["calls"] > 0 and report["marks"]["bad"] == 0
+    streams = report["streams"]
+    assert streams["boardMismatches"] == []
+    assert streams["dictionaryMismatches"] == []
+    # 照合が空振りしていない: すべての書き方が使われている
+    assert streams["additions"] > 0 and streams["tileRefs"] > 0 and streams["bricks"] > 0 and streams["multiRowRuns"] > 0

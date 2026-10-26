@@ -126,6 +126,80 @@ def test_codec_js_decodes_3d_motion(depth_walk):
     assert decoded["frames"] == [v.reshape(-1).tolist() for v, _ in iter_decoded_frames(data)]
     assert decoded["motionFrames"], "3D の動きベクトルを使ったフレームがありません"
     assert decoded["seekMismatches"] == []
+    assert decoded["dictionaryMismatches"] == []
+
+
+def make_blink_walk(path, size, frames=14, seed=3):
+    """奥から手前へ 1 マスずつ歩く物体の横で、飾りが 3 つの模様を順に繰り返し、一番奥の壁が所々塗り替わる .vox。
+    歩きは 3D の動きベクトルに、繰り返す模様はタイル辞書の参照に、壁の塗り替えは複数の行にまたがるランになる。"""
+    palette = np.zeros((256, 4), np.uint8)
+    for i, rgb in enumerate([(230, 40, 40), (240, 240, 240), (30, 60, 200), (40, 200, 60), (230, 200, 30)]):
+        palette[i] = (*rgb, 255)
+    rng = np.random.default_rng(seed)
+    sx, sy, sz = size
+    patterns = [[(x, y, z, 1 + int(rng.integers(0, 4)))
+                 for x in range(sx - 5, sx - 1) for y in range(3) for z in range(1, sz - 1) if rng.random() < 0.6]
+                for _ in range(3)]
+    wall = rng.integers(1, 5, size=sx * sz)  # 盤面の行優先の順 (vox の z は盤面の行では逆向き)
+    models = []
+    for t in range(frames):
+        for _ in range(3):
+            start = int(rng.integers(0, wall.size))
+            wall[start:start + int(rng.integers(10, 130))] = rng.integers(1, 5)
+        voxels = {(i % sx, sy - 1, sz - 1 - i // sx): int(color) for i, color in enumerate(wall)}
+        for x in range(2, min(sx - 6, 9)):
+            for y in range(6):
+                for z in range(min(sz - 1, 8)):
+                    if y + t < sy:
+                        voxels[(x, y + t, z)] = 1 + (x + 2 * z + y) % 3
+        for x, y, z, color in patterns[t % 3]:
+            voxels[(x, y, z)] = color
+        models.append((size, np.array([[*cell, color] for cell, color in voxels.items()], np.uint8)))
+    path.write_bytes(write_vox(models, palette))
+
+
+def decode_with_node(path):
+    result = subprocess.run(["node", str(ROOT / "tests" / "js" / "decode_frames.mjs"), str(path)],
+                            capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+# 立体は、そのフレームで書いたタイルだけを辞書の更新で比べる (codec.js の TileDictionary の dirty)。
+# 印の付け漏れが 1 つでもあると辞書がずれて、以後のフレームがすべて壊れるので、辞書の中身そのものも
+# 毎回すべてのタイルを比べた正解 (tests/js/decode_frames.mjs の ReferenceTiles) と照らす。
+# 幅 13・行数 242 は、タイルの大きさ (4, 8) でも動きのブリック (8) でも割り切れず、端の部分的なタイル・ブリックに当たる。
+@pytest.mark.skipif(not HAS_NODE, reason="node が必要")
+@pytest.mark.parametrize("tile", ["4", "8"])
+@pytest.mark.parametrize("size", [(13, 22, 11), (40, 30, 20)])
+def test_codec_js_tile_dictionary_follows_3d_motion(tmp_path, tile, size):
+    path = tmp_path / "blink.vox"
+    make_blink_walk(path, size)
+    out = tmp_path / "blink.js"
+    data = convert_vox(path, out, "--tile-size", tile, "--keyframe-interval", "6")
+    assert data["tile_size"] == int(tile) and data["layout"] == "volume"
+    decoded = decode_with_node(out)
+    assert decoded["frames"] == [v.reshape(-1).tolist() for v, _ in iter_decoded_frames(data)]
+    assert decoded["motionFrames"], "3D の動きベクトルを使ったフレームがありません"
+    assert decoded["tileFrames"], "タイル辞書の参照を使ったフレームがありません"
+    assert len(decoded["keyframes"]) > 1
+    assert decoded["seekMismatches"] == []
+    assert decoded["dictionaryMismatches"] == []
+    assert decoded["seekDictionaryMismatches"] == []
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node が必要")
+@pytest.mark.parametrize("tile", ["4", "8"])
+def test_codec_js_tile_dictionary_follows_depth_walk(tmp_path, tile):
+    path = make_depth_walk(tmp_path)
+    out = tmp_path / "walk.js"
+    data = convert_vox(path, out, "--tile-size", tile)
+    assert data["tile_size"] == int(tile)
+    decoded = decode_with_node(out)
+    assert decoded["frames"] == [v.reshape(-1).tolist() for v, _ in iter_decoded_frames(data)]
+    assert decoded["motionFrames"], "3D の動きベクトルを使ったフレームがありません"
+    assert decoded["seekMismatches"] == []
+    assert decoded["dictionaryMismatches"] == []
+    assert decoded["seekDictionaryMismatches"] == []
 
 
 # --- relief のヒステリシス / inflate ---
