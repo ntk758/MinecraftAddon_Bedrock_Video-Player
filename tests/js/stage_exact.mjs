@@ -1,10 +1,16 @@
 // codec.js の projectToStage (立体のだまし絵の投影) が、視線を 3D DDA でたどった正解と一致することを確かめる
 // (tests/test_stage_exact.py から実行)。
-// 使い方: node stage_exact.mjs <幅>x<高さ>x<奥行き> <図形> [目の数] [--inside]
+// 使い方: node stage_exact.mjs <幅>x<高さ>x<奥行き> <図形> [目の数] [--inside] [--path 面] [--dump ファイル] [--project ファイル]
 //   図形: shell (中が空洞の殻) / plates (薄い板) / points (ばらばらの点) / solid (中身の詰まった塊) / rods (細い棒)
 // 乱数の種は図形と大きさで決まる。目は座標が整数でない乱数で、舞台の箱の中のブロックの無い所 (正面・横・高い位置・ブロックの面のすぐ外)。
 // 盤面の各マスの中心から目への線分を DDA で人物の格子に沿って進め、最初に当たったブロックの値 (当たらなければ背景)
 // を正解とする。食い違うマスの数 (mismatchCount) が 0 であるべき。
+//   --path floor / back / left / right / general: 写る範囲の求め方 (projectToStage の近道) のうち、その面にしか写らない
+//     ブロック (general は 1 つの面に決まらないブロック) を多く含む目だけを使う。paths に、目に向いた面を持つブロックを
+//     8 つの角を通る視線が最初に当たる面で分けた数 (codec.js を使わず、定義どおりに数える) を出す
+//   --dump ファイル: 作った立体を Int16 の生のバイト列で書く
+//   --project ファイル: 投影にはこのファイルの立体 (閉じた空洞を埋めたものなど) を使い、正解はもとの立体で求める
+import { readFileSync, writeFileSync } from "node:fs";
 import { createStageWork, isStagePadding, projectToStage, stageGeometry } from "./codec.js";
 
 const AIR = 127;
@@ -12,8 +18,17 @@ const WALL = 30000;
 const FLOOR = 30001;
 const SIDE = 30002;
 
-const inside = process.argv.includes("--inside");
-const [dims, shape, eyeCountArg] = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
+let inside = false;
+const options = { "--path": null, "--dump": null, "--project": null };
+const positional = [];
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === "--inside") inside = true;
+  else if (argv[i] in options) options[argv[i]] = argv[++i];
+  else positional.push(argv[i]);
+}
+const wantedPath = options["--path"];
+const [dims, shape, eyeCountArg] = positional;
 const [width, height, depth] = dims.split("x").map(Number);
 const eyeCount = Number(eyeCountArg ?? 20);
 const video = { width, height, depth, air_level: AIR };
@@ -102,9 +117,67 @@ if (shape === "shell") {
   process.exit(2);
 }
 
+if (options["--dump"]) writeFileSync(options["--dump"], Buffer.from(figure.buffer, figure.byteOffset, figure.byteLength));
+// 投影する立体: --project があればそのファイルの立体 (閉じた空洞を埋めたもの)、無ければ作った立体。正解 (DDA) は作った立体で求める
+let projected = figure;
+if (options["--project"]) {
+  const raw = readFileSync(options["--project"]);
+  projected = new Int16Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.length));
+  if (projected.length !== figure.length) {
+    console.error(`--project: ${projected.length} voxels, expected ${figure.length}`);
+    process.exit(2);
+  }
+}
+
 const geom = stageGeometry(video);
 const { side, gap, stageWidth, wallHeight, floorRows, rowWidth } = geom;
 const box = { x0: side, x1: side + width, y0: 1, y1: 1 + height, z0: 1 + gap, z1: 1 + gap + depth };
+
+// --- 写る範囲の求め方の分類 (定義どおりに数える。codec.js の近道の条件式は使わない) ---
+// 投影される立体の、空気に面した面 (6 方向の隣が空気か立体の外) を持つブロック
+const surfaceBlocks = [];
+for (let p = 0; p < projected.length; p++) {
+  if (projected[p] === AIR) continue;
+  const x = p % width;
+  const row = Math.floor(p / width) % height;
+  const d = Math.floor(p / (width * height));
+  const air = (dx, dy, dz) => {
+    const nx = x + dx;
+    const nr = row + dy;
+    const nd = d + dz;
+    return nx < 0 || nx >= width || nr < 0 || nr >= height || nd < 0 || nd >= depth || projected[at(nx, nr, nd)] === AIR;
+  };
+  // 1 西 2 東 4 下 8 上 16 北 32 南 (codec.js の faces と同じ向き)
+  const mask = (air(-1, 0, 0) ? 1 : 0) | (air(1, 0, 0) ? 2 : 0) | (air(0, 1, 0) ? 4 : 0) | (air(0, -1, 0) ? 8 : 0)
+    | (air(0, 0, -1) ? 16 : 0) | (air(0, 0, 1) ? 32 : 0);
+  if (mask) surfaceBlocks.push({ x0: side + x, y0: height - row, z0: 1 + gap + d, mask });
+}
+const PATH_NAMES = ["floor", "back", "left", "right", "general"];
+// 目から角 (目との差 cx, cy, cz) を通る視線が、舞台のどの面に最初に当たるか (0 床 1 後ろの壁 2 左の壁 3 右の壁、当たらなければ -1)。
+// 同じ長さのときは床、後ろの壁、左右の壁の順
+function firstFace(e, cx, cy, cz) {
+  let nearest = Infinity;
+  let face = -1;
+  if (cy < 0 && (1 - e.y) / cy < nearest) { nearest = (1 - e.y) / cy; face = 0; }
+  if (cz < 0 && (1 - e.z) / cz < nearest) { nearest = (1 - e.z) / cz; face = 1; }
+  if (cx < 0 && -e.x / cx < nearest) { nearest = -e.x / cx; face = 2; }
+  if (cx > 0 && (stageWidth - e.x) / cx < nearest) { nearest = (stageWidth - e.x) / cx; face = 3; }
+  return face;
+}
+// 目に向いた面を持つブロックを、8 つの角の視線が当たる面で分けた数 (全部の角が同じ 1 つの面なら、その面。それ以外は general)
+function countPaths(e) {
+  const counts = [0, 0, 0, 0, 0];
+  for (const b of surfaceBlocks) {
+    const facing = (b.mask & 1 && e.x < b.x0) || (b.mask & 2 && e.x > b.x0 + 1) || (b.mask & 4 && e.y < b.y0) || (b.mask & 8 && e.y > b.y0 + 1)
+      || (b.mask & 16 && e.z < b.z0) || (b.mask & 32 && e.z > b.z0 + 1);
+    if (!facing) continue;
+    const first = firstFace(e, b.x0 - e.x, b.y0 - e.y, b.z0 - e.z);
+    let same = first >= 0;
+    for (let c = 1; c < 8 && same; c++) same = firstFace(e, b.x0 - e.x + (c & 1), b.y0 - e.y + ((c >> 1) & 1), b.z0 - e.z + ((c >> 2) & 1)) === first;
+    counts[same ? first : 4]++;
+  }
+  return counts;
+}
 
 // --- 目: 舞台の箱の中。座標は整数でない乱数。立てたブロックの外 (正面・横・高い位置・ブロックの面のすぐ外)。
 // inside を付けると、ブロックの並びの中の空気の所 (空洞の殻の中や、板・棒のすぐ横) に立つ目にする ---
@@ -149,7 +222,10 @@ function makeEyes() {
     return eye;
   };
   const pick = (list) => list[Math.floor(random() * list.length)];
-  const classes = inside ? [() => beside(pick(solids), Math.floor(random() * 3), random() < 0.5 ? -1 : 1)] : [
+  // --path: 舞台の箱の中のどこでも (人物の外の) 目を選び、目に向いた面のあるブロックのうち、指定した通り道のものが
+  // 3 割以上 (general は 1 割以上) ある目だけにする
+  const wide = () => ({ x: between(0.5, stageWidth - 0.5), y: between(1.3, 1 + 1.6 * height), z: between(1.3, front + height) });
+  const classes = wantedPath ? [wide] : inside ? [() => beside(pick(solids), Math.floor(random() * 3), random() < 0.5 ? -1 : 1)] : [
     // 正面: 床の手前の方、人物の背の高さの中ほど
     () => ({ x: between(centre - 0.25 * stageWidth, centre + 0.25 * stageWidth), y: between(1.3, 1 + 1.1 * height), z: between(front - 2, front + height) }),
     // 横: 人物の横 (左右の壁の近く) から人物の方を見る
@@ -167,12 +243,22 @@ function makeEyes() {
       return beside(pick(solids.filter((c) => c[axis] === extreme)), axis, axis === 1 ? -sign : sign);
     },
   ];
-  for (let i = 0; eyes.length < eyeCount && i < 100000; i++) {
+  const wanted = PATH_NAMES.indexOf(wantedPath);
+  if (wantedPath && wanted < 0) {
+    console.error(`unknown --path: ${wantedPath}`);
+    process.exit(2);
+  }
+  for (let i = 0; eyes.length < eyeCount && i < (wantedPath ? 20000 : 100000); i++) {
     const eye = classes[i % classes.length]();
     // 座標が整数にならない値にする (整数だと視線がブロックの角をかすめて、同点の扱いで食い違う)
     if ([eye.x, eye.y, eye.z].some((v) => Number.isInteger(v * 2)) || !inAir(eye) || (!inside && !outsideTight(eye))) continue;
     // 舞台の箱の中 (projectToStage が受け付ける所)
     if (!(eye.x > 0 && eye.x < stageWidth && eye.y > 1 && eye.z > 1)) continue;
+    if (wantedPath) {
+      const counts = countPaths(eye);
+      const total = counts.reduce((sum, n) => sum + n, 0);
+      if (total === 0 || counts[wanted] < total * (wanted === 4 ? 0.1 : 0.3)) continue;
+    }
     eyes.push(eye);
   }
   return eyes;
@@ -262,10 +348,13 @@ const eyes = makeEyes();
 let checked = 0;
 let painted = 0;
 let mismatchCount = 0;
+let surfaces = 0;
+const paths = Object.fromEntries(PATH_NAMES.map((name) => [name, 0]));
 const mismatches = [];
 for (const eye of eyes) {
   work.dirty = true;
-  if (!projectToStage(figure, video, geom, eye, board, work)) {
+  countPaths(eye).forEach((n, k) => { paths[PATH_NAMES[k]] += n; });
+  if (!projectToStage(projected, video, geom, eye, board, work)) {
     console.error(`eye refused: ${JSON.stringify(eye)}`);
     process.exit(3);
   }
@@ -281,7 +370,9 @@ for (const eye of eyes) {
       if (mismatches.length < 8) mismatches.push({ eye, p, row: Math.floor(p / rowWidth), column: p % rowWidth, got: board[p], expected });
     }
   }
+  surfaces += work.surfaceCount;
 }
 process.stdout.write(JSON.stringify({
   shape, dims, inside, voxels: figure.reduce((n, v) => n + (v !== AIR ? 1 : 0), 0), eyes: eyes.length, checked, painted, mismatchCount, mismatches,
+  surfaceBlocks: surfaceBlocks.length, surfaces, paths,
 }));

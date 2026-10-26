@@ -127,6 +127,128 @@ def hollow(volume):
     return out
 
 
+def _spread_along_axis(outside, is_air, axis):
+    """axis 方向に連なる空気 (ラン) のうち、1 つでも outside のランを、まるごと outside にした配列を返す。"""
+    air = np.moveaxis(is_air, axis, -1)
+    reach = np.moveaxis(outside, axis, -1)
+    shape = air.shape
+    flat_air = air.reshape(-1)
+    flat_reach = reach.reshape(-1)
+    # 空気かどうかが変わる所と線の先頭でランを区切り、ランごとに 1 つでも outside があるかを調べる
+    change = np.empty(flat_air.size, dtype=bool)
+    change[0] = True
+    np.not_equal(flat_air[1:], flat_air[:-1], out=change[1:])
+    change[::shape[-1]] = True
+    starts = np.flatnonzero(change)
+    touched = np.logical_or.reduceat(flat_reach, starts)
+    touched &= flat_air[starts]  # 空気でないラン (outside は空気にしか無いので偽になる) は外にしない
+    return np.moveaxis(np.repeat(touched, np.diff(starts, append=flat_air.size)).reshape(shape), -1, axis)
+
+
+# numpy の処理でランをたどる回数 (軸ごとに 1 回) の上限。MMD の人物は 4〜12 回で終わる。ばらばらの点のような入り組んだ立体は
+# 数十〜百回以上かかり、scipy の方がずっと速いので、この回数を超えたら scipy に任せる (scipy が無ければそのまま続ける)
+NUMPY_MAX_SWEEPS = 24
+
+
+def _enclosed_air_numpy(is_air, max_sweeps=None):
+    """閉じた空洞 (縁から 6 方向の空気でつながらない空気) の真偽配列。numpy だけ。
+
+    縁にある空気を「外」の種にして、x・y・z の順に、軸ごとに空気のランをまるごと外にする処理を、3 つの軸のどれでも
+    増えなくなるまで繰り返す (1 マスずつ広げるより、折れ曲がる回数だけの繰り返しで済む)。
+    max_sweeps 回で終わらなければ None を返す (None なら終わるまで続ける)。
+    """
+    outside = np.zeros_like(is_air)
+    for axis in range(3):
+        edge = [slice(None)] * 3
+        for position in (0, -1):
+            edge[axis] = position
+            outside[tuple(edge)] = is_air[tuple(edge)]
+    count = int(outside.sum())
+    unchanged = 0
+    axis = 0
+    sweeps = 0
+    while unchanged < 3:
+        if max_sweeps is not None and sweeps >= max_sweeps:
+            return None
+        sweeps += 1
+        outside = _spread_along_axis(outside, is_air, axis)
+        grown = int(outside.sum())
+        unchanged = unchanged + 1 if grown == count else 0
+        count = grown
+        axis = (axis + 1) % 3
+    return is_air & ~outside
+
+
+_NDIMAGE = False  # scipy.ndimage (False: まだ調べていない、None: 入っていない)
+
+
+def _scipy_ndimage():
+    """scipy.ndimage (入っていなければ None)。scipy は必須にしていない (ブラウザ版 (pyodide) と EXE には入っていない)。"""
+    global _NDIMAGE
+    if _NDIMAGE is False:
+        try:
+            from scipy import ndimage
+        except ImportError:
+            ndimage = None
+        _NDIMAGE = ndimage
+    return _NDIMAGE
+
+
+def _enclosed_air_scipy(is_air, ndimage):
+    """_enclosed_air_numpy と同じものを scipy.ndimage で求める (6 方向の隣、縁の空気は外)。"""
+    return ndimage.binary_fill_holes(~is_air) & is_air
+
+
+def enclosed_air(is_air):
+    """閉じた空洞 (縁から 6 方向の空気でつながらない空気) の真偽配列。
+
+    ふつうは numpy で求める (scipy は読み込みだけで 0.3〜0.5 秒かかり、MMD の人物では numpy の方が速い)。入り組んだ立体で
+    numpy の処理が NUMPY_MAX_SWEEPS 回で終わらないときは、scipy.ndimage があればそれで求める。2 つの方法の結果は同じ
+    (tests/test_volume3d.py が確かめる)。実体のある範囲の 1 マス外側までに絞って求める
+    (その外はすべて外の空気。絞った範囲の縁の空気は、必ず外とつながっている)。
+    """
+    is_air = np.asarray(is_air, dtype=bool)
+    solid = ~is_air
+    cavity = np.zeros_like(is_air)
+    if not solid.any():
+        return cavity
+    box = []
+    for axis in range(3):
+        used = np.flatnonzero(solid.any(axis=tuple(a for a in range(3) if a != axis)))
+        box.append(slice(max(0, int(used[0]) - 1), min(is_air.shape[axis], int(used[-1]) + 2)))
+    box = tuple(box)
+    inner = is_air[box]
+    found = _enclosed_air_numpy(inner, NUMPY_MAX_SWEEPS)
+    if found is None:
+        ndimage = _scipy_ndimage()
+        found = _enclosed_air_numpy(inner) if ndimage is None else _enclosed_air_scipy(inner, ndimage)
+    cavity[box] = found
+    return cavity
+
+
+def fill_enclosed_air(volume, air=AIR_LEVEL):
+    """外から見えない閉じた空洞 (縁から 6 方向の空気でつながらない空気) を埋めた立体を返す。volume は書き換えない。
+
+    空洞のマスは、同じ x の列 (幅方向) の左隣の値で埋める。空洞のランの左隣は必ず実体なので、空洞はその値のランに
+    なる (符号化のランが長くなる)。縁のマスは空洞にならないので、x = 0 の右隣で埋める場合は無い。
+
+    MMD のような表面だけの殻は中が空洞で、内側の面も「空気に面した面」として投影が調べるが、そこは外からの視線が
+    届かず、1 マスも塗らない。埋めると調べる面が減って投影が速くなる。目が人物の殻の中に入ったときは、内側が見えずに何も
+    描かれなくなるが、そこは見る場所ではないので問題ない。
+    外から見える立体のブロックを置く方式 (--view blocks) では中のブロックまで置くことになるので、だまし絵でだけ使う。
+    """
+    volume = np.asarray(volume)
+    out = volume.copy()
+    depth, row, column = np.nonzero(enclosed_air(volume == air))
+    if len(column):
+        # 空洞のマスを走査の順に並べたので、同じ列で続くマスが 1 つのランになる。ランの値は先頭のマスの左隣の実体の値
+        first = np.ones(len(column), dtype=bool)
+        first[1:] = ((depth[1:] != depth[:-1]) | (row[1:] != row[:-1]) | (column[1:] != column[:-1] + 1))
+        left = volume[depth[first], row[first], column[first] - 1]
+        out[depth, row, column] = left[np.cumsum(first) - 1]
+    return out
+
+
 class VolumeLifter:
     """2D のパレット番号フレームを順に立体にする (relief / extrude / inflate)。
 

@@ -48,8 +48,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 FPS = 10
-# 素材の作り方を変えたら上げる (out/fixtures の作り置きを使わず、作り直させる)
-FIXTURE_VERSION = 1
+# 素材の作り方を変えたら上げる (out/fixtures の作り置きを使わず、作り直させる)。2: .vox のだまし絵の変換が閉じた空洞を埋めるようになった
+FIXTURE_VERSION = 2
 FIXTURES = ("mmd40", "mmd80", "solid56", "person80", "person80_bg")
 # ゲーム内の実測 (tests/js/minecraft_mock の costs と同じ値、マイクロ秒) と、モックとゲーム内の時間の比の見積り
 COST_US = {"setBlock": 2.3, "fillCall": 15, "fillBlock": 0.55, "listCall": 15, "listBlock": 1.42}

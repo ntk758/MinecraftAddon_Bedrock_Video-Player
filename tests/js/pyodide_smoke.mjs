@@ -62,11 +62,22 @@ text = open("/work/vox.js", encoding="utf-8").read()
 counts["vox"] = sum(1 for _ in iter_decoded_frames(json.loads(text[text.index("{"):text.rindex("}") + 1])))
 pack_builder.build_addon_bytes([{"id": "walk", "title": "walk", "frames_js": text, "thumbnail": thumb, "sounds": []}],
                                "Smoke", "smoke")
+# だまし絵 (--view anamorphic) の .vox は、閉じた空洞を埋める (Pyodide には scipy が無いので、numpy だけの処理が動く)
+shell = np.array([[x, y, z, 1] for x in range(1, 8) for y in range(1, 8) for z in range(1, 8) if {x, y, z} & {1, 7}], np.uint8)
+with open("/work/shell.vox", "wb") as f:
+    f.write(write_vox([((9, 9, 9), shell)], vox_palette))
+assert convert.main(["--input-vox", "/work/shell.vox", "--mode", "vox", "--view", "anamorphic", "--output", "/work/shell.js",
+                     "--fps", "10", "--palette", "auto", "--device", "cpu", "--threads", "1"]) == 0
+text = open("/work/shell.js", encoding="utf-8").read()
+*_, (shell_volume, _rgb) = iter_decoded_frames(json.loads(text[text.index("{"):text.rindex("}") + 1]))
+counts["shell"] = int((shell_volume != 127).sum())
 json.dumps(counts)
 `);
 const counts = JSON.parse(result);
 console.log(JSON.stringify(counts));
 if (counts.screen !== 20 || counts.relief !== 20 || counts.vox !== 5) process.exit(1);
+// 7×7×7 の殻の中の閉じた空洞 (5×5×5) が埋まって、詰まった立方体 (343 マス) になる
+if (counts.shell !== 343) process.exit(1);
 // 最後の進み具合は「全部済んだ」(各変換の最後に必ず呼ばれる)
 console.log("progress calls", progress.length);
 if (progress.length === 0 || progress.some(([done, total]) => done > total)) process.exit(1);

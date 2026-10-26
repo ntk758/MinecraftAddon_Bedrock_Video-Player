@@ -52,6 +52,7 @@ from mvcodec.volume import (
     AIR_LEVEL,
     RELIEF_HYSTERESIS,
     VolumeLifter,
+    fill_enclosed_air,
     load_vox_frames_with_palettes,
     luminance01,
     nearest_levels,
@@ -802,8 +803,11 @@ def convert_vox(args):
     encoder = make_encoder(args, width, depth * height, gop_boundaries, AIR_LEVEL, depth)
     gop_ids = iter_gop_ids(gop_boundaries)
     progress = Progress(total)
+    # だまし絵は外から見える面だけを写すので、閉じた空洞 (MMD の殻の中など) は埋めてよい (投影が調べる面が減り、速くなる)
+    anamorphic = getattr(args, "view", "blocks") == "anamorphic"
     for i, frame in enumerate(frames):
-        encoder.add(i, next(gop_ids), vox_to_volume(frame, (depth, height, width), color_table(vox_palettes[i])))
+        volume = vox_to_volume(frame, (depth, height, width), color_table(vox_palettes[i]))
+        encoder.add(i, next(gop_ids), fill_enclosed_air(volume, AIR_LEVEL) if anamorphic else volume)
         progress.update(i + 1)
     encoder = encoder.best()
     chunks, index = encoder.finish()

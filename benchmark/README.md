@@ -87,7 +87,7 @@ python benchmark/stage_bench.py --out D:/work/stage_bench --quick               
 
 | 素材 | 中身 |
 |---|---|
-| `mmd40`・`mmd80` | `tests/mmd_fixture.py` の箱人形を踊らせ (`mmd_to_vox`、高さ 40・80)、GUI の MMD のだまし絵と同じ引数で変換。表面だけの殻なので中が空洞になる |
+| `mmd40`・`mmd80` | `tests/mmd_fixture.py` の箱人形を踊らせ (`mmd_to_vox`、高さ 40・80)、GUI の MMD のだまし絵と同じ引数で変換。表面だけの殻なので中が空洞になる (変換は閉じた空洞を埋める) |
 | `solid56` | コードで作る、中身の詰まった人型 (高さ 56、腕と脚が動く) の `.vox` |
 | `person80` | ffmpeg で作った白い人型の動画を人物の範囲にした inflate (80x45、奥行き 16) |
 | `person80_bg` | `person80` に testsrc2 の背景の映像 (後ろの壁の大きさ、`--fit cover`) を隠し項目として足したもの |
@@ -108,7 +108,7 @@ python benchmark/stage_bench.py --out D:/work/stage_bench --quick               
 
 ### 投影が厳密なことのテスト
 
-`tests/test_stage_exact.py` (`tests/js/stage_exact.mjs`) は、乱数 (種は固定) で作った立体 (中が空洞の殻・薄い板・ばらばらの点・詰まった塊・細い棒、24×40×8 と 40×80×16) を、座標が整数でない目 20 か所 (正面・横・高い位置・ブロックの面のすぐ外) から写し、盤面の各マスの中心から目への線分を 3D DDA でたどった正解と食い違うマスが 0 であることを確かめます。目が人物のブロックの並びの中や後ろにあるときは数マスが抜けることが分かっていて (既知)、その確認は `xfail` にしてあります。`tests/test_stage_bench.py` は `stage_bench.py --quick` の smoke テストです。
+`tests/test_stage_exact.py` (`tests/js/stage_exact.mjs`) は、乱数 (種は固定) で作った立体 (中が空洞の殻・薄い板・ばらばらの点・詰まった塊・細い棒、24×40×8 と 40×80×16) を、座標が整数でない目 20 か所 (正面・横・高い位置・ブロックの面のすぐ外) から写し、盤面の各マスの中心から目への線分を 3D DDA でたどった正解と食い違うマスが 0 であることを確かめます。目が人物のブロックの並びの中や後ろにあるときは数マスが抜けることが分かっていて (既知)、その確認は `xfail` にしてあります。写る範囲の求め方の近道 (床・後ろの壁・左の壁・右の壁のどれか 1 つにしか写らないブロックと、それ以外の一般の場合) は、それぞれのブロックを多く含む目 (`stage_exact.mjs --path floor|back|left|right|general`) で確かめます。外から見える面を持つブロックの一覧を作る処理 (空気だけの区間の読み飛ばし) は `tests/js/stage_surface.mjs` が、図形の置き場所・空気の番号・NaN のビット列を変えて、ブロックを 1 つずつ調べた正解と比べます。だまし絵の変換が埋める閉じた空洞 (`fill_enclosed_air`) は、埋めても投影が 1 マスも変わらず、調べる面だけが減ることを確かめます。`tests/test_stage_bench.py` は `stage_bench.py --quick` の smoke テストです。
 
 ## AI の人物の切り抜きの測定 (`person_bench.py`、ローカル専用)
 
