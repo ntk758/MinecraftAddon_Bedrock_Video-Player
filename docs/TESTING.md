@@ -93,17 +93,19 @@ GUI は人物の切り抜きを別のプロセスで行い、処理ログには�
 
 | 項目 | 中身 |
 |---|---|
-| `model` `profile` `profile_reason` `profile_skipped` | 使った切り抜きのモデルと段階、その段階にした理由 (`auto` = 空きメモリから、`given` = 指定、`retry_memory` `retry_crash` = 前の段階がメモリ不足・落ちたため)、より重い段階にしなかった理由 |
+| `model` `profile` `profile_reason` `profile_skipped` | 使った切り抜きのモデルと段階、その段階にした理由 (`auto` = 空きメモリから、`given` = 指定、`retry_memory` `retry_crash` = 前の段階がメモリ不足・落ちたため、`retry_model` = アニメ向けのモデルを取得できず photo の段階へ進んだため)、より重い段階にしなかった理由 |
 | `free_at_start` | 始めたときの空きの RAM と VRAM (MB。分からなければ `null`) |
-| `sources` `flagged` | 出所ごとのフレーム数 (`anime` そのまま / `filled` 前後で埋めた / `matched` 合わせた予備 / `fallback` そのままの予備。写真向けだけのときは `photo`)。`flagged` はアニメ向けが人物を見つけなかったフレームの数 |
+| `sources` `flagged` | 出所ごとのフレーム数 (`anime` そのまま / `filled` 前後で埋めた / `matched` 合わせた予備 / `fallback` そのままの予備 / `rejected` 面積の上限 (0.6) か位置の検査で採らずに空にした予備。写真向けだけのときは `photo`)。`flagged` はアニメ向けが人物を見つけなかったフレームの数 |
 | `fallback` | `reasons` 予備に頼った理由 (`long_run` 見つけない連なりが 3 枚以上 / `no_neighbour` 場面や動画の端 / `no_fallback`)、`model` `why` 予備に何を選んだか (`salient` `photo` `none`) とその理由、`frames` 予備が返した数 (モデル別)、`load_s` |
-| `salient_dropped` | BiRefNet を外したフレームと理由 (`oom` メモリ不足 / `slow` 遅くなった)。外していなければ `null` |
+| `salient_dropped` | BiRefNet を外したフレームと理由 (`oom` メモリ不足 / `slow` 遅くなった / `error` 実行中の失敗)。外していなければ `null` |
 | `empty_frames` `scene_cuts` | 書き出したマスクの人物が画面の 0.5% 未満のフレームの数、場面の切り替わりの数 |
-| `models` | モデルごと (`anime` `photo` `salient`) の実行プロバイダー (`providers`。onnxruntime の `get_providers()`) と、推論の ms (`ms`: `n` `mean` `median` `p95` `max`) |
+| `models` | モデルごと (`anime` `photo` `salient`) の実行プロバイダー (`providers`。onnxruntime の `get_providers()`) と、推論の ms (`ms`: `n` `mean` `median` `p95` `max`)。Windows では `peak_mb` `peak_ws_mb` (モデルを作る前から最初の推論の後までに、プロセスの最大の commit・working set が増えた MB。プロセス単位の最大値の増え分なので下限の目安) |
 | `stages_ms` | 工程 (`read` `segment` `split` `write`) ごとの、1 回の呼び出しの ms (`n` `mean` `median` `p95` `max`) と合計 `total_s` |
 | `load_s` `run_s` `wall_s` | モデルを作る・フレームを処理する・全体の秒数 |
 | `memory` | このプロセスの最大の working set と最大の commit (MB。Windows のみ、他は `null`) |
 | `error` | 失敗したときの理由 (`kind`: `input` `model` `out_of_memory` `crash` と `message`)。成功なら `null` |
+
+空きメモリの安全閾値は環境変数で上書きできる: `BVP_PROFILE_NEEDS_GB` (段階ごとに要る空きの RAM:VRAM を GiB で。例 `full=12:12,gpu=2:1`)、`BVP_MIN_FREE_RAM_MB` (処理中に要る空きの RAM を MB で)。不正な値は無視して既定値を使う。
 
 ローカルの `benchmark/person_bench.py` は、この統計を行に入れ、マスクの動画から数えた空のフレームの数・場面の切り替わりの数と合っているかを
 `stats_check` に出す。

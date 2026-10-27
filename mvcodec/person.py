@@ -23,6 +23,7 @@ import gc
 import hashlib
 import http.client
 import json
+import math
 import os
 import subprocess
 import time
@@ -68,11 +69,37 @@ def session_providers(session):
         return None
 
 
+def memory_peaks():
+    """このプロセスの最大の確保済みメモリ (commit) と最大の working set (バイトの組)。測れなければ None (Windows 以外など)。"""
+    try:
+        from mvcodec.resources import process_memory_peaks
+
+        peaks = process_memory_peaks()
+    except Exception:  # noqa: BLE001 (統計のためだけ。測れなければ無いものとする)
+        return None
+    return None if peaks is None else (peaks["peak_commit"], peaks["peak_working_set"])
+
+
+def peak_growth(before):
+    """before (memory_peaks の値) から今までに、プロセスの最大の commit と working set が増えた分 (MB)。stats の
+    models.<名前> に入れる {"peak_mb": commit, "peak_ws_mb": working set}。測れなければ None。
+
+    プロセス単位の最大値 (high-water mark) の増え分なので、モデルごとの値としては下限: 先に作ったモデルの山より低ければ 0 になる
+    (mvcodec は ISNet → 写真向け → BiRefNet の順に作り、最初の推論までを測る)。"""
+    after = memory_peaks()
+    if before is None or after is None:
+        return None
+    mb = 1 << 20
+    return {"peak_mb": round(max(0, after[0] - before[0]) / mb, 1), "peak_ws_mb": round(max(0, after[1] - before[1]) / mb, 1)}
+
+
 class PersonSegmenter:
     """1 枚の画像 (高さ × 幅 × 3 の uint8) から、人物である確からしさ (0〜1、同じ大きさ) を返す。
     inference_ms にモデルを動かした時間 (ms) を残す (report で統計にする)。"""
 
     def __init__(self, device="cpu"):
+        self.peak = None   # 作る前から最初の推論の後までに増えた最大のメモリ (peak_growth)
+        peak_start = memory_peaks()
         import torch
         from torchvision.models.segmentation import (DeepLabV3_MobileNet_V3_Large_Weights,
                                                      deeplabv3_mobilenet_v3_large)
@@ -83,9 +110,10 @@ class PersonSegmenter:
         try:
             self.model = deeplabv3_mobilenet_v3_large(weights=weights).eval().to(self.device)
         except urllib.error.URLError as error:  # 初回の重みのダウンロードに失敗した
-            raise ModelError(f"実写向きのモデルをダウンロードできませんでした: {error}") from error
+            raise ModelError(f"download failed: {getattr(weights, 'url', 'photo model')} ({error})") from error
         self.mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
         self.std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        self._peak_start = peak_start
 
     def __call__(self, rgb):
         torch = self.torch
@@ -98,12 +126,15 @@ class PersonSegmenter:
         with torch.no_grad():
             logits = self.model(x.to(self.device))["out"].float().cpu()
         self.inference_ms.append((time.perf_counter() - start) * 1000)
+        if self._peak_start is not None:
+            self.peak, self._peak_start = peak_growth(self._peak_start), None
         prob = torch.softmax(logits, dim=1)[0, PERSON_CLASS].numpy()
         return np.asarray(Image.fromarray(prob).resize((w, h), Image.Resampling.BILINEAR), np.float32)
 
     def report(self):
-        """stats 用: 使ったモデルと、推論の ms。"""
-        return {"models": {"photo": {"providers": [f"torch:{self.device}"], "ms": summarize_ms(self.inference_ms)}}}
+        """stats 用: 使ったモデルと、推論の ms (測れたら、最大のメモリの増え分 peak_mb・peak_ws_mb も)。"""
+        return {"models": {"photo": {"providers": [f"torch:{self.device}"], "ms": summarize_ms(self.inference_ms),
+                                     **(getattr(self, "peak", None) or {})}}}
 
 
 # 切り抜きと背景を作る大きさ (長い辺) の既定 (下の ANALYSIS_LONG_SIDE と同じ)
@@ -117,6 +148,12 @@ ANIME_INPUT_SIZE = 1024
 # 場面や、全身が小さく映った場面では何も返さないことがあるので、そのフレームだけ実写向きのモデルの結果を使う
 # (利用者のアニメ MV で、アニメ向けだけでは 12 場面中 6 場面で人物が消えた)
 ANIME_MIN_AREA = 0.005
+# 予備のモデルの結果を採らない、人物の面積 (確からしさ 0.5 以上の画素の割合) の上限。アニメ向けが何も見つけない場面で、予備が
+# 画面の大部分を人物とした結果 (背景や光を取り違えた) を、そのまま立体にしないため。全身が大きい近接の人物でも 0.6 は超えにくい
+FALLBACK_MAX_AREA = 0.6
+# 予備の結果の位置を調べる、近くの正常なフレームの箱 (外接箱) をたどる範囲。窓から出た後は、同じ場面の最後の正常なフレームの箱を
+# これだけのフレームの間覚えておく (速く動く人物が箱から離れていても外さないよう、窓 (PERSON_LOOKAHEAD) より長くする)
+FALLBACK_REF_FRAMES = 30
 # アニメ向けのモデルが人物を見つけないフレームに、GPU があれば使う「目立つ物」の切り抜き (onnx-community の BiRefNet_lite、
 # MIT、fp16 で約 115 MB、GPU で 1 枚約 0.15 秒。CPU では約 6 秒かかるので使わない)。3DCG の MV の強い照明の場面や
 # 全身が小さい場面でも人物を切り抜けるが、字幕・光の筋なども拾うので、写真向けのモデルが人物らしいと見る塊だけ残す
@@ -140,11 +177,13 @@ SALIENT_SLOW_WINDOW = 5
 
 
 class InputError(RuntimeError):
-    """入力の動画を読めない・ffmpeg を起動できない (別の段階でやり直しても直らない)。"""
+    """入力の動画を読めない・ffmpeg を起動できない (別の段階でやり直しても直らない)。
+    メッセージは対象 (パスなど) と元の例外の文だけにする (GUI が訳した文の {detail} に入るので、日本語の説明は入れない)。"""
 
 
 class ModelError(RuntimeError):
-    """モデルをダウンロードできない・壊れている (別の段階でやり直しても直らない)。"""
+    """モデルをダウンロードできない・壊れている。アニメ向けのモデルなら、別のモデルを使う photo の段階でなら続けられる
+    (GUI が photo の段階へ進む)。メッセージは InputError と同じく、対象 (URL など) と元の例外の文だけ。"""
 
 
 def model_dir():
@@ -175,15 +214,15 @@ def download_model(url, path, sha256, progress=None):
                     progress(done, total)
     except (OSError, http.client.HTTPException) as error:  # 接続できない・404・途中で切れた・書き込めない
         _remove(partial)
-        raise ModelError(f"モデルをダウンロードできませんでした: {url} ({error})") from error
+        raise ModelError(f"download failed: {url} ({error})") from error
     if digest.hexdigest() != sha256:
         partial.unlink()
-        raise ModelError(f"ダウンロードしたモデルが壊れています (SHA-256 が違います): {url}")
+        raise ModelError(f"sha256 mismatch: {url}")
     try:
         partial.replace(path)
     except OSError as error:
         _remove(partial)
-        raise ModelError(f"ダウンロードしたモデルを保存できませんでした: {path} ({error})") from error
+        raise ModelError(f"could not save: {path} ({error})") from error
     return path
 
 
@@ -204,15 +243,19 @@ class AnimeSegmenter:
                  salient_slow_ms=SALIENT_SLOW_MS):
         """fallback: 人物を見つけなかったフレームに使う切り抜き (既定は PersonSegmenter を最初に要るときに作る。
         PyTorch が無ければ使わない)。None なら使わない。salient が偽なら、GPU があっても目立つ物の切り抜き
-        (BiRefNet、RAM を 5〜10 GB 使う) は使わない。salient_slow_ms: 目立つ物の切り抜きの推論の直近 5 回の中央値がこれを
-        超えたら外す (SALIENT_SLOW_MS)。"""
+        (BiRefNet。最初の推論で RAM の確保済みメモリ約 12 GB・VRAM 約 11 GB を使う。段階 full は PROFILE_NEEDS のとおり
+        空きの RAM と VRAM が 12 GiB ずつ要る) は使わない。salient_slow_ms: 目立つ物の切り抜きの推論の直近 5 回の中央値が
+        これを超えたら外す (SALIENT_SLOW_MS)。"""
         import onnxruntime as ort
 
         self.fallback = fallback
         self.salient = salient
         self.salient_slow_ms = salient_slow_ms
-        self.salient_dropped = None   # 目立つ物の切り抜きを外したら (フレームの番号, "oom" か "slow")
+        self.salient_dropped = None   # 目立つ物の切り抜きを外したら (フレームの番号, "oom"・"slow"・"error")
         self.frame = None             # 予備を呼んでいるフレームの番号 (外したときの知らせに使う)
+        self.fallback_rejected = False   # 最後の fallback_prob が、検査で採らずに空を返したか (SalientPersonSegmenter)
+        self.peak = None              # ISNet を作る前から最初の推論の後までに増えた最大のメモリ (peak_growth)
+        self._peak_start = None
         self.calls = 0
         # 統計用: アニメ向けの推論の ms、予備の切り抜きが返した回数 (モデル別)、予備に何を選んだかと理由、
         # 作った写真向けのモデルと目立つ物の切り抜き (外した後も、使った記録を読めるよう持っておく)
@@ -233,6 +276,7 @@ class AnimeSegmenter:
             providers.append("CPUExecutionProvider")
         self.providers = providers
         self.download_progress = download_progress
+        self._peak_start = memory_peaks()
         self.session = ort.InferenceSession(str(path), providers=providers)
         self.input_name = self.session.get_inputs()[0].name
 
@@ -249,6 +293,8 @@ class AnimeSegmenter:
         start = time.perf_counter()
         mask = self.session.run(None, {self.input_name: image.transpose(2, 0, 1)[None]})[0]
         self.inference_ms.append((time.perf_counter() - start) * 1000)
+        if self._peak_start is not None:
+            self.peak, self._peak_start = peak_growth(self._peak_start), None
         mask = np.asarray(mask, np.float32).reshape(size, size)[top:top + nh, left:left + nw]
         return np.asarray(Image.fromarray(mask).resize((w, h), Image.Resampling.BILINEAR), np.float32)
 
@@ -256,9 +302,12 @@ class AnimeSegmenter:
         """予備の切り抜きで求めた人物の確からしさ。予備を使わない設定 (None)・作れないときは None。
         予備のモデルは、最初に要るときに作る。index は今のフレームの番号 (目立つ物の切り抜きを外したときの知らせに使う)。
 
-        目立つ物の切り抜きがメモリ不足で動かなくなったときは、写真向けのモデルだけに替えてそのフレームをやり直す。
+        目立つ物の切り抜きの推論 (session.run) がメモリ不足で動かなくなったときも、それ以外の実行時の失敗 (DirectML の
+        DXGI_ERROR_DEVICE_HUNG など。理由は "error") のときも、補助のモデルだけの失敗なので、写真向けのモデルだけに替えて
+        そのフレームをやり直す。写真向けのモデル (DeepLab) 自身の失敗は、メモリ不足以外は上へ伝える。
         推論が遅くなったとき (VRAM が足りずに共有メモリへ退避した) は、そのフレームはそのままで、次から写真向けだけにする。"""
         self.frame = index
+        self.fallback_rejected = False
         if self.fallback == "auto":
             start = time.perf_counter()
             self.fallback = self._make_fallback()
@@ -272,16 +321,20 @@ class AnimeSegmenter:
         reason = None
         try:
             prob = fallback(rgb)
-        except Exception as error:  # noqa: BLE001 (メモリ不足だけ受ける。例外の中の画面の参照を残さないよう、外で外す)
-            if not is_out_of_memory(error):
+        except Exception as error:  # noqa: BLE001 (例外の中の画面の参照を残さないよう、外で外す)
+            if is_out_of_memory(error):
+                reason = ("oom", str(error))
+            elif fallback.stage == "salient":   # 補助のモデルの推論だけの失敗。写真向けのモデル自身の失敗は上へ伝える
+                reason = ("error", f"{type(error).__name__}: {error}")
+            else:
                 raise
-            reason = ("oom", str(error))
         if reason is not None:
             # 写真向けのモデル (DeepLab、CPU) のメモリ不足も同じに扱う: 目立つ物の切り抜きを外せば、そのぶんのメモリが空く
             self._drop_salient(*reason)
             self.fallback_used["photo"] += 1
             return self.fallback(rgb)
         self.fallback_used["salient"] += 1
+        self.fallback_rejected = fallback.last_rejected
         if fallback.is_slow():
             self._drop_salient("slow", f"median of the last {SALIENT_SLOW_WINDOW} runs {fallback.median_ms():.0f} ms "
                                        f"> {self.salient_slow_ms:.0f} ms")
@@ -353,10 +406,10 @@ class AnimeSegmenter:
         self._report_dropped(reason, detail)
 
     def report(self):
-        """stats 用: 使ったモデルごとの実行プロバイダーと推論の ms (models)、予備の選び方・理由・返した回数 (fallback)、
-        目立つ物の切り抜きを外したフレームと理由 (salient_dropped)。"""
+        """stats 用: 使ったモデルごとの実行プロバイダーと推論の ms・測れたら最大のメモリの増え分 (models。peak_growth)、
+        予備の選び方・理由・返した回数 (fallback)、目立つ物の切り抜きを外したフレームと理由 (salient_dropped)。"""
         models = {"anime": {"providers": session_providers(self.session), "requested": list(self.providers),
-                            "ms": summarize_ms(self.inference_ms)}}
+                            "ms": summarize_ms(self.inference_ms), **(self.peak or {})}}
         photo = self.photo
         if photo is not None and getattr(photo, "inference_ms", None) and callable(getattr(photo, "report", None)):
             models["photo"] = photo.report()["models"]["photo"]
@@ -364,7 +417,9 @@ class AnimeSegmenter:
         if salient is not None:
             models["salient"] = {"providers": self.salient_providers,
                                  "ms": summarize_ms(getattr(salient, "inference_ms", [])),
-                                 "no_blob_frames": getattr(salient, "no_blob_frames", 0)}
+                                 "no_blob_frames": getattr(salient, "no_blob_frames", 0),
+                                 "rejected_frames": getattr(salient, "rejected_frames", 0),
+                                 **(getattr(salient, "peak", None) or {})}
         fallback = self.fallback
         if fallback == "auto":
             kind = "unused"   # 人物を見つけないフレームが無く、作らなかった
@@ -398,6 +453,11 @@ class SalientPersonSegmenter:
         self.times = deque(maxlen=SALIENT_SLOW_WINDOW)   # 直近の推論 (session.run) の ms。試しの推論は入れない
         self.inference_ms = []   # 統計用: 試しの推論を除く、全部の推論の ms
         self.no_blob_frames = 0  # 人物らしい塊が 1 つも無く、写真向けのモデルの結果を返したフレームの数
+        self.rejected_frames = 0  # そのうち、面積が FALLBACK_MAX_AREA を超えたので空を返したフレームの数
+        self.last_rejected = False   # 最後の __call__ が、写真向けの結果を採らずに空を返したか
+        self.stage = None
+        self.peak = None         # 作る前から試しの推論の後までに増えた最大のメモリ (peak_growth)
+        self._peak_start = memory_peaks()
         path = Path(model_path) if model_path else model_dir() / SALIENT_MODEL_FILE
         if not path.is_file():
             download_model(SALIENT_MODEL_URL, path, SALIENT_MODEL_SHA256, download_progress)
@@ -413,6 +473,8 @@ class SalientPersonSegmenter:
         足りなければここで例外になる。時間は記録しない (最初の 1 回は、確保のぶん普段の 10 倍ほどかかる)。"""
         size = SALIENT_INPUT_SIZE
         self.session.run(None, {self.input_name: np.zeros((1, 3, size, size), np.float32)})
+        if self._peak_start is not None:
+            self.peak, self._peak_start = peak_growth(self._peak_start), None
 
     def release(self):
         """ORT のセッションを手放す (GPU のメモリと RAM が返る)。これ以後は使えない。"""
@@ -443,14 +505,23 @@ class SalientPersonSegmenter:
         return np.asarray(Image.fromarray(prob).resize((w, h), Image.Resampling.BILINEAR), np.float32)
 
     def __call__(self, rgb):
+        self.last_rejected = False
+        self.stage = "salient"   # 失敗したのが目立つ物の推論か、写真向けのモデルかを、fallback_prob が見分ける
         salient = self.salient(rgb)
+        self.stage = "photo"
         person = self.photo(rgb)
         keep = person_components(salient >= 0.5, person)
         if not keep.any():
             self.no_blob_frames += 1
             # 人物らしい塊が 1 つも無いときは、空にせず、計算済みの写真向けのモデルの結果を返す (アニメ MV の 30 秒で、
-            # 人物が消えるフレームが 80 → 31 に減った)。形は粗く大きさが跳ぶので、TemporalGuard が大きさと位置を合わせる
-            return np.asarray(person, np.float32)
+            # 人物が消えるフレームが 80 → 31 に減った)。形は粗く大きさが跳ぶので、TemporalGuard が大きさと位置を合わせる。
+            # ただし面積が FALLBACK_MAX_AREA を超える結果は (背景や光を人物とした) 採らず、空を返す。位置の検査は TemporalGuard が行う
+            person = np.asarray(person, np.float32)
+            if float((person >= 0.5).mean()) > FALLBACK_MAX_AREA:
+                self.rejected_frames += 1
+                self.last_rejected = True
+                return np.zeros_like(person)
+            return person
         return np.where(keep, salient, 0).astype(np.float32)
 
 
@@ -530,6 +601,11 @@ PROFILE_NEEDS = {
 }
 # 処理中に空きの RAM がこれを下回ったら止める (PC 全体が固まる前に、軽い段階でやり直せるように)
 MIN_FREE_RAM = 400 * (1 << 20)
+# 上の 2 つ (PROFILE_NEEDS と MIN_FREE_RAM) は 1 機種 (RX 9070 XT 16 GB) の実測なので、環境変数で上書きできる
+# (profile_needs・min_free_ram が読む。値が不正なら無視して上の値): BVP_PROFILE_NEEDS_GB は段階ごとの空き RAM:VRAM (GiB)
+# 「full=12:12,gpu=2:1」、BVP_MIN_FREE_RAM_MB は MB
+ENV_PROFILE_NEEDS = "BVP_PROFILE_NEEDS_GB"
+ENV_MIN_FREE_RAM = "BVP_MIN_FREE_RAM_MB"
 # メモリ不足で止まったときの終了コード (GUI はこれを見て軽い段階でやり直す)
 EXIT_OUT_OF_MEMORY = 3
 # 入力の動画を読めない・ffmpeg を起動できないときと、モデルをダウンロードできないときの終了コード
@@ -538,13 +614,43 @@ EXIT_INPUT_ERROR = 4
 EXIT_MODEL_ERROR = 5
 
 
+def _non_negative(text):
+    """text を 0 以上の有限の数にする。できなければ None。"""
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
+
+
+def profile_needs():
+    """段階ごとに要る空きメモリ {段階: (RAM, VRAM)} (バイト)。PROFILE_NEEDS を、環境変数 BVP_PROFILE_NEEDS_GB
+    (「full=12:12,gpu=2:1」のように「段階=RAM:VRAM」を GiB で、カンマ区切り) で段階ごとに上書きしたもの。
+    知らない段階・数でない値・負の値の項目は無視する。"""
+    needs = dict(PROFILE_NEEDS)
+    for item in os.environ.get(ENV_PROFILE_NEEDS, "").split(","):
+        name, _, value = item.partition("=")
+        ram, _, vram = value.partition(":")
+        name, ram, vram = name.strip(), _non_negative(ram), _non_negative(vram)
+        if name in needs and ram is not None and vram is not None:
+            needs[name] = (int(ram * (1 << 30)), int(vram * (1 << 30)))
+    return needs
+
+
+def min_free_ram():
+    """処理中に要る空きの RAM (バイト)。環境変数 BVP_MIN_FREE_RAM_MB (MB。0 で見張らない) があればそれ。不正なら MIN_FREE_RAM。"""
+    megabytes = _non_negative(os.environ.get(ENV_MIN_FREE_RAM))
+    return MIN_FREE_RAM if megabytes is None else int(megabytes * (1 << 20))
+
+
 def profile_ladder(model, ram_free=None, vram_free=None):
     """model ("photo" / "anime") を、空きメモリ (分からなければ None) に収まる一番重い段階から、軽い段階へ順に並べる。
-    メモリ不足で止まったら次の段階でやり直す。"""
+    メモリ不足で止まったら次の段階でやり直す。要る空きメモリは profile_needs (環境変数で上書きできる)。"""
     order = ["full", "gpu", "cpu", "photo"] if model == "anime" else ["photo"]
     ladder = []
+    needs = profile_needs()
     for name in order:
-        need_ram, need_vram = PROFILE_NEEDS[name]
+        need_ram, need_vram = needs[name]
         if ram_free is not None and ram_free < need_ram and name != order[-1]:
             continue
         if vram_free is not None and vram_free < need_vram:
@@ -622,10 +728,15 @@ HOLD_MAX_RUN = 2
 # または CUT_CORRELATION_SOFT 未満で、色のヒストグラム (各色 3 ビット) の差 (0〜1) が CUT_HISTOGRAM_DISTANCE を超えたら切り替わり。
 # 明るさが変わっただけ (照明・フラッシュ) では相関が下がらないので、平均の色の差 (SCENE_CUT_DIFF) と違って切り替わりにならない
 # (アニメ MV の 30 秒で、隣り合う 299 組のうち、平均の色の差だと 95 組、構図だと 24 組が切り替わり。構図の 24 組は全部、色の差でも切り替わり)
+# ただし暗転・単色・白飛びのような一様な画面 (明るさの標準偏差 0〜255 が CUT_FLAT_STD 未満) は、平均を引くと構図が残らず相関が
+# 意味を持たない (ほとんど同じ画面が続いても毎フレーム 0 になる)。両方が一様なら平均の明るさの差が CUT_FLAT_DIFF を超えたときだけ、
+# 片方だけが一様なら (模様のある画面から暗転・白への切り替わり) 切り替わりとする
 CUT_LUMA_SIZE = (32, 18)
 CUT_CORRELATION = 0.5
 CUT_CORRELATION_SOFT = 0.75
 CUT_HISTOGRAM_DISTANCE = 0.5
+CUT_FLAT_STD = 3.0
+CUT_FLAT_DIFF = 40.0
 # 予備の切り抜きの確からしさを写し直すしきい値 tau の範囲と、人物の外接箱を広げる割合・余白 (画素)
 MATCH_TAU_MIN = 0.3
 MATCH_TAU_MAX = 0.8
@@ -634,17 +745,25 @@ MATCH_BOX_MARGIN = 8
 
 
 def scene_features(rgb):
-    """場面の切り替わりを決める画像の特徴: 32 × 18 の明るさ (平均を引いて長さ 1 にそろえたもの) と、色のヒストグラム。"""
+    """場面の切り替わりを決める画像の特徴: 32 × 18 の明るさ (平均を引いて長さ 1 にそろえたもの)・色のヒストグラム、
+    そろえる前の明るさの標準偏差と平均 (一様な画面を見分ける。is_scene_cut を見よ)。"""
     luma = np.asarray(Image.fromarray(rgb).convert("L").resize(CUT_LUMA_SIZE, Image.Resampling.BOX), np.float32)
+    mean, std = float(luma.mean()), float(luma.std())
     luma = luma - luma.mean()
     luma /= np.linalg.norm(luma) + 1e-6
     bins = (rgb[::4, ::4].reshape(-1, 3) >> 5).astype(np.int64)
     histogram = np.bincount(bins[:, 0] * 64 + bins[:, 1] * 8 + bins[:, 2], minlength=512).astype(np.float32)
-    return luma, histogram / histogram.sum()
+    return luma, histogram / histogram.sum(), std, mean
 
 
 def is_scene_cut(previous, current):
-    """scene_features を 2 つ (前のフレームと今のフレーム) 比べて、場面が切り替わったか。"""
+    """scene_features を 2 つ (前のフレームと今のフレーム) 比べて、場面が切り替わったか。標準偏差と平均を持たない 2 つ組の
+    特徴は、一様でない画面として扱う。"""
+    flat = [len(features) > 2 and features[2] < CUT_FLAT_STD for features in (previous, current)]
+    if all(flat):
+        return abs(previous[3] - current[3]) > CUT_FLAT_DIFF
+    if any(flat):
+        return True
     correlation = float((previous[0] * current[0]).sum())
     distance = 0.5 * float(np.abs(previous[1] - current[1]).sum())
     return correlation < CUT_CORRELATION or (correlation < CUT_CORRELATION_SOFT and distance > CUT_HISTOGRAM_DISTANCE)
@@ -663,13 +782,31 @@ def match_to_found(prob, found):
     target = float(np.median([f.area for f in found]))
     tau = float(np.clip(np.quantile(prob, 1 - target), MATCH_TAU_MIN, MATCH_TAU_MAX))
     matched = np.where(prob >= tau, 0.5 + 0.5 * (prob - tau) / (1 - tau), 0.5 * prob / tau).astype(np.float32)
-    inside = np.zeros(prob.shape, bool)
-    for f in (found[0], found[-1]):
-        top, bottom, left, right = f.box
+    inside = grown_region(prob.shape, [found[0].box, found[-1].box])
+    return np.where(inside, matched, 0).astype(np.float32)
+
+
+def grown_region(shape, boxes):
+    """boxes (上, 下, 左, 右) をそれぞれ MATCH_BOX_GROW と MATCH_BOX_MARGIN だけ広げた範囲の和 (真偽、shape の大きさ)。"""
+    inside = np.zeros(shape, bool)
+    for top, bottom, left, right in boxes:
         grow_y = int((bottom - top + 1) * MATCH_BOX_GROW) + MATCH_BOX_MARGIN
         grow_x = int((right - left + 1) * MATCH_BOX_GROW) + MATCH_BOX_MARGIN
         inside[max(0, top - grow_y):bottom + grow_y + 1, max(0, left - grow_x):right + grow_x + 1] = True
-    return np.where(inside, matched, 0).astype(np.float32)
+    return inside
+
+
+def rejects_fallback(prob, boxes=None):
+    """予備の切り抜きの確からしさ prob を採用しないか (真なら採用しない)。人物の面積 (0.5 以上の画素の割合) が ANIME_MIN_AREA
+    以上のとき、次のどちらかなら採用しない: 面積が FALLBACK_MAX_AREA を超える・boxes (近くの正常なフレームの外接箱) があり、
+    人物がそれを広げた範囲 (grown_region) と重ならない。面積が ANIME_MIN_AREA 未満の結果は空として、そのまま (採用しても何も出ない)。"""
+    mask = prob >= 0.5
+    area = float(mask.mean())
+    if area < ANIME_MIN_AREA:
+        return False
+    if area > FALLBACK_MAX_AREA:
+        return True
+    return bool(boxes) and not (mask & grown_region(prob.shape, boxes)).any()
 
 
 class _GuardFrame:
@@ -693,8 +830,18 @@ class TemporalGuard:
       - それ以外は予備の結果を使う。前後 PERSON_LOOKAHEAD 枚の同じ場面に見つけたフレームがあれば、match_to_found で
         その面積と位置に合わせる。無ければ予備の結果のまま
     場面の切り替わりは構図で決め (scene_features)、切り替わりをまたいでは前後のフレームを使わない。窓に持つのは最大
-    2 * PERSON_LOOKAHEAD + 1 フレーム (640 × 360 で約 20 MB)。counts に出所ごとのフレーム数を数える:
-    anime (そのまま)・filled (前後で埋めた)・matched (合わせた予備)・fallback (そのままの予備)・flagged (見つけなかった数)。
+    2 * PERSON_LOOKAHEAD + 1 フレーム (640 × 360 で約 20 MB)。
+
+    予備の結果は採用する前に検査する (rejects_fallback): 面積が FALLBACK_MAX_AREA を超える、または同じ場面の正常なフレームの箱
+    (窓の中の前後。無ければ、窓から出た FALLBACK_REF_FRAMES フレーム以内の最後の正常なフレーム) を広げた範囲と重ならない結果は
+    採用せず、空の確からしさにする (前のフレームを持ち続けると残像が出る)。人物のいない動画で、予備が背景や光の筋を人物とした塊が
+    立体になる (約 20 フレーム) のを防ぐ。判定は「空 (アニメ向け) + 面積の上限と位置 (予備)」の少ない指標にとどめた。前後のフレームとの
+    変化量・輪郭の不自然さなどを足した多指標の判定は、空の判定だけで改善のほとんどが得られ、しきい値が増えるほど手元の動画に
+    合わせ込む (過学習) おそれがあり、ほかの動画で本物の人物を外す害のほうが大きいので採らなかった。
+
+    counts に出所ごとのフレーム数を数える:
+    anime (そのまま)・filled (前後で埋めた)・matched (合わせた予備)・fallback (そのままの予備)・rejected (検査で採用しなかった予備。
+    空にした)・flagged (見つけなかった数)。
     reasons には、見つけなかったフレームを前後で埋めずに予備に頼った理由を数える: long_run (見つけない連なりが
     HOLD_MAX_RUN より長い)・no_neighbour (同じ場面のすぐ前かすぐ後に見つけたフレームが無い。場面や動画の端)・
     no_fallback (予備を使えず、アニメ向けの結果のまま。counts では anime に入る)。
@@ -715,8 +862,9 @@ class TemporalGuard:
         self.settled = 0        # 確定したフレームの数 (次に確定するフレームの番号)
         self.scene = 0
         self.features = None    # 前のフレームの scene_features
-        self.counts = dict.fromkeys(("anime", "filled", "matched", "fallback", "flagged"), 0)
+        self.counts = dict.fromkeys(("anime", "filled", "matched", "fallback", "rejected", "flagged"), 0)
         self.reasons = dict.fromkeys(("long_run", "no_neighbour", "no_fallback"), 0)
+        self.reference = None   # 最後に確定した正常なフレームの (場面, 番号, 箱)。窓から出た後の予備の位置の検査に使う
 
     def push(self, rgb):
         """フレームを 1 枚読み、確定したフレームの (rgb, 人物の確からしさ, 前のフレームから場面が切り替わったか) の並びを返す。"""
@@ -754,6 +902,7 @@ class TemporalGuard:
             prob, source = self._repair(frame)
         else:
             prob, source = frame.prob, "anime"
+            self.reference = (frame.scene, frame.index, frame.box)
         self.counts[source] += 1
         self.settled += 1
         while self.window and self.window[0].index < self.settled - self.lookahead:
@@ -785,6 +934,14 @@ class TemporalGuard:
             self.reasons["no_fallback"] += 1
             return frame.prob, "anime"
         near = [other for other in self.window if found(other) and abs(other.index - t) <= self.lookahead]
+        if near:
+            boxes = [near[0].box, near[-1].box]   # match_to_found が合わせる範囲と同じ
+        elif self.reference and self.reference[0] == scene and t - self.reference[1] <= FALLBACK_REF_FRAMES:
+            boxes = [self.reference[2]]
+        else:
+            boxes = []
+        if getattr(self.segmenter, "fallback_rejected", False) or rejects_fallback(prob, boxes):
+            return np.zeros(prob.shape, np.float32), "rejected"
         if not near:
             return prob, "fallback"
         return match_to_found(prob, near), "matched"
@@ -889,27 +1046,29 @@ def _start_ffmpeg(cmd, ffmpeg, **kwargs):
     try:
         return subprocess.Popen(cmd, **kwargs, **_subprocess_kwargs())
     except OSError as error:
-        raise InputError(f"ffmpeg を起動できませんでした: {ffmpeg} ({error})") from error
+        raise InputError(f"could not start ffmpeg: {ffmpeg} ({error})") from error
 
 
 def _writer(path, width, height, fps, ffmpeg, audio_from=None, duration=None):
     cmd = [ffmpeg, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
            "-r", str(fps), "-i", "-"]
     if audio_from is not None:
-        cmd += ["-i", str(audio_from), "-map", "0:v", "-map", "1:a?", "-c:a", "aac", "-shortest"]
+        # 映像は受け取ったフレームの数が正: 出力全体を -t や -shortest で切ると、duration が 1 フレームの長さの倍数でないとき
+        # (0.35 秒を 10 fps など) に最後の 1 フレームが落ちる。音声の入力だけを duration で切る
         if duration is not None:
             cmd += ["-t", str(duration)]
+        cmd += ["-i", str(audio_from), "-map", "0:v", "-map", "1:a?", "-c:a", "aac"]
     # 色を正確に残す (人物の範囲は白黒、背景はブロックの色を選ぶ元になる)
     cmd += ["-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv444p", str(path)]
     return _start_ffmpeg(cmd, ffmpeg, stdin=subprocess.PIPE)
 
 
 def _check_free_ram():
-    """空きの RAM が MIN_FREE_RAM を下回っていたら MemoryError (PC 全体が固まる前に止める)。"""
+    """空きの RAM が min_free_ram() (既定は MIN_FREE_RAM) を下回っていたら MemoryError (PC 全体が固まる前に止める)。"""
     from mvcodec.resources import system_memory
 
     memory = system_memory()
-    if memory is not None and memory[1] < MIN_FREE_RAM:
+    if memory is not None and memory[1] < min_free_ram():
         raise MemoryError(f"空きの RAM が少なくなりました ({memory[1] >> 20} MB)")
 
 
@@ -943,7 +1102,7 @@ def make_person_videos(source, mask_path, background_path, fps, duration=None, f
     stats (dict) を渡すと、次を入れる (途中で失敗しても、そこまでの分が入る):
       frames: 書き出したフレームの数、run_s: この関数の秒数
       sources: 出所ごとのフレーム数。アニメ向け: anime (そのまま)・filled (前後で埋めた)・matched (合わせた予備)・
-        fallback (そのままの予備)。写真向けだけのとき: photo
+        fallback (そのままの予備)・rejected (検査で採らずに空にした予備)。写真向けだけのとき: photo
       flagged: アニメ向けが人物を見つけなかったフレームの数 (アニメ向けだけ)
       fallback: reasons (予備に頼った理由と数。TemporalGuard.reasons)、model (予備に何を使っているか)・why (その理由)・
         frames (予備が返したフレームの数、モデル別) (segmenter.report があるとき)
@@ -996,7 +1155,7 @@ def make_person_videos(source, mask_path, background_path, fps, duration=None, f
         stats.update(frames=count, run_s=round(time.perf_counter() - started, 2), empty_frames=empty, scene_cuts=cuts,
                      stages_ms=stages)
         if guard:
-            stats["sources"] = {key: guard.counts[key] for key in ("anime", "filled", "matched", "fallback")}
+            stats["sources"] = {key: guard.counts[key] for key in ("anime", "filled", "matched", "fallback", "rejected")}
             stats["flagged"] = guard.counts["flagged"]
         else:
             stats["sources"] = {"photo": count}
@@ -1028,7 +1187,7 @@ def make_person_videos(source, mask_path, background_path, fps, duration=None, f
             writer.stdin.close()
             writer.wait()
     if count == 0:
-        raise InputError(f"動画を読めませんでした: {source}")
+        raise InputError(f"could not read the video: {source}")
     return count
 
 
@@ -1038,8 +1197,9 @@ def skipped_profiles(model, profile, ram_free, vram_free):
     order = ["full", "gpu", "cpu", "photo"] if model == "anime" else ["photo"]
     gib = 1 << 30
     skipped = {}
+    needs = profile_needs()
     for name in order[:order.index(profile)] if profile in order else []:
-        need_ram, need_vram = PROFILE_NEEDS[name]
+        need_ram, need_vram = needs[name]
         why = []
         if ram_free is not None and ram_free < need_ram:
             why.append(f"RAM {ram_free / gib:.1f} < {need_ram / gib:.0f} GiB")
@@ -1078,13 +1238,17 @@ def main(argv=None):
 
     GUI は別のプロセスとしてこれを起動し、標準出力の「<数> frames」「download <済み> <全体>」を読む。
     メモリ不足で止まったら EXIT_OUT_OF_MEMORY で終わる (GUI は軽い段階でやり直す)。入力を読めない・ffmpeg を起動できない
-    ときは EXIT_INPUT_ERROR、モデルをダウンロードできないときは EXIT_MODEL_ERROR で終わる (どちらも 1 行の知らせ付き。軽い段階では
-    直らないので、GUI はやり直さない)。目立つ物の切り抜きを外したときは「salient dropped at frame <番号>: oom|slow」を出す。
+    ときは EXIT_INPUT_ERROR、モデルをダウンロードできないときは EXIT_MODEL_ERROR で終わる (どちらも 1 行の知らせ付き。知らせは
+    対象と元の例外の文だけで、説明は GUI が訳す。入力の問題は軽い段階では直らないので GUI はやり直さない。モデルの問題は、
+    アニメ向けなら別のモデルを使う photo の段階で続けられる)。目立つ物の切り抜きを外したときは
+    「salient dropped at frame <番号>: oom|slow|error」を出す。
 
     終わる前 (done や失敗の知らせの前) に 1 行の「stats <JSON>」を出す。選んだモデルと段階とその理由、始めたときの空きメモリ、
     出所ごとのフレーム数、予備に頼った理由、空のフレームの数、場面の切り替わりの数、モデルごとの実行プロバイダーと推論の ms
     (n・mean・median・p95・max)、工程ごとの ms、秒数、最大の working set と最大の commit (Windows のみ)。--stats PATH があれば
-    同じ JSON をそのファイルにも書く。"""
+    同じ JSON をそのファイルにも書く。--free-ram・--free-vram (バイト) が渡されたときは (GUI が直前に測った値)、空きメモリを測り直さない。
+    モデルごとの最大のメモリは、プロセスの最大値 (high-water mark) の増え分 (models.<名前>.peak_mb。peak_growth) で、
+    プロセス単位でしか測れないので下限の目安。"""
     import argparse
 
     from mvcodec.resources import gpu_memory, system_memory, use_utf8_for_pipes
@@ -1108,15 +1272,27 @@ def main(argv=None):
     parser.add_argument("--salient-slow-ms", type=float, default=SALIENT_SLOW_MS,
                         help=f"目立つ物の切り抜き (BiRefNet) の推論の直近 {SALIENT_SLOW_WINDOW} 回の中央値がこの ms を超えたら、"
                              f"写真向けのモデルだけにする (既定 {SALIENT_SLOW_MS:.0f}。遅いが正常な GPU では大きくする)")
+    parser.add_argument("--free-ram", type=int, default=None, metavar="BYTES",
+                        help="空きの RAM (バイト。GUI が測った値)。渡されたら測り直さない (負なら、分からないものとして扱う)")
+    parser.add_argument("--free-vram", type=int, default=None, metavar="BYTES",
+                        help="空きの VRAM (バイト。GUI が測った値)。渡されたら、測り直さない (測るのに約 2.6 秒かかる。負なら分からない)")
     parser.add_argument("--stats", default=None, metavar="PATH",
                         help="統計 (JSON) を書くファイル。フォルダなら、その中に person-stats-<日時>.json を作る")
     args = parser.parse_args(argv)
     started = time.perf_counter()
     profile = args.profile
-    # 始めたときの空きメモリ。VRAM は測るのに約 2 秒かかるので、GPU を使う段階 (と、段階を選ぶとき) だけ測る
-    ram = system_memory()
-    vram = gpu_memory() if profile is None or (args.model == "anime" and PROFILES[profile]["gpu"]) else None
-    ram_free, vram_free = ram and ram[1], vram and vram[1]
+    # 始めたときの空きメモリ。GUI が測った値 (--free-ram・--free-vram) があればそれを使う。VRAM は測るのに約 2.6 秒かかるので、
+    # 渡されていないときは、GPU を使う段階 (と、段階を選ぶとき) だけ測る
+    if args.free_ram is not None:
+        ram_free = args.free_ram if args.free_ram >= 0 else None
+    else:
+        ram = system_memory()
+        ram_free = ram and ram[1]
+    if args.free_vram is not None:
+        vram_free = args.free_vram if args.free_vram >= 0 else None
+    else:
+        vram = gpu_memory() if profile is None or (args.model == "anime" and PROFILES[profile]["gpu"]) else None
+        vram_free = vram and vram[1]
     reason = args.profile_reason
     if profile is None:
         profile = profile_ladder(args.model, ram_free, vram_free)[0]

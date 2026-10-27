@@ -140,7 +140,8 @@ def open_log(path: Path | None):
 def person_summary_lines(tr, stats: dict, log: Path | None) -> list[str]:
     """人物の切り抜きの統計 (mvcodec/person.py が出す「stats <JSON>」) から、処理ログに出すまとめを作る: まとめ 1 行、ログの場所
     1 行 (ログは動画の場所を含み、ユーザー名が入ることがあるので、共有するときの注意を添える)、そして次のどれかに
-    当てはまるときだけ注意 1 行: 人物が空のフレームが 10% を超える・予備のモデルが 50% を超える・目立つ物の切り抜き (BiRefNet) を外した。"""
+    当てはまるときだけ注意 1 行: 人物が空のフレームが 10% を超える・予備のモデルが 50% を超える・目立つ物の切り抜き (BiRefNet) を外した。
+    予備の結果を検査で退けて空にしたフレームがあれば、まとめの 1 行の終わりにその数を足す。"""
     frames = int(stats.get("frames") or 0)
     sources = stats.get("sources") or {}
     fallback = int(sources.get("matched", 0)) + int(sources.get("fallback", 0))
@@ -151,6 +152,9 @@ def person_summary_lines(tr, stats: dict, log: Path | None) -> list[str]:
                 profile=tr(f"profile.{stats.get('profile', 'photo')}"), backend=providers[0] if providers else "?",
                 primary=int(sources.get("anime", sources.get("photo", 0))), filled=int(sources.get("filled", 0)),
                 fallback=fallback, empty=empty)]
+    rejected = int(sources.get("rejected", 0))
+    if rejected:
+        lines[0] += tr("build.person_rejected", rejected=rejected)
     if log is not None:
         lines.append(tr("build.person_log", path=log))
     warnings = []
@@ -160,7 +164,8 @@ def person_summary_lines(tr, stats: dict, log: Path | None) -> list[str]:
         warnings.append(tr("build.person_warn_fallback", percent=round(100 * fallback / frames)))
     dropped = stats.get("salient_dropped")
     if dropped:
-        warnings.append(tr(f"build.person_warn_dropped_{'oom' if dropped.get('reason') == 'oom' else 'slow'}",
+        reason = dropped.get("reason")
+        warnings.append(tr(f"build.person_warn_dropped_{reason if reason in ('oom', 'error') else 'slow'}",
                            frame=dropped.get("frame", "?")))
     if warnings:
         lines.append(tr("build.person_warn", reasons=" / ".join(warnings)))
@@ -1090,8 +1095,9 @@ class PackBuilderApp(tk.Tk):
 
         切り抜きは別のプロセスで行う (AI のモデルは GPU のメモリと RAM を大きく使い、同じプロセスだと作り終わっても
         解放されない。メモリ不足で落ちても GUI は止まらない)。空きメモリから一番重い段階を選び、メモリ不足で止まったら
-        軽い段階でやり直す (mvcodec/person.py の profile_ladder)。入力の動画を読めない・モデルをダウンロードできない
-        (終了コード 4・5) ときは、軽い段階にしても直らないので、やり直さずにその理由を知らせる。
+        軽い段階でやり直す (mvcodec/person.py の profile_ladder)。入力の動画を読めない (終了コード 4) ときは、軽い段階にしても
+        直らないので、やり直さずにその理由を知らせる。モデルをダウンロードできない (終了コード 5) ときは、アニメ向けなら
+        gpu・cpu を飛ばして photo の段階 (別のモデル。写真向けの DeepLab) で続け、photo の段階でもだめなら理由を知らせる。
 
         子プロセスの出力すべてと統計は、ログのファイル (new_person_log。やり直した分も続けて 1 つ) に書く。全部の段階でだめなら、
         そのログの場所を失敗の知らせに書く。"""
@@ -1111,9 +1117,13 @@ class PackBuilderApp(tk.Tk):
         with open_log(log) as write_log:
             write_log(f"{datetime.now():%Y-%m-%d %H:%M:%S} person cutout ({model}): {video}")
         why = "auto"   # 段階を選んだ理由 (最初は空きメモリから。やり直しはその前の段階がどうなったか)
-        for step, profile in enumerate(ladder):
+        # 測った空きメモリは子プロセスに渡す (子で測り直すと、VRAM は約 2.6 秒かかる)。測れなかった (-1) ときも測り直さない
+        free = ["--free-ram", str(ram[1] if ram else -1), "--free-vram", str(vram[1] if vram else -1)]
+        step = 0
+        while step < len(ladder):
+            profile = ladder[step]
             argv = [str(video), str(mask), str(background), "--fps", str(fps), "--ffmpeg", ffmpeg,
-                    "--model", model, "--profile", profile, "--profile-reason", why]
+                    "--model", model, "--profile", profile, "--profile-reason", why, *free]
             if duration is not None:
                 argv += ["--duration", str(duration)]
             if log is not None:   # 統計はログのフォルダにも書く (標準出力を読めなくても残る)
@@ -1129,11 +1139,17 @@ class PackBuilderApp(tk.Tk):
                 prefix = "input error: " if code == EXIT_INPUT_ERROR else "model error: "
                 lines = [line for line in output.splitlines() if line.startswith(prefix)]
                 detail = lines[-1][len(prefix):] if lines else output.strip()[-400:]
+                if code == EXIT_MODEL_ERROR and model == "anime" and profile != "photo" and "photo" in ladder:
+                    # アニメ向けのモデル (Hugging Face) を取得できなくても、photo の段階は別のモデル (写真向け) なので動く
+                    step, why = ladder.index("photo"), "retry_model"
+                    self.messages.put(self.tr("build.person_retry_model", detail=detail))
+                    continue
                 raise RuntimeError(self.tr(key, detail=detail))
             if step + 1 < len(ladder):
                 reason = "memory" if code == EXIT_OUT_OF_MEMORY else "crash"
                 why = f"retry_{reason}"
                 self.messages.put(self.tr(f"build.person_retry_{reason}", profile=self.tr(f"profile.{ladder[step + 1]}")))
+            step += 1
         raise RuntimeError(self.tr("build.person_failed", detail=output.strip()[-400:], log=log if log is not None else "-"))
 
     def _person_process(self, argv: list[str]) -> tuple[int, str]:

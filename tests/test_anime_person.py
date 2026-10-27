@@ -370,7 +370,7 @@ def test_a_short_gap_inside_a_scene_is_filled_from_the_neighbours_without_the_fa
     # 2 フレームの欠け: それぞれ近い方 (4 は 3、5 は 6)。1 フレームの欠けは距離が同じなので前 (8)
     assert np.array_equal(settled[4][1], people[3]) and np.array_equal(settled[5][1], people[6])
     assert np.array_equal(settled[9][1], people[8])
-    assert guard.counts == {"anime": 9, "filled": 3, "matched": 0, "fallback": 0, "flagged": 3}
+    assert guard.counts == {"anime": 9, "filled": 3, "matched": 0, "fallback": 0, "rejected": 0, "flagged": 3}
 
 
 def test_a_gap_of_three_frames_is_not_filled():
@@ -563,7 +563,7 @@ def test_only_the_anime_model_gets_the_temporal_guard(monkeypatch, capsys):
                                           progress=seen.append, stats=stats)
         # 6 フレーム遅れるが、動画の終わりで残りを全部書き出す: フレームの数は同じ。2 フレームの欠けは前後で埋めるので、予備は呼ばない
         assert count == 20 and len(made) == 1 and seen == list(range(1, 21))
-        assert stats["sources"] == {"anime": 18, "filled": 2, "matched": 0, "fallback": 0} and stats["flagged"] == 2
+        assert stats["sources"] == {"anime": 18, "filled": 2, "matched": 0, "fallback": 0, "rejected": 0} and stats["flagged"] == 2
         assert anime.fallback_calls == 0
         masks = [frame[..., 0].mean() / 255 for frame in person.read_frames(Path(folder) / "m2.mp4", 10, None, "ffmpeg", 640)]
         assert len(masks) == 20 and min(masks) > 0.1   # 見つけなかった 2 枚にも、前後と同じ四角 (面積 12.5%) が入っている
@@ -574,7 +574,8 @@ def test_only_the_anime_model_gets_the_temporal_guard(monkeypatch, capsys):
                 "--profile", "gpu"]
         assert person.main(argv) == 0
         lines = capsys.readouterr().out.splitlines()
-        assert "sources anime=18 filled=2 matched=0 fallback=0 flagged=2" in lines and lines[-1].startswith("done 20 frames")
+        assert "sources anime=18 filled=2 matched=0 fallback=0 rejected=0 flagged=2" in lines \
+            and lines[-1].startswith("done 20 frames")
         monkeypatch.setattr(person, "make_segmenter", lambda model, profile, download_progress=None, **_: photo)
         assert person.main(argv[:-4] + ["--model", "photo", "--profile", "photo"]) == 0
         assert not [line for line in capsys.readouterr().out.splitlines() if line.startswith("sources")]
@@ -597,6 +598,7 @@ def test_guard_output_equals_a_direct_reading_of_the_rules():
         out[max(0, y0 - dy):y1 + dy + 1, max(0, x0 - dx):x1 + dx + 1] = True
         return out
 
+    rejected_total = 0
     for seed in range(8):
         rng = np.random.default_rng(seed)
         layout = [int(n) for n in rng.integers(3, 16, rng.integers(2, 5))]
@@ -620,6 +622,7 @@ def test_guard_output_equals_a_direct_reading_of_the_rules():
         assert [cut for _, _, cut in settled] == [t > 0 and scene[t] != scene[t - 1] for t in range(n)]
         area = np.array([_fraction(p) for p in primary])
         flag = area < min_area
+        rejected = 0
         for t in range(n):
             expected = primary[t]
             if flag[t]:
@@ -636,13 +639,25 @@ def test_guard_output_equals_a_direct_reading_of_the_rules():
                     expected = fallback[t]
                     near = [u for u in range(max(0, t - 6), min(n, t + 7)) if not flag[u] and scene[u] == scene[t]]
                     if near:
-                        tau = float(np.clip(np.quantile(expected, 1 - float(np.median(area[near]))), 0.3, 0.8))
                         box = expanded_box(primary[near[0]] >= 0.5) | expanded_box(primary[near[-1]] >= 0.5)
+                    else:   # 窓に無いときは、同じ場面の直前の正常なフレームの箱 (30 フレーム以内)
+                        last = [u for u in range(t) if not flag[u]]
+                        box = expanded_box(primary[last[-1]] >= 0.5) \
+                            if last and scene[last[-1]] == scene[t] and t - last[-1] <= 30 else None
+                    mask = expected >= 0.5
+                    if mask.mean() >= min_area and (mask.mean() > 0.6 or (box is not None and not (mask & box).any())):
+                        expected = np.zeros(shape, np.float32)      # 予備の結果を採らない (rejected)
+                        rejected += 1
+                    elif near:
+                        tau = float(np.clip(np.quantile(expected, 1 - float(np.median(area[near]))), 0.3, 0.8))
                         expected = np.where(box, rescale(expected, tau), 0).astype(np.float32)
             assert np.array_equal(settled[t][1], expected), (seed, t)
             assert settled[t][0] is frames[t]
-        assert sum(guard.counts[k] for k in ("anime", "filled", "matched", "fallback")) == n
+        assert sum(guard.counts[k] for k in ("anime", "filled", "matched", "fallback", "rejected")) == n
+        assert guard.counts["rejected"] == rejected
         assert guard.counts["flagged"] == int(flag.sum())
+        rejected_total += rejected
+    assert rejected_total > 0   # 乱数の例の中に、予備の結果を採らない場合も入っている
 
 
 def test_guard_keeps_a_small_window_and_delays_by_the_lookahead():
@@ -747,6 +762,20 @@ def _run_person_cli(tmp_path, args, model_url=None, model_dir=None):
     return result.returncode, (result.stdout + result.stderr).decode("utf-8", errors="replace")
 
 
+def _japanese(text):
+    """ひらがな・カタカナ・漢字を含むか。"""
+    import re
+
+    return bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", text))
+
+
+def _without_os_text(line):
+    """知らせの行の終わりの「(元の例外の文)」を除く (OS の例外の文は、日本語の Windows では日本語になる)。"""
+    import re
+
+    return re.sub(r" \(.*\)$", "", line)
+
+
 def _model_dir_with_isnet(tmp_path):
     folder = tmp_path / "models"
     folder.mkdir(exist_ok=True)
@@ -763,12 +792,17 @@ def test_pipe_output_is_utf8_and_an_unreadable_input_exits_with_4(tmp_path):
     text.write_text("this is not a video", encoding="utf-8")
     code, output = _run_person_cli(tmp_path, [text, tmp_path / "m.mp4", tmp_path / "b.mp4", "--model", "anime", "--profile", "gpu"],
                                    model_dir=_model_dir_with_isnet(tmp_path))
-    # 日本語の知らせがパイプ越しにそのまま届く (cp932 で書くと GUI の読み方 (utf-8) では文字化けする)
-    assert "�" not in output and "動画を読めませんでした" in output
     assert code == person.EXIT_INPUT_ERROR == 4
-    # 1 行の知らせで終わる (トレースバックは出さない)
-    assert "Traceback" not in output
-    assert [line for line in output.splitlines() if line.startswith("input error: 動画を読めませんでした")]
+    # 1 行の知らせで終わる (トレースバックは出さない)。知らせは対象と元の例外の文だけで、日本語の説明は入らない (F6)
+    assert "Traceback" not in output and "�" not in output
+    lines = [line for line in output.splitlines() if line.startswith("input error: ")]
+    assert len(lines) == 1 and lines[0].startswith("input error: could not read the video: ") and not _japanese(lines[0])
+    # 日本語のパスは、パイプ越しにそのまま届く (cp932 で書くと GUI の読み方 (utf-8) では文字化けする)
+    japanese = tmp_path / "動画.txt"
+    japanese.write_text("this is not a video", encoding="utf-8")
+    code, output = _run_person_cli(tmp_path, [japanese, tmp_path / "m.mp4", tmp_path / "b.mp4", "--model", "anime", "--profile", "gpu"],
+                                   model_dir=_model_dir_with_isnet(tmp_path))
+    assert code == person.EXIT_INPUT_ERROR and "�" not in output and "動画.txt" in output
 
 
 def test_a_missing_ffmpeg_exits_with_4(tmp_path):
@@ -778,7 +812,9 @@ def test_a_missing_ffmpeg_exits_with_4(tmp_path):
         tmp_path, [video, tmp_path / "m.mp4", tmp_path / "b.mp4", "--model", "anime", "--profile", "gpu",
                    "--ffmpeg", tmp_path / "no-such-ffmpeg"], model_dir=_model_dir_with_isnet(tmp_path))
     assert code == person.EXIT_INPUT_ERROR and "�" not in output
-    assert "input error: ffmpeg を起動できませんでした" in output and "Traceback" not in output
+    assert "input error: could not start ffmpeg: " in output and "Traceback" not in output
+    line = [line for line in output.splitlines() if line.startswith("input error: ")][-1]
+    assert not _japanese(_without_os_text(line))
     # 読み取りも書き出しも、起動できないのは同じ InputError (FileNotFoundError はそのまま出さない)
     with pytest.raises(person.InputError):
         list(person.read_frames(video, 10, ffmpeg=str(tmp_path / "no-such-ffmpeg")))
@@ -797,7 +833,8 @@ def test_a_failed_model_download_exits_with_5(tmp_path, problem):
                                               "--profile", "gpu"], model_url=url, model_dir=models)
     assert code == person.EXIT_MODEL_ERROR == 5 and "Traceback" not in output
     line = output.strip().splitlines()[-1]
-    assert line.startswith("model error: ") and ("SHA-256" in line if problem == "wrong_bytes" else "ダウンロードできませんでした" in line)
+    assert line.startswith("model error: ") and ("sha256 mismatch: " if problem == "wrong_bytes" else "download failed: ") in line
+    assert not _japanese(_without_os_text(line))   # 説明は GUI の翻訳に任せ、対象と元の例外の文だけ (F6)
     assert not list(models.glob("*"))   # 壊れたモデルも、書きかけの .part も残さない
 
 
@@ -874,7 +911,8 @@ def test_pipe_output_is_switched_to_utf8_in_one_shared_place(monkeypatch):
 
 
 def test_gui_stops_at_once_when_the_input_or_the_model_is_the_problem(tmp_path, monkeypatch):
-    """終了コード 4・5 は軽い段階にしても直らない: 1 段だけ試して、その理由を知らせる。3 とそれ以外の異常は今までどおり次の段階へ。"""
+    """終了コード 4 (入力の動画) は軽い段階にしても直らない: 1 段だけ試して理由を知らせる。5 (モデルを取得できない) は、アニメ向けなら
+    別のモデルを使う photo の段階へ進み、photo でもだめなら理由を知らせる。3 とそれ以外の異常は今までどおり次の段階へ。"""
     import queue
 
     import video_player_gui as gui
@@ -892,23 +930,47 @@ def test_gui_stops_at_once_when_the_input_or_the_model_is_the_problem(tmp_path, 
             self.codes = list(codes)
             self.output = output
             self.profiles = []
+            self.argvs = []
 
         def _person_process(self, argv):
+            self.argvs.append(argv)
             self.profiles.append(argv[argv.index("--profile") + 1])
             return self.codes.pop(0), self.output
 
-    def split(app):
-        return gui.PackBuilderApp._split_person(app, tmp_path / "in.mp4", tmp_path / "work", 80, 45, 10, None, "ffmpeg", "anime")
+    def split(app, model="anime"):
+        return gui.PackBuilderApp._split_person(app, tmp_path / "in.mp4", tmp_path / "work", 80, 45, 10, None, "ffmpeg", model)
 
-    for code, key, line in ((person.EXIT_INPUT_ERROR, "build.person_input_error", "input error: 動画を読めませんでした: in.mp4"),
-                            (person.EXIT_MODEL_ERROR, "build.person_model_error", "model error: モデルをダウンロードできませんでした: u")):
-        app = Headless([code, 0, 0, 0], "profile full\n" + line)
-        with pytest.raises(RuntimeError) as caught:
-            split(app)
-        assert app.profiles == ["full"]   # 次の段階を試さない
-        assert str(caught.value) == app.tr(key, detail=line.split(": ", 1)[1])
-        retry_texts = [str(app.messages.get()) for _ in range(app.messages.qsize())]
-        assert not [text for text in retry_texts if "やり直します" in text]   # 「軽い設定でやり直します」は出さない
+    def texts(app):
+        return [str(app.messages.get()) for _ in range(app.messages.qsize())]
+
+    # 入力の動画を読めない (4): 次の段階を試さない
+    line = "input error: could not read the video: in.mp4"
+    app = Headless([person.EXIT_INPUT_ERROR, 0, 0, 0], "profile full\n" + line)
+    with pytest.raises(RuntimeError) as caught:
+        split(app)
+    assert app.profiles == ["full"]
+    assert str(caught.value) == app.tr("build.person_input_error", detail=line.split(": ", 1)[1])
+    assert not [text for text in texts(app) if "やり直します" in text]   # 「軽い設定でやり直します」は出さない
+    # アニメ向けのモデルを取得できない (5): gpu・cpu を飛ばして photo の段階へ進む (photo は別のモデル。v6.28.0 と同じく作れる)
+    line = "model error: download failed: https://example.invalid/isnetis.onnx (boom)"
+    detail = line.split(": ", 1)[1]
+    app = Headless([person.EXIT_MODEL_ERROR, 0], "profile full\n" + line)
+    mask, background = split(app)
+    assert app.profiles == ["full", "photo"] and mask.name == "mask.mp4"
+    assert app.argvs[1][app.argvs[1].index("--profile-reason") + 1] == "retry_model"   # 統計に、なぜ photo になったかを残す
+    shown = texts(app)
+    assert app.tr("build.person_retry_model", detail=detail) in shown   # 知らせる (訳した文 + 元の知らせ)
+    assert not [text for text in shown if "メモリが足りずに" in text]
+    # photo の段階でも 5 (写真向けの重みを取得できない) なら、今までどおり理由を知らせて止まる
+    app = Headless([person.EXIT_MODEL_ERROR, person.EXIT_MODEL_ERROR, 0], "profile full\n" + line)
+    with pytest.raises(RuntimeError) as caught:
+        split(app)
+    assert app.profiles == ["full", "photo"] and str(caught.value) == app.tr("build.person_model_error", detail=detail)
+    # 切り抜きのモデルが photo のときは、ほかの段階が無いのでそのまま止まる
+    app = Headless([person.EXIT_MODEL_ERROR, 0], "profile photo\n" + line)
+    with pytest.raises(RuntimeError):
+        split(app, "photo")
+    assert app.profiles == ["photo"]
     # 3 (メモリ不足)・落ちた (-1073741819)・ほかの 0 でないコード (1) は、今までどおり次の段階へ進む
     app = Headless([person.EXIT_OUT_OF_MEMORY, -1073741819, 1, 0], "something happened")
     split(app)
@@ -917,10 +979,19 @@ def test_gui_stops_at_once_when_the_input_or_the_model_is_the_problem(tmp_path, 
     split(app)
     assert app.profiles == ["full", "gpu"]
     # 4 の知らせの後ろに別の行 (警告など) が続いても、知らせの行を理由にする
-    app = Headless([person.EXIT_INPUT_ERROR], "input error: 動画を読めませんでした: in.mp4\nW: late warning")
+    app = Headless([person.EXIT_INPUT_ERROR], "input error: could not read the video: in.mp4\nW: late warning")
     with pytest.raises(RuntimeError) as caught:
         split(app)
-    assert "動画を読めませんでした: in.mp4" in str(caught.value) and "late warning" not in str(caught.value)
+    assert "could not read the video: in.mp4" in str(caught.value) and "late warning" not in str(caught.value)
+    # GUI が測った空きメモリを子プロセスに渡す (子で測り直さない。測れなかったときは -1)
+    app = Headless([0], "")
+    split(app)
+    argv = app.argvs[0]
+    assert argv[argv.index("--free-ram") + 1] == str(16 * gib) and argv[argv.index("--free-vram") + 1] == str(14 * gib)
+    monkeypatch.setattr(resources, "gpu_memory", lambda: None)
+    app = Headless([0], "")
+    split(app)
+    assert app.argvs[0][app.argvs[0].index("--free-vram") + 1] == "-1"
 
 
 # ---- BiRefNet (目立つ物の切り抜き) をその場で外す ----
@@ -1071,12 +1142,31 @@ def test_the_trial_inference_catches_the_out_of_memory_at_creation(birefnet, cap
     assert isinstance(segmenter.fallback, person.SalientPersonSegmenter) and log.runs == 2
 
 
-def test_other_errors_of_the_birefnet_are_not_swallowed(birefnet):
-    log, photo = birefnet(fail_at=2, error="invalid argument")
+def test_other_runtime_errors_of_the_birefnet_drop_it_and_the_frame_is_redone(birefnet, capsys):
+    """メモリ不足でなくても (DirectML の DXGI_ERROR_DEVICE_HUNG など)、補助の BiRefNet だけの失敗なので外して続ける。"""
+    log, photo = birefnet(fail_at=2, error="DXGI_ERROR_DEVICE_HUNG")
     segmenter = person.AnimeSegmenter()
-    with pytest.raises(RuntimeError, match="invalid argument"):
+    prob = segmenter.fallback_prob(FRAME, 0)
+    assert segmenter.salient_dropped == (0, "error") and segmenter.fallback is photo and np.allclose(prob, 0.8)
+    assert segmenter.report()["salient_dropped"] == {"frame": 0, "reason": "error"}
+    assert segmenter.report()["fallback"]["why"] == "dropped_error"
+    out = capsys.readouterr().out
+    assert "salient dropped at frame 0: error" in out and "DXGI_ERROR_DEVICE_HUNG" in out
+    assert log.released()
+
+
+def test_an_error_of_the_photo_model_itself_is_still_raised(birefnet, monkeypatch):
+    """BiRefNet が動いても、写真向けのモデル (DeepLab) 自身の例外は、メモリ不足以外は上へ伝える (外して続けない)。"""
+    log, photo = birefnet()
+
+    def broken(self, rgb):
+        raise ValueError("deeplab broke")
+
+    monkeypatch.setattr(type(photo), "__call__", broken)
+    segmenter = person.AnimeSegmenter()
+    with pytest.raises(ValueError, match="deeplab broke"):
         segmenter.fallback_prob(FRAME, 0)
-    assert isinstance(segmenter.fallback, person.SalientPersonSegmenter) and segmenter.salient_dropped is None
+    assert segmenter.salient_dropped is None and isinstance(segmenter.fallback, person.SalientPersonSegmenter)
 
 
 def test_a_birefnet_that_slows_down_is_dropped_within_six_frames(birefnet, capsys):
@@ -1135,25 +1225,34 @@ def test_the_salient_slow_limit_comes_from_the_command_line(monkeypatch):
     assert seen == {("anime", "full"): 600.0, ("anime", "gpu"): 1500.0}
 
 
-def test_a_full_cutout_continues_with_the_photo_model_after_the_birefnet_is_dropped(birefnet, tmp_path, capsys):
-    """BiRefNet が途中で 'DmlExecutionProvider 887A0005' を投げても、動画は最後まで作られて終了コード 0。以後は写真向けのモデルを使う。"""
+@pytest.mark.parametrize("error, reason", [("[ONNXRuntimeError] : 1 : FAIL : DmlExecutionProvider 887A0005", "oom"),
+                                           ("DXGI_ERROR_DEVICE_HUNG", "error")])
+def test_a_full_cutout_continues_with_the_photo_model_after_the_birefnet_is_dropped(birefnet, tmp_path, capsys, monkeypatch,
+                                                                                    error, reason):
+    """BiRefNet が途中で 'DmlExecutionProvider 887A0005' (メモリ不足) や DXGI_ERROR_DEVICE_HUNG を投げても、動画は最後まで作られて
+    終了コード 0。以後は写真向けのモデルを使う。"""
     import shutil
     import subprocess
+
+    # この偽のモデルは全面を人物と返すので、予備の結果の面積の上限の検査は外す (検査は別のテストで確かめる)
+    monkeypatch.setattr(person, "FALLBACK_MAX_AREA", 1.0)
 
     if shutil.which("ffmpeg") is None:
         pytest.skip("ffmpeg が必要")
     video = tmp_path / "in.mp4"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10:duration=1.5",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)], check=True)
-    log, photo = birefnet(fail_at=3)
+    log, photo = birefnet(fail_at=3, error=error)
     code = person.main([str(video), str(tmp_path / "m.mp4"), str(tmp_path / "b.mp4"), "--fps", "10", "--model", "anime",
                         "--profile", "full"])
     lines = capsys.readouterr().out.splitlines()
     assert code == 0 and lines[-1].startswith("done 15 frames")
     # アニメ向けが何も見つけないので 15 フレームとも予備。フレーム 1 で外れ、以後は写真向けだけ (BiRefNet の run は 3 回で止まる)
-    assert "salient dropped at frame 1: oom" in " ".join(lines) and log.runs == 3
-    assert "sources anime=0 filled=0 matched=0 fallback=15 flagged=15" in lines
+    assert f"salient dropped at frame 1: {reason}" in " ".join(lines) and log.runs == 3
+    assert "sources anime=0 filled=0 matched=0 fallback=15 rejected=0 flagged=15" in lines
     assert photo.calls == 15 and log.released()
+    stats_line = [line for line in lines if line.startswith("stats {")][0]
+    assert json.loads(stats_line[len("stats "):])["salient_dropped"] == {"frame": 1, "reason": reason}
     masks = list(person.read_frames(tmp_path / "m.mp4", 10, None, "ffmpeg", 640))
     assert len(masks) == 15 and all(frame[..., 0].mean() > 100 for frame in masks)
 
@@ -1232,7 +1331,7 @@ def test_stats_count_the_sources_reasons_empty_frames_and_scene_cuts_like_the_be
 
     assert stats["frames"] == 27
     # 見つけたのは 18、前後で埋めたのは 12 の 1 枚、予備の結果を合わせたのは 3・4・5・8・23、そのままの予備は 24〜26
-    assert stats["sources"] == {"anime": 18, "filled": 1, "matched": 5, "fallback": 3}
+    assert stats["sources"] == {"anime": 18, "filled": 1, "matched": 5, "fallback": 3, "rejected": 0}
     assert sum(stats["sources"].values()) == 27 and stats["flagged"] == 9
     assert segmenter.fallback_calls == [3, 4, 5, 8, 23, 24, 25, 26]
     # 予備に頼った理由: 見つけない連なりが 3 枚 (3〜5 と 24〜26) で長い。8 と 23 は場面の端で、前後のどちらかに頼れない
@@ -1533,6 +1632,11 @@ def test_gui_summary_is_one_or_two_lines_and_warns_only_when_a_condition_holds()
     assert "フレーム 12" in warns(salient_dropped={"frame": 12, "reason": "oom"})[0]
     assert "メモリ不足" in warns(salient_dropped={"frame": 12, "reason": "oom"})[0]
     assert "遅く" in warns(salient_dropped={"frame": 9, "reason": "slow"})[0]
+    assert "失敗" in warns(salient_dropped={"frame": 4, "reason": "error"})[0]
+    # 予備の結果を検査で退けて空にしたフレームの数は、まとめの 1 行に入る (無ければ入れない。注意の条件にはしない)
+    rejected = gui.person_summary_lines(tr, _stats(sources={"anime": 80, "filled": 6, "matched": 8, "fallback": 0, "rejected": 6}), log)
+    assert len(rejected) == 2 and "予備を退けた 6" in rejected[0] and "退けた" not in lines[0]
+    assert not warns(sources={"anime": 80, "filled": 6, "matched": 8, "fallback": 0, "rejected": 6})
     everything = warns(empty_frames=40, salient_dropped={"frame": 3, "reason": "slow"},
                        sources={"anime": 10, "filled": 0, "matched": 90, "fallback": 0})
     assert len(everything) == 1 and "40%" in everything[0] and "90%" in everything[0] and "フレーム 3" in everything[0]
@@ -1693,3 +1797,139 @@ def test_gui_passes_the_stats_folder_and_the_reason_and_names_the_log_when_it_fa
     with pytest.raises(RuntimeError) as caught:
         split(app)
     assert "last words of the child" in str(caught.value) and not any("--stats" in argv for argv in app.argvs)
+
+
+# ---------------------------------------------------------------------------
+# 予備の結果の検査 (面積の上限・位置)、一様な画面は場面の切り替わりにしない、背景の動画のフレームの数
+# ---------------------------------------------------------------------------
+
+def test_a_fallback_that_covers_most_of_the_frame_is_rejected_and_the_mask_is_empty():
+    """アニメ向けが何も見つけない動画 (人物がいない) で、予備が画面の 9 割を「人物」にしても採らない。空にする。フレームの数・順序は変わらない。"""
+    frames = _scene_images([10])
+    big = _rect(0, 0, 81, 160)
+    assert _fraction(big) == pytest.approx(0.9)
+    segmenter = _Scripted(frames, [np.zeros(SHAPE, np.float32)] * 10, [big] * 10)
+    guard, settled = _settle_all(segmenter, frames)
+    assert guard.counts == {"anime": 0, "filled": 0, "matched": 0, "fallback": 0, "rejected": 10, "flagged": 10}
+    assert len(settled) == 10 and all(item[0] is frame for item, frame in zip(settled, frames))   # 1:1 で順序のまま
+    assert all(not prob.any() for _, prob, _ in settled)
+    # 面積が上限の内側の塊 (位置を決める正常なフレームが無い) は、今までどおりそのまま
+    blob = _rect(10, 10, 40, 60)
+    segmenter = _Scripted(frames, [np.zeros(SHAPE, np.float32)] * 10, [blob] * 10)
+    guard, settled = _settle_all(segmenter, frames)
+    assert guard.counts["fallback"] == 10 and guard.counts["rejected"] == 0
+    assert all(np.array_equal(prob, blob) for _, prob, _ in settled)
+
+
+def test_a_fallback_far_from_the_last_normal_frame_is_rejected():
+    frames = _scene_images([40])
+    people = [_rect(30, 20, 36, 20) if t < 3 else np.zeros(SHAPE, np.float32) for t in range(40)]
+    near_blob, far_blob = _cone((48, 30), 20), _rect(0, 130, 12, 20)    # 人物のあたり / 画面の右上 (字幕や光の筋のつもり)
+    fallback = [far_blob if t % 2 == 0 else near_blob for t in range(40)]
+    segmenter = _Scripted(frames, people, fallback)
+    guard, settled = _settle_all(segmenter, frames)
+    assert len(settled) == 40 and all(item[0] is frame for item, frame in zip(settled, frames))
+    assert person.FALLBACK_REF_FRAMES == 30
+    for t in range(3, 33):   # 直近の正常なフレームの箱から離れた塊は採らず、近い塊は採る (窓の中は match_to_found の範囲、窓の外はその箱)
+        prob = settled[t][1]
+        if t % 2 == 0:
+            assert not prob.any(), t
+        else:
+            assert (prob >= 0.5).any() and not (prob[:25, 120:] >= 0.5).any(), t
+    # 正常なフレーム (番号 2) が FALLBACK_REF_FRAMES より前になったら、位置の手がかりにしない (人物はもう別の所にいるかもしれない)
+    for t in (34, 36, 38):
+        assert np.array_equal(settled[t][1], far_blob), t
+    assert guard.counts["anime"] == 3 and guard.counts["flagged"] == 37 and guard.counts["rejected"] == 15
+    assert guard.counts["matched"] + guard.counts["fallback"] == 22
+
+
+def test_a_normal_fallback_is_still_matched_to_the_people_nearby():
+    """正常な予備 (人物のあたり・大きすぎない) は、今までどおり match_to_found で合わせる。出力は検査の前と変わらない。"""
+    frames = _scene_images([16])
+    people = [_rect(30, 20 + 4 * t, 36, 20) for t in range(16)]
+    for t in range(5, 10):
+        people[t] = np.zeros(SHAPE, np.float32)
+    fallback = [_cone((48, 30 + 4 * t), 30) for t in range(16)]
+    segmenter = _Scripted(frames, people, fallback)
+    guard, settled = _settle_all(segmenter, frames)
+    assert guard.counts["matched"] == 5 and guard.counts["rejected"] == 0
+    for t in range(5, 10):
+        near = [u for u in range(max(0, t - 6), min(16, t + 7)) if not 5 <= u < 10]
+        assert np.array_equal(settled[t][1], person.match_to_found(fallback[t], [_GuardLike(people[u]) for u in near])), t
+
+
+class _GuardLike:
+    """match_to_found に渡す、面積と箱を持つだけの入れ物。"""
+
+    def __init__(self, prob):
+        mask = prob >= 0.5
+        self.area, self.box = float(mask.mean()), person.bounding_box(mask)
+
+
+def test_the_salient_cutout_does_not_return_a_huge_photo_result_when_it_has_no_blob(tmp_path, monkeypatch):
+    module = types.SimpleNamespace(InferenceSession=_SalientSession, SessionOptions=lambda: types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "onnxruntime", module)
+    model = tmp_path / "salient.onnx"
+    model.write_bytes(b"x")
+    photo = lambda image: (image[..., 1] > 128).astype(np.float32) * 0.8   # 写真向けのモデルは緑だけを人物と見る
+    segmenter = person.SalientPersonSegmenter(photo, model_path=model)
+    streak_only = np.zeros((90, 160, 3), np.uint8)
+    streak_only[82:90, :, 2] = 255            # 光の筋 (青)。写真向けは人物と見ないので、人物らしい塊は無い
+    huge = streak_only.copy()
+    huge[:80, :, 1] = 255                     # 写真向けが画面の 89% を人物とする
+    small = streak_only.copy()
+    small[:20, :, 1] = 255                    # 22%
+    assert not segmenter(huge).any() and segmenter.last_rejected and segmenter.rejected_frames == 1
+    assert (segmenter(small) >= 0.5).mean() == pytest.approx(20 / 90) and not segmenter.last_rejected
+    assert segmenter.no_blob_frames == 2 and segmenter.rejected_frames == 1
+
+
+@pytest.mark.parametrize("level, noise", [(0, 0), (16, 1), (16, 3), (40, 2), (128, 2), (250, 1)])
+def test_a_uniform_screen_is_not_a_scene_cut_on_every_frame(level, noise):
+    """暗転・単色・白飛びがほぼ同じまま続くとき、切り替わりは 0 (平均を引いた構図は意味が無い)。"""
+    rng = np.random.default_rng(level + noise)
+    frames = [np.clip(level + rng.integers(-noise, noise + 1, (90, 160, 3)), 0, 255).astype(np.uint8) for _ in range(20)]
+    features = [person.scene_features(frame) for frame in frames]
+    assert [i for i in range(1, 20) if person.is_scene_cut(features[i - 1], features[i])] == []
+
+
+def test_a_cut_between_a_patterned_screen_and_a_uniform_one_is_still_a_cut():
+    features = person.scene_features
+    pattern = _scene_images([1])[0]
+    white, black = np.full_like(pattern, 255), np.zeros_like(pattern)
+    assert person.is_scene_cut(features(pattern), features(white)) and person.is_scene_cut(features(white), features(pattern))
+    assert person.is_scene_cut(features(pattern), features(black)) and person.is_scene_cut(features(black), features(pattern))
+    # 両方が一様なら、平均の明るさの差だけで決める
+    assert person.is_scene_cut(features(black), features(white)) and person.is_scene_cut(features(black), features(np.full_like(pattern, 60)))
+    assert not person.is_scene_cut(features(np.full_like(pattern, 16)), features(np.full_like(pattern, 30)))
+    # 標準偏差と平均を持たない 2 つ組の特徴 (模様のある画面) の規則は変わらない
+    assert person.is_scene_cut(features(pattern)[:2], features(white)[:2]) is not None
+
+
+@pytest.mark.parametrize("duration", [0.35, 0.33])
+def test_the_background_video_has_as_many_frames_as_were_sent_even_when_the_duration_has_a_fraction(tmp_path, duration):
+    """-t を出力全体に付けると、duration が 1 フレームの長さの倍数でないとき背景の動画が 1 フレーム短かった。
+    音声の入力だけを duration で切る: 送った 4 フレームがそのまま 4 フレームの背景になる。"""
+    import shutil
+    import subprocess
+
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("ffmpeg と ffprobe が必要")
+    source = tmp_path / "with_sound.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=64x36:rate=10:duration=2",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                    "-shortest", str(source)], check=True)
+    sent = 4   # 送るフレームの数 (duration * 10 fps を切り上げた数。以前は出力の -t で 3 フレームに切られた)
+    out = tmp_path / "background.mp4"
+    writer = person._writer(out, 64, 36, 10, "ffmpeg", audio_from=source, duration=duration)
+    for _ in range(sent):
+        writer.stdin.write(np.full((36, 64, 3), 90, np.uint8).tobytes())
+    writer.stdin.close()
+    assert writer.wait() == 0
+
+    def probe(stream, entries):
+        return subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", stream, "-show_entries", entries,
+                               "-of", "csv=p=0", str(out)], capture_output=True, text=True, check=True).stdout.strip()
+
+    assert probe("v:0", "stream=nb_read_frames") == str(sent)
+    assert float(probe("a:0", "stream=duration")) <= duration + 0.1   # 音声は duration で切る
