@@ -43,6 +43,8 @@ const ANCHOR_KEY = `${EVENT_NAMESPACE}:anchor`;
 const ANCHOR_DIMENSION_KEY = `${EVENT_NAMESPACE}:dimension`;
 // setup を実行したプレイヤーの足元。動画を切り替えたとき、新しい動画の形 (平面・立体) に合わせて置く位置を決め直す
 const ORIGIN_KEY = `${EVENT_NAMESPACE}:origin`;
+// setup で決めたスクリーンの向き (JSON の { facing, wall })。動画を切り替えても同じ向きで置き直す
+const LAYOUT_KEY = `${EVENT_NAMESPACE}:layout`;
 // 登録した tickingarea の名前の一覧 (JSON)。次の setup・動画の切り替えで、別の位置の分も含めて外す
 const TICKING_NAMES_KEY = `${EVENT_NAMESPACE}:ticking_areas`;
 const MESSAGE_PREFIX = `§b[${EVENT_NAMESPACE}]`;
@@ -169,29 +171,84 @@ function resolvePermutation(spec) {
   }
 }
 
-// 盤面の 1 マス (p 番目) をワールド座標にする。
-//  平面スクリーン: 足元の高さに、x は東、行は南向き (z+)
-//  立体: x は東、高さは上向き (行 0 が一番上)、奥行き 0 が一番北 (プレイヤーから遠い側)
-//  だまし絵: 壁と床 (stageCellOffset。anchor は舞台の北西の角の床の高さ)
+// スクリーンの向き (facing): setup を実行したプレイヤーが見ていた方向。0 北・1 東・2 南・3 西。
+// 盤面は向きに関係なく「ローカル座標」(x は見ている人の右、z は見ている人の側 (手前)) で並べ、置くときに回す。
+// 北向き (setup の既定) ではローカル座標とワールド座標が同じ
+const FACING_NAMES = ["north", "east", "south", "west"];
+const DEFAULT_LAYOUT = { facing: 0, wall: false };
+
+/** ローカルのマス (lx, lz) の anchor からのずれを out.x / out.z に書く。マスの中心で回すので並びは崩れない。 */
+function rotateCell(facing, lx, lz, out) {
+  if (facing === 1) {
+    out.x = -lz - 1;
+    out.z = lx;
+  } else if (facing === 2) {
+    out.x = -lx - 1;
+    out.z = -lz - 1;
+  } else if (facing === 3) {
+    out.x = lz;
+    out.z = -lx - 1;
+  } else {
+    out.x = lx;
+    out.z = lz;
+  }
+  return out;
+}
+
+/** ワールドでの anchor の角からのずれ (dx, dz。小数でよい) をローカル座標へ戻す (だまし絵の目の位置用)。 */
+function unrotatePoint(facing, dx, dz, out) {
+  if (facing === 1) {
+    out.x = dz;
+    out.z = -dx;
+  } else if (facing === 2) {
+    out.x = -dx;
+    out.z = -dz;
+  } else if (facing === 3) {
+    out.x = -dz;
+    out.z = dx;
+  } else {
+    out.x = dx;
+    out.z = dz;
+  }
+  return out;
+}
+
+/** 平面の動画を壁のように立てて置くか (setup wall。立体・だまし絵は元から立っているので関係しない)。 */
+function standsAsWall(videoData, anchor) {
+  return !!anchor.wall && !isVolume(videoData) && !isAnamorphic(videoData);
+}
+
+// 盤面の 1 マス (p 番目) をワールド座標にする (以下はローカル座標。最後に向きに合わせて回す)。
+//  平面スクリーン: 足元の高さに、x は右、行は手前向き (z+)。setup wall のときは立てる (行 0 が一番上)
+//  立体: x は右、高さは上向き (行 0 が一番上)、奥行き 0 が一番奥 (プレイヤーから遠い側)
+//  だまし絵: 壁と床 (stageCellOffset。anchor は舞台の左奥の角の床の高さ)
 function cellToWorld(videoData, anchor, p, loc) {
+  let lx;
+  let lz;
   if (isAnamorphic(videoData)) {
     stageCellOffset(stageOf(videoData), p, loc);
-    loc.x += anchor.x;
+    lx = loc.x;
+    lz = loc.z;
     loc.y += anchor.y;
-    loc.z += anchor.z;
-    return loc;
-  }
-  const width = videoData.width;
-  const row = Math.floor(p / width);
-  loc.x = anchor.x + (p % width);
-  if (isVolume(videoData)) {
-    const height = videoData.height;
-    loc.y = anchor.y + (height - 1 - (row % height));
-    loc.z = anchor.z + Math.floor(row / height);
   } else {
-    loc.y = anchor.y;
-    loc.z = anchor.z + row;
+    const width = videoData.width;
+    const height = videoData.height;
+    const row = Math.floor(p / width);
+    lx = p % width;
+    if (isVolume(videoData)) {
+      loc.y = anchor.y + (height - 1 - (row % height));
+      lz = Math.floor(row / height);
+    } else if (anchor.wall) {
+      loc.y = anchor.y + (height - 1 - row);
+      lz = 0;
+    } else {
+      loc.y = anchor.y;
+      lz = row;
+    }
   }
+  rotateCell(anchor.facing ?? 0, lx, lz, loc);
+  loc.x += anchor.x;
+  loc.z += anchor.z;
   return loc;
 }
 
@@ -242,13 +299,25 @@ function boardWidthOf(videoData) {
   return isAnamorphic(videoData) ? stageOf(videoData).rowWidth : videoData.width;
 }
 
-// ワールド上で占める範囲の x 方向・z 方向の大きさ
-function footprintOf(videoData) {
+// 占める範囲のローカル座標での x 方向 (左右)・z 方向 (奥行き) の大きさ。layout は setup の向き (wall なら平面も厚さ 1)
+function footprintOf(videoData, layout = DEFAULT_LAYOUT) {
   if (isAnamorphic(videoData)) {
     const geom = stageOf(videoData);
     return { sizeX: geom.sizeX, sizeZ: geom.sizeZ };
   }
-  return { sizeX: videoData.width, sizeZ: isVolume(videoData) ? videoData.depth : videoData.height };
+  if (isVolume(videoData)) return { sizeX: videoData.width, sizeZ: videoData.depth };
+  return { sizeX: videoData.width, sizeZ: layout.wall ? 1 : videoData.height };
+}
+
+/** 占める範囲のワールドでの x・z の最小と最大 (両端を含む)。向きに合わせて回した後の範囲。 */
+function worldBoxOf(videoData, anchor) {
+  const { sizeX, sizeZ } = footprintOf(videoData, anchor);
+  const a = rotateCell(anchor.facing ?? 0, 0, 0, { x: 0, z: 0 });
+  const b = rotateCell(anchor.facing ?? 0, sizeX - 1, sizeZ - 1, { x: 0, z: 0 });
+  return {
+    x0: anchor.x + Math.min(a.x, b.x), x1: anchor.x + Math.max(a.x, b.x),
+    z0: anchor.z + Math.min(a.z, b.z), z1: anchor.z + Math.max(a.z, b.z),
+  };
 }
 
 function ticksPerFrameOf(videoData) {
@@ -266,7 +335,9 @@ function secondsToFrame(videoData, seconds) {
 
 class VideoPlayer {
   constructor(anchor, dimension, videoId) {
-    this.anchor = anchor;
+    // 保存した anchor (x・y・z だけ) にも、setup で決めた向きを付ける
+    const layout = anchor.facing === undefined ? storedLayout() : anchor;
+    this.anchor = { x: anchor.x, y: anchor.y, z: anchor.z, facing: layout.facing, wall: layout.wall };
     this.dimension = dimension;
     this.videoId = videoId;
     this.videoData = VIDEOS[videoId];
@@ -568,14 +639,20 @@ class VideoPlayer {
       const permutation = this.activePalette ? this.activePalette[run.level] : null;
       if (!permutation) continue;
 
-      const bx = this.anchor.x + (run.position % width);
-      const bz = this.anchor.z + Math.floor(run.position / width);
+      cellToWorld(this.videoData, this.anchor, run.position, loc);
+      const bx = loc.x;
+      const by = loc.y;
+      const bz = loc.z;
+      // ランは右へ続く (向きに合わせて回した右方向へ 1 マスずつ進む)
+      const facing = this.anchor.facing ?? 0;
+      const stepX = facing === 0 ? 1 : facing === 2 ? -1 : 0;
+      const stepZ = facing === 1 ? 1 : facing === 3 ? -1 : 0;
 
       for (let i = 0; i < run.length; i++) {
         // yield を挟むので座標は毎回すべて書き直す
-        loc.x = bx + i;
-        loc.y = this.anchor.y;
-        loc.z = bz;
+        loc.x = bx + i * stepX;
+        loc.y = by;
+        loc.z = bz + i * stepZ;
         try {
           this.dimension.setBlockPermutation(loc, permutation);
         } catch (e) {
@@ -1084,7 +1161,9 @@ class VideoPlayer {
       } catch (e) {
         continue;
       }
-      const eye = { x: head.x - this.anchor.x - geom.originX, y: head.y - this.anchor.y, z: head.z - this.anchor.z };
+      // 舞台のローカル座標へ戻す (setup の向きに合わせて回して置いているため)
+      const local = unrotatePoint(this.anchor.facing ?? 0, head.x - this.anchor.x, head.z - this.anchor.z, { x: 0, z: 0 });
+      const eye = { x: local.x - geom.originX, y: head.y - this.anchor.y, z: local.z };
       if (!(eye.z > 1 && eye.y > 1 && eye.x > 0 && eye.x < geom.stageWidth)) continue;
       const dx = eye.x - geom.stageWidth / 2;
       const dz = eye.z - (1 + geom.floorRows / 2);
@@ -1462,8 +1541,10 @@ function runBenchmark(player) {
     return;
   }
   const dimension = vp.dimension;
-  const side = Math.min(64, vp.videoData.width, footprintOf(vp.videoData).sizeZ);
-  const base = { x: vp.anchor.x, y: vp.anchor.y, z: vp.anchor.z };
+  // スクリーンの範囲 (向きに合わせて回した後) の北西の角から、範囲に収まる正方形を使う (壁に立てたスクリーンは 1 マス)
+  const box = worldBoxOf(vp.videoData, vp.anchor);
+  const side = Math.min(64, box.x1 - box.x0 + 1, box.z1 - box.z0 + 1);
+  const base = { x: box.x0, y: vp.anchor.y, z: box.z0 };
   const colors = [BlockPermutation.resolve("minecraft:white_concrete"), BlockPermutation.resolve("minecraft:black_concrete")];
   const cells = [];
   for (let z = 0; z < side; z++) for (let x = 0; x < side; x++) cells.push({ x: base.x + x, y: base.y, z: base.z + z });
@@ -1633,19 +1714,19 @@ function ensureTickingArea(dimension, anchor, videoData) {
     dimension.runCommand(`tickingarea remove ${prefix}`); // 以前の版の名前
   } catch (e) { /* 同上 */ }
 
-  const { sizeX, sizeZ } = footprintOf(videoData);
-  const chunk0X = Math.floor(anchor.x / 16);
-  const chunk0Z = Math.floor(anchor.z / 16);
-  const chunk1X = Math.floor((anchor.x + sizeX - 1) / 16);
-  const chunk1Z = Math.floor((anchor.z + sizeZ - 1) / 16);
+  const box = worldBoxOf(videoData, anchor);
+  const chunk0X = Math.floor(box.x0 / 16);
+  const chunk0Z = Math.floor(box.z0 / 16);
+  const chunk1X = Math.floor(box.x1 / 16);
+  const chunk1Z = Math.floor(box.z1 / 16);
   const step = TICKING_AREA_CHUNKS_PER_SIDE;
   const areas = [];
   for (let cz = chunk0Z; cz <= chunk1Z; cz += step) {
     for (let cx = chunk0X; cx <= chunk1X; cx += step) {
-      const fromX = Math.max(anchor.x, cx * 16);
-      const fromZ = Math.max(anchor.z, cz * 16);
-      const toX = Math.min(anchor.x + sizeX - 1, (cx + step) * 16 - 1);
-      const toZ = Math.min(anchor.z + sizeZ - 1, (cz + step) * 16 - 1);
+      const fromX = Math.max(box.x0, cx * 16);
+      const fromZ = Math.max(box.z0, cz * 16);
+      const toX = Math.min(box.x1, (cx + step) * 16 - 1);
+      const toZ = Math.min(box.z1, (cz + step) * 16 - 1);
       areas.push([fromX, fromZ, toX, toZ]);
     }
   }
@@ -1666,29 +1747,58 @@ function ensureTickingArea(dimension, anchor, videoData) {
 }
 
 /**
- * プレイヤーの足元 origin から、動画を置く位置 (盤面の 0 番のマスの座標) を決める。
- * 平面は足元から北東へ広がる。立体はプレイヤーの 2 ブロック北に、左右中央をそろえて立て、建築できる高さに収める。
+ * プレイヤーの足元 origin から、動画を置く位置 (盤面の 0 番のマスの座標) を決める。layout は setup で決めた向き。
+ * 平面は足元から前と右へ広がる (北向きなら北東)。立体と壁に立てた平面はプレイヤーの 2 ブロック前に、左右中央を
+ * そろえて立てる。どれも建築できる高さに収める。返す anchor は向き (facing・wall) も持つ。
  */
-function anchorForVideo(videoData, origin, dimension) {
+function anchorForVideo(videoData, origin, dimension, layout = DEFAULT_LAYOUT) {
+  const { sizeX, sizeZ } = footprintOf(videoData, layout);
+  // 盤面のローカル座標での anchor の、足元からのずれ (北向きのときのワールドのずれと同じ)
+  let offsetX;
+  let offsetZ;
+  let sizeY;
   if (isAnamorphic(videoData)) {
     // だまし絵の舞台は、プレイヤーが床の手前から人物の高さの半分ほど離れて見る位置に、左右中央をそろえて置く
-    const { sizeX, sizeZ } = footprintOf(videoData);
-    const anchor = { x: origin.x - Math.floor(sizeX / 2), y: origin.y, z: origin.z - sizeZ - Math.ceil(videoData.height / 2) };
-    const fittedY = fitToBuildHeight(dimension, anchor.y, stageOf(videoData).wallHeight + 1);
-    const shifted = fittedY !== anchor.y;
-    anchor.y = fittedY;
-    return { anchor, shifted };
+    offsetX = -Math.floor(sizeX / 2);
+    offsetZ = -sizeZ - Math.ceil(videoData.height / 2);
+    sizeY = stageOf(videoData).wallHeight + 1;
+  } else if (isVolume(videoData) || layout.wall) {
+    offsetX = -Math.floor(videoData.width / 2);
+    offsetZ = -sizeZ - 2;
+    sizeY = videoData.height;
+  } else {
+    offsetX = 0;
+    offsetZ = -sizeZ;
+    sizeY = 1;
   }
-  const volume = isVolume(videoData);
-  const anchor = {
-    x: origin.x - (volume ? Math.floor(videoData.width / 2) : 0),
-    y: origin.y,
-    z: origin.z - footprintOf(videoData).sizeZ - (volume ? 2 : 0),
-  };
-  const fittedY = fitToBuildHeight(dimension, anchor.y, volume ? videoData.height : 1);
+  // 足元のマスはローカル座標で (-offsetX, -offsetZ)。向きに合わせて回したとき、そのマスが足元に来るよう anchor を決める
+  const feet = rotateCell(layout.facing, -offsetX, -offsetZ, { x: 0, z: 0 });
+  const anchor = { x: origin.x - feet.x, y: origin.y, z: origin.z - feet.z, facing: layout.facing, wall: layout.wall };
+  const fittedY = fitToBuildHeight(dimension, anchor.y, sizeY);
   const shifted = fittedY !== anchor.y;
   anchor.y = fittedY;
   return { anchor, shifted };
+}
+
+/** setup で保存した向き。無い・壊れていれば北向きの床置き (以前の版と同じ)。 */
+function storedLayout() {
+  try {
+    const value = JSON.parse(world.getDynamicProperty(LAYOUT_KEY) ?? "null");
+    if (value && FACING_NAMES[value.facing] !== undefined) return { facing: value.facing, wall: !!value.wall };
+  } catch (e) { /* 壊れた値は無視する */ }
+  return DEFAULT_LAYOUT;
+}
+
+/** プレイヤーが見ている方向を 4 方向 (0 北・1 東・2 南・3 西) にまるめる。 */
+function facingOf(player) {
+  let view;
+  try {
+    view = player.getViewDirection();
+  } catch (e) {
+    return 0;
+  }
+  if (Math.abs(view.x) > Math.abs(view.z)) return view.x > 0 ? 1 : 3;
+  return view.z > 0 ? 2 : 0;
 }
 
 /** 高さ sizeY の範囲が dimension.heightRange (max は含まない) に収まる一番近い y を返す。 */
@@ -1721,35 +1831,46 @@ function chunkAlignShift(start, size) {
  * スクリーン (立体は床の範囲) がまたぐチャンクの数が一番少なくなるよう、置く位置 origin を東西・南北にずらす
  * (/scriptevent <接頭辞>:setup align)。ずらした量と、ずらす前後のチャンクの数を返す。
  */
-function alignOriginToChunks(videoData, origin, dimension) {
-  const { anchor } = anchorForVideo(videoData, origin, dimension);
-  const { sizeX, sizeZ } = footprintOf(videoData);
-  const dx = chunkAlignShift(anchor.x, sizeX);
-  const dz = chunkAlignShift(anchor.z, sizeZ);
+function alignOriginToChunks(videoData, origin, dimension, layout = DEFAULT_LAYOUT) {
+  const { anchor } = anchorForVideo(videoData, origin, dimension, layout);
+  const box = worldBoxOf(videoData, anchor);
+  const sizeX = box.x1 - box.x0 + 1;
+  const sizeZ = box.z1 - box.z0 + 1;
+  const dx = chunkAlignShift(box.x0, sizeX);
+  const dz = chunkAlignShift(box.z0, sizeZ);
   return {
     origin: { x: origin.x + dx, y: origin.y, z: origin.z + dz },
     dx,
     dz,
-    before: chunksSpanned(anchor.x, sizeX) * chunksSpanned(anchor.z, sizeZ),
-    after: chunksSpanned(anchor.x + dx, sizeX) * chunksSpanned(anchor.z + dz, sizeZ),
+    before: chunksSpanned(box.x0, sizeX) * chunksSpanned(box.z0, sizeZ),
+    after: chunksSpanned(box.x0 + dx, sizeX) * chunksSpanned(box.z0 + dz, sizeZ),
   };
 }
 
+/**
+ * setup のオプション: align (チャンクにそろえる)、face (見ている方向に向けて置く)、wall (平面の動画を壁のように
+ * 立てて、見ている方向に向けて置く)。face も wall も無ければ以前の版と同じ北向き。
+ */
 function setup(player, options = "") {
   if (!globalSelectedVideoId) {
     notify("no_video_selected");
     return;
   }
   const videoData = VIDEOS[globalSelectedVideoId];
+  const words = options.toLowerCase().split(/\s+/);
+  const wall = words.includes("wall");
+  const layout = { facing: wall || words.includes("face") ? facingOf(player) : 0, wall };
+  world.setDynamicProperty(LAYOUT_KEY, JSON.stringify(layout));
+  if (layout.facing !== 0 || wall) notify(wall ? "setup_wall" : "setup_facing", tr(`facing_${FACING_NAMES[layout.facing]}`));
   const loc = player.location;
   let origin = { x: Math.floor(loc.x), y: Math.floor(loc.y), z: Math.floor(loc.z) };
-  if (options.split(/\s+/).includes("align")) {
-    const aligned = alignOriginToChunks(videoData, origin, player.dimension);
+  if (words.includes("align")) {
+    const aligned = alignOriginToChunks(videoData, origin, player.dimension, layout);
     origin = aligned.origin;
     notify("setup_aligned", aligned.dx, aligned.dz, aligned.before, aligned.after);
   }
   // 建築できる高さ (オーバーワールドは Y=-64〜319) からはみ出すと置けないので、収まる高さへずらす
-  const { anchor, shifted } = anchorForVideo(videoData, origin, player.dimension);
+  const { anchor, shifted } = anchorForVideo(videoData, origin, player.dimension, layout);
   if (shifted) notify("setup_shifted", anchor.y);
   world.setDynamicProperty(ORIGIN_KEY, origin);
 
@@ -1760,7 +1881,8 @@ function setup(player, options = "") {
   const keyStr = getAnchorKeyStr(anchor);
   const vp = new VideoPlayer(anchor, player.dimension, globalSelectedVideoId);
   activePlayers.set(keyStr, vp);
-  world.setDynamicProperty(ANCHOR_KEY, anchor); // For single remote control backwards compatibility
+  // 保存するのは位置 (x・y・z) だけ。向きは LAYOUT_KEY に別に保存してある
+  world.setDynamicProperty(ANCHOR_KEY, { x: anchor.x, y: anchor.y, z: anchor.z }); // For single remote control backwards compatibility
   world.setDynamicProperty(ANCHOR_DIMENSION_KEY, player.dimension.id);
   startMainLoop();
 
@@ -1797,13 +1919,13 @@ function startPlayback(dimension) {
     const videoData = VIDEOS[globalSelectedVideoId];
     if (origin && videoData) {
       // 平面と立体では置く位置・高さ・常時読み込みの範囲が違うので、setup の足元から決め直す
-      const fitted = anchorForVideo(videoData, origin, playbackDimension);
+      const fitted = anchorForVideo(videoData, origin, playbackDimension, storedLayout());
       anchor = fitted.anchor;
       if (fitted.shifted) notify("setup_shifted", anchor.y);
       const ticking = ensureTickingArea(playbackDimension, anchor, videoData);
       if (ticking.added < ticking.needed) notify("tickingarea_partial", ticking.added, ticking.needed);
       activePlayers.delete(keyStr);
-      world.setDynamicProperty(ANCHOR_KEY, anchor);
+      world.setDynamicProperty(ANCHOR_KEY, { x: anchor.x, y: anchor.y, z: anchor.z });
     }
     vp = new VideoPlayer(anchor, playbackDimension, globalSelectedVideoId);
     activePlayers.set(getAnchorKeyStr(anchor), vp);
@@ -1812,6 +1934,9 @@ function startPlayback(dimension) {
 
   vp.restart();
   notify("starting");
+  // 音声が入っていない動画なら、音が出ない理由が分かるよう知らせる (古い版で作ったアドオンには数が無いので何も出さない)
+  const audioEntry = VIDEO_LIST.find((v) => v.id === vp.audioVideoId);
+  if (audioEntry?.audio_chunks === 0) notify("no_audio");
 }
 
 function resumeOrStartPlayback(dimension) {

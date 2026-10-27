@@ -95,6 +95,11 @@ export const dimension = {
 export const player = {
   location: { x: 0, y: 64, z: 100 },
   dimension,
+  // 見ている方向 (setup face / wall の確認用。既定は北)
+  viewDirection: { x: 0, y: 0, z: -1 },
+  getViewDirection() {
+    return { ...this.viewDirection };
+  },
   // 目の高さ (実際の Minecraft と同じく足元から 1.62 ブロック上)
   getHeadLocation() {
     return { x: this.location.x, y: this.location.y + 1.62, z: this.location.z };
