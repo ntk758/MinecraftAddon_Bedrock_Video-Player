@@ -174,18 +174,58 @@ function wavBytes(samples, rate) {
   return new Uint8Array(buffer);
 }
 
-// 音声を 22.05 kHz モノラルにして AUDIO_CHUNK_SECONDS ごとの WAV にする (音声が無ければ [])
-async function extractAudio(v, length) {
+/**
+ * 動画ファイルの音声をデコードする。まず動画ファイルを丸ごと渡し、失敗したら (iPhone の Safari / Chrome は MP4・MOV
+ * の動画ファイルを読めない) AAC の音声トラックだけを取り出して (mp4audio.js) もう一度デコードする。
+ */
+async function decodeVideoAudio(file) {
+  const context = new AudioContext();
   try {
-    const data = await v.file.arrayBuffer();
-    const decoded = await new AudioContext().decodeAudioData(data);
-    const frames = Math.ceil(Math.min(decoded.duration, length) * AUDIO_RATE);
+    try {
+      return await context.decodeAudioData(await file.arrayBuffer());
+    } catch (e) {
+      const adts = await Mp4Audio.extractAdts(file).catch(() => null);
+      if (!adts || adts.length === 0) throw e;
+      log("  音声を動画から取り出してデコード / decoding the AAC track taken out of the video");
+      return await context.decodeAudioData(adts.buffer.slice(adts.byteOffset, adts.byteOffset + adts.length));
+    }
+  } finally {
+    // iPhone は同時に作れる AudioContext の数に限りがあるので、動画ごとに閉じる
+    context.close().catch(() => {});
+  }
+}
+
+/** decoded を AUDIO_RATE のモノラルにする。OfflineAudioContext が使えない・失敗したときは、平均を取って間引く。 */
+async function toMono(decoded, seconds) {
+  const frames = Math.ceil(seconds * AUDIO_RATE);
+  try {
     const offline = new OfflineAudioContext(1, frames, AUDIO_RATE);
     const source = offline.createBufferSource();
     source.buffer = decoded;
     source.connect(offline.destination);
     source.start();
-    const mono = (await offline.startRendering()).getChannelData(0);
+    return (await offline.startRendering()).getChannelData(0);
+  } catch (e) {
+    const channels = [];
+    for (let c = 0; c < decoded.numberOfChannels; c++) channels.push(decoded.getChannelData(c));
+    const ratio = decoded.sampleRate / AUDIO_RATE;
+    const mono = new Float32Array(frames);
+    for (let i = 0; i < frames; i++) {
+      const from = Math.floor(i * ratio);
+      const to = Math.min(decoded.length, Math.max(from + 1, Math.floor((i + 1) * ratio)));
+      let sum = 0;
+      for (const data of channels) for (let k = from; k < to; k++) sum += data[k];
+      mono[i] = to > from ? sum / ((to - from) * channels.length) : 0;
+    }
+    return mono;
+  }
+}
+
+// 音声を 22.05 kHz モノラルにして AUDIO_CHUNK_SECONDS ごとの WAV にする (音声が無ければ [])
+async function extractAudio(v, length) {
+  try {
+    const decoded = await decodeVideoAudio(v.file);
+    const mono = await toMono(decoded, Math.min(decoded.duration, length));
     const chunks = [];
     const step = AUDIO_CHUNK_SECONDS * AUDIO_RATE;
     for (let start = 0, index = 0; start < mono.length; start += step, index++) {
