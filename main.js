@@ -367,6 +367,12 @@ class VideoPlayer {
       // 一時停止の前に描きかけだったフレームは、遅れも時間も正しく測れないので数えない
       skipPartialFrame: this.frameIterator !== null,
       startFrame: this.currentFrame,
+      // だまし絵: 人物を壁と床へ写した回数と時間の合計・最大 (ms)、目の動きで描き直しを始めた回数。Date.now は 1 ms 単位
+      //   (写すのは 1 回が数 ms なので、1 回ごとの値は粗い) なので、合計を回数で割った平均で見る
+      stageProjMs: 0,
+      stageProjMax: 0,
+      stageProjCount: 0,
+      viewRedraws: 0,
     };
   }
 
@@ -398,6 +404,10 @@ class VideoPlayer {
       maxFrameMs: st.maxFrameMs,
       tps: ((st.wallEnd !== null ? st.tickEnd : this.elapsedTicks) - st.tickStart) / seconds,
       driftSeconds: seconds - videoSeconds,
+      stageProjAvg: st.stageProjCount > 0 ? st.stageProjMs / st.stageProjCount : 0,
+      stageProjMax: st.stageProjMax,
+      stageProjCount: st.stageProjCount,
+      viewRedraws: st.viewRedraws,
     };
   }
 
@@ -1109,8 +1119,16 @@ class VideoPlayer {
       ?? { x: geom.stageWidth / 2, y: 1 + this.videoData.height / 2, z: 1 + geom.floorRows + this.videoData.height };
     // 背景の映像のフレームが変わったときだけ後ろの壁を作り直す (decodedFrame を版にする)
     const background = this.background;
+    const projectStart = Date.now();
     projectToStage(this.figure, this.videoData, geom, eye, this.nextBoard, this.stageWork, background?.decoded ?? null,
       background ? background.decodedFrame : 0);
+    const st = this.playStats;
+    if (st) {
+      const projectMs = Date.now() - projectStart;
+      st.stageProjMs += projectMs;
+      st.stageProjMax = Math.max(st.stageProjMax, projectMs);
+      st.stageProjCount++;
+    }
     const work = this.stageWork;
     if (work.rowMin <= work.rowMax) this.extendStageRows(work.rowMin, work.rowMax + 1, work.colMin, work.colMax + 1);
     this.lastEye = eye;
@@ -1137,6 +1155,7 @@ class VideoPlayer {
     const last = this.lastEye;
     const moved = eye && (!last || Math.hypot(eye.x - last.x, eye.y - last.y, eye.z - last.z) >= VIEW_REDRAW_DISTANCE);
     if (!moved && !this.viewRedrawPending) return;
+    if (this.playStats) this.playStats.viewRedraws++;
     const self = this;
     this.viewIterator = (function* () {
       self.drawStage();
@@ -1871,6 +1890,10 @@ function showPlayStats() {
   notify("stats_play", summary.frames, fixed(summary.seconds, 1), fixed(summary.fps, 2), fixed(summary.targetFps, 2),
     fixed(summary.tps, 1), fixed(summary.driftSeconds, 2));
   notify("stats_load", summary.lateFrames, summary.maxLateTicks, fixed(summary.avgFrameMs, 1), summary.maxFrameMs);
+  // だまし絵だけ: 人物を壁と床へ写す時間の平均・最大 (ms)・回数と、目の動きでの描き直しの回数
+  if (isAnamorphic(vp.videoData)) {
+    notify("stats_stage", fixed(summary.stageProjAvg, 2), summary.stageProjMax, summary.stageProjCount, summary.viewRedraws);
+  }
 }
 
 function getActivePlayer() {

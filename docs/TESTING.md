@@ -41,6 +41,73 @@
 8. ゲームの言語を英語以外に変えて、チャットとリモコンの文字が翻訳されている
 9. Windows 用 EXE: 解凍して起動 → 動画を追加 → 作成 → できた `.mcaddon` を 1〜3 と同じ手順で確かめる
 
+### 2.1 だまし絵の重さを実機で測る (o40・o80・dancer)
+
+モックの時間は、実機の約 3.1〜4.3 倍が目安 (見積り。実機の値が届くたびに直す) で、だまし絵の重さの定数 (`video_player_gui.py` の
+`MMD_STAGE_MS_AT_40`・`MMD_STAGE_COST_EXPONENT`) もこの見積りから出している。実機の値は次の 3 本で測る。手元だけにある第三者の
+モデルから作った試験用アドオンなので、リポジトリにも配布物にも入れない (数字だけを記録する)。
+
+| 名前 | 中身 |
+|---|---|
+| o40 | MMD の人物 (高さ 40 のだまし絵)。背景の映像なし |
+| o80 | 同じ人物を高さ 80 に (エクストリーム)。背景の映像なし |
+| dancer | 人物を切り抜いた立体 (高さ 45 ほど) + 後ろの壁の背景の映像 |
+
+1. アドオンを取り込み、新しいワールド (チート有効、ビヘイビアーパックとリソースパックの両方を有効) で `/scriptevent badapple:setup`。
+2. 舞台の箱の中か手前に立ち、**動かずに**最後まで再生する (`/scriptevent badapple:start`)。終わったらすぐに `/scriptevent badapple:stats`。
+3. もう一度、今度は舞台の前を左右に歩き回りながら (目を動かして) 最後まで再生し、同じように `stats` を見る。
+4. 出た 3 行を記録する。
+   - `再生` (stats_play): フレーム数・fps・TPS・映像の遅れ。目標の fps と TPS 20 に届いたか
+   - `負荷` (stats_load): 予定より遅れて描き始めたフレームの数・最大の遅れ (tick)、1 フレームのスクリプト時間の平均と最大 (ms)
+   - `舞台` (stats_stage): 人物を壁と床へ写した時間の平均・最大 (ms)・回数と、目の動きで描き直しを始めた回数 (だまし絵だけ)
+5. 読み方: 実機の `Date.now()` は 1 ms 単位なので、`舞台` の最大は 1 ms 刻み。投影 1 回は数 ms なので、平均 (合計 ÷ 回数) で見る。
+   1 フレームの平均 (`負荷`) のうち投影が占める分は「平均 × 回数 ÷ フレーム数」。残りは展開と設置。動かずに再生したときの回数は
+   変わるフレームの数と同じで、歩き回ると描き直しの分だけ増える。
+6. 記録の形 (表の欄が足りなければ [PERFORMANCE.md](PERFORMANCE.md) に表を足す):
+
+| 名前 | 目の動き | fps / 目標 | TPS | 遅れ (最大 tick) | 1 フレーム 平均 / 最大 ms | 投影 平均 / 最大 ms (回数) | 描き直し | モックの 1 フレーム ms |
+|---|---|---|---|---|---|---|---|---|
+| o40 | 動かない |  |  |  |  |  |  |  |
+| o40 | 歩き回る |  |  |  |  |  |  |  |
+| o80 | 動かない |  |  |  |  |  |  |  |
+| o80 | 歩き回る |  |  |  |  |  |  |  |
+| dancer | 動かない |  |  |  |  |  |  |  |
+| dancer | 歩き回る |  |  |  |  |  |  |  |
+
+「モックの 1 フレーム ms」は `python benchmark/stage_bench.py --addon <アドオン>` の `stats_load` の平均 (同じアドオンを実機の費用をまねた
+モックで再生した値)。実機 ÷ モックが、見積りの 3.1〜4.3 倍に収まるかを見る。収まらなければ見積りの倍率を、`MMD_STAGE_MS_AT_40` などの定数は
+実機の値が届いてから、別の変更で直す。
+
+### 2.2 人物の切り抜き (AI) の記録
+
+GUI は人物の切り抜きを別のプロセスで行い、処理ログには結果の短いまとめを 1〜2 行だけ出す (人物が空のフレームが 10% を超える・予備の
+モデルが 50% を超える・目立つ物の切り抜き (BiRefNet) を外した、のどれかなら注意の 1 行を足す)。くわしい記録は次のファイルに残る。
+
+- `%LOCALAPPDATA%\BlockVideoPlayer\logs\person-YYYYMMDD-HHMMSS.log`: 子プロセスの出力すべて (やり直した段階の分も続けて) と、統計の JSON の行。
+  新しい 10 個だけ残る。失敗のダイアログにもこのファイルの場所が出る
+- `person-stats-YYYYMMDD-HHMMSS.json`: 同じフォルダに子プロセスが書く統計。windowed の EXE のように標準出力を読めなくても残る
+
+**ログには入力の動画の場所 (ユーザー名を含むことがある) が書かれる**。人に送るときは確かめてから。統計の JSON には場所は入らない。
+
+統計の JSON (`python scripts/make_person_videos.py ... [--stats PATH]` の `stats {...}` の行も同じ):
+
+| 項目 | 中身 |
+|---|---|
+| `model` `profile` `profile_reason` `profile_skipped` | 使った切り抜きのモデルと段階、その段階にした理由 (`auto` = 空きメモリから、`given` = 指定、`retry_memory` `retry_crash` = 前の段階がメモリ不足・落ちたため)、より重い段階にしなかった理由 |
+| `free_at_start` | 始めたときの空きの RAM と VRAM (MB。分からなければ `null`) |
+| `sources` `flagged` | 出所ごとのフレーム数 (`anime` そのまま / `filled` 前後で埋めた / `matched` 合わせた予備 / `fallback` そのままの予備。写真向けだけのときは `photo`)。`flagged` はアニメ向けが人物を見つけなかったフレームの数 |
+| `fallback` | `reasons` 予備に頼った理由 (`long_run` 見つけない連なりが 3 枚以上 / `no_neighbour` 場面や動画の端 / `no_fallback`)、`model` `why` 予備に何を選んだか (`salient` `photo` `none`) とその理由、`frames` 予備が返した数 (モデル別)、`load_s` |
+| `salient_dropped` | BiRefNet を外したフレームと理由 (`oom` メモリ不足 / `slow` 遅くなった)。外していなければ `null` |
+| `empty_frames` `scene_cuts` | 書き出したマスクの人物が画面の 0.5% 未満のフレームの数、場面の切り替わりの数 |
+| `models` | モデルごと (`anime` `photo` `salient`) の実行プロバイダー (`providers`。onnxruntime の `get_providers()`) と、推論の ms (`ms`: `n` `mean` `median` `p95` `max`) |
+| `stages_ms` | 工程 (`read` `segment` `split` `write`) ごとの、1 回の呼び出しの ms (`n` `mean` `median` `p95` `max`) と合計 `total_s` |
+| `load_s` `run_s` `wall_s` | モデルを作る・フレームを処理する・全体の秒数 |
+| `memory` | このプロセスの最大の working set と最大の commit (MB。Windows のみ、他は `null`) |
+| `error` | 失敗したときの理由 (`kind`: `input` `model` `out_of_memory` `crash` と `message`)。成功なら `null` |
+
+ローカルの `benchmark/person_bench.py` は、この統計を行に入れ、マスクの動画から数えた空のフレームの数・場面の切り替わりの数と合っているかを
+`stats_check` に出す。
+
 ## 3. 端末ごとの対応状況
 
 [COMPATIBILITY.md](COMPATIBILITY.md) を参照してください。

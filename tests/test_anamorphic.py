@@ -597,3 +597,102 @@ def test_stop_after_pausing_mid_frame_leaves_nothing_on_the_stage(busy, tmp_path
     out = drive(tmp_path / "addon", {"stage": path}, steps)
     assert out["errors"] == []
     assert {block for *_position, block in out["worlds"][0]["blocks"]} == {"minecraft:air"}
+
+
+# --- /scriptevent <接頭辞>:stats の「舞台」の行: 人物を壁と床へ写した時間・回数と、目の動きでの描き直しの回数 ---
+
+def wrap_projections(min_ms):
+    """drive の prepare に渡す。work の codec.js の projectToStage を、呼んだ回数を globalThis.__bvpProjections に数え、
+    1 回に min_ms 以上かける関数で包む (drive_main が回数を projections に出す)。stats の時計は Date.now で 1 ms 単位なので、
+    速すぎる計算では平均が 0 になってしまう。min_ms が 0 なら数えるだけ。"""
+    def prepare(work):
+        codec = work / "codec.js"
+        text = codec.read_text(encoding="utf-8")
+        assert text.count("export function projectToStage(") == 1
+        text = text.replace("export function projectToStage(", "function projectToStageOriginal(")
+        text += (
+            "\nexport function projectToStage(...args) {\n"
+            "  globalThis.__bvpProjections = (globalThis.__bvpProjections ?? 0) + 1;\n"
+            "  const start = Date.now();\n"
+            "  const result = projectToStageOriginal(...args);\n"
+            f"  while (Date.now() - start < {min_ms}) {{ /* 計算が速すぎて 0 ms にならないよう待つ */ }}\n"
+            "  return result;\n"
+            "}\n")
+        codec.write_text(text, encoding="utf-8")
+    return prepare
+
+
+def stats_messages(out, key):
+    """drive_main の messages から、翻訳キー key の知らせの引数 (数値) を、出た順に取り出す。"""
+    found = []
+    for message in out["messages"]:
+        for part in json.loads(message)["rawtext"]:
+            if isinstance(part, dict) and part.get("translate") == key:
+                found.append([float(arg["text"]) for arg in part["with"]["rawtext"]])
+    return found
+
+
+def test_stats_report_how_long_the_stage_projections_took(tmp_path):
+    """だまし絵を再生した後の stats に、舞台の行 (投影の平均・最大・回数、目の動きでの描き直しの回数) が出る。回数は
+    投影した回数と一致し、平均は 0 より大きい。再生が終わった後で目が動けば、描き直しが増えて、その分だけ回数も増える。"""
+    path = make_depth_walk(tmp_path)
+    data = convert_vox(path, tmp_path / "walk.js", "--view", "anamorphic")
+    start = {"x": 0.5, "y": 64, "z": 100.5}
+    moved = {"x": -6.5, "y": 70, "z": 92.5}
+    stats = {"event": "badapple:stats"}
+    steps = [dict(start), {"event": "badapple:setup"}, {"event": "badapple:start"}, {"until": "bvp.playback_finished"}, stats,
+             dict(moved), {"tick": 20}, stats]
+    out = drive(tmp_path / "addon", {"stage": tmp_path / "walk.js"}, steps, prepare=wrap_projections(2))
+    assert out["errors"] == []
+    (first, second) = stats_messages(out, "bvp.stats_stage")
+    average, longest, count, redraws = first
+    # 再生中は、フレームが変わるたびに 1 回ずつ写す。目は動かないので、描き直しは 0 回
+    assert count == data["frame_count"] and redraws == 0
+    assert 2 <= average <= longest and longest >= 2
+    # 目が動いた後は、描き直しの 1 回が増え、その投影の分も回数に入る。回数は、実際に呼んだ回数
+    assert second[3] == 1 and second[2] == count + 1 == out["projections"]
+    assert second[0] >= 2
+    # 並び: 再生の行 → 負荷の行 → 舞台の行
+    keys = [part["translate"] for message in out["messages"] for part in json.loads(message)["rawtext"]
+            if isinstance(part, dict) and part.get("translate", "").startswith("bvp.stats_")]
+    assert keys[:3] == ["bvp.stats_play", "bvp.stats_load", "bvp.stats_stage"]
+
+
+def test_stage_stats_count_only_projections_made_since_the_play_started(tmp_path):
+    """再生を始め直す (止めてから再生) と、舞台の回数も数え直す。動かない目で、再生を 2 回すれば、回数は 1 回目と同じ。"""
+    path = make_depth_walk(tmp_path)
+    data = convert_vox(path, tmp_path / "walk.js", "--view", "anamorphic")
+    stats = {"event": "badapple:stats"}
+    steps = [{"x": 0.5, "y": 64, "z": 100.5}, {"event": "badapple:setup"}, {"event": "badapple:start"},
+             {"until": "bvp.playback_finished"}, stats,
+             {"event": "badapple:start"}, {"tick": 80}, stats]   # 終わりの知らせは 1 回目のが残っているので、tick 数で待つ
+    out = drive(tmp_path / "addon", {"stage": tmp_path / "walk.js"}, steps, prepare=wrap_projections(0))
+    assert out["errors"] == []
+    (first, second) = stats_messages(out, "bvp.stats_stage")
+    assert first[2] == second[2] == data["frame_count"]
+    assert out["projections"] == 2 * data["frame_count"]   # 投影そのものは 2 回分あるが、2 回目の stats は 2 回目の分だけ
+
+
+def test_flat_video_stats_have_no_stage_line(tmp_path):
+    """だまし絵でない動画 (平面) の stats は今までどおり。舞台の行は出ない。"""
+    from test_codec_v4 import make_scene_frames, run_convert
+
+    make_scene_frames(tmp_path / "frames")
+    run_convert(tmp_path / "frames", tmp_path / "scene.js")
+    out = drive(tmp_path / "addon", {"demo": tmp_path / "scene.js"},
+                [{"event": "badapple:setup"}, {"event": "badapple:start"}, {"until": "bvp.playback_finished"},
+                 {"event": "badapple:stats"}])
+    text = json.dumps(out["messages"])
+    assert "bvp.stats_play" in text and "bvp.stats_load" in text and "bvp.stats_stage" not in text
+
+
+def test_stage_stats_line_is_translated_in_every_language():
+    """舞台の行の翻訳が、10 言語とも、4 つの数 (%1〜%4) を入れる形である。"""
+    import gui_i18n
+
+    files = gui_i18n.addon_lang_files()
+    languages = [path for path in files if path.endswith(".lang")]
+    assert len(languages) >= 10
+    for path in languages:
+        line = next(line for line in files[path].splitlines() if line.startswith("bvp.stats_stage="))
+        assert [f"%{n}" in line for n in (1, 2, 3, 4)] == [True] * 4, path

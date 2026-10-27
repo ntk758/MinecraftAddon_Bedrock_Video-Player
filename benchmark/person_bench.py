@@ -5,6 +5,8 @@
   - wall 時間と ms/フレーム (モデルの読み込みを含む)
   - ピーク時のワーキングセット (peak working set) と、確保したメモリ (peak private)。psutil で 200 ms ごとに見る
   - --vram を付けると、(Windows のみ) そのプロセスの GPU の専用メモリ (Dedicated Usage) の最大。Get-Counter で見る
+  - 子プロセスが自分で出す統計 (--stats。出所ごとのフレーム数・空のフレーム・場面の切り替わり・モデルごとの推論の ms・工程ごとの ms・
+    自分で測った最大のメモリ) を行に入れ、下のマスクから数えた値と合っているかを stats_check に出す (統計を出さない古い版は飛ばす)
 出力のマスク動画からは、ブロックの単位 (80x45 にボックス平均で縮めて 0.5 以上を人物とする) で次を求める:
   - 空のフレームの数 (ブロック単位で人物が 1 つも無い。面積 0.5% 未満も別に数える)
   - 1 フレームあたりの「変わるマス」と「1 フレームだけ点滅するマス」(場面の切り替わりをまたぐ変化は含めない)
@@ -102,16 +104,34 @@ class VramSampler(threading.Thread):
             self.process.kill()
 
 
+def supports_stats(tree_dir):
+    """この版の人物の切り抜きが --stats (統計の JSON) を出せるか。"""
+    try:
+        return '"--stats"' in (tree_dir / "mvcodec" / "person.py").read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def read_stats(out_dir):
+    """子プロセスが out_dir に書いた統計 (person-stats-*.json のうち一番新しいもの)。無ければ None。"""
+    files = sorted(out_dir.glob("person-stats-*.json"), key=lambda path: path.stat().st_mtime)
+    return json.loads(files[-1].read_text(encoding="utf-8")) if files else None
+
+
 def run_pipeline(tree_dir, video, out_dir, profile, model, fps, duration, ffmpeg, want_vram):
     """make_person_videos.py を新しいプロセスで動かし、時間とメモリを測る。戻り値は (結果, マスクの動画, 背景の動画)。"""
     import psutil
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    for old in out_dir.glob("person-stats-*.json"):
+        old.unlink()
     mask, background = out_dir / "mask.mp4", out_dir / "background.mp4"
     argv = [sys.executable, str(tree_dir / "scripts" / "make_person_videos.py"), str(video), str(mask), str(background),
             "--fps", str(fps), "--ffmpeg", ffmpeg, "--model", model, "--profile", profile]
     if duration is not None:
         argv += ["--duration", str(duration)]
+    if supports_stats(tree_dir):
+        argv += ["--stats", str(out_dir)]
     with open(out_dir / "log.txt", "w", encoding="utf-8", errors="replace") as log:
         started = time.perf_counter()
         process = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT, cwd=tree_dir, creationflags=CREATE_NO_WINDOW)
@@ -142,7 +162,8 @@ def run_pipeline(tree_dir, video, out_dir, profile, model, fps, duration, ffmpeg
             if vram:
                 vram.stop()
     result = {"exit_code": process.returncode, "wall_s": wall, "peak_working_set_mb": peaks["wset"] / MB,
-              "peak_private_mb": peaks["private"] / MB, "peak_vram_mb": vram.peak if vram else None}
+              "peak_private_mb": peaks["private"] / MB, "peak_vram_mb": vram.peak if vram else None,
+              "stats": read_stats(out_dir)}
     return result, mask, background
 
 
@@ -210,6 +231,26 @@ def mask_statistics(mask_path, source, fps, ffmpeg):
     return block_statistics(masks[:count], scene_cuts(frames[:count]))
 
 
+def check_stats(stats, measured):
+    """子プロセスの統計 stats と、マスクの動画から数えた値 measured を比べる。{項目: (統計, 数えた値, 合っているか)}。
+    ブロック単位の「空」(empty_frames_blocks) は面積 0.5% 未満より厳しいので、面積のほうと比べる。"""
+    pairs = {"frames": (stats.get("frames"), measured["frames"]),
+             "empty_frames": (stats.get("empty_frames"), measured["empty_frames_area"]),
+             "scene_cuts": (stats.get("scene_cuts"), measured["scene_cuts"])}
+    return {name: (a, b, a == b) for name, (a, b) in pairs.items()}
+
+
+def format_stats(stats):
+    """統計の主な数を 1 行にする (出所ごとのフレーム数・予備に頼った理由・モデルごとの推論の中央値と p95)。"""
+    if not stats:
+        return ""
+    models = " ".join(f"{name}[{m['ms']['n']}x {m['ms']['median']:.0f}/{m['ms']['p95']:.0f}ms]"
+                      for name, m in (stats.get("models") or {}).items() if m.get("ms"))
+    sources = " ".join(f"{k}={v}" for k, v in (stats.get("sources") or {}).items())
+    return (f"stats: {sources} flagged={stats.get('flagged', '-')} reasons={(stats.get('fallback') or {}).get('reasons', '-')} "
+            f"{models} mem={stats.get('memory')}")
+
+
 def format_row(row):
     def number(value, digits=1):
         return "-" if value is None else f"{value:.{digits}f}"
@@ -259,6 +300,8 @@ def main(argv=None):
                 if result["exit_code"] == 0 and mask.is_file():
                     row.update(mask_statistics(mask, video, args.fps, args.ffmpeg))
                     row["ms_per_frame"] = result["wall_s"] * 1000 / max(1, row["frames"])
+                    if result["stats"]:
+                        row["stats_check"] = check_stats(result["stats"], row)
                 else:
                     row["ms_per_frame"] = None
                 if not args.keep_masks:
@@ -266,6 +309,10 @@ def main(argv=None):
                         path.unlink(missing_ok=True)
                 rows.append(row)
                 print("  " + format_row(row), flush=True)
+                if row.get("stats"):
+                    print("  " + format_stats(row["stats"]), flush=True)
+                    print("  stats_check (統計 / マスクから数えた値): " + ", ".join(
+                        f"{name} {a}/{b} {'OK' if ok else 'NG'}" for name, (a, b, ok) in row.get("stats_check", {}).items()), flush=True)
                 (out / "person_results.json").write_text(json.dumps(
                     {"date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), "fps": args.fps, "duration": args.duration,
                      "rows": rows}, ensure_ascii=False, indent=1), encoding="utf-8")

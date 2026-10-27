@@ -13,11 +13,16 @@ AI の切り抜きモデルで各フレームの人物の範囲を求める。�
   - 人物を消した背景の動画: だまし絵の後ろの壁に流す (--stage-background)。消した所は、同じ場面で人物がいなかった
     ときの色 (カメラが止まっている映像) か、まわりの色をぼかして埋める
 
-    python scripts/make_person_videos.py in.mp4 mask.mp4 background.mp4 --fps 10 [--model anime]
+    python scripts/make_person_videos.py in.mp4 mask.mp4 background.mp4 --fps 10 [--model anime] [--stats PATH]
+
+終わる前に 1 行の「stats <JSON>」を出し、--stats PATH があればそのファイル (フォルダならその中) にも書く: 選んだモデルと段階・理由、
+出所ごとのフレーム数、予備に頼った理由、空のフレーム、場面の切り替わり、モデルごとの実行プロバイダーと推論の ms (中央値・p95 など)、
+工程ごとの ms、最大のメモリ (くわしくは make_person_videos と main の説明、docs/TESTING.md の 2.2)
 """
 import gc
 import hashlib
 import http.client
+import json
 import os
 import subprocess
 import time
@@ -46,8 +51,26 @@ SCENE_CUT_DIFF = 40.0
 BACKGROUND_LEARNING = 0.2
 
 
+def summarize_ms(values):
+    """ms の記録 (並び) の個数 n・平均・中央値・p95・最大 (小数 2 桁)。記録が無ければ None。stats に入れる。"""
+    if not len(values):
+        return None
+    a = np.asarray(values, np.float64)
+    return {"n": int(a.size), "mean": round(float(a.mean()), 2), "median": round(float(np.median(a)), 2),
+            "p95": round(float(np.percentile(a, 95)), 2), "max": round(float(a.max()), 2)}
+
+
+def session_providers(session):
+    """onnxruntime のセッションが実際に使う実行プロバイダー (get_providers)。読めなければ None。"""
+    try:
+        return list(session.get_providers())
+    except Exception:  # noqa: BLE001 (偽物のセッションなど。統計のためだけなので、読めなければ無いものとする)
+        return None
+
+
 class PersonSegmenter:
-    """1 枚の画像 (高さ × 幅 × 3 の uint8) から、人物である確からしさ (0〜1、同じ大きさ) を返す。"""
+    """1 枚の画像 (高さ × 幅 × 3 の uint8) から、人物である確からしさ (0〜1、同じ大きさ) を返す。
+    inference_ms にモデルを動かした時間 (ms) を残す (report で統計にする)。"""
 
     def __init__(self, device="cpu"):
         import torch
@@ -55,6 +78,7 @@ class PersonSegmenter:
                                                      deeplabv3_mobilenet_v3_large)
         self.torch = torch
         self.device = torch.device(device)
+        self.inference_ms = []
         weights = DeepLabV3_MobileNet_V3_Large_Weights.DEFAULT
         try:
             self.model = deeplabv3_mobilenet_v3_large(weights=weights).eval().to(self.device)
@@ -70,10 +94,16 @@ class PersonSegmenter:
         size = (max(1, round(w * scale)), max(1, round(h * scale)))
         small = np.asarray(Image.fromarray(rgb).resize(size, Image.Resampling.BILINEAR), np.float32) / 255
         x = (torch.from_numpy(small).permute(2, 0, 1)[None] - self.mean) / self.std
+        start = time.perf_counter()
         with torch.no_grad():
             logits = self.model(x.to(self.device))["out"].float().cpu()
+        self.inference_ms.append((time.perf_counter() - start) * 1000)
         prob = torch.softmax(logits, dim=1)[0, PERSON_CLASS].numpy()
         return np.asarray(Image.fromarray(prob).resize((w, h), Image.Resampling.BILINEAR), np.float32)
+
+    def report(self):
+        """stats 用: 使ったモデルと、推論の ms。"""
+        return {"models": {"photo": {"providers": [f"torch:{self.device}"], "ms": summarize_ms(self.inference_ms)}}}
 
 
 # 切り抜きと背景を作る大きさ (長い辺) の既定 (下の ANALYSIS_LONG_SIDE と同じ)
@@ -167,7 +197,8 @@ def _remove(path):
 class AnimeSegmenter:
     """アニメ・イラスト向けの切り抜き (skytnt/anime-seg の ISNet)。PersonSegmenter と同じく、画像から人物の確からしさを返す。
 
-    画像は縦横比を保って 1024 × 1024 の真ん中に置き (余白は黒)、出力の同じ範囲を元の大きさに戻す。"""
+    画像は縦横比を保って 1024 × 1024 の真ん中に置き (余白は黒)、出力の同じ範囲を元の大きさに戻す。
+    使ったモデル・実行プロバイダー・推論の ms・予備の選び方と使った回数は、report で統計にする。"""
 
     def __init__(self, model_path=None, providers=None, download_progress=None, fallback="auto", salient=True,
                  salient_slow_ms=SALIENT_SLOW_MS):
@@ -183,6 +214,15 @@ class AnimeSegmenter:
         self.salient_dropped = None   # 目立つ物の切り抜きを外したら (フレームの番号, "oom" か "slow")
         self.frame = None             # 予備を呼んでいるフレームの番号 (外したときの知らせに使う)
         self.calls = 0
+        # 統計用: アニメ向けの推論の ms、予備の切り抜きが返した回数 (モデル別)、予備に何を選んだかと理由、
+        # 作った写真向けのモデルと目立つ物の切り抜き (外した後も、使った記録を読めるよう持っておく)
+        self.inference_ms = []
+        self.fallback_used = {"salient": 0, "photo": 0}
+        self.fallback_why = None
+        self.fallback_load_s = None   # 予備のモデルを作る (と試しの推論をする) のにかかった秒数
+        self.photo = None
+        self.salient_model = None
+        self.salient_providers = None
 
         path = Path(model_path) if model_path else model_dir() / ANIME_MODEL_FILE
         if not path.is_file():
@@ -206,7 +246,9 @@ class AnimeSegmenter:
         image = np.zeros((size, size, 3), np.float32)
         image[top:top + nh, left:left + nw] = np.asarray(
             Image.fromarray(rgb).resize((nw, nh), Image.Resampling.BILINEAR), np.float32) / 255
+        start = time.perf_counter()
         mask = self.session.run(None, {self.input_name: image.transpose(2, 0, 1)[None]})[0]
+        self.inference_ms.append((time.perf_counter() - start) * 1000)
         mask = np.asarray(mask, np.float32).reshape(size, size)[top:top + nh, left:left + nw]
         return np.asarray(Image.fromarray(mask).resize((w, h), Image.Resampling.BILINEAR), np.float32)
 
@@ -218,11 +260,14 @@ class AnimeSegmenter:
         推論が遅くなったとき (VRAM が足りずに共有メモリへ退避した) は、そのフレームはそのままで、次から写真向けだけにする。"""
         self.frame = index
         if self.fallback == "auto":
+            start = time.perf_counter()
             self.fallback = self._make_fallback()
+            self.fallback_load_s = time.perf_counter() - start
         fallback = self.fallback
         if fallback is None:
             return None
         if not isinstance(fallback, SalientPersonSegmenter):
+            self.fallback_used["photo"] += 1
             return fallback(rgb)
         reason = None
         try:
@@ -234,7 +279,9 @@ class AnimeSegmenter:
         if reason is not None:
             # 写真向けのモデル (DeepLab、CPU) のメモリ不足も同じに扱う: 目立つ物の切り抜きを外せば、そのぶんのメモリが空く
             self._drop_salient(*reason)
+            self.fallback_used["photo"] += 1
             return self.fallback(rgb)
+        self.fallback_used["salient"] += 1
         if fallback.is_slow():
             self._drop_salient("slow", f"median of the last {SALIENT_SLOW_WINDOW} runs {fallback.median_ms():.0f} ms "
                                        f"> {self.salient_slow_ms:.0f} ms")
@@ -258,8 +305,14 @@ class AnimeSegmenter:
         try:
             photo = PersonSegmenter()
         except ImportError:
+            self.fallback_why = "no_torch"
             return None
-        if not self.salient or not any(p in GPU_PROVIDERS for p in self.providers):
+        self.photo = photo
+        if not self.salient:
+            self.fallback_why = "salient_off"   # この段階では使わない設定
+            return photo
+        if not any(p in GPU_PROVIDERS for p in self.providers):
+            self.fallback_why = "no_gpu"
             return photo
         salient = None
         failure = None
@@ -267,6 +320,9 @@ class AnimeSegmenter:
             salient = SalientPersonSegmenter(photo, providers=self.providers, download_progress=self.download_progress,
                                              slow_ms=self.salient_slow_ms)
             salient.warm_up()
+            self.salient_model = salient
+            self.salient_providers = session_providers(getattr(salient, "session", None))
+            self.fallback_why = "salient"
             return salient
         except Exception as error:  # ダウンロードできない・GPU で動かない・メモリが足りないときは写真向けだけにする
             failure = error
@@ -279,8 +335,10 @@ class AnimeSegmenter:
             salient = None
             gc.collect()
         if out_of_memory:
+            self.fallback_why = "dropped_oom"
             self._report_dropped("oom", message)
         else:
+            self.fallback_why = "salient_error"
             print(f"[person] 目立つ物の切り抜きを使えないので、写真向けのモデルだけを使います: {message}", flush=True)
         return photo
 
@@ -291,7 +349,35 @@ class AnimeSegmenter:
         salient.release()
         del salient
         gc.collect()
+        self.fallback_why = f"dropped_{reason}"
         self._report_dropped(reason, detail)
+
+    def report(self):
+        """stats 用: 使ったモデルごとの実行プロバイダーと推論の ms (models)、予備の選び方・理由・返した回数 (fallback)、
+        目立つ物の切り抜きを外したフレームと理由 (salient_dropped)。"""
+        models = {"anime": {"providers": session_providers(self.session), "requested": list(self.providers),
+                            "ms": summarize_ms(self.inference_ms)}}
+        photo = self.photo
+        if photo is not None and getattr(photo, "inference_ms", None) and callable(getattr(photo, "report", None)):
+            models["photo"] = photo.report()["models"]["photo"]
+        salient = self.salient_model
+        if salient is not None:
+            models["salient"] = {"providers": self.salient_providers,
+                                 "ms": summarize_ms(getattr(salient, "inference_ms", [])),
+                                 "no_blob_frames": getattr(salient, "no_blob_frames", 0)}
+        fallback = self.fallback
+        if fallback == "auto":
+            kind = "unused"   # 人物を見つけないフレームが無く、作らなかった
+        elif fallback is None:
+            kind = "none"
+        else:
+            kind = "salient" if isinstance(fallback, SalientPersonSegmenter) else "photo"
+        dropped = self.salient_dropped
+        load = self.fallback_load_s
+        return {"models": models,
+                "fallback": {"model": kind, "why": self.fallback_why, "frames": dict(self.fallback_used),
+                             "load_s": None if load is None else round(load, 2)},
+                "salient_dropped": {"frame": dropped[0], "reason": dropped[1]} if dropped else None}
 
     def _report_dropped(self, reason, detail):
         """外した理由を 1 行で知らせ、salient_dropped に残す (動画の途中で替えるとマスクの形が変わるので、フレームの番号を出す)。"""
@@ -310,6 +396,8 @@ class SalientPersonSegmenter:
         self.photo = photo
         self.slow_ms = slow_ms
         self.times = deque(maxlen=SALIENT_SLOW_WINDOW)   # 直近の推論 (session.run) の ms。試しの推論は入れない
+        self.inference_ms = []   # 統計用: 試しの推論を除く、全部の推論の ms
+        self.no_blob_frames = 0  # 人物らしい塊が 1 つも無く、写真向けのモデルの結果を返したフレームの数
         path = Path(model_path) if model_path else model_dir() / SALIENT_MODEL_FILE
         if not path.is_file():
             download_model(SALIENT_MODEL_URL, path, SALIENT_MODEL_SHA256, download_progress)
@@ -348,7 +436,9 @@ class SalientPersonSegmenter:
         image = (image - self.mean) / self.std
         start = time.perf_counter()
         logits = self.session.run(None, {self.input_name: image.transpose(2, 0, 1)[None]})[0]
-        self.times.append((time.perf_counter() - start) * 1000)
+        elapsed = (time.perf_counter() - start) * 1000
+        self.times.append(elapsed)
+        self.inference_ms.append(elapsed)
         prob = 1 / (1 + np.exp(-np.asarray(logits, np.float32).reshape(size, size)))
         return np.asarray(Image.fromarray(prob).resize((w, h), Image.Resampling.BILINEAR), np.float32)
 
@@ -357,6 +447,7 @@ class SalientPersonSegmenter:
         person = self.photo(rgb)
         keep = person_components(salient >= 0.5, person)
         if not keep.any():
+            self.no_blob_frames += 1
             # 人物らしい塊が 1 つも無いときは、空にせず、計算済みの写真向けのモデルの結果を返す (アニメ MV の 30 秒で、
             # 人物が消えるフレームが 80 → 31 に減った)。形は粗く大きさが跳ぶので、TemporalGuard が大きさと位置を合わせる
             return np.asarray(person, np.float32)
@@ -604,6 +695,9 @@ class TemporalGuard:
     場面の切り替わりは構図で決め (scene_features)、切り替わりをまたいでは前後のフレームを使わない。窓に持つのは最大
     2 * PERSON_LOOKAHEAD + 1 フレーム (640 × 360 で約 20 MB)。counts に出所ごとのフレーム数を数える:
     anime (そのまま)・filled (前後で埋めた)・matched (合わせた予備)・fallback (そのままの予備)・flagged (見つけなかった数)。
+    reasons には、見つけなかったフレームを前後で埋めずに予備に頼った理由を数える: long_run (見つけない連なりが
+    HOLD_MAX_RUN より長い)・no_neighbour (同じ場面のすぐ前かすぐ後に見つけたフレームが無い。場面や動画の端)・
+    no_fallback (予備を使えず、アニメ向けの結果のまま。counts では anime に入る)。
 
         guard = TemporalGuard(segmenter)  # segmenter は primary(rgb) と fallback_prob(rgb) を持つ (AnimeSegmenter)
         for frame in frames:
@@ -622,6 +716,7 @@ class TemporalGuard:
         self.scene = 0
         self.features = None    # 前のフレームの scene_features
         self.counts = dict.fromkeys(("anime", "filled", "matched", "fallback", "flagged"), 0)
+        self.reasons = dict.fromkeys(("long_run", "no_neighbour", "no_fallback"), 0)
 
     def push(self, rgb):
         """フレームを 1 枚読み、確定したフレームの (rgb, 人物の確からしさ, 前のフレームから場面が切り替わったか) の並びを返す。"""
@@ -684,8 +779,10 @@ class TemporalGuard:
         before, after = self._at(first - 1), self._at(last + 1)
         if last - first + 1 <= HOLD_MAX_RUN and found(before) and found(after):
             return (before if t - before.index <= after.index - t else after).prob, "filled"
+        self.reasons["long_run" if last - first + 1 > HOLD_MAX_RUN else "no_neighbour"] += 1
         prob = self.segmenter.fallback_prob(frame.rgb, frame.index)
         if prob is None:  # 予備の切り抜きを使えない
+            self.reasons["no_fallback"] += 1
             return frame.prob, "anime"
         near = [other for other in self.window if found(other) and abs(other.index - t) <= self.lookahead]
         if not near:
@@ -702,6 +799,7 @@ class PersonSplitter:
         self.previous = None
         self.background = None   # 人物がいなかったときの色の記憶 (場面ごと)
         self.known = None        # 記憶のある画素
+        self.cut = False         # 最後に渡されたフレームが、場面の切り替わりだったか (最初のフレームも真)
 
     def __call__(self, rgb, prob=None, cut=None):
         """prob は人物の確からしさ (省くと segmenter で求める)。cut は前のフレームから場面が切り替わったか (省くと、
@@ -711,6 +809,7 @@ class PersonSplitter:
         frame = rgb.astype(np.float32)
         if cut is None:
             cut = self.previous is None or np.abs(frame - self.previous).mean() > SCENE_CUT_DIFF
+        self.cut = bool(cut or self.mask is None)
         if cut or self.mask is None:
             self.mask = prob
             self.background = frame.copy()
@@ -814,6 +913,24 @@ def _check_free_ram():
         raise MemoryError(f"空きの RAM が少なくなりました ({memory[1] >> 20} MB)")
 
 
+def _timed(frames, samples):
+    """frames から次の 1 枚を取り出すのにかかった ms を samples に残しながら、そのまま順に返す。"""
+    iterator = iter(frames)
+    try:
+        while True:
+            start = time.perf_counter()
+            try:
+                item = next(iterator)
+            except StopIteration:
+                return
+            samples.append((time.perf_counter() - start) * 1000)
+            yield item
+    finally:
+        close = getattr(iterator, "close", None)
+        if close is not None:
+            close()
+
+
 def make_person_videos(source, mask_path, background_path, fps, duration=None, ffmpeg="ffmpeg", segmenter=None,
                        progress=None, long_side=ANALYSIS_LONG_SIDE, stats=None):
     """source から、人物の範囲の動画 (mask_path) と、人物を消した背景の動画 (background_path、元の音声付き) を作る。
@@ -821,47 +938,139 @@ def make_person_videos(source, mask_path, background_path, fps, duration=None, f
     戻り値はフレームの数。progress(i) を書き出したフレームごとに呼ぶ。
 
     アニメ向けの切り抜き (primary と fallback_prob を持つもの) は TemporalGuard を通すので、書き出しは PERSON_LOOKAHEAD
-    フレーム遅れる (動画の終わりで全部書き出す。フレームの数・音声・背景の動画は変わらない)。stats (dict) を渡すと、そのとき
-    だけ TemporalGuard.counts (出所ごとのフレーム数) を入れる。"""
+    フレーム遅れる (動画の終わりで全部書き出す。フレームの数・音声・背景の動画は変わらない)。
+
+    stats (dict) を渡すと、次を入れる (途中で失敗しても、そこまでの分が入る):
+      frames: 書き出したフレームの数、run_s: この関数の秒数
+      sources: 出所ごとのフレーム数。アニメ向け: anime (そのまま)・filled (前後で埋めた)・matched (合わせた予備)・
+        fallback (そのままの予備)。写真向けだけのとき: photo
+      flagged: アニメ向けが人物を見つけなかったフレームの数 (アニメ向けだけ)
+      fallback: reasons (予備に頼った理由と数。TemporalGuard.reasons)、model (予備に何を使っているか)・why (その理由)・
+        frames (予備が返したフレームの数、モデル別) (segmenter.report があるとき)
+      empty_frames: 書き出したマスクの人物が画面の ANIME_MIN_AREA 未満だったフレームの数
+      scene_cuts: 場面の切り替わりの数 (最初のフレームは数えない)
+      stages_ms: 工程 (read / segment / split / write) ごとの、呼び出し 1 回の ms の n・mean・median・p95・max と total_s
+        (合計の秒数)。read は ffmpeg を待った時間、segment は切り抜き (アニメ向けは先読みの TemporalGuard を含む。動画の
+        終わりで残りを確定する分は flush_ms に別に入れ、n・mean などには入れない)、split は背景の組み立て、write は書き出し
+      models・salient_dropped: segmenter.report の、使ったモデルごとの実行プロバイダーと推論の ms・目立つ物の切り抜きを
+        外したフレームと理由"""
     segmenter = segmenter or PersonSegmenter()
     splitter = PersonSplitter(segmenter)
     guard = TemporalGuard(segmenter) if all(callable(getattr(segmenter, name, None))
                                            for name in ("primary", "fallback_prob")) else None
     writers = []
-    count = 0
+    count = empty = cuts = 0
+    flush_ms = 0.0
+    started = time.perf_counter()
+    timings = {name: [] for name in ("read", "segment", "split", "write")}
 
     def write(settled):
-        nonlocal count
+        nonlocal count, empty, cuts
         for rgb, prob, cut in settled:
             mask_writer, background_writer = writers
+            start = time.perf_counter()
             mask, background = splitter(rgb, prob, cut)
+            split_done = time.perf_counter()
             gray = (np.clip(mask, 0, 1) * 255).astype(np.uint8)
             mask_writer.stdin.write(np.repeat(gray[..., None], 3, axis=2).tobytes())
             background_writer.stdin.write(background.tobytes())
+            timings["split"].append((split_done - start) * 1000)
+            timings["write"].append((time.perf_counter() - split_done) * 1000)
+            # 書き出したマスクで数える (動画に読み戻して 0.5 以上を人物とした数と同じ)。最初のフレームは切り替わりに数えない
+            empty += bool((gray >= 128).mean() < ANIME_MIN_AREA)
+            cuts += bool(count > 0 and splitter.cut)
             count += 1
             if count % 10 == 0:
                 _check_free_ram()
             if progress:
                 progress(count)
 
+    def collect_stats():
+        stages = {}
+        for name, values in timings.items():
+            stages[name] = summarize_ms(values)
+            if values:
+                stages[name]["total_s"] = round((sum(values) + (flush_ms if name == "segment" else 0)) / 1000, 2)
+        if guard and stages["segment"]:
+            stages["segment"]["flush_ms"] = round(flush_ms, 1)
+        stats.update(frames=count, run_s=round(time.perf_counter() - started, 2), empty_frames=empty, scene_cuts=cuts,
+                     stages_ms=stages)
+        if guard:
+            stats["sources"] = {key: guard.counts[key] for key in ("anime", "filled", "matched", "fallback")}
+            stats["flagged"] = guard.counts["flagged"]
+        else:
+            stats["sources"] = {"photo": count}
+        report = segmenter.report() if callable(getattr(segmenter, "report", None)) else {}
+        stats["models"] = report.get("models", {})
+        if guard:
+            stats["fallback"] = {**report.get("fallback", {}), "reasons": dict(guard.reasons)}
+        stats["salient_dropped"] = report.get("salient_dropped")
+
     try:
-        for frame in read_frames(source, fps, duration, ffmpeg, long_side):
+        for frame in _timed(read_frames(source, fps, duration, ffmpeg, long_side), timings["read"]):
             if not writers:
                 height, width = frame.shape[:2]
                 writers = [_writer(mask_path, width, height, fps, ffmpeg),
                            _writer(background_path, width, height, fps, ffmpeg, audio_from=source, duration=duration)]
-            write(guard.push(frame) if guard else [(frame, None, None)])
+            start = time.perf_counter()
+            settled = guard.push(frame) if guard else [(frame, segmenter(frame), None)]
+            timings["segment"].append((time.perf_counter() - start) * 1000)
+            write(settled)
         if guard:
-            write(guard.flush())
+            start = time.perf_counter()
+            settled = guard.flush()
+            flush_ms = (time.perf_counter() - start) * 1000
+            write(settled)
     finally:
+        if stats is not None:
+            collect_stats()
         for writer in writers:
             writer.stdin.close()
             writer.wait()
     if count == 0:
         raise InputError(f"動画を読めませんでした: {source}")
-    if guard and stats is not None:
-        stats.update(guard.counts)
     return count
+
+
+def skipped_profiles(model, profile, ram_free, vram_free):
+    """profile より重い段階を選ばなかった理由 ({段階: 理由})。空きメモリが足りなかった段階は足りなかった量を、足りていたのに
+    選ばなかった段階 (指定された・メモリ不足や落ちた後のやり直し) は "not chosen"。空きが分からない (None) ときは足りないとみなさない。"""
+    order = ["full", "gpu", "cpu", "photo"] if model == "anime" else ["photo"]
+    gib = 1 << 30
+    skipped = {}
+    for name in order[:order.index(profile)] if profile in order else []:
+        need_ram, need_vram = PROFILE_NEEDS[name]
+        why = []
+        if ram_free is not None and ram_free < need_ram:
+            why.append(f"RAM {ram_free / gib:.1f} < {need_ram / gib:.0f} GiB")
+        if vram_free is not None and vram_free < need_vram:
+            why.append(f"VRAM {vram_free / gib:.1f} < {need_vram / gib:.0f} GiB")
+        skipped[name] = ", ".join(why) or "not chosen"
+    return skipped
+
+
+def _emit_stats(stats, started, destination=None, error=None):
+    """統計 (stats) に全体の秒数・最大のメモリ・失敗の理由を足し、1 行の「stats <JSON>」で出す。destination (ファイル、または
+    フォルダ。フォルダなら person-stats-<日時>.json) があれば、そこにも書く (windowed の EXE では標準出力が捨てられることがあるので)。"""
+    from mvcodec.resources import process_memory_peaks
+
+    mb = 1 << 20
+    peaks = process_memory_peaks()
+    stats["wall_s"] = round(time.perf_counter() - started, 2)
+    stats["memory"] = None if peaks is None else {"peak_working_set_mb": round(peaks["peak_working_set"] / mb, 1),
+                                                  "peak_commit_mb": round(peaks["peak_commit"] / mb, 1)}
+    stats["error"] = error
+    print("stats " + json.dumps(stats, separators=(",", ":")), flush=True)
+    if not destination:
+        return
+    path = Path(destination)
+    if path.is_dir() or str(destination).endswith(("/", "\\")):
+        path = path / f"person-stats-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(stats, indent=1) + "\n", encoding="utf-8")
+    except OSError as problem:
+        print(f"[person] 統計のファイルを書けませんでした: {path} ({problem})", flush=True)
 
 
 def main(argv=None):
@@ -870,10 +1079,15 @@ def main(argv=None):
     GUI は別のプロセスとしてこれを起動し、標準出力の「<数> frames」「download <済み> <全体>」を読む。
     メモリ不足で止まったら EXIT_OUT_OF_MEMORY で終わる (GUI は軽い段階でやり直す)。入力を読めない・ffmpeg を起動できない
     ときは EXIT_INPUT_ERROR、モデルをダウンロードできないときは EXIT_MODEL_ERROR で終わる (どちらも 1 行の知らせ付き。軽い段階では
-    直らないので、GUI はやり直さない)。目立つ物の切り抜きを外したときは「salient dropped at frame <番号>: oom|slow」を出す。"""
+    直らないので、GUI はやり直さない)。目立つ物の切り抜きを外したときは「salient dropped at frame <番号>: oom|slow」を出す。
+
+    終わる前 (done や失敗の知らせの前) に 1 行の「stats <JSON>」を出す。選んだモデルと段階とその理由、始めたときの空きメモリ、
+    出所ごとのフレーム数、予備に頼った理由、空のフレームの数、場面の切り替わりの数、モデルごとの実行プロバイダーと推論の ms
+    (n・mean・median・p95・max)、工程ごとの ms、秒数、最大の working set と最大の commit (Windows のみ)。--stats PATH があれば
+    同じ JSON をそのファイルにも書く。"""
     import argparse
 
-    from mvcodec.resources import use_utf8_for_pipes
+    from mvcodec.resources import gpu_memory, system_memory, use_utf8_for_pipes
 
     use_utf8_for_pipes()
     parser = argparse.ArgumentParser(description="動画から人物を切り抜き、人物の範囲の動画と、人物を消した背景の動画を作る")
@@ -889,39 +1103,62 @@ def main(argv=None):
                         help="photo: 実写向き (DeepLabV3)、anime: アニメ・イラスト向き (anime-seg、初回に約 176 MB をダウンロード)")
     parser.add_argument("--profile", choices=list(PROFILES), default=None,
                         help="メモリの使い方 (full / gpu / cpu / photo)。既定は空きメモリから選ぶ")
+    parser.add_argument("--profile-reason", default=None,
+                        help="段階を選んだ理由 (統計にそのまま入れる。GUI が、最初の段階か、メモリ不足・落ちた後のやり直しかを渡す)")
     parser.add_argument("--salient-slow-ms", type=float, default=SALIENT_SLOW_MS,
                         help=f"目立つ物の切り抜き (BiRefNet) の推論の直近 {SALIENT_SLOW_WINDOW} 回の中央値がこの ms を超えたら、"
                              f"写真向けのモデルだけにする (既定 {SALIENT_SLOW_MS:.0f}。遅いが正常な GPU では大きくする)")
+    parser.add_argument("--stats", default=None, metavar="PATH",
+                        help="統計 (JSON) を書くファイル。フォルダなら、その中に person-stats-<日時>.json を作る")
     args = parser.parse_args(argv)
+    started = time.perf_counter()
     profile = args.profile
+    # 始めたときの空きメモリ。VRAM は測るのに約 2 秒かかるので、GPU を使う段階 (と、段階を選ぶとき) だけ測る
+    ram = system_memory()
+    vram = gpu_memory() if profile is None or (args.model == "anime" and PROFILES[profile]["gpu"]) else None
+    ram_free, vram_free = ram and ram[1], vram and vram[1]
+    reason = args.profile_reason
     if profile is None:
-        from mvcodec.resources import gpu_memory, system_memory
-
-        ram, vram = system_memory(), gpu_memory()
-        profile = profile_ladder(args.model, ram and ram[1], vram and vram[1])[0]
+        profile = profile_ladder(args.model, ram_free, vram_free)[0]
+        reason = reason or "auto"
     long_side = args.long_side or PROFILES[profile]["long_side"]
     print(f"profile {profile}", flush=True)
-    stats = {}
+    stats = {"version": 1, "model": args.model, "profile": profile, "profile_reason": reason or "given",
+             "profile_skipped": skipped_profiles(args.model, profile, ram_free, vram_free),
+             "free_at_start": {"ram_mb": ram_free and ram_free >> 20, "vram_mb": vram_free and vram_free >> 20},
+             "fps": args.fps, "long_side": long_side}
+
+    def finish(error=None):
+        _emit_stats(stats, started, args.stats, error and {"kind": error[0], "message": " ".join(error[1].split())[:300]})
+
     try:
+        load_start = time.perf_counter()
         segmenter = make_segmenter(args.model, profile,
                                    download_progress=lambda done, total: print(f"download {done} {total}", flush=True),
                                    salient_slow_ms=args.salient_slow_ms)
+        stats["load_s"] = round(time.perf_counter() - load_start, 2)
         count = make_person_videos(args.input, args.mask_output, args.background_output, args.fps, args.duration,
                                    args.ffmpeg, segmenter=segmenter,
                                    progress=lambda i: print(f"{i} frames", flush=True) if i % 10 == 0 else None,
                                    long_side=long_side, stats=stats)
     except InputError as error:
+        finish(("input", str(error)))   # 知らせの行を最後にする (GUI は終わりの行を理由として読む)
         print(f"input error: {' '.join(str(error).split())}", flush=True)
         return EXIT_INPUT_ERROR
     except ModelError as error:
+        finish(("model", str(error)))
         print(f"model error: {' '.join(str(error).split())}", flush=True)
         return EXIT_MODEL_ERROR
     except Exception as error:  # noqa: BLE001 (メモリ不足だけ、決まった終了コードで知らせる)
         if is_out_of_memory(error):
+            finish(("out_of_memory", str(error)))
             print(f"out of memory: {error}", flush=True)
             return EXIT_OUT_OF_MEMORY
+        finish(("crash", f"{type(error).__name__}: {error}"))
         raise
-    if stats:  # 出所ごとのフレーム数 (anime=そのまま filled=前後で埋めた matched=合わせた予備 fallback=そのままの予備)
-        print("sources " + " ".join(f"{key}={value}" for key, value in stats.items()), flush=True)
+    if "flagged" in stats:  # 出所ごとのフレーム数 (anime=そのまま filled=前後で埋めた matched=合わせた予備 fallback=そのままの予備)
+        print("sources " + " ".join(f"{key}={value}" for key, value in {**stats["sources"], "flagged": stats["flagged"]}.items()),
+              flush=True)
+    finish()
     print(f"done {count} frames -> {args.mask_output}, {args.background_output}", flush=True)
     return 0

@@ -6,6 +6,7 @@
 偽の切り抜きで、前後で埋める・面積と位置を合わせる・場面の切り替わりをまたがない、を確かめる。
 """
 import hashlib
+import json
 import sys
 import time
 import types
@@ -18,6 +19,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import mvcodec.person as person  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def no_real_gpu_probe(monkeypatch):
+    """person.main は始めたときの空きの VRAM を測る (PowerShell を起動して約 2 秒)。テストでは測らない。"""
+    from mvcodec import resources
+
+    monkeypatch.setattr(resources, "gpu_memory", lambda: None)
 
 
 class _FakeSession:
@@ -546,14 +555,16 @@ def test_only_the_anime_model_gets_the_temporal_guard(monkeypatch, capsys):
         stats = {}
         count = person.make_person_videos(video, Path(folder) / "m1.mp4", Path(folder) / "b1.mp4", 10, segmenter=photo,
                                           stats=stats)
-        assert count == 20 and made == [] and stats == {}
+        assert count == 20 and made == [] and "flagged" not in stats and stats["sources"] == {"photo": 20}
+        stats.clear()
         seen = []
         anime = Anime()
         count = person.make_person_videos(video, Path(folder) / "m2.mp4", Path(folder) / "b2.mp4", 10, segmenter=anime,
                                           progress=seen.append, stats=stats)
         # 6 フレーム遅れるが、動画の終わりで残りを全部書き出す: フレームの数は同じ。2 フレームの欠けは前後で埋めるので、予備は呼ばない
         assert count == 20 and len(made) == 1 and seen == list(range(1, 21))
-        assert stats == {"anime": 18, "filled": 2, "matched": 0, "fallback": 0, "flagged": 2} and anime.fallback_calls == 0
+        assert stats["sources"] == {"anime": 18, "filled": 2, "matched": 0, "fallback": 0} and stats["flagged"] == 2
+        assert anime.fallback_calls == 0
         masks = [frame[..., 0].mean() / 255 for frame in person.read_frames(Path(folder) / "m2.mp4", 10, None, "ffmpeg", 640)]
         assert len(masks) == 20 and min(masks) > 0.1   # 見つけなかった 2 枚にも、前後と同じ四角 (面積 12.5%) が入っている
 
@@ -711,7 +722,8 @@ class Session:
 
 sys.modules["onnxruntime"] = types.SimpleNamespace(
     InferenceSession=Session, SessionOptions=lambda: types.SimpleNamespace(), get_available_providers=lambda: ["CPUExecutionProvider"])
-from mvcodec import person
+from mvcodec import person, resources
+resources.gpu_memory = lambda: None
 if os.environ.get("DRIVER_MODEL_URL"):
     person.ANIME_MODEL_URL = os.environ["DRIVER_MODEL_URL"]
 sys.exit(person.main(sys.argv[1:]))
@@ -957,6 +969,9 @@ class _IsnetSession:
     def get_inputs(self):
         return [types.SimpleNamespace(name="img")]
 
+    def get_providers(self):
+        return ["DmlExecutionProvider", "CPUExecutionProvider"]
+
     def run(self, _outputs, feeds):
         return [np.zeros((1, 1, person.ANIME_INPUT_SIZE, person.ANIME_INPUT_SIZE), np.float32)]   # 人物を見つけない
 
@@ -967,6 +982,9 @@ class _BiRefNetSession:
 
     def get_inputs(self):
         return [types.SimpleNamespace(name="input_image")]
+
+    def get_providers(self):
+        return ["DmlExecutionProvider", "CPUExecutionProvider"]
 
     def run(self, _outputs, feeds):
         log = self.log
@@ -1138,3 +1156,540 @@ def test_a_full_cutout_continues_with_the_photo_model_after_the_birefnet_is_drop
     assert photo.calls == 15 and log.released()
     masks = list(person.read_frames(tmp_path / "m.mp4", 10, None, "ffmpeg", 640))
     assert len(masks) == 15 and all(frame[..., 0].mean() > 100 for frame in masks)
+
+
+# ---------------------------------------------------------------------------
+# 統計 (stats): 出所ごとのフレーム数・空のフレーム・場面の切り替わり・モデルごとの推論の ms・工程ごとの ms・最大のメモリを、
+# 1 行の JSON にして出し、GUI が 1〜2 行のまとめとログにする
+# ---------------------------------------------------------------------------
+
+def _write_video(path, frames, fps=10):
+    """frames (高さ × 幅 × 3 の uint8 の並び) を、ほぼ劣化しない mp4 にする。"""
+    import subprocess
+
+    height, width = frames[0].shape[:2]
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}", "-r", str(fps),
+                    "-i", "-", "-c:v", "libx264", "-crf", "0", "-pix_fmt", "yuv444p", str(path)],
+                   input=b"".join(frame.tobytes() for frame in frames), check=True)
+
+
+class _VideoScripted:
+    """映像を読んだ順に決めた確からしさを返す偽のアニメ向けの切り抜き。fallback_prob は渡されたフレームの番号で引く。
+    report は、本物 (AnimeSegmenter.report) の形の決まった内容を返す。"""
+
+    def __init__(self, primary, fallback):
+        self.primary_probs, self.fallback_probs = primary, fallback
+        self.reads = 0
+        self.fallback_calls = []
+
+    def primary(self, rgb):
+        prob = self.primary_probs[self.reads]
+        self.reads += 1
+        return prob
+
+    def fallback_prob(self, rgb, frame=None):
+        self.fallback_calls.append(frame)
+        return self.fallback_probs[frame]
+
+    def report(self):
+        return {"models": {"anime": {"providers": ["FakeProvider"], "requested": ["FakeProvider"], "ms": None}},
+                "fallback": {"model": "photo", "why": "salient_off", "frames": {"salient": 0, "photo": len(self.fallback_calls)}},
+                "salient_dropped": {"frame": 7, "reason": "slow"}}
+
+
+@pytest.fixture
+def person_bench():
+    """benchmark/person_bench.py (マスクの動画から空のフレームや場面の切り替わりを数える)。"""
+    sys.path.insert(0, str(ROOT / "benchmark"))
+    try:
+        import person_bench as module
+    finally:
+        sys.path.pop(0)
+    return module
+
+
+def test_stats_count_the_sources_reasons_empty_frames_and_scene_cuts_like_the_benchmark(tmp_path, person_bench):
+    """決めた出所のとおりに切り抜く偽のモデルで、stats の数が決めた数と一致する。空のフレームの数と場面の切り替わりの数は、
+    書き出したマスクの動画から person_bench が数えた値と同じ。"""
+    import shutil
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg が必要")
+    # 場面は 4 つ (0〜7 / 8〜14 / 15〜23 / 24〜26) で、場面の切り替わりは 3 つ
+    frames = _scene_images([8, 7, 9, 3])
+    video = tmp_path / "in.mp4"
+    _write_video(video, frames)
+    lost = {3, 4, 5, 8, 12, 23, 24, 25, 26}   # アニメ向けが人物を見つけないフレーム
+    primary = [np.zeros(SHAPE, np.float32) if t in lost else _rect(30, 20 + t, 36, 20) for t in range(27)]
+    # 予備は人物のあたりに塊をひとつ返す (合わせた結果は、近くの人物の外接箱の中に残る)。最後の場面 (24〜26) は全部見つからず、
+    # 前後に頼れないので、予備が空のマスクを返す
+    fallback = [np.zeros(SHAPE, np.float32) if t >= 24 else _cone((48, 30 + t), 25) for t in range(27)]
+    segmenter = _VideoScripted(primary, fallback)
+
+    stats = {}
+    mask, background = tmp_path / "mask.mp4", tmp_path / "background.mp4"
+    assert person.make_person_videos(video, mask, background, 10, segmenter=segmenter, stats=stats) == 27
+
+    assert stats["frames"] == 27
+    # 見つけたのは 18、前後で埋めたのは 12 の 1 枚、予備の結果を合わせたのは 3・4・5・8・23、そのままの予備は 24〜26
+    assert stats["sources"] == {"anime": 18, "filled": 1, "matched": 5, "fallback": 3}
+    assert sum(stats["sources"].values()) == 27 and stats["flagged"] == 9
+    assert segmenter.fallback_calls == [3, 4, 5, 8, 23, 24, 25, 26]
+    # 予備に頼った理由: 見つけない連なりが 3 枚 (3〜5 と 24〜26) で長い。8 と 23 は場面の端で、前後のどちらかに頼れない
+    assert stats["fallback"]["reasons"] == {"long_run": 6, "no_neighbour": 2, "no_fallback": 0}
+    assert stats["fallback"]["model"] == "photo" and stats["fallback"]["frames"] == {"salient": 0, "photo": 8}   # segmenter.report の内容
+    assert stats["models"]["anime"]["providers"] == ["FakeProvider"] and stats["salient_dropped"] == {"frame": 7, "reason": "slow"}
+
+    bench = person_bench.mask_statistics(mask, video, 10, "ffmpeg")
+    assert bench["frames"] == 27
+    assert stats["empty_frames"] == bench["empty_frames_area"] == 3
+    assert stats["scene_cuts"] == bench["scene_cuts"] == 3
+
+    # 工程ごとの ms: 呼び出し 1 回ごとの記録の個数と、小さい順の関係。segment は読んだ枚数 (動画の終わりで確定する分は flush_ms)
+    stages = stats["stages_ms"]
+    assert set(stages) == {"read", "segment", "split", "write"}
+    for name, stage in stages.items():
+        assert stage["n"] == 27, name
+        assert 0 < stage["median"] <= stage["p95"] <= stage["max"] and stage["mean"] > 0 and stage["total_s"] > 0, name
+    assert stages["segment"]["flush_ms"] >= 0 and stats["run_s"] >= stages["split"]["total_s"]
+    json.dumps(stats)   # そのまま JSON にできる
+
+
+def test_stats_of_a_photo_only_run_and_of_a_run_that_stops_halfway(tmp_path):
+    import shutil
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg が必要")
+    video = tmp_path / "in.mp4"
+    _write_video(video, _scene_images([12]))
+    bright = lambda rgb: (rgb.mean(axis=2) > 100).astype(np.float32)
+    stats = {}
+    assert person.make_person_videos(video, tmp_path / "m.mp4", tmp_path / "b.mp4", 10, segmenter=bright, stats=stats) == 12
+    # 写真向けだけ (TemporalGuard を通さない): 出所は photo だけで、予備・見つけなかった数はない
+    assert stats["sources"] == {"photo": 12} and "flagged" not in stats and "fallback" not in stats
+    assert stats["models"] == {} and stats["salient_dropped"] is None
+    assert stats["stages_ms"]["segment"]["n"] == 12 and "flush_ms" not in stats["stages_ms"]["segment"]
+
+    # 途中でメモリ不足になっても、そこまでの統計が入る (書き出した 5 枚、読んだのは 6 枚)
+    calls = []
+
+    def breaks(rgb):
+        calls.append(1)
+        if len(calls) == 6:
+            raise MemoryError("not enough")
+        return bright(rgb)
+
+    stats = {}
+    with pytest.raises(MemoryError):
+        person.make_person_videos(video, tmp_path / "m2.mp4", tmp_path / "b2.mp4", 10, segmenter=breaks, stats=stats)
+    assert stats["frames"] == 5 and stats["stages_ms"]["read"]["n"] == 6 and stats["stages_ms"]["write"]["n"] == 5
+
+
+def test_summarize_ms_gives_median_p95_mean_and_max():
+    values = list(range(1, 101))
+    assert person.summarize_ms(values) == {"n": 100, "mean": 50.5, "median": 50.5, "p95": 95.05, "max": 100.0}
+    assert person.summarize_ms([3.0]) == {"n": 1, "mean": 3.0, "median": 3.0, "p95": 3.0, "max": 3.0}
+    assert person.summarize_ms([]) is None
+
+
+def test_anime_segmenter_reports_models_providers_times_and_the_drop(birefnet):
+    log, photo = birefnet(fail_at=4)   # 1 回目は試しの推論、2・3 回目はフレーム 0・1、4 回目 (フレーム 2) でメモリ不足
+    segmenter = person.AnimeSegmenter()
+    for _ in range(3):
+        segmenter.primary(FRAME)
+    report = segmenter.report()
+    both = ["DmlExecutionProvider", "CPUExecutionProvider"]
+    assert report["models"]["anime"]["providers"] == both and report["models"]["anime"]["requested"] == both
+    assert report["models"]["anime"]["ms"]["n"] == 3
+    assert report["fallback"]["model"] == "unused" and report["fallback"]["load_s"] is None   # 予備はまだ作っていない
+    assert report["salient_dropped"] is None
+    segmenter.fallback_prob(FRAME, 0)
+    segmenter.fallback_prob(FRAME, 1)
+    report = segmenter.report()
+    assert report["models"]["salient"]["providers"] == both and report["models"]["salient"]["ms"]["n"] == 2
+    assert report["models"]["salient"]["no_blob_frames"] >= 0
+    assert report["fallback"].pop("load_s") >= 0   # 予備を作る (試しの推論も含む) のにかかった秒数
+    assert report["fallback"] == {"model": "salient", "why": "salient", "frames": {"salient": 2, "photo": 0}}
+    segmenter.fallback_prob(FRAME, 2)   # BiRefNet が動かなくなる: 外して、このフレームを写真向けでやり直す
+    report = segmenter.report()
+    assert report["fallback"].pop("load_s") >= 0
+    assert report["fallback"] == {"model": "photo", "why": "dropped_oom", "frames": {"salient": 2, "photo": 1}}
+    assert report["salient_dropped"] == {"frame": 2, "reason": "oom"}
+    assert report["models"]["salient"]["ms"]["n"] == 2   # 外した後も、使った分の記録は残る
+    # 予備の選び方の理由: GPU が無い・この段階では使わない
+    log, photo = birefnet()
+    cpu = person.AnimeSegmenter(providers=["CPUExecutionProvider"])
+    cpu.fallback_prob(FRAME, 0)
+    assert {k: v for k, v in cpu.report()["fallback"].items() if k != "load_s"} == {
+        "model": "photo", "why": "no_gpu", "frames": {"salient": 0, "photo": 1}}
+    gpu = person.AnimeSegmenter(salient=False)
+    gpu.fallback_prob(FRAME, 0)
+    assert gpu.report()["fallback"]["why"] == "salient_off" and "salient" not in gpu.report()["models"]
+
+
+def test_salient_cutout_counts_its_inferences_and_the_frames_without_an_approved_blob(tmp_path, monkeypatch):
+    module = types.SimpleNamespace(InferenceSession=_SalientSession, SessionOptions=lambda: types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "onnxruntime", module)
+    model = tmp_path / "salient.onnx"
+    model.write_bytes(b"x")
+    photo = lambda image: (image[..., 0] > 128).astype(np.float32) * 0.8   # 写真向けのモデルは赤だけを人物と見る
+    segmenter = person.SalientPersonSegmenter(photo, model_path=model)
+    with_person = np.zeros((90, 160, 3), np.uint8)
+    with_person[20:70, 20:50, 0] = 255
+    streak = np.zeros((90, 160, 3), np.uint8)
+    streak[20:70, 100:150, 2] = 255      # 光の筋だけ (写真向けは人物と見ない)
+    segmenter(with_person)
+    assert segmenter.no_blob_frames == 0 and len(segmenter.inference_ms) == 1
+    segmenter(streak)
+    assert segmenter.no_blob_frames == 1 and len(segmenter.inference_ms) == 2 and all(ms >= 0 for ms in segmenter.inference_ms)
+
+
+def test_photo_segmenter_reports_its_inference_times():
+    photo = object.__new__(person.PersonSegmenter)   # 本物のモデルは作らない
+    photo.device, photo.inference_ms = "cpu", [10.0, 20.0, 30.0]
+    assert photo.report() == {"models": {"photo": {"providers": ["torch:cpu"], "ms": person.summarize_ms([10.0, 20.0, 30.0])}}}
+
+
+def test_skipped_profiles_explain_why_a_heavier_one_was_not_taken():
+    gib = 1 << 30
+    skipped = person.skipped_profiles
+    assert skipped("anime", "gpu", 20 * gib, 9 * gib) == {"full": "VRAM 9.0 < 12 GiB"}
+    assert skipped("anime", "cpu", 6 * gib, gib // 2) == {"full": "RAM 6.0 < 12 GiB, VRAM 0.5 < 12 GiB", "gpu": "VRAM 0.5 < 1 GiB"}
+    assert skipped("anime", "photo", 6 * gib, 20 * gib)["full"] == "RAM 6.0 < 12 GiB"
+    assert skipped("anime", "gpu", 20 * gib, 20 * gib) == {"full": "not chosen"}   # 足りていたのに選ばなかった (指定・やり直し)
+    assert skipped("anime", "gpu", None, None) == {"full": "not chosen"}           # 空きが分からなければ足りないとはしない
+    assert skipped("anime", "full", 20 * gib, 20 * gib) == {} and skipped("photo", "photo", 0, 0) == {}
+
+
+def test_process_memory_peaks_matches_psutil_on_windows():
+    from mvcodec import resources
+
+    first = resources.process_memory_peaks()
+    if sys.platform != "win32":
+        assert first is None
+        return
+    block = np.ones(60_000_000, np.uint8)   # 60 MB を使う
+    block += 1
+    second = resources.process_memory_peaks()
+    assert second["peak_working_set"] >= second["working_set"] >= 60_000_000
+    assert second["peak_commit"] >= second["commit"] >= 60_000_000
+    assert second["peak_working_set"] >= first["peak_working_set"] and second["peak_commit"] >= first["peak_commit"]
+    del block
+    third = resources.process_memory_peaks()
+    assert third["peak_working_set"] >= second["peak_working_set"]   # 最大は減らない
+    try:
+        import psutil
+    except ImportError:
+        return
+    info = psutil.Process().memory_info()
+    assert abs(third["peak_working_set"] - info.peak_wset) < 0.1 * info.peak_wset
+    assert abs(third["peak_commit"] - info.peak_pagefile) < 0.1 * info.peak_pagefile
+
+
+def _fake_pipeline(monkeypatch, stats_for_run=None, error=None):
+    """person.main の下の、モデルと動画の処理を偽物にする (空きメモリは RAM 20 GiB・VRAM 9 GiB)。"""
+    from mvcodec import resources
+
+    monkeypatch.setattr(resources, "system_memory", lambda: (32 << 30, 20 << 30))
+    monkeypatch.setattr(resources, "gpu_memory", lambda: (16 << 30, 9 << 30))
+    monkeypatch.setattr(person, "make_segmenter", lambda *args, **kwargs: "segmenter")
+
+    def make(source, mask, background, fps, duration, ffmpeg, segmenter=None, progress=None, long_side=None, stats=None):
+        stats.update(stats_for_run or {"frames": 5, "sources": {"anime": 4, "filled": 1, "matched": 0, "fallback": 0}, "flagged": 1})
+        if error:
+            raise error
+        return stats["frames"]
+
+    monkeypatch.setattr(person, "make_person_videos", make)
+
+
+def test_main_prints_one_stats_line_before_done_and_writes_the_file(tmp_path, monkeypatch, capsys):
+    _fake_pipeline(monkeypatch)
+    folder = tmp_path / "logs"
+    folder.mkdir()
+    argv = ["in.mp4", "m.mp4", "b.mp4", "--model", "anime", "--profile", "gpu", "--profile-reason", "retry_memory"]
+    assert person.main(argv + ["--stats", str(folder)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    stats_lines = [line for line in lines if line.startswith("stats ")]
+    assert len(stats_lines) == 1 and lines[-2] == stats_lines[0] and lines[-1].startswith("done 5 frames")
+    stats = json.loads(stats_lines[0][len("stats "):])
+    # 選んだモデルと段階とその理由、始めたときの空きメモリ
+    assert (stats["model"], stats["profile"], stats["profile_reason"]) == ("anime", "gpu", "retry_memory")
+    assert stats["profile_skipped"] == {"full": "VRAM 9.0 < 12 GiB"}
+    assert stats["free_at_start"] == {"ram_mb": 20480, "vram_mb": 9216}
+    assert stats["error"] is None and stats["wall_s"] >= 0 and stats["load_s"] >= 0
+    if sys.platform == "win32":
+        memory = stats["memory"]
+        assert memory["peak_working_set_mb"] > 0 and memory["peak_commit_mb"] >= memory["peak_working_set_mb"] * 0.5
+    else:
+        assert stats["memory"] is None
+    # フォルダを渡すと、その中に person-stats-<日時>.json を作る。中身は 1 行と同じ
+    files = list(folder.glob("person-stats-*.json"))
+    assert len(files) == 1 and json.loads(files[0].read_text(encoding="utf-8")) == stats
+    # ファイルを渡せば、そのファイル
+    target = tmp_path / "deep" / "stats.json"
+    assert person.main(argv + ["--stats", str(target)]) == 0
+    assert json.loads(target.read_text(encoding="utf-8"))["profile"] == "gpu"
+    # 指定が無ければ段階は空きメモリから選び、理由は auto (VRAM 9 GiB では最高の段階に足りない)
+    capsys.readouterr()
+    assert person.main(["in.mp4", "m.mp4", "b.mp4", "--model", "anime"]) == 0
+    out = capsys.readouterr().out
+    stats = json.loads(next(line for line in out.splitlines() if line.startswith("stats "))[len("stats "):])
+    assert (stats["profile"], stats["profile_reason"]) == ("gpu", "auto")
+    assert "sources anime=4 filled=1 matched=0 fallback=0 flagged=1" in out
+    # 理由を渡せば、段階を空きメモリから選んでも、渡された理由を残す
+    assert person.main(["in.mp4", "m.mp4", "b.mp4", "--model", "anime", "--profile-reason", "wizard"]) == 0
+    out = capsys.readouterr().out
+    assert json.loads(next(line for line in out.splitlines() if line.startswith("stats "))[len("stats "):])["profile_reason"] == "wizard"
+
+
+def test_main_prints_the_stats_before_the_failure_line(tmp_path, monkeypatch, capsys):
+    """失敗でも stats を出す (理由と、そこまでの統計)。知らせの行 (input error: など) は今までどおり最後。"""
+    _fake_pipeline(monkeypatch, error=person.InputError("動画を読めませんでした: in.mp4"))
+    folder = tmp_path / "logs"
+    folder.mkdir()
+    argv = ["in.mp4", "m.mp4", "b.mp4", "--model", "anime", "--profile", "gpu", "--stats", str(folder)]
+    assert person.main(argv) == person.EXIT_INPUT_ERROR
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[-1].startswith("input error: ") and lines[-2].startswith("stats ")
+    stats = json.loads(lines[-2][len("stats "):])
+    assert stats["error"] == {"kind": "input", "message": "動画を読めませんでした: in.mp4"} and stats["frames"] == 5
+    assert list(folder.glob("person-stats-*.json"))
+    for error, kind, code in ((MemoryError("out of memory"), "out_of_memory", person.EXIT_OUT_OF_MEMORY),
+                              (person.ModelError("download failed"), "model", person.EXIT_MODEL_ERROR)):
+        _fake_pipeline(monkeypatch, error=error)
+        assert person.main(argv) == code
+        lines = capsys.readouterr().out.splitlines()
+        assert json.loads(lines[-2][len("stats "):])["error"]["kind"] == kind and not lines[-1].startswith("stats ")
+    # 思いがけない失敗は、stats を出してから、そのまま投げ直す
+    _fake_pipeline(monkeypatch, error=ValueError("bug"))
+    with pytest.raises(ValueError):
+        person.main(argv)
+    stats_line = next(line for line in capsys.readouterr().out.splitlines() if line.startswith("stats "))
+    assert json.loads(stats_line[len("stats "):])["error"] == {"kind": "crash", "message": "ValueError: bug"}
+
+
+def test_the_stats_file_is_written_even_when_there_is_no_standard_output(tmp_path, monkeypatch):
+    """windowed の EXE では標準出力が無い (捨てられる) ことがある。統計はファイルにも書く。"""
+    _fake_pipeline(monkeypatch)
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    target = tmp_path / "stats.json"
+    assert person.main(["in.mp4", "m.mp4", "b.mp4", "--model", "anime", "--profile", "gpu", "--stats", str(target)]) == 0
+    assert json.loads(target.read_text(encoding="utf-8"))["sources"]["anime"] == 4
+
+
+# ---- GUI: 短いまとめ・注意・ログのファイル ----
+
+def _stats(**changes):
+    stats = {"version": 1, "model": "anime", "profile": "gpu", "frames": 100, "wall_s": 42.4, "empty_frames": 3,
+             "sources": {"anime": 80, "filled": 6, "matched": 14, "fallback": 0}, "flagged": 20, "salient_dropped": None,
+             "models": {"anime": {"providers": ["DmlExecutionProvider", "CPUExecutionProvider"], "ms": None}}}
+    stats.update(changes)
+    return stats
+
+
+class _GuiApp:
+    """GUI の画面なしで _person_process・_split_person を動かす入れ物。"""
+
+    def __init__(self, language="ja"):
+        import queue
+
+        from gui_i18n import Translator
+
+        self.tr = Translator(language)
+        self.messages = queue.Queue()
+
+    def lines(self):
+        return [str(self.messages.get()) for _ in range(self.messages.qsize())]
+
+
+def test_gui_summary_is_one_or_two_lines_and_warns_only_when_a_condition_holds():
+    import video_player_gui as gui
+    from gui_i18n import Translator
+
+    tr = Translator("ja")
+    log = Path("C:/Users/someone/AppData/Local/BlockVideoPlayer/logs/person-20261027-120000.log")
+    lines = gui.person_summary_lines(tr, _stats(), log)
+    # まとめは 2 行 (結果・ログの場所)。注意は無い
+    assert len(lines) == 2 and not any("注意" in line for line in lines)
+    assert "100 フレーム" in lines[0] and "42 秒" in lines[0] and "DmlExecutionProvider" in lines[0] and "GPU" in lines[0]
+    assert "80" in lines[0] and "14" in lines[0] and "3" in lines[0]    # そのまま・予備・人物なし
+    assert str(log) in lines[1] and "ユーザー名" in lines[1]            # 共有するときの注意を添える
+    assert len(gui.person_summary_lines(tr, _stats(), None)) == 1       # ログを作れなかったとき
+
+    def warns(**changes):
+        found = [line for line in gui.person_summary_lines(tr, _stats(**changes), log) if "注意" in line]
+        assert len(found) <= 1   # 条件がいくつ当てはまっても、注意は 1 行
+        return found
+
+    # 人物が空のフレームが 10% を超えたら (10% ちょうどは警告しない)
+    assert not warns(empty_frames=10)
+    assert "11%" in warns(empty_frames=11)[0]
+    # 予備のモデルが 50% を超えたら。前後で埋めたフレームは予備のモデルを使っていない
+    assert not warns(sources={"anime": 30, "filled": 20, "matched": 30, "fallback": 20})
+    assert "51%" in warns(sources={"anime": 29, "filled": 20, "matched": 31, "fallback": 20})[0]
+    # BiRefNet を外した
+    assert "フレーム 12" in warns(salient_dropped={"frame": 12, "reason": "oom"})[0]
+    assert "メモリ不足" in warns(salient_dropped={"frame": 12, "reason": "oom"})[0]
+    assert "遅く" in warns(salient_dropped={"frame": 9, "reason": "slow"})[0]
+    everything = warns(empty_frames=40, salient_dropped={"frame": 3, "reason": "slow"},
+                       sources={"anime": 10, "filled": 0, "matched": 90, "fallback": 0})
+    assert len(everything) == 1 and "40%" in everything[0] and "90%" in everything[0] and "フレーム 3" in everything[0]
+    # 写真向けだけのとき
+    photo = _stats(model="photo", profile="photo", sources={"photo": 100}, models={"photo": {"providers": ["torch:cpu"], "ms": None}})
+    del photo["flagged"]
+    lines = gui.person_summary_lines(tr, photo, log)
+    assert len(lines) == 2 and "torch:cpu" in lines[0] and "100" in lines[0]
+
+
+_FAKE_CHILD = '''
+import sys
+from pathlib import Path
+
+sys.stdout.reconfigure(encoding="utf-8")
+for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    print(line, flush=True)
+sys.exit(int(sys.argv[2]))
+'''
+
+
+def _run_fake_child(tmp_path, monkeypatch, lines, code=0, language="ja"):
+    """_person_process を、決めた行を出して終わる子プロセスで動かす。(終了コード, 出力の最後の部分, 入れ物, ログのファイル)。"""
+    import video_player_gui as gui
+
+    script = tmp_path / "fake_child.py"
+    script.write_text(_FAKE_CHILD, encoding="utf-8")
+    output = tmp_path / "child_output.txt"
+    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(gui, "person_command", lambda: [sys.executable, str(script)])
+    app = _GuiApp(language)
+    app.person_log = gui.new_person_log()
+    result = gui.PackBuilderApp._person_process(app, [str(output), str(code)])
+    return (*result, app, app.person_log)
+
+
+def test_gui_turns_the_stats_line_into_a_summary_and_logs_everything(tmp_path, monkeypatch):
+    child = ["profile gpu", "download 1048576 4194304", "W:onnxruntime: some warning", "10 frames", "50 frames",
+             "salient dropped at frame 12: oom (887A0005)", "sources anime=80 filled=6 matched=14 fallback=0 flagged=20",
+             "stats " + json.dumps(_stats(empty_frames=20, salient_dropped={"frame": 12, "reason": "oom"}), separators=(",", ":")),
+             "done 100 frames -> m.mp4, b.mp4"]
+    code, tail, app, log = _run_fake_child(tmp_path, monkeypatch, child)
+    shown = app.lines()
+    assert code == 0 and "stats {" not in tail   # 失敗の知らせに使う最後の部分に、統計の JSON を入れない
+    # 画面: 統計の JSON と sources の行はそのまま流さない。まとめ 2 行 + 注意 1 行
+    assert not [line for line in shown if "stats {" in line or "sources anime" in line]
+    assert shown[-3].startswith("  切り抜きの結果") and str(log) in shown[-2] and shown[-1].startswith("  注意")
+    assert "salient dropped at frame 12: oom (887A0005)" in "\n".join(shown)   # 外したときの知らせは流れる
+    assert not [line for line in shown if "W:onnxruntime" in line]
+    # ログのファイル: 子プロセスの出力は全部 (流さなかった行も)、統計の JSON と終了コード
+    text = log.read_text(encoding="utf-8")
+    for line in child:
+        assert line in text, line
+    assert "fake_child.py" in text and text.rstrip().endswith("exit code 0")
+
+    # 条件に当てはまらなければ注意は無い。失敗 (0 でない終了コード) ではまとめを出さない
+    code, tail, app, log = _run_fake_child(tmp_path, monkeypatch, ["stats " + json.dumps(_stats(), separators=(",", ":"))])
+    shown = app.lines()
+    assert code == 0 and len(shown) == 3 and shown[0].startswith("$ ") and not [line for line in shown if "注意" in line]
+    code, tail, app, log = _run_fake_child(tmp_path, monkeypatch, ["out of memory: x"], code=3)
+    assert code == 3 and not [line for line in app.lines() if "切り抜きの結果" in line]
+    assert log.read_text(encoding="utf-8").rstrip().endswith("exit code 3")
+    # 統計の行が壊れていれば、そのまま流す (まとめは出さない)
+    code, tail, app, log = _run_fake_child(tmp_path, monkeypatch, ["stats {broken"])
+    assert code == 0 and "  stats {broken" in app.lines()
+
+
+def test_person_logs_keep_only_the_newest_ten(tmp_path, monkeypatch):
+    import os
+
+    import video_player_gui as gui
+
+    folder = tmp_path / "logs"
+    monkeypatch.setenv("BVP_LOG_DIR", str(folder))
+    assert gui.logs_dir() == folder
+    folder.mkdir()
+    for i in range(12):
+        for name in (f"person-20260101-0000{i:02d}.log", f"person-stats-20260101-0000{i:02d}.json"):
+            (folder / name).write_text("old", encoding="utf-8")
+            os.utime(folder / name, (1_700_000_000 + i * 10, 1_700_000_000 + i * 10))
+    (folder / "settings.txt").write_text("not a log", encoding="utf-8")
+    new = gui.new_person_log()
+    assert new.parent == folder and new.name.startswith("person-") and new.suffix == ".log" and new.read_text() == ""
+    logs = sorted(path.name for path in folder.glob("person-*.log"))
+    assert len(logs) == 10 and new.name in logs and logs[0] == "person-20260101-000003.log"   # 古い 3 つが消え、新しい 9 つ + 今回
+    # 子プロセスが書く統計は、今回の 1 つが増えて 10 個になるよう 9 個残す
+    assert sorted(path.name for path in folder.glob("person-stats-*.json"))[0] == "person-stats-20260101-000003.json"
+    assert len(list(folder.glob("person-stats-*.json"))) == 9
+    assert (folder / "settings.txt").exists()
+    # 同じ秒に続けて作っても、別のファイル
+    second = gui.new_person_log()
+    assert second != new and second.exists() and len(list(folder.glob("person-*.log"))) == 10
+    # 作れないとき (フォルダの場所がファイル) はログなしで続ける
+    blocker = tmp_path / "blocker"
+    blocker.write_text("file", encoding="utf-8")
+    monkeypatch.setenv("BVP_LOG_DIR", str(blocker / "logs"))
+    assert gui.new_person_log() is None
+    with gui.open_log(None) as write:
+        write("ignored")   # ログなしでも落ちない
+
+
+def test_logs_dir_defaults_to_local_app_data(monkeypatch, tmp_path):
+    import video_player_gui as gui
+
+    monkeypatch.delenv("BVP_LOG_DIR")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+    assert gui.logs_dir() == tmp_path / "Local" / "BlockVideoPlayer" / "logs"
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    assert gui.logs_dir() == tmp_path / "state" / "BlockVideoPlayer" / "logs"
+
+
+def test_gui_passes_the_stats_folder_and_the_reason_and_names_the_log_when_it_fails(tmp_path, monkeypatch):
+    import video_player_gui as gui
+    from mvcodec import resources
+
+    gib = 1 << 30
+    monkeypatch.setattr(resources, "system_memory", lambda: (32 * gib, 16 * gib))
+    monkeypatch.setattr(resources, "gpu_memory", lambda: (16 * gib, 14 * gib))
+
+    class Headless(_GuiApp):
+        def __init__(self, codes):
+            super().__init__()
+            self.codes, self.argvs = list(codes), []
+
+        def _person_process(self, argv):
+            self.argvs.append(argv)
+            return self.codes.pop(0), "last words of the child"
+
+    def split(app):
+        return gui.PackBuilderApp._split_person(app, tmp_path / "in.mp4", tmp_path / "work", 80, 45, 10, None, "ffmpeg", "anime")
+
+    app = Headless([person.EXIT_OUT_OF_MEMORY, -1073741819, 0])
+    split(app)
+    reasons = [argv[argv.index("--profile-reason") + 1] for argv in app.argvs]
+    profiles = [argv[argv.index("--profile") + 1] for argv in app.argvs]
+    assert profiles == ["full", "gpu", "cpu"] and reasons == ["auto", "retry_memory", "retry_crash"]
+    # 統計はログのフォルダへ。やり直しても同じログ (1 回の切り抜きにつき 1 つ)
+    folder = gui.logs_dir()
+    assert all(argv[argv.index("--stats") + 1] == str(folder) for argv in app.argvs)
+    assert len(list(folder.glob("person-*.log"))) == 1
+    header = next(folder.glob("person-*.log")).read_text(encoding="utf-8")
+    assert "anime" in header and str(tmp_path / "in.mp4") in header
+
+    # 全部の段階でだめなら、失敗のダイアログ (RuntimeError の文) に、ログの場所を書く
+    before = set(folder.glob("person-*.log"))
+    app = Headless([person.EXIT_OUT_OF_MEMORY] * 4)
+    with pytest.raises(RuntimeError) as caught:
+        split(app)
+    (this_time,) = set(folder.glob("person-*.log")) - before
+    assert str(this_time) in str(caught.value) and "last words of the child" in str(caught.value)
+    # ログを作れないときも、失敗の知らせは出る (--stats は渡さない)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("file", encoding="utf-8")
+    monkeypatch.setenv("BVP_LOG_DIR", str(blocker / "logs"))
+    app = Headless([person.EXIT_OUT_OF_MEMORY] * 4)
+    with pytest.raises(RuntimeError) as caught:
+        split(app)
+    assert "last words of the child" in str(caught.value) and not any("--stats" in argv for argv in app.argvs)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
 import queue
 import re
@@ -10,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -54,6 +57,114 @@ def person_command() -> list[str]:
     if getattr(sys, "frozen", False):
         return [sys.executable, RUN_PERSON_FLAG]
     return [sys.executable, str(APP_DIR / "scripts" / "make_person_videos.py")]
+
+
+# 人物の切り抜きのログ (子プロセスの出力すべてと統計の JSON) を残す数。新しい順にこれだけ残し、古いものは消す
+PERSON_LOG_KEEP = 10
+# 人物の切り抜きのまとめに注意を足す条件: 人物が空のフレームがこの割合を超える・予備のモデルがこの割合を超える
+PERSON_WARN_EMPTY = 0.10
+PERSON_WARN_FALLBACK = 0.50
+
+
+def logs_dir() -> Path:
+    """ログを置くフォルダ。Windows は %LOCALAPPDATA%/BlockVideoPlayer/logs、ほかは ~/.local/state/BlockVideoPlayer/logs。
+    環境変数 BVP_LOG_DIR で変えられる。"""
+    if os.environ.get("BVP_LOG_DIR"):
+        return Path(os.environ["BVP_LOG_DIR"])
+    if sys.platform == "win32" and os.environ.get("LOCALAPPDATA"):
+        base = Path(os.environ["LOCALAPPDATA"])
+    else:
+        base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    return base / "BlockVideoPlayer" / "logs"
+
+
+def new_person_log(keep: int = PERSON_LOG_KEEP) -> Path | None:
+    """人物の切り抜きの新しいログのファイル (person-YYYYMMDD-HHMMSS.log) を作り、古いログを消して今回を含め新しい keep 個だけ
+    残す (子プロセスが書く統計の person-stats-*.json も、今回の 1 つを足して keep 個になるよう消す)。フォルダやファイルを
+    作れなければ None (ログなしで続ける)。"""
+    folder = logs_dir()
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = folder / f"person-{stamp}.log"
+        number = 1
+        while path.exists():   # 同じ秒に 2 つ作ったとき
+            number += 1
+            path = folder / f"person-{stamp}-{number}.log"
+        path.touch()
+    except OSError:
+        return None
+
+    def age(file: Path) -> tuple[float, str]:
+        try:
+            return file.stat().st_mtime, file.name
+        except OSError:
+            return 0.0, file.name
+
+    # 今作ったログ (と、これから子プロセスが書く統計) を入れて keep 個になるよう、前のものを keep - 1 個残す
+    for pattern in ("person-*.log", "person-stats-*.json"):
+        others = [file for file in folder.glob(pattern) if file != path]
+        for stale in sorted(others, key=age, reverse=True)[keep - 1:]:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+    return path
+
+
+@contextlib.contextmanager
+def open_log(path: Path | None):
+    """ログのファイルに 1 行ずつ追記する関数 write(text) を渡す。1 行ごとに書き出す (途中で落ちても残る)。path が None や、
+    書けないときは何もしない。"""
+    handle = None
+    if path is not None:
+        try:
+            handle = open(path, "a", encoding="utf-8", errors="replace", buffering=1)
+        except OSError:
+            handle = None
+
+    def write(text: str) -> None:
+        if handle is not None:
+            try:
+                handle.write(text + "\n")
+            except OSError:
+                pass
+
+    try:
+        yield write
+    finally:
+        if handle is not None:
+            handle.close()
+
+
+def person_summary_lines(tr, stats: dict, log: Path | None) -> list[str]:
+    """人物の切り抜きの統計 (mvcodec/person.py が出す「stats <JSON>」) から、処理ログに出すまとめを作る: まとめ 1 行、ログの場所
+    1 行 (ログは動画の場所を含み、ユーザー名が入ることがあるので、共有するときの注意を添える)、そして次のどれかに
+    当てはまるときだけ注意 1 行: 人物が空のフレームが 10% を超える・予備のモデルが 50% を超える・目立つ物の切り抜き (BiRefNet) を外した。"""
+    frames = int(stats.get("frames") or 0)
+    sources = stats.get("sources") or {}
+    fallback = int(sources.get("matched", 0)) + int(sources.get("fallback", 0))
+    empty = int(stats.get("empty_frames") or 0)
+    models = stats.get("models") or {}
+    providers = (models.get("anime") or models.get("photo") or {}).get("providers") or []
+    lines = [tr("build.person_summary", frames=frames, seconds=f"{float(stats.get('wall_s') or 0):.0f}",
+                profile=tr(f"profile.{stats.get('profile', 'photo')}"), backend=providers[0] if providers else "?",
+                primary=int(sources.get("anime", sources.get("photo", 0))), filled=int(sources.get("filled", 0)),
+                fallback=fallback, empty=empty)]
+    if log is not None:
+        lines.append(tr("build.person_log", path=log))
+    warnings = []
+    if frames and empty / frames > PERSON_WARN_EMPTY:
+        warnings.append(tr("build.person_warn_empty", percent=round(100 * empty / frames)))
+    if frames and fallback / frames > PERSON_WARN_FALLBACK:
+        warnings.append(tr("build.person_warn_fallback", percent=round(100 * fallback / frames)))
+    dropped = stats.get("salient_dropped")
+    if dropped:
+        warnings.append(tr(f"build.person_warn_dropped_{'oom' if dropped.get('reason') == 'oom' else 'slow'}",
+                           frame=dropped.get("frame", "?")))
+    if warnings:
+        lines.append(tr("build.person_warn", reasons=" / ".join(warnings)))
+    return lines
 
 
 def converter_command() -> list[str]:
@@ -980,7 +1091,10 @@ class PackBuilderApp(tk.Tk):
         切り抜きは別のプロセスで行う (AI のモデルは GPU のメモリと RAM を大きく使い、同じプロセスだと作り終わっても
         解放されない。メモリ不足で落ちても GUI は止まらない)。空きメモリから一番重い段階を選び、メモリ不足で止まったら
         軽い段階でやり直す (mvcodec/person.py の profile_ladder)。入力の動画を読めない・モデルをダウンロードできない
-        (終了コード 4・5) ときは、軽い段階にしても直らないので、やり直さずにその理由を知らせる。"""
+        (終了コード 4・5) ときは、軽い段階にしても直らないので、やり直さずにその理由を知らせる。
+
+        子プロセスの出力すべてと統計は、ログのファイル (new_person_log。やり直した分も続けて 1 つ) に書く。全部の段階でだめなら、
+        そのログの場所を失敗の知らせに書く。"""
         from mvcodec.person import EXIT_INPUT_ERROR, EXIT_MODEL_ERROR, EXIT_OUT_OF_MEMORY, PROFILE_NEEDS, profile_ladder
         from mvcodec.resources import GIB, gpu_memory, system_memory
 
@@ -992,11 +1106,18 @@ class PackBuilderApp(tk.Tk):
             profile=self.tr(f"profile.{ladder[0]}")))
         work.mkdir(parents=True, exist_ok=True)
         mask, background = work / "mask.mp4", work / "background.mp4"
+        # 子プロセスの出力すべてと統計を、やり直した分も続けて 1 つのログに書く (失敗の知らせにその場所を出す)
+        log = self.person_log = new_person_log()
+        with open_log(log) as write_log:
+            write_log(f"{datetime.now():%Y-%m-%d %H:%M:%S} person cutout ({model}): {video}")
+        why = "auto"   # 段階を選んだ理由 (最初は空きメモリから。やり直しはその前の段階がどうなったか)
         for step, profile in enumerate(ladder):
             argv = [str(video), str(mask), str(background), "--fps", str(fps), "--ffmpeg", ffmpeg,
-                    "--model", model, "--profile", profile]
+                    "--model", model, "--profile", profile, "--profile-reason", why]
             if duration is not None:
                 argv += ["--duration", str(duration)]
+            if log is not None:   # 統計はログのフォルダにも書く (標準出力を読めなくても残る)
+                argv += ["--stats", str(log.parent)]
             code, output = self._person_process(argv)
             if code == 0:
                 return mask, background
@@ -1011,11 +1132,15 @@ class PackBuilderApp(tk.Tk):
                 raise RuntimeError(self.tr(key, detail=detail))
             if step + 1 < len(ladder):
                 reason = "memory" if code == EXIT_OUT_OF_MEMORY else "crash"
+                why = f"retry_{reason}"
                 self.messages.put(self.tr(f"build.person_retry_{reason}", profile=self.tr(f"profile.{ladder[step + 1]}")))
-        raise RuntimeError(self.tr("build.person_failed", detail=output.strip()[-400:]))
+        raise RuntimeError(self.tr("build.person_failed", detail=output.strip()[-400:], log=log if log is not None else "-"))
 
     def _person_process(self, argv: list[str]) -> tuple[int, str]:
-        """人物の切り抜きを別のプロセスで行い、(終了コード, 出力の最後の部分) を返す。進み具合を処理ログへ流す。"""
+        """人物の切り抜きを別のプロセスで行い、(終了コード, 出力の最後の部分) を返す。進み具合を処理ログへ流す。
+
+        出力はすべて person_log (_split_person が作る) に書く。子プロセスが最後に出す「stats <JSON>」の行は、そのまま
+        流さずに、終了コード 0 のとき 1〜2 行のまとめと (条件に当てはまれば) 注意にして流す (person_summary_lines)。"""
         command = [*person_command(), *argv]
         self.messages.put("$ " + subprocess.list2cmdline(command))
         process = subprocess.Popen(
@@ -1024,25 +1149,43 @@ class PackBuilderApp(tk.Tk):
         )
         tail: list[str] = []
         last_download = -1
-        for line in process.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            tail = (tail + [line])[-30:]
-            words = line.split()
-            if len(words) == 2 and words[1] == "frames" and words[0].isdigit():
-                if int(words[0]) % 50 == 0:
-                    self.messages.put(self.tr("build.person_progress", count=int(words[0])))
-            elif len(words) == 3 and words[0] == "download" and words[1].isdigit() and words[2].isdigit():
-                done, total = int(words[1]) >> 20, int(words[2]) >> 20
-                if done // 16 != last_download or done == total:
-                    last_download = done // 16
-                    self.messages.put(self.tr("build.model_download", done=done, total=total))
-            elif words[0] == "profile":
-                self.messages.put(self.tr("build.person_profile", profile=self.tr(f"profile.{words[1]}")))
-            elif "W:onnxruntime" not in line:
-                self.messages.put("  " + line)
-        return process.wait(), "\n".join(tail)
+        stats = None
+        log = getattr(self, "person_log", None)
+        with open_log(log) as write_log:
+            write_log("$ " + subprocess.list2cmdline(command))
+            for raw in process.stdout:
+                write_log(raw.rstrip("\r\n"))
+                line = raw.strip()
+                if not line:
+                    continue
+                words = line.split()
+                if line.startswith("stats {"):   # 統計の JSON (1 行。文字列の中に空白がある)
+                    try:
+                        stats = json.loads(line[len("stats "):])
+                        continue
+                    except ValueError:
+                        pass
+                tail = (tail + [line])[-30:]
+                if len(words) == 2 and words[1] == "frames" and words[0].isdigit():
+                    if int(words[0]) % 50 == 0:
+                        self.messages.put(self.tr("build.person_progress", count=int(words[0])))
+                elif len(words) == 3 and words[0] == "download" and words[1].isdigit() and words[2].isdigit():
+                    done, total = int(words[1]) >> 20, int(words[2]) >> 20
+                    if done // 16 != last_download or done == total:
+                        last_download = done // 16
+                        self.messages.put(self.tr("build.model_download", done=done, total=total))
+                elif words[0] == "profile":
+                    self.messages.put(self.tr("build.person_profile", profile=self.tr(f"profile.{words[1]}")))
+                elif words[0] == "sources":
+                    pass   # まとめに入る (ログには書いた)
+                elif "W:onnxruntime" not in line:
+                    self.messages.put("  " + line)
+            code = process.wait()
+            write_log(f"exit code {code}")
+        if code == 0 and isinstance(stats, dict):
+            for text in person_summary_lines(self.tr, stats, log):
+                self.messages.put(text)
+        return code, "\n".join(tail)
 
     def _extract_audio(self, ffmpeg: str, video: Path, sounds_dir: Path) -> list[tuple[int, str, bytes]]:
         """音声を AUDIO_CHUNK_SECONDS 秒ごとの .ogg (44.1kHz ステレオ) に切り出す。無音の動画やエラーなら []。"""

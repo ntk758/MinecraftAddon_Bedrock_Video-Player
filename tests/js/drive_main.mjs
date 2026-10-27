@@ -72,4 +72,6 @@ for (const step of steps) {
 const allBlocks = [...board.entries()].map(([key, id]) => [...key.split(",").map(Number), id]);
 process.stdout.write(JSON.stringify({
   snaps, worlds, ticks, stats, commands, errors, allBlocks, messages: messages.map((m) => JSON.stringify(m)),
+  // テストが codec.js の projectToStage を包んで数えた回数 (包んでいなければ null)
+  projections: globalThis.__bvpProjections ?? null,
 }));
