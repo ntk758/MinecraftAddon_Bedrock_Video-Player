@@ -54,6 +54,8 @@ def test_build_addon_with_wav_audio(frames_js, tmp_path):
     sounds = json.loads(archive.read("RP/sounds/sound_definitions.json"))["sound_definitions"]
     # パスは拡張子なし (ゲームが .ogg / .wav を探す)
     assert sounds["movie.clip.chunk_1"]["sounds"][0]["name"] == "sounds/music/clip/chunk_1"
+    # メモリの少ない端末 (スマートフォンなど) でも読み込ませる
+    assert sounds["movie.clip.chunk_1"]["sounds"][0]["load_on_low_memory"] is True
     main_js = archive.read("BP/scripts/main.js").decode("utf-8")
     assert 'const EVENT_NAMESPACE = "movie";' in main_js
     bp = json.loads(archive.read("BP/manifest.json"))
@@ -64,6 +66,9 @@ def test_build_addon_with_wav_audio(frames_js, tmp_path):
     out = tmp_path / "pack.mcaddon"
     entries = build_addon(out, videos, "My Pack", "movie")
     assert entries[0]["id"] == "clip" and entries[0]["frame_count"] > 0
+    # 音声の区切りの数 (0 ならゲーム内で「音声が入っていない」と知らせる)
+    assert entries[0]["audio_chunks"] == 2
+    assert build_addon(tmp_path / "silent.mcaddon", [{**videos[0], "sounds": []}], "My Pack", "movie")[0]["audio_chunks"] == 0
     assert set(zipfile.ZipFile(out).namelist()) == names
 
 

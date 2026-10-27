@@ -7,6 +7,7 @@
 //   {"ui": [{"selection": 0}, {"formValues": [6]}]}   リモコン (コンパス) を使い、開いたフォームへ順に応答する
 //   {"failZ": 92} / {"failZ": null}                   z がその値以上のマスへの設置を失敗させる / 元に戻す
 //   {"y": 318} / {"x": 5, "z": 100}                   プレイヤーの立つ位置を変える
+//   {"view": {"x": 1, "z": 0}}                        プレイヤーの見ている方向を変える
 //   {"snap": "名前"}                                  いま選ばれている動画の盤面 (各マスのブロック) を記録する
 //   {"world": "名前"}                                 ワールドに置かれたブロックをすべて記録する (だまし絵の舞台は snap の範囲に収まらない)
 import {
@@ -61,6 +62,7 @@ for (const step of steps) {
       useItem("minecraft:compass");
       for (let i = 0; i < 10; i++) await Promise.resolve();
     } else if ("failZ" in step) options.failZ = step.failZ ?? undefined;
+    else if (step.view) player.viewDirection = { y: 0, ...step.view };
     else if ("y" in step || "x" in step || "z" in step) Object.assign(player.location, step);
     else if (step.snap) snap(step.snap, step.video ?? Object.keys(VIDEOS)[0]);
     else if (step.world) worlds.push({ label: step.world, blocks: [...board.entries()].map(([key, id]) => [...key.split(",").map(Number), id]) });

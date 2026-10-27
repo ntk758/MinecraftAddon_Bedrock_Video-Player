@@ -24,9 +24,11 @@ from test_codec_v4 import HEIGHT, WIDTH, make_scene_frames, run_convert  # noqa:
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node が必要")
 
 
-def drive(work, videos, steps, prepare=None):
+def drive(work, videos, steps, prepare=None, listing_extra=None):
     """videos ({動画ID: frames_*.js}) を収録したアドオンを、steps のとおりに操作した結果を返す。
-    prepare(work) があれば、アドオン一式を work に置いた後、動かす前に呼ぶ (main.js・codec.js を書き換えて計測を足すときなど)。"""
+    prepare(work) があれば、アドオン一式を work に置いた後、動かす前に呼ぶ (main.js・codec.js を書き換えて計測を足すときなど)。
+    listing_extra: {動画ID: {項目: 値}} を VIDEO_LIST のその動画に足す (audio_chunks など)。
+    """
     work.mkdir(parents=True)
     for name in ("main.js", "codec.js"):
         shutil.copy(ROOT / name, work / name)
@@ -36,8 +38,9 @@ def drive(work, videos, steps, prepare=None):
         shutil.copy(path, work / f"frames_{video_id}.js")
         imports.append(f'import {{ FRAME_DATA as v{n} }} from "./frames_{video_id}.js";')
         entries.append(f'"{video_id}": v{n}')
+        extra = "".join(f", {key}: {json.dumps(value)}" for key, value in (listing_extra or {}).get(video_id, {}).items())
         listing.append(f'{{ id: "{video_id}", title: "{video_id}", frame_count: v{n}.frame_count, '
-                       f'width: v{n}.width, height: v{n}.height }}')
+                       f'width: v{n}.width, height: v{n}.height{extra} }}')
     (work / "videos.js").write_text(
         "\n".join(imports) + f"\nexport const VIDEOS = {{ {', '.join(entries)} }};\n"
         f"export const VIDEO_LIST = [{', '.join(listing)}];\n", encoding="utf-8")

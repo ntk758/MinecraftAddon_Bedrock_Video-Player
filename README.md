@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v6.28.0](https://img.shields.io/badge/Release-v6.28.0-blue.svg)](#-releases)
+[![Release v6.29.1](https://img.shields.io/badge/Release-v6.29.1-blue.svg)](#-releases)
 [![CI](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml/badge.svg)](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
@@ -34,7 +34,7 @@
   <b>View-dependent trompe-l'oeil</b> (real in-game recording): the dancer is not built from blocks but painted on the floor and walls exactly as the player's eye sees it, and repainted as they walk</sub>
 </p>
 
-**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.28.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.28.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.28.0-windows-x64.zip` (Python 不要) を使ってください。
+**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.29.1.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.29.1.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.29.1-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 
 [日本語](#日本語-japanese) | [English](#english) | [変更履歴 / Changelog](CHANGELOG.md)
@@ -42,7 +42,7 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
 ## 🚀 クイックスタート / Quick start
 
 **A. サンプルを試す (変換は不要・約 3 分) / Try the sample (no conversion)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.28.0.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.28.0.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.29.1.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.29.1.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
    Download a sample `.mcaddon` from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) and double-click it to import it into Minecraft Bedrock.
 2. 新しいワールドを作り、**チートを有効**、**ビヘイビアーパックとリソースパックの両方** を有効にします (スーパーフラットがおすすめ)。
    Create a world with **cheats on** and **both** the Behavior Pack and the Resource Pack enabled (a superflat world works best).
@@ -50,8 +50,8 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
    Run `/scriptevent badapple:setup` then `/scriptevent badapple:start`. Use a compass to open the remote control.
 
 **B. 自分の動画を変換する (Windows) / Convert your own video (Windows)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.28.0-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
-   Unzip `BlockVideoPlayer-v6.28.0-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.29.1-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
+   Unzip `BlockVideoPlayer-v6.29.1-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
 2. 初めて起動すると **はじめてガイド** が開きます (左上のボタンでいつでも開けます): 環境 (FFmpeg・GPU・メモリ・AI の切り抜き・保存先の空き・Minecraft) を自動で調べ、動画を選ぶと勧める設定とアドオンの大きさの見込みを出し、作り終わると「保存先を開く」「Minecraft に読み込む」と再生のコマンドを案内します。ガイドを使わないときは「動画を追加」→「動画の縦横比に合わせる」→「.mcaddon を作成」。画面の **再生負荷の目安** が「重い」なら幅・高さ・fps を下げます。
    Add a video → *Match video aspect ratio* → *Create .mcaddon*. If the **playback load estimate** says *heavy*, lower the size or fps.
 3. できた `.mcaddon` を A の 2〜3 と同じように使います。うまくいかないときは [既知の問題](docs/KNOWN_ISSUES.md) を見てください。
@@ -83,10 +83,10 @@ Python で動かす方法・GPU の設定は [インストールと使い方](#-
 リリースページでは各ファイルの横に SHA-256 が表示されます (`SHA256SUMS.txt` が付いている版はそのファイルにも)。手元のファイルの値と一致すれば、壊れても書き換えられてもいません。
 Each file on the release page shows its SHA-256; it must match the value you compute:
 ```powershell
-Get-FileHash .\BlockVideoPlayer-v6.28.0-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\BlockVideoPlayer-v6.29.1-windows-x64.zip -Algorithm SHA256
 ```
 ```bash
-sha256sum BlockVideoPlayer-v6.28.0-windows-x64.zip
+sha256sum BlockVideoPlayer-v6.29.1-windows-x64.zip
 ```
 
 ## 日本語 (Japanese)
@@ -194,7 +194,9 @@ python video_player_gui.py
    ```
    /scriptevent badapple:setup
    ```
-   スクリーンは **プレイヤーの足元の高さに、東 (+X) と北 (-Z) 方向へ水平に** 作られます。範囲内のブロックは上書きされるので、平らで何もない場所で実行し、上空から見下ろしてください。
+   スクリーンは **プレイヤーの足元の高さに、東 (+X) と北 (-Z) 方向へ水平に** 作られます (映像の面が上を向く床置き)。範囲内のブロックは上書きされるので、平らで何もない場所で実行し、上空から見下ろしてください。
+   - **テレビのように立てたいとき**: 見たい方向を向いて `/scriptevent badapple:setup wall` を実行すると、見ている方向の 3 ブロック先に、こちらを向けて立てます。
+   - **床置きのまま向きを変えたいとき**: 見たい方向を向いて `/scriptevent badapple:setup face` を実行すると、足元から前と右へ広がるように置きます (立体・だまし絵もこちらを向きます)。
 4. **コンパスを使う** (右クリック / 長押し) とリモコンが開きます。
 
 | リモコンのボタン | 動作 |
@@ -207,8 +209,10 @@ python video_player_gui.py
 
 | コマンド | 動作 |
 |---|---|
-| `/scriptevent badapple:setup` | 現在地にスクリーンを設置 |
-| `/scriptevent badapple:setup align` | スクリーンがまたぐチャンク (16×16 の区画) が一番少なくなるよう、東西・南北に最大 15 ブロックずらして設置 (128×72 で平均 48.6 → 40 チャンク) |
+| `/scriptevent badapple:setup` | 現在地にスクリーンを設置 (北向き: 平面は足元から北東へ広がる床置き、立体は 2 ブロック北に南向きで立てる) |
+| `/scriptevent badapple:setup face` | 見ている方向 (東西南北) に向けて設置 (平面は足元から前と右へ広がる床置き、立体・だまし絵はこちらを向く) |
+| `/scriptevent badapple:setup wall` | 平面の動画をテレビのように立て、見ている方向の 3 ブロック先にこちらを向けて設置 |
+| `/scriptevent badapple:setup align` | (`face`・`wall` と組み合わせられる) スクリーンがまたぐチャンク (16×16 の区画) が一番少なくなるよう、東西・南北に最大 15 ブロックずらして設置 (128×72 で平均 48.6 → 40 チャンク) |
 | `/scriptevent badapple:start` | 選択中の動画を最初から再生 |
 | `/scriptevent badapple:list` | 収録動画の一覧 |
 | `/scriptevent badapple:play <動画ID>` | 指定した動画を再生 |
@@ -559,6 +563,8 @@ This project is licensed under the [MIT License](LICENSE).
 すべての版の変更点は [CHANGELOG.md](CHANGELOG.md) にあります / Full history: [CHANGELOG.md](CHANGELOG.md).
 
 
+- **v6.29.1**: iPhone の Safari・Chrome のブラウザ版で音声をデコードできなかった問題を修正 (動画から AAC の音声トラックだけを取り出してデコードする)。
+- **v6.29.0**: `setup face` (見ている方向に向けて置く)・`setup wall` (平面を壁のように立てる)。音声の入っていない動画を再生するとチャットで知らせる。音声をメモリの少ない端末でも読み込ませる。
 - **v6.28.0**: はじめてガイド (FFmpeg・GPU・メモリ・AI・保存先・Minecraft を自動で調べ、動画を選ぶと勧める設定とアドオンの大きさの見込み、作り終わると保存先を開く・Minecraft に読み込む・再生のコマンド)。AI の人物の切り抜きを別のプロセスで、空きメモリから重さを選び、メモリ不足ならやり直す。
 - **v6.27.1**: MMD のエクストリームの重さの見込みを実機の値 (高さ 80 で 217 ms) に合わせた。
 - **v6.27.0**: Windows 版に「MMD を高解像度で (エクストリーム)」: MMD の人物の高さの上限を 128 ブロック (だまし絵は 80) に。重さの見込みと勧める fps を処理ログに出す。

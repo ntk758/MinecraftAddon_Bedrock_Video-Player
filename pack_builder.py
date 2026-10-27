@@ -133,6 +133,8 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
                  "width": dims.get("width", video.get("width", 0)), "height": dims.get("height", video.get("height", 0))}
         if "depth" in dims:
             entry["depth"] = dims["depth"]
+        # 音声の区切りの数。0 ならゲーム内で再生するときに「音声が入っていない」と知らせる
+        entry["audio_chunks"] = len(video.get("sounds") or [])
         if video.get("hidden"):
             # だまし絵の背景の映像など、人物の動画と一緒に再生するので一覧に出さない
             entry["hidden"] = True
@@ -145,7 +147,8 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
             # パスは拡張子なしで書く (.ogg / .wav のどちらでもゲームが探す)
             sound_definitions[f"{namespace}.{video_id}.chunk_{index}"] = {
                 "category": "ui",
-                "sounds": [{"name": f"sounds/music/{video_id}/chunk_{index}", "stream": True}],
+                # load_on_low_memory: メモリの少ない端末 (スマートフォンなど) でも読み込ませる
+                "sounds": [{"name": f"sounds/music/{video_id}/chunk_{index}", "stream": True, "load_on_low_memory": True}],
             }
 
     if sound_definitions:
