@@ -183,6 +183,35 @@ def test_setup_align_lines_the_screen_up_with_chunks(scene, tmp_path, x, z):
     assert final["board"] == frames[-1]
 
 
+def test_playback_waits_until_the_screen_chunks_are_loaded(scene, tmp_path):
+    """setup の直後でスクリーンの一部のチャンクがまだ読み込まれていなければ、読み込まれるまで再生を始めない。
+    以前はすぐ始めて、最初の画面に置けなかった穴が開き、「置けなかった」の知らせが出ていた (お試し版の録画)。"""
+    path, data = scene
+    frames = reference_frames(data)
+    steps = [{"event": "badapple:setup"}, {"unloadedZ": 92}, {"event": "badapple:start"}, {"tick": 60},
+             {"snap": "waiting"}, {"unloadedZ": None}, {"until": "bvp.playback_finished"}, {"snap": "final"}]
+    out = drive(tmp_path / "addon", {"demo": path}, steps)
+    assert out["errors"] == []
+    waiting, final = out["snaps"]
+    assert all(block is None for block in waiting["board"])
+    assert final["board"] == frames[-1]
+    assert not any("bvp.place_failed" in m for m in out["messages"])
+
+
+def test_playback_starts_anyway_if_the_chunks_never_load(scene, tmp_path):
+    """読み込まれないまま 10 秒たったら始める (置けなかったブロックは今までどおり知らせる)。"""
+    path, data = scene
+    steps = [{"event": "badapple:setup"}, {"unloadedZ": 92}, {"event": "badapple:start"},
+             {"until": "bvp.playback_finished"}, {"snap": "final"}]
+    out = drive(tmp_path / "addon", {"demo": path}, steps)
+    assert out["errors"] == []
+    anchor, board = out["snaps"][0]["anchor"], out["snaps"][0]["board"]
+    width = data["width"]
+    # 読み込まれている側には置いた (待つのをやめて最後まで再生した)
+    assert any(board[p] is not None for p in range(len(board)) if anchor["z"] + p // width < 92)
+    assert sum(1 for m in out["messages"] if "bvp.place_failed" in m) == 1
+
+
 def test_blocks_that_cannot_be_placed_are_reported_once_in_chat(tmp_path):
     """置けなかったブロックは再生ごとに 1 回だけチャットで知らせる (理由のエラーも)。以前はコンテンツログだけで、
     実機で前の場面のブロックが残ったときに原因が分からなかった。"""
