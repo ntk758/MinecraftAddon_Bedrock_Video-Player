@@ -333,5 +333,13 @@
   "web.preview_making": "正在產生預覽：{id}",
   "after.preview": "預覽",
   "build.preview": "預覽（依遊戲規則繪製的 Minecraft 中的樣子）：{path}",
-  "build.preview_failed": "  無法產生 {id} 的預覽（附加元件沒有問題）：{error}"
+  "build.preview_failed": "  無法產生 {id} 的預覽（附加元件沒有問題）：{error}",
+  "web.camera_open": "📷 用相機錄影",
+  "web.camera_start": "● 開始錄影",
+  "web.camera_stop": "■ 停止",
+  "web.camera_close": "關閉",
+  "web.camera_hint": "最多錄製 {max} 秒並加入影片清單。錄影不會離開此瀏覽器。",
+  "web.camera_failed": "無法使用相機：{error}",
+  "web.camera_unsupported": "此瀏覽器不支援用相機錄影。",
+  "web.camera_recording": "錄影中… {seconds} 秒"
 }

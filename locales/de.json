@@ -333,5 +333,13 @@
   "web.preview_making": "Vorschau wird erstellt: {id}",
   "after.preview": "Vorschau",
   "build.preview": "Vorschau (so sieht es in Minecraft aus, nach den Regeln des Spiels gezeichnet): {path}",
-  "build.preview_failed": "  Die Vorschau von {id} konnte nicht erstellt werden (das Add-on ist in Ordnung): {error}"
+  "build.preview_failed": "  Die Vorschau von {id} konnte nicht erstellt werden (das Add-on ist in Ordnung): {error}",
+  "web.camera_open": "📷 Mit der Kamera aufnehmen",
+  "web.camera_start": "● Aufnahme starten",
+  "web.camera_stop": "■ Stopp",
+  "web.camera_close": "Schließen",
+  "web.camera_hint": "Nimmt bis zu {max} Sekunden auf und fügt den Clip der Liste hinzu. Er verlässt diesen Browser nicht.",
+  "web.camera_failed": "Die Kamera konnte nicht verwendet werden: {error}",
+  "web.camera_unsupported": "Dieser Browser kann nicht mit der Kamera aufnehmen.",
+  "web.camera_recording": "Aufnahme… {seconds} s"
 }

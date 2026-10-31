@@ -333,5 +333,13 @@
   "web.preview_making": "Création de l'aperçu : {id}",
   "after.preview": "Aperçu",
   "build.preview": "Aperçu (l'apparence dans Minecraft, dessinée avec les règles du jeu) : {path}",
-  "build.preview_failed": "  Impossible de créer l'aperçu de {id} (le module est correct) : {error}"
+  "build.preview_failed": "  Impossible de créer l'aperçu de {id} (le module est correct) : {error}",
+  "web.camera_open": "📷 Filmer avec la caméra",
+  "web.camera_start": "● Commencer l'enregistrement",
+  "web.camera_stop": "■ Arrêter",
+  "web.camera_close": "Fermer",
+  "web.camera_hint": "Enregistre jusqu'à {max} secondes et ajoute la vidéo à la liste. Elle ne quitte pas ce navigateur.",
+  "web.camera_failed": "Impossible d'utiliser la caméra : {error}",
+  "web.camera_unsupported": "Ce navigateur ne peut pas enregistrer avec la caméra.",
+  "web.camera_recording": "Enregistrement… {seconds} s"
 }

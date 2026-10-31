@@ -333,5 +333,13 @@
   "web.preview_making": "プレビューを作成中: {id}",
   "after.preview": "プレビュー",
   "build.preview": "プレビュー (ゲームと同じ規則で描いた Minecraft の中での見え方): {path}",
-  "build.preview_failed": "  {id} のプレビューを作れませんでした (アドオンは問題ありません): {error}"
+  "build.preview_failed": "  {id} のプレビューを作れませんでした (アドオンは問題ありません): {error}",
+  "web.camera_open": "📷 カメラで撮る",
+  "web.camera_start": "● 録画を始める",
+  "web.camera_stop": "■ 止める",
+  "web.camera_close": "閉じる",
+  "web.camera_hint": "最大 {max} 秒まで録画して、動画の一覧に加えます。録画はこのブラウザの外に出ません。",
+  "web.camera_failed": "カメラを使えませんでした: {error}",
+  "web.camera_unsupported": "このブラウザはカメラの録画に対応していません。",
+  "web.camera_recording": "録画中… {seconds} 秒"
 }

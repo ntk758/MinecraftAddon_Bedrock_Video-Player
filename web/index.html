@@ -20,7 +20,20 @@
 <main>
   <section class="card">
     <h2 data-i18n="web.section_videos">1. Videos and .vox</h2>
-    <input type="file" id="files" accept="video/*,.vox" multiple>
+    <div class="row">
+      <input type="file" id="files" accept="video/*,.vox" multiple>
+      <button type="button" id="cameraOpen" data-i18n="web.camera_open">📷 Record with the camera</button>
+    </div>
+    <!-- カメラで撮る (web/camera.js) -->
+    <div id="cameraPanel" class="camera" hidden>
+      <video id="cameraLive" muted playsinline></video>
+      <div class="row">
+        <button type="button" id="cameraStart" disabled data-i18n="web.camera_start">● Start recording</button>
+        <button type="button" id="cameraStop" hidden data-i18n="web.camera_stop">■ Stop</button>
+        <button type="button" id="cameraClose" data-i18n="web.camera_close">Close</button>
+      </div>
+      <p id="cameraStatus" class="hint"></p>
+    </div>
     <p class="hint" data-i18n="web.vox_hint">MagicaVoxel animations (.vox) can be added too: their size and frames are kept, and only FPS and palette apply.</p>
     <ul id="videoList"></ul>
   </section>
@@ -127,6 +140,7 @@
 <script src="usage.js"></script>
 <script src="mp4audio.js"></script>
 <script src="preview.js"></script>
+<script src="camera.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

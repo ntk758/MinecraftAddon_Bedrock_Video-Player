@@ -333,5 +333,13 @@
   "web.preview_making": "Making the preview: {id}",
   "after.preview": "Preview",
   "build.preview": "Preview (how it looks in Minecraft, drawn with the game's rules): {path}",
-  "build.preview_failed": "  Could not make the preview of {id} (the add-on is fine): {error}"
+  "build.preview_failed": "  Could not make the preview of {id} (the add-on is fine): {error}",
+  "web.camera_open": "📷 Record with the camera",
+  "web.camera_start": "● Start recording",
+  "web.camera_stop": "■ Stop",
+  "web.camera_close": "Close",
+  "web.camera_hint": "Records up to {max} seconds and adds the clip to the list. It stays in this browser.",
+  "web.camera_failed": "Could not use the camera: {error}",
+  "web.camera_unsupported": "This browser cannot record from the camera.",
+  "web.camera_recording": "Recording… {seconds} s"
 }

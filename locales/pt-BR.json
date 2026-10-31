@@ -333,5 +333,13 @@
   "web.preview_making": "Criando a prévia: {id}",
   "after.preview": "Prévia",
   "build.preview": "Prévia (como fica no Minecraft, desenhada com as regras do jogo): {path}",
-  "build.preview_failed": "  Não foi possível criar a prévia de {id} (o complemento está certo): {error}"
+  "build.preview_failed": "  Não foi possível criar a prévia de {id} (o complemento está certo): {error}",
+  "web.camera_open": "📷 Gravar com a câmera",
+  "web.camera_start": "● Começar a gravar",
+  "web.camera_stop": "■ Parar",
+  "web.camera_close": "Fechar",
+  "web.camera_hint": "Grava até {max} segundos e adiciona o clipe à lista. Ele não sai deste navegador.",
+  "web.camera_failed": "Não foi possível usar a câmera: {error}",
+  "web.camera_unsupported": "Este navegador não consegue gravar com a câmera.",
+  "web.camera_recording": "Gravando… {seconds} s"
 }

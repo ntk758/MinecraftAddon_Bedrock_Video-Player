@@ -103,3 +103,7 @@ label.lang { flex-direction: row; align-items: center; gap: 6px; }
 .preview video, .preview canvas { width: 100%; background: #000; border-radius: 6px; }
 .preview canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
 label.inline { flex-direction: row; align-items: center; gap: 8px; }
+/* カメラで撮る */
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.camera { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.camera video { width: 100%; max-width: 480px; background: #000; border-radius: 6px; }

@@ -333,5 +333,13 @@
   "web.preview_making": "미리보기 만드는 중: {id}",
   "after.preview": "미리보기",
   "build.preview": "미리보기 (게임과 같은 규칙으로 그린 Minecraft 안에서의 모습): {path}",
-  "build.preview_failed": "  {id}의 미리보기를 만들지 못했습니다 (애드온은 문제없습니다): {error}"
+  "build.preview_failed": "  {id}의 미리보기를 만들지 못했습니다 (애드온은 문제없습니다): {error}",
+  "web.camera_open": "📷 카메라로 촬영",
+  "web.camera_start": "● 녹화 시작",
+  "web.camera_stop": "■ 정지",
+  "web.camera_close": "닫기",
+  "web.camera_hint": "최대 {max}초까지 녹화해 동영상 목록에 추가합니다. 녹화한 영상은 이 브라우저 밖으로 나가지 않습니다.",
+  "web.camera_failed": "카메라를 사용할 수 없습니다: {error}",
+  "web.camera_unsupported": "이 브라우저는 카메라 녹화를 지원하지 않습니다.",
+  "web.camera_recording": "녹화 중… {seconds}초"
 }

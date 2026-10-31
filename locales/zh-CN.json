@@ -333,5 +333,13 @@
   "web.preview_making": "正在生成预览：{id}",
   "after.preview": "预览",
   "build.preview": "预览（按游戏规则绘制的 Minecraft 中的效果）：{path}",
-  "build.preview_failed": "  无法生成 {id} 的预览（附加包没有问题）：{error}"
+  "build.preview_failed": "  无法生成 {id} 的预览（附加包没有问题）：{error}",
+  "web.camera_open": "📷 用摄像头录制",
+  "web.camera_start": "● 开始录制",
+  "web.camera_stop": "■ 停止",
+  "web.camera_close": "关闭",
+  "web.camera_hint": "最多录制 {max} 秒并加入视频列表。录像不会离开此浏览器。",
+  "web.camera_failed": "无法使用摄像头：{error}",
+  "web.camera_unsupported": "此浏览器不支持用摄像头录制。",
+  "web.camera_recording": "录制中… {seconds} 秒"
 }

@@ -333,5 +333,13 @@
   "web.preview_making": "Создание предпросмотра: {id}",
   "after.preview": "Предпросмотр",
   "build.preview": "Предпросмотр (как это выглядит в Minecraft, по правилам игры): {path}",
-  "build.preview_failed": "  Не удалось создать предпросмотр {id} (с дополнением всё в порядке): {error}"
+  "build.preview_failed": "  Не удалось создать предпросмотр {id} (с дополнением всё в порядке): {error}",
+  "web.camera_open": "📷 Снять на камеру",
+  "web.camera_start": "● Начать запись",
+  "web.camera_stop": "■ Стоп",
+  "web.camera_close": "Закрыть",
+  "web.camera_hint": "Записывает до {max} секунд и добавляет клип в список. Запись не покидает этот браузер.",
+  "web.camera_failed": "Не удалось использовать камеру: {error}",
+  "web.camera_unsupported": "Этот браузер не умеет записывать с камеры.",
+  "web.camera_recording": "Запись… {seconds} с"
 }

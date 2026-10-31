@@ -44,7 +44,17 @@ function loadVideoElement(url, name = "") {
     video.preload = "auto";
     video.playsInline = true;
     video.src = url;
-    video.onloadedmetadata = () => resolve(video);
+    video.onloadedmetadata = () => {
+      if (Number.isFinite(video.duration)) { resolve(video); return; }
+      // MediaRecorder の WebM (カメラの録画) は長さが入っていない (Infinity)。最後へ飛ぶと本当の長さが分かる
+      video.ontimeupdate = () => {
+        video.ontimeupdate = null;
+        if (!Number.isFinite(video.duration)) { reject(new Error(t("web.cannot_open", { name }))); return; }
+        video.onseeked = () => resolve(video);
+        video.currentTime = 0;
+      };
+      video.currentTime = 1e101;
+    };
     video.onerror = () => reject(new Error(t("web.cannot_open", { name })));
   });
 }
@@ -381,6 +391,7 @@ async function build() {
 }
 
 $("files").addEventListener("change", (e) => addFiles(e.target.files));
+Camera.onRecorded((file) => addFiles([file]));
 $("fitAspect").addEventListener("click", () => fitAspect());
 // プリセットを選ぶと幅・高さ・fps を入れ、動画があればその縦横比に合わせる (Windows 版と同じく長い辺をプリセットの値に)
 function applyPreset() {
