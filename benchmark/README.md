@@ -110,6 +110,35 @@ python benchmark/stage_bench.py --out D:/work/stage_bench --quick               
 
 `tests/test_stage_exact.py` (`tests/js/stage_exact.mjs`) は、乱数 (種は固定) で作った立体 (中が空洞の殻・薄い板・ばらばらの点・詰まった塊・細い棒、24×40×8 と 40×80×16) を、座標が整数でない目 20 か所 (正面・横・高い位置・ブロックの面の外) から写し、盤面の各マスの中心から目への線分を 3D DDA でたどった正解と食い違うマスが 0 であることを確かめます。目が人物のブロックの並びの中や後ろにあるときは数マスが、人物の最前面から約 0.03〜0.12 ブロック手前にあるときは数百〜千数百マス (24×40×8 の塊を目 150 か所で確かめると 1798 マス) が抜けることが分かっていて (v6.28.0 からの既知の不正確さ。既定の 20 か所には当たらない)、その確認は `xfail` にしてあります。写る範囲の求め方の近道 (床・後ろの壁・左の壁・右の壁のどれか 1 つにしか写らないブロックと、それ以外の一般の場合) は、それぞれのブロックを多く含む目 (`stage_exact.mjs --path floor|back|left|right|general`) で確かめます。外から見える面を持つブロックの一覧を作る処理 (空気だけの区間の読み飛ばし) は `tests/js/stage_surface.mjs` が、図形の置き場所・空気の番号・NaN のビット列を変えて、ブロックを 1 つずつ調べた正解と比べます。だまし絵の変換が埋める閉じた空洞 (`fill_enclosed_air`) は、埋めても投影が 1 マスも変わらず、調べる面だけが減ることを確かめます。`tests/test_stage_bench.py` は `stage_bench.py --quick` の smoke テストです。
 
+## ディザの見え方の物差し (`dither_view_bench.py`、Phase 13.1)
+
+変換した `.js` を元のフレームと比べて、スクリーンの高さの k 倍 (既定 1・2・4) から見たときの色差・粒・ちらつきを出します。定義は `metrics/dither_view.py` にあります。node が無ければ描画時間の見積りを省きます。
+
+```bash
+python benchmark/dither_view_bench.py --out D:/work/dither_view --clips anime gradients mandelbrot testsrc2 pan --variant none="--dither-method none" --variant blue="--dither-method blue_noise"
+python benchmark/dither_view_bench.py --frames-root D:/work/frames --set-label ジャンル --out D:/work/dither_view/base --device auto   # フォルダごとの PNG。結果には連番だけを書く
+python benchmark/dither_view_bench.py --out D:/work/dither_view/one --from-js out.js --frames-dir D:/work/frames/one                  # 変換済みの .js と比べる
+python benchmark/dither_view_bench.py --compare D:/work/before/results.json D:/work/after/results.json                                # Phase 13 の採用基準を判定 (通れば終了コード 0)
+```
+
+| 項目 | 中身 |
+|---|---|
+| `view_error_k` | 同じ視覚ぼかし V_k をかけた 2 枚の CIEDE2000 の全マス平均。0 なら距離 k で同じ色に見える |
+| `grain_visible_k` (`_L_k`・`_ab_k`) | 残って見える粒。**採用基準の本命**。V_k から平均のぼかし (Lab、σ = 2 マス) を引いた差のエネルギーを、元の分だけ引いて平方根を取る。細部を失っただけの画像や全体の色ずれは 0 |
+| `grain_removed_k` | ぼかしで消える粒。ぼかす前後の差なので距離とともに増える。粒を高い周波数へ移す改善で上がるので、基準には使わない |
+| `grain_band_k`・`grain_band_fraction` | 元の M(L*) で分けた 4 つの帯 (0–25・25–50・50–75・75–100) の粒と、帯の割合。1% 未満の帯は `n/a` |
+| `flicker_rate`・`flicker_mag_k`・`static_coverage` | 動かない場所 (元の映像の 5 フレームの Lab の幅が τ 以下、動きの隣を除く) で表示の RGB が変わった割合と、距離 k で見た変化の大きさ。静止が 5% 未満のクリップは `n/a` にして平均から外し、本数を `flicker_na` に出す |
+| `deltaE2000`・`deltaE2000_blur` | 過去の値と並べるための従来の色差。`_blur` は `palette_bench.py` と同じ 3×3 で、距離を表しません |
+| `zip_bytes`・`best_us`・`convert_s` | deflate 後のデータ、描画時間の見積り、変換時間 |
+
+色差と粒は `--stride` (既定 4) フレームごと、ちらつきは全フレームです。`--compare` の粒は k=2 を代表にし、k=1・4 の悪化なしを条件にします (代表の距離は実機の確認で確定)。`flicker_rate` は基準値が 0.5% 未満なら比率の判定から外して絶対値だけ出します。
+
+**視覚のモデルの仮定**: マス/度 = H·k / θ1。θ1 は 1 倍の距離でスクリーンの高さが占める視角で、既定の 24.7 度は 24 型 1080p を 60 cm で見て、ゲーム内の縦の視野を 60 度とした仮定です (`--screen-angle`)。実機のスクリーンショットの画素高さから測って直してください。ぼかしは S-CIELAB (Zhang & Wandell 1997) の形で、明るさの 7 度の負の山を外して正規化しています。数値は原典と未照合なので、当面は単なるガウスの近似として扱ってください。白が反対色の 0 にならないので、灰色のディザも `grain_visible_ab` へ少し漏れます (L の約 1/4)。ブロックのテクスチャ、面の明るさの違い、ミップマップ、時間方向の感度、模様によるマスキングはモデルにありません。
+
+128×72 の 4 倍は約 5.8 cpd で感度の高い帯域に近く、ディザはぼけて消えません。距離を離せば粒が消えるとは限らないので、k ごとに見てください。
+
+`--frames-root` の `--out` はリポジトリの外にします (中だと拒否します)。第三者の映像から作った結果は、元の名前を含めてコミットしないでください。
+
 ## AI の人物の切り抜きの測定 (`person_bench.py`、ローカル専用)
 
 `mvcodec/person.py` の切り抜きを、構成 (版 × メモリの段階) ごとに新しいプロセスで動かして、速さ・メモリ・マスクの安定性を測ります。CI では動かしません (モデルと GPU が要る)。動画は `--video` で渡すだけで、リポジトリには何も書きません (マスクと背景の動画は、数値を出した後に消します)。
