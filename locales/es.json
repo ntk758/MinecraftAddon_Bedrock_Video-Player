@@ -341,5 +341,12 @@
   "web.camera_hint": "Graba hasta {max} segundos y añade el clip a la lista. No sale de este navegador.",
   "web.camera_failed": "No se pudo usar la cámara: {error}",
   "web.camera_unsupported": "Este navegador no puede grabar con la cámara.",
-  "web.camera_recording": "Grabando… {seconds} s"
+  "web.camera_recording": "Grabando… {seconds} s",
+  "web.mmd_title": "Modelo y baile de MMD (.pmx + .vmd) en 3D",
+  "web.mmd_folder": "Carpeta del modelo (el .pmx y sus texturas)",
+  "web.mmd_model": "Modelo",
+  "web.mmd_motion": "Baile (.vmd)",
+  "web.mmd_add": "Añadir a la lista",
+  "web.mmd_hint": "La figura baila en el sitio. No se usan la física (pelo, faldas) ni las expresiones faciales. Las figuras altas son pesadas de reproducir: 3D hasta {height} bloques, trampantojo hasta {stage}.",
+  "web.mmd_no_pmx": "No hay ningún archivo .pmx en esta carpeta."
 }

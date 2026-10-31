@@ -341,5 +341,12 @@
   "web.camera_hint": "最多录制 {max} 秒并加入视频列表。录像不会离开此浏览器。",
   "web.camera_failed": "无法使用摄像头：{error}",
   "web.camera_unsupported": "此浏览器不支持用摄像头录制。",
-  "web.camera_recording": "录制中… {seconds} 秒"
+  "web.camera_recording": "录制中… {seconds} 秒",
+  "web.mmd_title": "将 MMD 模型和舞蹈（.pmx + .vmd）变为立体",
+  "web.mmd_folder": "模型文件夹（.pmx 和贴图）",
+  "web.mmd_model": "模型",
+  "web.mmd_motion": "舞蹈（.vmd）",
+  "web.mmd_add": "加入列表",
+  "web.mmd_hint": "人物在原地跳舞。不使用物理（头发、裙子的摆动）和表情。人物越高，播放越重（立体最高 {height}，错觉画最高 {stage}）。",
+  "web.mmd_no_pmx": "此文件夹中没有 .pmx 文件。"
 }

@@ -341,5 +341,12 @@
   "web.camera_hint": "Nimmt bis zu {max} Sekunden auf und fügt den Clip der Liste hinzu. Er verlässt diesen Browser nicht.",
   "web.camera_failed": "Die Kamera konnte nicht verwendet werden: {error}",
   "web.camera_unsupported": "Dieser Browser kann nicht mit der Kamera aufnehmen.",
-  "web.camera_recording": "Aufnahme… {seconds} s"
+  "web.camera_recording": "Aufnahme… {seconds} s",
+  "web.mmd_title": "MMD-Modell und Tanz (.pmx + .vmd) in 3D",
+  "web.mmd_folder": "Modellordner (die .pmx und ihre Texturen)",
+  "web.mmd_model": "Modell",
+  "web.mmd_motion": "Tanz (.vmd)",
+  "web.mmd_add": "Zur Liste hinzufügen",
+  "web.mmd_hint": "Die Figur tanzt auf der Stelle. Physik (Haare, Röcke) und Gesichtsausdrücke werden nicht verwendet. Große Figuren sind schwer abzuspielen: 3D bis {height} Blöcke, Trompe-l'oeil bis {stage}.",
+  "web.mmd_no_pmx": "In diesem Ordner gibt es keine .pmx-Datei."
 }

@@ -341,5 +341,12 @@
   "web.camera_hint": "最大 {max} 秒まで録画して、動画の一覧に加えます。録画はこのブラウザの外に出ません。",
   "web.camera_failed": "カメラを使えませんでした: {error}",
   "web.camera_unsupported": "このブラウザはカメラの録画に対応していません。",
-  "web.camera_recording": "録画中… {seconds} 秒"
+  "web.camera_recording": "録画中… {seconds} 秒",
+  "web.mmd_title": "MMD のモデルと踊り (.pmx + .vmd) を立体に",
+  "web.mmd_folder": "モデルのフォルダ (.pmx とテクスチャ)",
+  "web.mmd_model": "モデル",
+  "web.mmd_motion": "踊り (.vmd)",
+  "web.mmd_add": "一覧に加える",
+  "web.mmd_hint": "人物はその場で踊ります。物理 (髪・スカートの揺れ) と表情は使いません。人物が高いほど再生が重くなります (立体は高さ {height} まで、だまし絵は {stage} まで)。",
+  "web.mmd_no_pmx": "このフォルダには .pmx のファイルがありません。"
 }

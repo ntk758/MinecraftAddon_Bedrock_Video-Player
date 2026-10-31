@@ -341,5 +341,12 @@
   "web.camera_hint": "Записывает до {max} секунд и добавляет клип в список. Запись не покидает этот браузер.",
   "web.camera_failed": "Не удалось использовать камеру: {error}",
   "web.camera_unsupported": "Этот браузер не умеет записывать с камеры.",
-  "web.camera_recording": "Запись… {seconds} с"
+  "web.camera_recording": "Запись… {seconds} с",
+  "web.mmd_title": "Модель и танец MMD (.pmx + .vmd) в 3D",
+  "web.mmd_folder": "Папка модели (.pmx и текстуры)",
+  "web.mmd_model": "Модель",
+  "web.mmd_motion": "Танец (.vmd)",
+  "web.mmd_add": "Добавить в список",
+  "web.mmd_hint": "Фигура танцует на месте. Физика (волосы, юбки) и мимика не используются. Высокие фигуры тяжело воспроизводить: 3D до {height} блоков, обманка до {stage}.",
+  "web.mmd_no_pmx": "В этой папке нет файла .pmx."
 }

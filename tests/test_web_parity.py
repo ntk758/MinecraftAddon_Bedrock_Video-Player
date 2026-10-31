@@ -50,3 +50,14 @@ def test_web_passes_the_same_quality_options_as_the_windows_app():
     worker = (WEB / "worker.js").read_text(encoding="utf-8")
     assert '"--keyframe-interval", String(s.keyframe)' in worker
     assert '"--no-perceptual"' in worker
+
+
+def test_mmd_height_limits_match_the_windows_app():
+    source = (ROOT / "video_player_gui.py").read_text(encoding="utf-8")
+    gui = {name: int(re.search(rf"^{name} = (\d+)", source, re.M).group(1)) for name in (
+        "MMD_MAX_HEIGHT", "MMD_STAGE_MAX_HEIGHT", "MMD_EXTREME_MAX_HEIGHT", "MMD_EXTREME_STAGE_MAX_HEIGHT")}
+    mmd = (WEB / "mmd.js").read_text(encoding="utf-8")
+    limits = dict(re.findall(r"(\w+): (\d+)", re.search(r"const LIMITS = \{([^}]*)\}", mmd).group(1)))
+    assert {k: int(v) for k, v in limits.items()} == {
+        "normal": gui["MMD_MAX_HEIGHT"], "stage": gui["MMD_STAGE_MAX_HEIGHT"],
+        "extreme": gui["MMD_EXTREME_MAX_HEIGHT"], "extremeStage": gui["MMD_EXTREME_STAGE_MAX_HEIGHT"]}

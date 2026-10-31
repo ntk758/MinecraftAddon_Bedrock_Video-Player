@@ -341,5 +341,12 @@
   "web.camera_hint": "최대 {max}초까지 녹화해 동영상 목록에 추가합니다. 녹화한 영상은 이 브라우저 밖으로 나가지 않습니다.",
   "web.camera_failed": "카메라를 사용할 수 없습니다: {error}",
   "web.camera_unsupported": "이 브라우저는 카메라 녹화를 지원하지 않습니다.",
-  "web.camera_recording": "녹화 중… {seconds}초"
+  "web.camera_recording": "녹화 중… {seconds}초",
+  "web.mmd_title": "MMD 모델과 춤(.pmx + .vmd)을 입체로",
+  "web.mmd_folder": "모델 폴더 (.pmx와 텍스처)",
+  "web.mmd_model": "모델",
+  "web.mmd_motion": "춤 (.vmd)",
+  "web.mmd_add": "목록에 추가",
+  "web.mmd_hint": "인물은 제자리에서 춤춥니다. 물리(머리카락·치마의 흔들림)와 표정은 사용하지 않습니다. 인물이 클수록 재생이 무거워집니다(입체는 높이 {height}까지, 트릭아트는 {stage}까지).",
+  "web.mmd_no_pmx": "이 폴더에는 .pmx 파일이 없습니다."
 }

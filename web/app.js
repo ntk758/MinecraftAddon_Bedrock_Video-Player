@@ -114,7 +114,7 @@ function renderList() {
     input.value = v.id;
     input.title = t("web.video_id");
     input.onchange = () => { v.id = safeId(input.value, new Set(videos.filter((o) => o !== v).map((o) => o.id))); input.value = v.id; };
-    li.append(input, v.vox ? ` ${v.title} (MagicaVoxel 3D)` : ` ${v.title} (${v.width}×${v.height}, ${v.duration.toFixed(1)} s)`);
+    li.append(input, v.mmd ? ` ${v.title} (MMD 3D)` : v.vox ? ` ${v.title} (MagicaVoxel 3D)` : ` ${v.title} (${v.width}×${v.height}, ${v.duration.toFixed(1)} s)`);
     list.append(li);
   }
   $("build").disabled = videos.length === 0;
@@ -364,6 +364,15 @@ async function build() {
   const background = await extractBackground(s);
   const jobs = [];
   for (const [n, v] of videos.entries()) {
+    if (v.mmd) {
+      // MMD: モデルのフォルダのファイルと踊りを渡し、worker が Python (mvcodec/mmd.py) で .vox の立体にする
+      const files = [];
+      for (const item of v.mmd.files) files.push([item.path, new Uint8Array(await item.file.arrayBuffer())]);
+      const height = Math.min(s.height, Mmd.heightLimit(s.anamorphic, v.mmd.extreme));
+      jobs.push({ id: v.id, title: v.title, frames: [], thumbnail: null, sounds: [],
+                  mmd: { files, pmx: v.mmd.pmx, motion: new Uint8Array(await v.mmd.motion.arrayBuffer()), height } });
+      continue;
+    }
     if (v.vox) {
       // .vox はそのまま渡し、変換とサムネイル (立体を斜め上から見た絵) は Python で作る。音声は無し
       jobs.push({ id: v.id, title: v.title, vox: new Uint8Array(await v.file.arrayBuffer()), frames: [], thumbnail: null, sounds: [] });
@@ -380,6 +389,7 @@ async function build() {
     for (const f of job.frames) transfer.push(f.buffer);
     if (job.thumbnail) transfer.push(job.thumbnail.buffer);
     if (job.vox) transfer.push(job.vox.buffer);
+    if (job.mmd) transfer.push(job.mmd.motion.buffer, ...job.mmd.files.map(([, bytes]) => bytes.buffer));
     for (const [, , bytes] of job.sounds) transfer.push(bytes.buffer);
   }
   if (background) {
@@ -392,6 +402,12 @@ async function build() {
 
 $("files").addEventListener("change", (e) => addFiles(e.target.files));
 Camera.onRecorded((file) => addFiles([file]));
+// MMD: .vox と同じ扱い (大きさは人物の高さで決まり、音声は無い) にして一覧に加える
+Mmd.onAdd(({ title, files, pmx, motion }) => {
+  const used = new Set(videos.map((v) => v.id));
+  videos.push({ id: safeId(title, used), title, vox: true, mmd: { files, pmx, motion, extreme: Mmd.extreme } });
+  renderList();
+});
 $("fitAspect").addEventListener("click", () => fitAspect());
 // プリセットを選ぶと幅・高さ・fps を入れ、動画があればその縦横比に合わせる (Windows 版と同じく長い辺をプリセットの値に)
 function applyPreset() {
@@ -440,7 +456,7 @@ function setupUsage() {
   $("usageOptOut").addEventListener("change", (e) => Usage.setOptOut(e.target.checked));
 }
 
-I18n.onChange(() => { updateLoadHint(); renderHowto(); renderList(); Preview.refreshText(); });
+I18n.onChange(() => { updateLoadHint(); renderHowto(); renderList(); Preview.refreshText(); Mmd.refreshText(); });
 I18n.init().then(() => {
   I18n.fillSelect($("language"));
   setupUsage();

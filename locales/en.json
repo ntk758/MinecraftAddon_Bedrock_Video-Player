@@ -341,5 +341,12 @@
   "web.camera_hint": "Records up to {max} seconds and adds the clip to the list. It stays in this browser.",
   "web.camera_failed": "Could not use the camera: {error}",
   "web.camera_unsupported": "This browser cannot record from the camera.",
-  "web.camera_recording": "Recording… {seconds} s"
+  "web.camera_recording": "Recording… {seconds} s",
+  "web.mmd_title": "MMD model and dance (.pmx + .vmd) to 3D",
+  "web.mmd_folder": "Model folder (the .pmx and its textures)",
+  "web.mmd_model": "Model",
+  "web.mmd_motion": "Dance (.vmd)",
+  "web.mmd_add": "Add to the list",
+  "web.mmd_hint": "The figure dances in place. Physics (hair, skirts) and facial expressions are not used. Tall figures are heavy to play: 3D up to {height} blocks, trompe-l'oeil up to {stage}.",
+  "web.mmd_no_pmx": "There is no .pmx file in this folder."
 }

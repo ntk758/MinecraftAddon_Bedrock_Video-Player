@@ -35,6 +35,20 @@
       <p id="cameraStatus" class="hint"></p>
     </div>
     <p class="hint" data-i18n="web.vox_hint">MagicaVoxel animations (.vox) can be added too: their size and frames are kept, and only FPS and palette apply.</p>
+    <!-- MMD のモデルと踊りを立体に (web/mmd.js) -->
+    <details id="mmdBox" class="mmd">
+      <summary data-i18n="web.mmd_title">MMD model and dance (.pmx + .vmd) to 3D</summary>
+      <div class="grid">
+        <label><span data-i18n="web.mmd_folder">Model folder (the .pmx and its textures)</span>
+          <input type="file" id="mmdFolder" webkitdirectory multiple></label>
+        <label id="mmdPick" hidden><span data-i18n="web.mmd_model">Model</span> <select id="mmdModel"></select></label>
+        <label><span data-i18n="web.mmd_motion">Dance (.vmd)</span> <input type="file" id="mmdMotion" accept=".vmd"></label>
+        <button type="button" id="mmdAdd" disabled data-i18n="web.mmd_add">Add to the list</button>
+      </div>
+      <label class="check"><input type="checkbox" id="mmdExtreme"> <span id="mmdExtremeLabel"></span></label>
+      <p id="mmdHint" class="hint"></p>
+      <p id="mmdStatus" class="hint"></p>
+    </details>
     <ul id="videoList"></ul>
   </section>
 
@@ -141,6 +155,7 @@
 <script src="mp4audio.js"></script>
 <script src="preview.js"></script>
 <script src="camera.js"></script>
+<script src="mmd.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

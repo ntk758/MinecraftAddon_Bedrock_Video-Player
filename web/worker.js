@@ -83,6 +83,32 @@ function convertBackground(pyodide, s, background, id, figureJs, lang) {
            sounds: background.sounds, width, height, hidden: true };
 }
 
+// MMD: モデルのフォルダのファイルと踊りを書き、Windows 版と同じ mvcodec/mmd.py で .vox の立体アニメにする
+function mmdToVox(pyodide, s, job, dir) {
+  const base = `${dir}/mmd`;
+  for (const [path, bytes] of job.mmd.files) {
+    const target = `${base}/${path}`;
+    pyodide.FS.mkdirTree(target.split("/").slice(0, -1).join("/"));
+    pyodide.FS.writeFile(target, bytes);
+  }
+  const motion = `${dir}/motion.vmd`;
+  pyodide.FS.writeFile(motion, job.mmd.motion);
+  const voxPath = `${dir}/${job.id}.vox`;
+  say("build.mmd", { height: job.mmd.height }, "");
+  pyodide.globals.set("mmd_args", pyodide.toPy({
+    pmx_path: `${base}/${job.mmd.pmx}`, vmd_path: motion, output: voxPath, height: job.mmd.height, fps: s.fps,
+    duration: s.duration > 0 ? s.duration : null,
+  }));
+  pyodide.globals.set("mmd_progress", (done, total) => {
+    if (done % 50 === 0 || done === total) say("build.mmd_progress", { done, total }, "");
+  });
+  pyodide.runPython(`
+from mvcodec.mmd import mmd_to_vox
+mmd_to_vox(**dict(mmd_args), progress=mmd_progress)
+`);
+  return voxPath;
+}
+
 self.onmessage = async (event) => {
   const { settings: s, jobs, background, lang } = event.data;
   try {
@@ -96,16 +122,17 @@ self.onmessage = async (event) => {
       post("progress", { value: (n + 0.4) / jobs.length });
       const out = `/work/frames_${job.id}.js`;
       let args = convertArgs(s, dir, out, lang);
-      if (job.vox) {
-        const voxPath = `${dir}/${job.id}.vox`;
-        pyodide.FS.writeFile(voxPath, job.vox);
+      if (job.mmd) job.voxPath = mmdToVox(pyodide, s, job, dir);
+      if (job.vox || job.voxPath) {
+        const voxPath = job.voxPath || `${dir}/${job.id}.vox`;
+        if (!job.voxPath) pyodide.FS.writeFile(voxPath, job.vox);
         args = voxArgs(s, voxPath, out, lang);
         const thumb = pyodide.globals.get("pack_builder").vox_thumbnail_png(voxPath, 256, s.palette);
         job.thumbnail = thumb.toJs();
         thumb.destroy();
       }
       // だまし絵の背景の映像 (立体のときだけ。人物の動画 ID + "_bg" の、一覧に出さない平面の動画にする)
-      const backgroundId = background && s.anamorphic && (job.vox || s.mode !== "screen") ? `${job.id}_bg` : null;
+      const backgroundId = background && s.anamorphic && (job.vox || job.mmd || s.mode !== "screen") ? `${job.id}_bg` : null;
       if (backgroundId) args.push("--stage-background", backgroundId);
       // 変換の進み具合 (数秒ごと) に合わせてバーを動かす (この動画の 40%〜95% の区間)
       const convertModule = pyodide.globals.get("convert");

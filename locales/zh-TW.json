@@ -341,5 +341,12 @@
   "web.camera_hint": "最多錄製 {max} 秒並加入影片清單。錄影不會離開此瀏覽器。",
   "web.camera_failed": "無法使用相機：{error}",
   "web.camera_unsupported": "此瀏覽器不支援用相機錄影。",
-  "web.camera_recording": "錄影中… {seconds} 秒"
+  "web.camera_recording": "錄影中… {seconds} 秒",
+  "web.mmd_title": "將 MMD 模型與舞蹈（.pmx + .vmd）變成立體",
+  "web.mmd_folder": "模型資料夾（.pmx 與貼圖）",
+  "web.mmd_model": "模型",
+  "web.mmd_motion": "舞蹈（.vmd）",
+  "web.mmd_add": "加入清單",
+  "web.mmd_hint": "人物在原地跳舞。不使用物理（頭髮、裙子的擺動）與表情。人物越高，播放越重（立體最高 {height}，錯視畫最高 {stage}）。",
+  "web.mmd_no_pmx": "此資料夾中沒有 .pmx 檔案。"
 }

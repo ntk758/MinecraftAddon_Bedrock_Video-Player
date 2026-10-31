@@ -451,6 +451,29 @@ def skin_vertices(model, skin):
 # 色と立体
 # ---------------------------------------------------------------------------
 
+def find_texture(base_dir, name):
+    """モデルのフォルダからテクスチャのファイルを探す。PMX の中の名前は Windows の区切り (\\) で、大文字・小文字を
+    区別しない (Windows では Tex.PNG と tex.png は同じ)。そのままで無ければ、区切りごとに大文字・小文字を無視して探す
+    (macOS・Linux とブラウザ版の Pyodide は区別する)。見つからなければ、そのままの場所を返す (読めずに材質の色になる)。"""
+    parts = [p for p in name.replace("\\", "/").split("/") if p not in ("", ".")]
+    exact = Path(base_dir).joinpath(*parts)
+    if exact.exists():
+        return exact
+    current = Path(base_dir)
+    for part in parts:
+        if part == "..":
+            current = current.parent
+            continue
+        try:
+            match = next((c for c in current.iterdir() if c.name.lower() == part.lower()), None)
+        except OSError:
+            return exact
+        if match is None:
+            return exact
+        current = match
+    return current
+
+
 class _Materials:
     """材質ごとの面の範囲と、色 (テクスチャか材質の色) の引き方。"""
 
@@ -463,7 +486,7 @@ class _Materials:
             texture = None
             index = material["texture"]
             if 0 <= index < len(model.textures):
-                path = Path(base_dir) / model.textures[index].replace("\\", "/")
+                path = find_texture(base_dir, model.textures[index])
                 if path not in cache:
                     try:
                         with Image.open(path) as image:
