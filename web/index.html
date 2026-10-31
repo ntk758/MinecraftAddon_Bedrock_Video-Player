@@ -28,8 +28,19 @@
   <section class="card">
     <h2 data-i18n="web.section_settings">2. Settings</h2>
     <div class="grid">
-      <label><span data-i18n="settings.width">Width</span> <input type="number" id="width" value="128" min="8" max="256"></label>
-      <label><span data-i18n="settings.height">Height</span> <input type="number" id="height" value="72" min="8" max="256"></label>
+      <label><span data-i18n="settings.preset">Quality preset</span>
+        <select id="preset">
+          <option value="" disabled>—</option>
+          <option value="light" data-i18n="preset.light">Light (64×64 / 20fps)</option>
+          <option value="standard" data-i18n="preset.standard">Standard (96×96 / 10fps)</option>
+          <option value="high" data-i18n="preset.high" selected>High (128×128 / 10fps)</option>
+          <option value="detail" data-i18n="preset.detail">Detailed (128×128 / 5fps)</option>
+          <option value="ultra" data-i18n="preset.ultra">Ultra (256×256 / 5fps)</option>
+          <option value="extreme" data-i18n="preset.extreme">Extreme (512×512 / 2fps)</option>
+        </select>
+      </label>
+      <label><span data-i18n="settings.width">Width</span> <input type="number" id="width" value="128" min="8" max="512"></label>
+      <label><span data-i18n="settings.height">Height</span> <input type="number" id="height" value="72" min="8" max="512"></label>
       <button type="button" id="fitAspect" data-i18n="settings.fit_aspect">Match video aspect ratio</button>
       <label><span data-i18n="settings.fps">FPS</span> <input type="number" id="fps" value="10" min="1" max="20"></label>
       <label><span data-i18n="web.max_length">Length to convert (s)</span> <input type="number" id="duration" min="0.1" step="0.1" placeholder="Whole video" data-i18n-placeholder="web.full_length"></label>
@@ -50,6 +61,7 @@
           <option value="auto" data-i18n="palette.auto">Auto (recommended: up to 127 of 214 colors per scene)</option>
           <option value="all" data-i18n="palette.all">All blocks, 127 colors (concrete, terracotta, wool, wood, stone, light blocks…)</option>
           <option value="full" data-i18n="palette.full">All 39 colors (concrete + terracotta + light blocks)</option>
+          <option value="expanded" data-i18n="palette.expanded">Extended 33 colors (concrete + terracotta)</option>
           <option value="concrete" data-i18n="palette.concrete">Basic 16 colors (concrete)</option>
           <option value="glass" data-i18n="palette.glass">Stained glass, 16 colors (translucent, for 3D holograms)</option>
         </select>
@@ -60,8 +72,13 @@
           <option value="none" data-i18n="web.dither_none">None</option>
           <option value="ordered">Ordered</option>
           <option value="floyd">Floyd-Steinberg</option>
+          <option value="atkinson">Atkinson</option>
+          <option value="burkes">Burkes</option>
+          <option value="sierra">Sierra Lite</option>
         </select>
       </label>
+      <label><span data-i18n="settings.keyframe">Keyframe interval</span> <input type="number" id="keyframe" value="30" min="0" max="300"></label>
+      <label class="check"><input type="checkbox" id="perceptual" checked> <span data-i18n="settings.perceptual">Perceptual optimization (sharper edges)</span></label>
       <label><span data-i18n="pack.name">Pack name</span> <input type="text" id="packName" value="Block Video Player"></label>
       <label><span data-i18n="pack.namespace">Command prefix</span> <input type="text" id="namespace" value="badapple" pattern="[a-z0-9_]+"></label>
     </div>

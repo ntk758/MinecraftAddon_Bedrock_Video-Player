@@ -6,6 +6,11 @@
 const AUDIO_CHUNK_SECONDS = 10; // pack_builder.AUDIO_CHUNK_SECONDS と同じ
 const AUDIO_RATE = 22050; // WAV は大きいので 22.05 kHz モノラルにする
 const THUMB_SIZE = 256;
+// 画質プリセット: キー -> [幅, 高さ, fps] (Windows 版の QUALITY_PRESETS と同じ。tests/test_web_i18n.py で確かめる)
+const QUALITY_PRESETS = {
+  light: [64, 64, 20], standard: [96, 96, 10], high: [128, 128, 10],
+  detail: [128, 128, 5], ultra: [256, 256, 5], extreme: [512, 512, 2],
+};
 // コマのデータがこれより大きくなりそうなら注意を出す (MB)。ブラウザのタブが使えるメモリと、Pyodide (32bit の
 // WebAssembly) に同じデータを写すことを考えて決めた目安
 const MEMORY_WARNING_MB = 1000;
@@ -45,6 +50,7 @@ function loadVideoElement(url, name = "") {
 }
 
 async function addFiles(fileList) {
+  const hadVideo = videos.some((v) => !v.vox);
   const used = new Set(videos.map((v) => v.id));
   for (const file of fileList) {
     if (isVox(file)) {
@@ -65,6 +71,8 @@ async function addFiles(fileList) {
   }
   renderList();
   fillDuration();
+  // 最初の動画を足したら、その縦横比に合わせる (Windows 版のはじめてガイドと同じく黒帯を出さない)
+  if (!hadVideo && videos.some((v) => !v.vox)) fitAspect();
 }
 
 // 変換する長さ: 動画を追加したら、一番長い動画の終わりの秒数を入れる (利用者が書き換えた値はそのまま)。
@@ -104,10 +112,9 @@ function renderList() {
 }
 
 // GUI の「動画の縦横比に合わせる」と同じ: 長い辺をそのままに、短い辺を縦横比に合わせる (偶数にそろえる)
-function fitAspect() {
+function fitAspect(longSide = Math.max(Number($("width").value), Number($("height").value))) {
   const v = videos.find((o) => !o.vox);
   if (!v) return;
-  const longSide = Math.max(Number($("width").value), Number($("height").value));
   let w, h;
   if (v.width >= v.height) { w = longSide; h = Math.max(2, Math.round((longSide * v.height) / v.width / 2) * 2); }
   else { h = longSide; w = Math.max(2, Math.round((longSide * v.width) / v.height / 2) * 2); }
@@ -122,6 +129,7 @@ function settings() {
     duration: $("duration").value.trim() === "" ? 0 : Number($("duration").value), mode: $("mode").value, depth: Number($("depth").value),
     anamorphic: $("anamorphic").checked,
     palette: $("palette").value, dither: $("dither").value,
+    keyframe: Math.max(0, Math.round(Number($("keyframe").value) || 0)), perceptual: $("perceptual").checked,
     packName: $("packName").value.trim() || "Block Video Player",
     namespace: ($("namespace").value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "") || "badapple"),
   };
@@ -371,7 +379,21 @@ async function build() {
 }
 
 $("files").addEventListener("change", (e) => addFiles(e.target.files));
-$("fitAspect").addEventListener("click", fitAspect);
+$("fitAspect").addEventListener("click", () => fitAspect());
+// プリセットを選ぶと幅・高さ・fps を入れ、動画があればその縦横比に合わせる (Windows 版と同じく長い辺をプリセットの値に)
+function applyPreset() {
+  const preset = QUALITY_PRESETS[$("preset").value];
+  if (!preset) return;
+  const [width, height, fps] = preset;
+  $("width").value = width;
+  $("height").value = height;
+  $("fps").value = fps;
+  fitAspect(Math.max(width, height));
+  updateLoadHint();
+}
+$("preset").addEventListener("change", applyPreset);
+// 幅・高さ・fps を手で変えたら、プリセットの表示を「—」にする
+for (const id of ["width", "height", "fps"]) $(id).addEventListener("input", () => { $("preset").value = ""; });
 $("build").addEventListener("click", () => build().catch((e) => failed(e.message)));
 for (const id of ["width", "height", "fps", "mode", "duration"]) $(id).addEventListener("change", updateLoadHint);
 // 利用者が長さを書き換えたら、動画を追加しても上書きしない。空にしたら、また動画の長さを入れる

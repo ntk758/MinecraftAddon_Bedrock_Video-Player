@@ -59,6 +59,7 @@ function convertArgs(s, framesDir, out, lang) {
   const [width, height] = figureSize(s);
   return ["--frames-dir", framesDir, "--output", out, "--width", String(width), "--height", String(height),
           "--fps", String(s.fps), "--palette", s.palette, "--dither-method", s.dither, "--device", "cpu",
+          "--keyframe-interval", String(s.keyframe), ...(s.perceptual ? [] : ["--no-perceptual"]),
           "--threads", "1", "--mode", s.mode, "--depth", String(s.depth), "--lang", lang,
           ...viewArgs(s, s.mode !== "screen")];
 }
