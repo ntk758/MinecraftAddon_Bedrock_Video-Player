@@ -320,5 +320,15 @@
   "web.done": "完成：{size} KB",
   "web.error": "錯誤：{error}",
   "web.usage_note": "為了解有多少人在使用，本頁面透過 GoatCounter 計算頁面開啟次數與附加元件建立完成的次數。不使用 Cookie，也不會傳送檔名或影片。",
-  "web.usage_optout": "不傳送使用統計"
+  "web.usage_optout": "不傳送使用統計",
+  "web.preview_title": "4. 成品預覽",
+  "web.preview_note": "依照與遊戲相同的規則繪製的 Minecraft 中的樣子（立體為斜上方視角）。匯入前即可確認。",
+  "web.preview_original": "原始影片",
+  "web.preview_blocks": "Minecraft 中",
+  "web.preview_video": "影片",
+  "web.preview_play": "播放",
+  "web.preview_pause": "暫停",
+  "web.preview_info": "{frames} 個影格（{fps} fps）",
+  "web.preview_thinned": "為節省記憶體，這裡每 {step} 個影格顯示一個（附加元件中包含全部影格）。",
+  "web.preview_making": "正在產生預覽：{id}"
 }

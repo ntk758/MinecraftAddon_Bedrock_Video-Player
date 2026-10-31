@@ -320,5 +320,15 @@
   "web.done": "Terminé : {size} Ko",
   "web.error": "Erreur : {error}",
   "web.usage_note": "Pour savoir combien de personnes l'utilisent, cette page compte avec GoatCounter les ouvertures de la page et les modules terminés. Aucun cookie n'est utilisé, et aucun nom de fichier ni aucune vidéo n'est envoyé.",
-  "web.usage_optout": "Ne pas envoyer les statistiques d'utilisation"
+  "web.usage_optout": "Ne pas envoyer les statistiques d'utilisation",
+  "web.preview_title": "4. Aperçu",
+  "web.preview_note": "L'apparence du module dans Minecraft, dessinée avec les mêmes règles que le jeu (la 3D est vue de haut, en biais). Vérifiez-la avant l'importation.",
+  "web.preview_original": "Original",
+  "web.preview_blocks": "Dans Minecraft",
+  "web.preview_video": "Vidéo",
+  "web.preview_play": "Lire",
+  "web.preview_pause": "Pause",
+  "web.preview_info": "{frames} images à {fps} fps",
+  "web.preview_thinned": "Pour économiser la mémoire, seule 1 image sur {step} est affichée ici (le module les contient toutes).",
+  "web.preview_making": "Création de l'aperçu : {id}"
 }

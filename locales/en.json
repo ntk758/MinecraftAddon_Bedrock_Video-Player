@@ -320,5 +320,15 @@
   "web.done": "Done: {size} KB",
   "web.error": "Error: {error}",
   "web.usage_note": "To learn how many people use it, this page counts page opens and finished add-ons with GoatCounter. No cookies are used, and no file names or videos are sent.",
-  "web.usage_optout": "Don't send usage counts"
+  "web.usage_optout": "Don't send usage counts",
+  "web.preview_title": "4. Preview",
+  "web.preview_note": "How the add-on looks in Minecraft, drawn with the same rules as the game (3D is seen from above at an angle). Check it before you import.",
+  "web.preview_original": "Original",
+  "web.preview_blocks": "In Minecraft",
+  "web.preview_video": "Video",
+  "web.preview_play": "Play",
+  "web.preview_pause": "Pause",
+  "web.preview_info": "{frames} frames at {fps} fps",
+  "web.preview_thinned": "To save memory, only every {step}th frame is shown here (the add-on has them all).",
+  "web.preview_making": "Making the preview: {id}"
 }

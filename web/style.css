@@ -96,3 +96,10 @@ label.lang { flex-direction: row; align-items: center; gap: 6px; }
 #usage p { margin: 0 0 4px; }
 #usage label.check { padding-bottom: 0; }
 #loadHint { white-space: pre-line; }
+/* できあがりのプレビュー: 元の動画とブロックの絵を並べる (狭い画面では縦に) */
+.preview { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 10px; }
+.preview figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.preview figcaption { font-size: 0.85rem; color: var(--muted); }
+.preview video, .preview canvas { width: 100%; background: #000; border-radius: 6px; }
+.preview canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
+label.inline { flex-direction: row; align-items: center; gap: 8px; }

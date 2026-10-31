@@ -320,5 +320,15 @@
   "web.done": "Terminado: {size} KB",
   "web.error": "Error: {error}",
   "web.usage_note": "Para saber cuántas personas la usan, esta página cuenta con GoatCounter las veces que se abre y los complementos terminados. No usa cookies ni envía nombres de archivo ni vídeos.",
-  "web.usage_optout": "No enviar estadísticas de uso"
+  "web.usage_optout": "No enviar estadísticas de uso",
+  "web.preview_title": "4. Vista previa",
+  "web.preview_note": "Cómo se ve el complemento en Minecraft, dibujado con las mismas reglas que el juego (el 3D se ve desde arriba en diagonal). Compruébalo antes de importarlo.",
+  "web.preview_original": "Original",
+  "web.preview_blocks": "En Minecraft",
+  "web.preview_video": "Vídeo",
+  "web.preview_play": "Reproducir",
+  "web.preview_pause": "Pausa",
+  "web.preview_info": "{frames} fotogramas a {fps} fps",
+  "web.preview_thinned": "Para ahorrar memoria, aquí solo se muestra 1 de cada {step} fotogramas (el complemento los tiene todos).",
+  "web.preview_making": "Creando la vista previa: {id}"
 }

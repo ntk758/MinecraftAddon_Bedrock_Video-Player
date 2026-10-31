@@ -126,25 +126,49 @@ self.onmessage = async (event) => {
     pyodide.globals.set("js_videos", pyodide.toPy(videos));
     pyodide.globals.set("pack_name", s.packName);
     pyodide.globals.set("namespace", s.namespace);
+    // できあがりのプレビュー: 変換したデータを参照デコーダで最後まで復元する確認のついでに、ゲームと同じ規則で絵にする
+    pyodide.globals.set("preview_progress", (done, total) => post("progress", { value: 0.95 + 0.05 * Math.min(1, done / total) }));
+    pyodide.globals.set("say_preview", (id) => say("web.preview_making", { id }));
     const result = pyodide.runPython(`
-from mvcodec.decode import iter_decoded_frames, load_frame_data
+from mvcodec.decode import iter_decoded_frames
+from mvcodec.preview import render_preview
 import json
 videos = []
+previews = []
+shown = [v for v in js_videos if not dict(v).get("hidden")]
+# プレビューの合計はブラウザのメモリに置くので、動画の本数で分ける (1 本 8〜96 MB)
+budget = max(8 << 20, (96 << 20) // max(1, len(shown)))
 for v in js_videos:
     v = dict(v)
     v["thumbnail"] = bytes(v["thumbnail"]) if v.get("thumbnail") is not None else None
     v["sounds"] = [(int(i), str(ext), bytes(data)) for i, ext, data in v["sounds"]]
     videos.append(v)
-    # 確認: 変換したデータを Python の参照デコーダで最後まで復元できること
     text = v["frames_js"]
     data = json.loads(text[text.index("{"):text.rindex("}") + 1])
-    decoded = sum(1 for _ in iter_decoded_frames(data))
+    if v.get("hidden"):
+        # だまし絵の背景の映像: 確認だけ (Python の参照デコーダで最後まで復元できること)
+        decoded = sum(1 for _ in iter_decoded_frames(data))
+    else:
+        say_preview(v["id"])
+        p = render_preview(data, max_bytes=budget, max_volume_frames=150, progress=preview_progress)
+        decoded = p.total_frames
+        previews.append({"id": v["id"], "title": v["title"], "width": p.width, "height": p.height, "fps": p.fps,
+                         "step": p.step, "count": len(p.frames), "volume": p.volume, "rgb": p.packed()})
     print(f"  {v['id']}: {decoded} frames, {len(text) // 1024} KB, {len(v['sounds'])} audio chunks")
-pack_builder.build_addon_bytes(videos, pack_name, namespace)
+(pack_builder.build_addon_bytes(videos, pack_name, namespace), previews)
 `);
-    const addon = result.toJs();
+    const [addonProxy, previewProxy] = result.toJs({ depth: 1 });
+    const addon = addonProxy.toJs ? addonProxy.toJs() : addonProxy;
+    const previews = [];
+    for (const item of previewProxy) {
+      const p = item.toJs({ dict_converter: Object.fromEntries });
+      previews.push(p);
+      item.destroy();
+    }
+    if (addonProxy.destroy) addonProxy.destroy();
+    previewProxy.destroy();
     result.destroy();
-    post("done", { addon }, [addon.buffer]);
+    post("done", { addon, previews }, [addon.buffer, ...previews.map((p) => p.rgb.buffer)]);
   } catch (e) {
     post("error", { text: String(e && e.message ? e.message : e) });
   }

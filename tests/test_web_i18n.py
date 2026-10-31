@@ -31,8 +31,8 @@ def used_keys():
     html = (WEB / "index.html").read_text(encoding="utf-8")
     keys = set(re.findall(r'data-i18n(?:-title|-placeholder)?="([^"]+)"', html))
     prefixes = "|".join(KEY_PREFIXES)
-    for name in ("app.js", "worker.js"):
-        source = (WEB / name).read_text(encoding="utf-8")
+    for path in sorted(WEB.glob("*.js")):
+        source = path.read_text(encoding="utf-8")
         keys |= set(re.findall(rf'"((?:{prefixes})\.[a-z0-9_.]+)"', source))
     return keys
 
@@ -52,8 +52,9 @@ def test_every_web_key_is_used():
 
 def test_page_text_is_not_left_untranslated():
     """画面に出る文は、日本語と英語を並べて書かず、翻訳のキーから入れる"""
-    for name in ("index.html", "app.js", "worker.js"):
-        source = (WEB / name).read_text(encoding="utf-8")
+    for path in [WEB / "index.html", *sorted(WEB.glob("*.js"))]:
+        name = path.name
+        source = path.read_text(encoding="utf-8")
         code = re.sub(r"/\*.*?\*/|<!--.*?-->", "", source, flags=re.S)
         code = re.sub(r"(^|[^:\"'`])//.*", r"\1", code)  # 行末のコメント (URL の // は残す)
         code = re.sub(r"(?m)^\s*#.*$", "", code)  # worker.js の中の Python のコメント

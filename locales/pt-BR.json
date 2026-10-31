@@ -320,5 +320,15 @@
   "web.done": "Concluído: {size} KB",
   "web.error": "Erro: {error}",
   "web.usage_note": "Para saber quantas pessoas a usam, esta página conta com o GoatCounter as aberturas da página e os complementos concluídos. Não usa cookies e não envia nomes de arquivos nem vídeos.",
-  "web.usage_optout": "Não enviar estatísticas de uso"
+  "web.usage_optout": "Não enviar estatísticas de uso",
+  "web.preview_title": "4. Prévia",
+  "web.preview_note": "Como o complemento fica no Minecraft, desenhado com as mesmas regras do jogo (o 3D é visto de cima, na diagonal). Confira antes de importar.",
+  "web.preview_original": "Original",
+  "web.preview_blocks": "No Minecraft",
+  "web.preview_video": "Vídeo",
+  "web.preview_play": "Reproduzir",
+  "web.preview_pause": "Pausar",
+  "web.preview_info": "{frames} quadros a {fps} fps",
+  "web.preview_thinned": "Para economizar memória, aqui só aparece 1 a cada {step} quadros (o complemento tem todos).",
+  "web.preview_making": "Criando a prévia: {id}"
 }

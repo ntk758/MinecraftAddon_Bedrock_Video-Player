@@ -93,6 +93,21 @@
     <pre id="log"></pre>
   </section>
 
+  <!-- できあがりのプレビュー: 作り終えたら、ゲームと同じ規則で描いた絵を元の動画と並べて再生する (web/preview.js) -->
+  <section class="card" id="previewCard" hidden>
+    <h2 data-i18n="web.preview_title">4. Preview</h2>
+    <p class="hint" data-i18n="web.preview_note">How the add-on looks in Minecraft, drawn with the same rules as the game.</p>
+    <label id="previewPick" class="inline" hidden><span data-i18n="web.preview_video">Video</span> <select id="previewSelect"></select></label>
+    <div class="preview">
+      <figure id="previewSourceBox"><figcaption data-i18n="web.preview_original">Original</figcaption>
+        <video id="previewSource" controls playsinline preload="auto"></video></figure>
+      <figure><figcaption data-i18n="web.preview_blocks">In Minecraft</figcaption>
+        <canvas id="previewCanvas" width="1" height="1"></canvas>
+        <button type="button" id="previewPlay" hidden data-i18n="web.preview_play">Play</button></figure>
+    </div>
+    <p id="previewInfo" class="hint"></p>
+  </section>
+
   <section class="card small">
     <h2 data-i18n="web.section_howto">How to use</h2>
     <ol>
@@ -111,6 +126,7 @@
 <script src="i18n.js"></script>
 <script src="usage.js"></script>
 <script src="mp4audio.js"></script>
+<script src="preview.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

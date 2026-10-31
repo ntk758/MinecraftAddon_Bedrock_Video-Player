@@ -303,6 +303,7 @@ function finish(msg) {
   $("build").disabled = false;
   log(t("web.done", { size: (blob.size / 1024).toFixed(0) }));
   window.lastResult = msg; // テスト用
+  if (msg.previews && msg.previews.length) Preview.show(msg.previews, videos);
   if (lastBuild) {
     Usage.event("build-done");
     Usage.event(`build-kind-${lastBuild.kind}`);
@@ -345,6 +346,7 @@ async function build() {
   const s = settings();
   $("build").disabled = true;
   $("download").hidden = true;
+  Preview.hide();
   $("log").textContent = "";
   const w = startWorker();
   lastBuild = { kind: Usage.kindOf(s, videos.some((v) => v.vox), videos.some((v) => !v.vox)), lang: I18n.language };
@@ -427,7 +429,7 @@ function setupUsage() {
   $("usageOptOut").addEventListener("change", (e) => Usage.setOptOut(e.target.checked));
 }
 
-I18n.onChange(() => { updateLoadHint(); renderHowto(); renderList(); });
+I18n.onChange(() => { updateLoadHint(); renderHowto(); renderList(); Preview.refreshText(); });
 I18n.init().then(() => {
   I18n.fillSelect($("language"));
   setupUsage();

@@ -320,5 +320,15 @@
   "web.done": "Fertig: {size} KB",
   "web.error": "Fehler: {error}",
   "web.usage_note": "Um zu erfahren, wie viele Leute sie nutzen, zählt diese Seite mit GoatCounter, wie oft sie geöffnet und wie viele Add-ons fertiggestellt wurden. Es werden keine Cookies verwendet und weder Dateinamen noch Videos gesendet.",
-  "web.usage_optout": "Keine Nutzungszahlen senden"
+  "web.usage_optout": "Keine Nutzungszahlen senden",
+  "web.preview_title": "4. Vorschau",
+  "web.preview_note": "So sieht das Add-on in Minecraft aus, gezeichnet nach denselben Regeln wie im Spiel (3D schräg von oben gesehen). Prüfe es vor dem Import.",
+  "web.preview_original": "Original",
+  "web.preview_blocks": "In Minecraft",
+  "web.preview_video": "Video",
+  "web.preview_play": "Abspielen",
+  "web.preview_pause": "Pause",
+  "web.preview_info": "{frames} Frames mit {fps} fps",
+  "web.preview_thinned": "Um Speicher zu sparen, wird hier nur jeder {step}. Frame gezeigt (das Add-on enthält alle).",
+  "web.preview_making": "Vorschau wird erstellt: {id}"
 }
