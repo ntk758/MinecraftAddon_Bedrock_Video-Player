@@ -41,7 +41,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      # 利用数は GoatCounter (https://nakat.goatcounter.com) で数える (web/usage.js)。別のサイトで数えるときは、
+      # リポジトリの変数 (Settings → Secrets and variables → Actions → Variables) の GOATCOUNTER_CODE にそのコードを入れる
       - name: Build the site
+        env:
+          BVP_GOATCOUNTER_CODE: ${{ vars.GOATCOUNTER_CODE || 'nakat' }}
         run: python scripts/build_web.py --out web_dist
 
       - uses: actions/configure-pages@v5

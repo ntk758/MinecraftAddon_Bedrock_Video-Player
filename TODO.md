@@ -6,7 +6,7 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 ---
 
 ## 🔁 定期的な運用 (Operations)
-- **2 週間に 1 回**: `python scripts/traffic_report.py` で閲覧数・参照元・ダウンロード数を確認 (GitHub は直近 14 日分しか残らない)。CurseForge の作者ページでダウンロード数とコメントを確認。
+- **2 週間に 1 回**: `python scripts/traffic_report.py` で閲覧数・参照元・ダウンロード数を確認 (GitHub は直近 14 日分しか残らない)。CurseForge の作者ページでダウンロード数とコメントを確認。GoatCounter の画面でブラウザ版の `build-done` の数と言語を確認。
 - **リリースごと**: [docs/TESTING.md](docs/TESTING.md) の「リリースごとの記録」に自動テスト・モック・EXE・実機の結果を書く。手順は [docs/RELEASING.md](docs/RELEASING.md)。
 - **実機の計測を集める**: Windows 以外の端末での動作と、`/scriptevent <接頭辞>:stats` の結果を [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) と [docs/PERFORMANCE.md](docs/PERFORMANCE.md) に追記する (まだ Windows の `bench` しか無い)。
 
@@ -133,6 +133,11 @@ Java 版で「マップアートをプレイヤーの視点に合わせて描き
 
 ### 11.3 効果の確認
 - 2 週間後に、変換ツールの DL 数・GitHub の閲覧数・CurseForge のコメントを比べる (`scripts/traffic_report.py`)。
+- ✅ ブラウザ版を 10 言語に (GUI と同じ `locales/*.json`)。
+- ✅ ブラウザ版の簡易的な利用数 (`web/usage.js`、GoatCounter): ページを開いた回数 (`/`)、`build-start` / `build-done` / `build-error`、
+  `build-kind-<screen|3d|vox|trompe>`、`build-lang-<言語>`。集計は https://nakat.goatcounter.com (Pages のワークフローの既定。
+  リポジトリの変数 `GOATCOUNTER_CODE` で別のサイトに変えられる)。
+- 目安: 作り終えた回数 (`build-done`) が CurseForge のお試し版の DL 数の 1% を超えるか。言語ごとの数で、どの言語の説明を厚くするか決める。
 
 ## 🔴 優先度: 高 (Phase 10: 画質を保ったまま軽くする)
 

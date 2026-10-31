@@ -8,9 +8,11 @@ importScripts(`https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/pyodide
 
 const post = (type, extra, transfer = []) => self.postMessage({ type, ...extra }, transfer);
 const log = (text) => post("log", { text });
+// 画面の言語で出す文は、キー (locales/*.json の web.*) を送って画面 (app.js) で翻訳する
+const say = (key, params, indent = "") => post("log", { key, params, indent });
 
 async function setup() {
-  log("Python を読み込み中 / Loading Python…");
+  say("web.loading_python");
   const pyodide = await loadPyodide({ stdout: log, stderr: log });
   await pyodide.loadPackage(["numpy", "pillow"]);
   // files.json は scripts/build_web.py が作る (サイトに置いた Python のソースと翻訳の一覧)
@@ -26,7 +28,7 @@ import sys
 sys.path.insert(0, "/app")
 import convert, pack_builder  # noqa: F401
 `);
-  log("準備完了 / Ready");
+  say("web.ready");
   return pyodide;
 }
 
@@ -63,7 +65,7 @@ function convertArgs(s, framesDir, out, lang) {
 
 // だまし絵の背景の映像を、後ろの壁の大きさ (人物の大きさから mvcodec/stage.py で求める) の平面の動画に変換する
 function convertBackground(pyodide, s, background, id, figureJs, lang) {
-  log(`  背景の映像 / background video: ${background.title}`);
+  say("web.background", { name: background.title }, "  ");
   const dims = pyodide.globals.get("pack_builder").frame_data_dims(figureJs).toJs();
   const geom = pyodide.pyimport("mvcodec.stage").stage_geometry(dims.get("width"), dims.get("height"), dims.get("depth")).toJs();
   const width = geom.get("stageWidth");
@@ -89,7 +91,7 @@ self.onmessage = async (event) => {
       const dir = `/work/${job.id}`;
       try { pyodide.FS.mkdirTree(dir); } catch (e) { /* 既にある */ }
       job.frames.forEach((ppm, i) => pyodide.FS.writeFile(`${dir}/frame_${String(i).padStart(6, "0")}.ppm`, ppm));
-      log(`[${n + 1}/${jobs.length}] ${job.title}: ブロックに変換中 / converting to blocks…`);
+      say("web.converting", { index: n + 1, total: jobs.length, title: job.title });
       post("progress", { value: (n + 0.4) / jobs.length });
       const out = `/work/frames_${job.id}.js`;
       let args = convertArgs(s, dir, out, lang);
@@ -119,7 +121,7 @@ self.onmessage = async (event) => {
       if (backgroundId) videos.push(convertBackground(pyodide, s, background, backgroundId, framesJs, lang));
       post("progress", { value: (n + 0.95) / jobs.length });
     }
-    log("アドオンを組み立て中 / Assembling the add-on…");
+    say("web.assembling");
     pyodide.globals.set("js_videos", pyodide.toPy(videos));
     pyodide.globals.set("pack_name", s.packName);
     pyodide.globals.set("namespace", s.namespace);
