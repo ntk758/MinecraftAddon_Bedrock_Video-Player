@@ -17,6 +17,12 @@ MIX_THRESHOLD = 2.0
 # 混ぜる 2 つは、代表色に近い順にこの数のブロックから選ぶ。割合はパターンディザと同じ 1/8 ずつ (線形の明るさ)
 MIX_NEIGHBORS = 24
 MIX_STEPS = 8
+# refine_palette: 代表にする色の数の上限、試す入れ替えの数、改善とみなす割合。ジャンル 24 本でぼかした色差 −0.69%・実写 16 本で
+# −0.30%、データ +0.3〜0.5%。試す数を 10 倍にしても −1.37% / −0.61% でデータ +1.4〜2.4% (最大 +14%) なので増やさない
+# (docs/research/phase7x.md の 28 章)
+REFINE_COLORS = 800
+REFINE_TRIES = 60
+REFINE_MIN_GAIN = 0.002
 
 
 def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, sample_stride=10, seed=0, warn=None,
@@ -71,9 +77,8 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, 
                 state["device"] = None
                 return _kmeans_select(pixels, all_blocks, count, None, seed, color_space)
 
-    if max_colors != "auto":
-        return select(max_colors)
-    return _select_color_count(pixels, select)
+    blocks = select(max_colors) if max_colors != "auto" else _select_color_count(pixels, select)
+    return refine_palette(pixels, blocks, all_blocks)
 
 
 def _select_color_count(pixels, select):
@@ -240,3 +245,76 @@ def _blocks_for_color(rgb, all_blocks, threshold):
     if mix_dist.min() >= dist[nearest]:
         return [nearest]
     return [int(near[i]), int(near[j])]
+
+
+def _mix_error(goal_lin, goal_lab, weights, pal_rgb):
+    """パターンディザで混ぜたときの平均の色と、元の色の距離 (OkLab × 100) の重み付き平均。返り値は
+    (全体の誤差, 色ごとの誤差, ブロックごとの使われた量)。knoll_dither_indices と同じ手順で候補を作る。"""
+    from mvcodec.color import CHROMA_WEIGHT, KNOLL_GAIN, KNOLL_STEPS, _linear_to_oklab_np, _srgb_to_linear_np
+
+    scale = np.array([1.0, CHROMA_WEIGHT, CHROMA_WEIGHT], np.float32)
+    pal_lin = _srgb_to_linear_np(pal_rgb)
+    pal_lab = _linear_to_oklab_np(pal_lin) * scale
+    pal_sq = (pal_lab ** 2).sum(1)
+    err = np.zeros_like(goal_lin)
+    usage = np.zeros(len(pal_rgb), np.float64)
+    mix = np.zeros_like(goal_lin)
+    for _ in range(KNOLL_STEPS):
+        lab = _linear_to_oklab_np(np.clip(goal_lin + err * KNOLL_GAIN, 0, 1)) * scale
+        chosen = (pal_sq[None] - 2.0 * lab @ pal_lab.T).argmin(1)
+        err += goal_lin - pal_lin[chosen]
+        mix += pal_lin[chosen]
+        usage += np.bincount(chosen, weights=weights, minlength=len(pal_rgb))
+    errors = np.linalg.norm(_linear_to_oklab_np(mix / KNOLL_STEPS) - goal_lab, axis=1)
+    return float((errors * weights).sum() / weights.sum()), errors, usage
+
+
+def refine_palette(pixels, blocks, all_blocks):
+    """K-Means は代表色の近さしか見ないので、できたパレットのブロックを入れ替えて、実際にパターンディザで混ぜたときの
+    色の誤差を直接下げる。誤差への寄与が大きい色に近いブロックを、一番使われていないブロックと入れ替えて試す。
+    色数は変えない。同じ入力からは同じ結果になる。"""
+    from mvcodec.color import _linear_to_oklab_np, _srgb_to_linear_np
+
+    all_rgb = np.array([b["rgb"] for b in all_blocks], np.float32)
+    if len(blocks) >= len(all_blocks) or len(blocks) < 2:
+        return blocks
+    # 色をまとめて計算を軽くする (RGB 各 5 ビット)
+    quant = np.clip(np.asarray(pixels), 0, 255).astype(np.int32) >> 3
+    keys, counts = np.unique((quant[:, 0] << 10) | (quant[:, 1] << 5) | quant[:, 2], return_counts=True)
+    order = np.argsort(-counts, kind="stable")[:REFINE_COLORS]
+    keys, weights = keys[order], counts[order].astype(np.float32)
+    colors = np.stack([(keys >> 10) & 31, (keys >> 5) & 31, keys & 31], 1).astype(np.float32) * 8 + 4
+    goal_lin = _srgb_to_linear_np(colors)
+    goal_lab = _linear_to_oklab_np(goal_lin)
+    all_lab = _linear_to_oklab_np(_srgb_to_linear_np(all_rgb))
+
+    index = {id(b): i for i, b in enumerate(all_blocks)}  # 同じ色の別のブロックと取り違えない
+    current = [index[id(b)] for b in blocks]
+    best, errors, usage = _mix_error(goal_lin, goal_lab, weights, all_rgb[current])
+    tries = 0
+    improved = True
+    while improved and tries < REFINE_TRIES:
+        improved = False
+        worst = np.argsort(-(errors * weights), kind="stable")
+        tried = set()
+        for w in worst[:12]:
+            near = np.argsort(np.linalg.norm(all_lab - goal_lab[w], axis=1), kind="stable")
+            add = [int(i) for i in near[:4] if int(i) not in current and int(i) not in tried][:2]
+            for candidate in add:
+                tried.add(candidate)
+                for slot in np.argsort(usage, kind="stable")[:2]:
+                    if tries >= REFINE_TRIES:
+                        break
+                    tries += 1
+                    trial = list(current)
+                    trial[int(slot)] = candidate
+                    score, trial_errors, trial_usage = _mix_error(goal_lin, goal_lab, weights, all_rgb[trial])
+                    if score < best * (1 - REFINE_MIN_GAIN):
+                        current, best, errors, usage = trial, score, trial_errors, trial_usage
+                        improved = True
+                        break
+                if improved:
+                    break
+            if improved or tries >= REFINE_TRIES:
+                break
+    return [all_blocks[i] for i in current]
