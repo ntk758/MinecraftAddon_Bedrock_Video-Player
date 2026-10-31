@@ -348,5 +348,8 @@
   "web.mmd_motion": "Baile (.vmd)",
   "web.mmd_add": "Añadir a la lista",
   "web.mmd_hint": "La figura baila en el sitio. No se usan la física (pelo, faldas) ni las expresiones faciales. Las figuras altas son pesadas de reproducir: 3D hasta {height} bloques, trampantojo hasta {stage}.",
-  "web.mmd_no_pmx": "No hay ningún archivo .pmx en esta carpeta."
+  "web.mmd_no_pmx": "No hay ningún archivo .pmx en esta carpeta.",
+  "web.image_hint": "También sirven imágenes (PNG, JPEG, WebP…): se convierten en arte de bloques fijo que se queda en su sitio después de mostrarse. Con un modo 3D se convierten en una escultura.",
+  "web.image_item": "imagen",
+  "dialog.image_files": "Imágenes (arte de bloques fijo)"
 }

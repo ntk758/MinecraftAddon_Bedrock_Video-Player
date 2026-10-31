@@ -348,5 +348,8 @@
   "web.mmd_motion": "Dance (.vmd)",
   "web.mmd_add": "Add to the list",
   "web.mmd_hint": "The figure dances in place. Physics (hair, skirts) and facial expressions are not used. Tall figures are heavy to play: 3D up to {height} blocks, trompe-l'oeil up to {stage}.",
-  "web.mmd_no_pmx": "There is no .pmx file in this folder."
+  "web.mmd_no_pmx": "There is no .pmx file in this folder.",
+  "web.image_hint": "Pictures (PNG, JPEG, WebP…) work too: they become still block art that stays in place after it is shown. With a 3D mode they become a sculpture.",
+  "web.image_item": "image",
+  "dialog.image_files": "Pictures (still block art)"
 }

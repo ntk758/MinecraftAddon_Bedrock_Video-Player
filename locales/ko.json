@@ -348,5 +348,8 @@
   "web.mmd_motion": "춤 (.vmd)",
   "web.mmd_add": "목록에 추가",
   "web.mmd_hint": "인물은 제자리에서 춤춥니다. 물리(머리카락·치마의 흔들림)와 표정은 사용하지 않습니다. 인물이 클수록 재생이 무거워집니다(입체는 높이 {height}까지, 트릭아트는 {stage}까지).",
-  "web.mmd_no_pmx": "이 폴더에는 .pmx 파일이 없습니다."
+  "web.mmd_no_pmx": "이 폴더에는 .pmx 파일이 없습니다.",
+  "web.image_hint": "이미지(PNG·JPEG·WebP 등)도 쓸 수 있습니다. 표시한 뒤에도 그대로 남는 정지된 블록 아트가 됩니다. 입체 모드라면 조각이 됩니다.",
+  "web.image_item": "이미지",
+  "dialog.image_files": "이미지 (정지된 블록 아트)"
 }

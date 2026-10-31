@@ -835,6 +835,7 @@ class PackBuilderApp(tk.Tk):
             title=self.tr("dialog.select_videos_title"),
             filetypes=[
                 (self.tr("dialog.video_files"), "*.mp4 *.mkv *.avi *.mov *.webm"),
+                (self.tr("dialog.image_files"), "*.png *.jpg *.jpeg *.webp *.bmp"),
                 (self.tr("dialog.vox_files"), "*.vox"),
                 (self.tr("dialog.mmd_files"), "*.pmx"),
                 (self.tr("dialog.all_files"), "*.*"),

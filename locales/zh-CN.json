@@ -348,5 +348,8 @@
   "web.mmd_motion": "舞蹈（.vmd）",
   "web.mmd_add": "加入列表",
   "web.mmd_hint": "人物在原地跳舞。不使用物理（头发、裙子的摆动）和表情。人物越高，播放越重（立体最高 {height}，错觉画最高 {stage}）。",
-  "web.mmd_no_pmx": "此文件夹中没有 .pmx 文件。"
+  "web.mmd_no_pmx": "此文件夹中没有 .pmx 文件。",
+  "web.image_hint": "也可以使用图片（PNG、JPEG、WebP 等）：会变成显示后一直保留的静态方块画。选择立体模式则会变成雕塑。",
+  "web.image_item": "图片",
+  "dialog.image_files": "图片（静态方块画）"
 }

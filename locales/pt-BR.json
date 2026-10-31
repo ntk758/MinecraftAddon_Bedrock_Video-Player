@@ -348,5 +348,8 @@
   "web.mmd_motion": "Dança (.vmd)",
   "web.mmd_add": "Adicionar à lista",
   "web.mmd_hint": "A figura dança no lugar. A física (cabelo, saias) e as expressões faciais não são usadas. Figuras altas pesam na reprodução: 3D até {height} blocos, trompe-l'oeil até {stage}.",
-  "web.mmd_no_pmx": "Não há nenhum arquivo .pmx nesta pasta."
+  "web.mmd_no_pmx": "Não há nenhum arquivo .pmx nesta pasta.",
+  "web.image_hint": "Imagens (PNG, JPEG, WebP…) também funcionam: viram arte de blocos parada que fica no lugar depois de mostrada. Com um modo 3D, viram uma escultura.",
+  "web.image_item": "imagem",
+  "dialog.image_files": "Imagens (arte de blocos parada)"
 }

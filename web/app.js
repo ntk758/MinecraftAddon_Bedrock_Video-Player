@@ -19,6 +19,8 @@ const $ = (id) => document.getElementById(id);
 const t = (key, params) => I18n.t(key, params); // 翻訳 (web/i18n.js、locales/*.json)
 const videos = []; // { file, url, id, title, width, height, duration, vox }
 const isVox = (file) => /\.vox$/i.test(file.name);
+// 画像は 1 コマの動画にする (再生が終わってもブロックはそのまま残るので、止まったブロックアートになる)
+const isImage = (file) => /^image\//.test(file.type) || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name);
 let worker = null;
 let lastDownloadUrl = null;
 
@@ -70,6 +72,16 @@ async function addFiles(fileList) {
       videos.push({ file, id: safeId(file.name, used), title: file.name.replace(/\.[^.]+$/, ""), vox: true });
       continue;
     }
+    if (isImage(file)) {
+      try {
+        const bitmap = await createImageBitmap(file);
+        videos.push({ file, id: safeId(file.name, used), title: file.name.replace(/\.[^.]+$/, ""), image: bitmap,
+                      width: bitmap.width, height: bitmap.height });
+      } catch (e) {
+        log(t("web.cannot_open", { name: file.name }));
+      }
+      continue;
+    }
     const url = URL.createObjectURL(file);
     try {
       const el = await loadVideoElement(url, file.name);
@@ -114,7 +126,8 @@ function renderList() {
     input.value = v.id;
     input.title = t("web.video_id");
     input.onchange = () => { v.id = safeId(input.value, new Set(videos.filter((o) => o !== v).map((o) => o.id))); input.value = v.id; };
-    li.append(input, v.mmd ? ` ${v.title} (MMD 3D)` : v.vox ? ` ${v.title} (MagicaVoxel 3D)` : ` ${v.title} (${v.width}×${v.height}, ${v.duration.toFixed(1)} s)`);
+    li.append(input, v.mmd ? ` ${v.title} (MMD 3D)` : v.vox ? ` ${v.title} (MagicaVoxel 3D)`
+      : v.image ? ` ${v.title} (${t("web.image_item")}, ${v.width}×${v.height})` : ` ${v.title} (${v.width}×${v.height}, ${v.duration.toFixed(1)} s)`);
     list.append(li);
   }
   $("build").disabled = videos.length === 0;
@@ -172,6 +185,36 @@ function seek(video, time) {
     video.onseeked = () => resolve();
     video.currentTime = time;
   });
+}
+
+/** canvas の絵を PPM (P6) にする (convert.py が Pillow で読める一番簡単な形式)。 */
+function canvasToPpm(ctx, width, height) {
+  const header = new TextEncoder().encode(`P6\n${width} ${height}\n255\n`);
+  const rgba = ctx.getImageData(0, 0, width, height).data;
+  const ppm = new Uint8Array(header.length + width * height * 3);
+  ppm.set(header);
+  for (let p = 0, q = header.length; p < rgba.length; p += 4) {
+    ppm[q++] = rgba[p];
+    ppm[q++] = rgba[p + 1];
+    ppm[q++] = rgba[p + 2];
+  }
+  return ppm;
+}
+
+function imageToPpm(bitmap, width, height) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  drawLetterboxed(ctx, bitmap, bitmap.width, bitmap.height, width, height);
+  return canvasToPpm(ctx, width, height);
+}
+
+async function thumbnailPng(source, srcW, srcH) {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = THUMB_SIZE;
+  drawLetterboxed(canvas.getContext("2d"), source, srcW, srcH, THUMB_SIZE, THUMB_SIZE);
+  return new Uint8Array(await (await new Promise((r) => canvas.toBlob(r, "image/png"))).arrayBuffer());
 }
 
 // 動画のコマを PPM (P6) にして返す (convert.py が Pillow で読める一番簡単な形式)
@@ -376,6 +419,12 @@ async function build() {
     if (v.vox) {
       // .vox はそのまま渡し、変換とサムネイル (立体を斜め上から見た絵) は Python で作る。音声は無し
       jobs.push({ id: v.id, title: v.title, vox: new Uint8Array(await v.file.arrayBuffer()), frames: [], thumbnail: null, sounds: [] });
+      continue;
+    }
+    if (v.image) {
+      // 画像: 1 コマだけ (サムネイルも同じ絵)。音声は無い
+      jobs.push({ id: v.id, title: v.title, frames: [imageToPpm(v.image, s.width, s.height)],
+                  thumbnail: await thumbnailPng(v.image, v.width, v.height), sounds: [] });
       continue;
     }
     log(t("web.extracting", { index: n + 1, total: videos.length, title: v.title }));

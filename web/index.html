@@ -21,7 +21,7 @@
   <section class="card">
     <h2 data-i18n="web.section_videos">1. Videos and .vox</h2>
     <div class="row">
-      <input type="file" id="files" accept="video/*,.vox" multiple>
+      <input type="file" id="files" accept="video/*,image/*,.vox" multiple>
       <button type="button" id="cameraOpen" data-i18n="web.camera_open">📷 Record with the camera</button>
     </div>
     <!-- カメラで撮る (web/camera.js) -->
@@ -49,6 +49,7 @@
       <p id="mmdHint" class="hint"></p>
       <p id="mmdStatus" class="hint"></p>
     </details>
+    <p class="hint" data-i18n="web.image_hint">Pictures (PNG, JPEG, WebP…) work too: they become still block art.</p>
     <ul id="videoList"></ul>
   </section>
 

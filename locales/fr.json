@@ -348,5 +348,8 @@
   "web.mmd_motion": "Danse (.vmd)",
   "web.mmd_add": "Ajouter à la liste",
   "web.mmd_hint": "Le personnage danse sur place. La physique (cheveux, jupes) et les expressions du visage ne sont pas utilisées. Les grands personnages sont lourds à lire : 3D jusqu'à {height} blocs, trompe-l'œil jusqu'à {stage}.",
-  "web.mmd_no_pmx": "Ce dossier ne contient aucun fichier .pmx."
+  "web.mmd_no_pmx": "Ce dossier ne contient aucun fichier .pmx.",
+  "web.image_hint": "Les images (PNG, JPEG, WebP…) fonctionnent aussi : elles deviennent une œuvre en blocs fixe qui reste en place après l'affichage. En mode 3D, elles deviennent une sculpture.",
+  "web.image_item": "image",
+  "dialog.image_files": "Images (œuvre en blocs fixe)"
 }
