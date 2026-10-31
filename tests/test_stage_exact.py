@@ -114,6 +114,14 @@ def test_projection_from_an_eye_inside_the_figure_box(run_dir, shape):
     assert out["mismatchCount"] == 0, out["mismatches"]
 
 
+@pytest.mark.xfail(strict=False, reason="人物の最前面から約 0.03〜0.12 ブロック手前の目では、写る範囲が足りずに数百〜千数百マスが抜ける (v6.28.0 からの既知の不正確さ。"
+                   "既定の 20 か所の目には当たらない。投影を直したら外す)")
+def test_projection_from_eyes_just_in_front_of_the_figure(run_dir):
+    out = run_exact(run_dir, "24x40x8", "solid", eyes=150)
+    assert out["eyes"] == 150
+    assert out["mismatchCount"] == 0, out["mismatches"]
+
+
 def test_exact_test_notices_a_wrong_projection(tmp_path):
     """正解との比較そのものが働いていること: 投影の結果の塗り色を一部ずらした codec.js では、食い違うマスが出る。"""
     broken = tmp_path / "broken"

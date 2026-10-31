@@ -25,6 +25,7 @@ git の版 (既定: main) の main.js・codec.js と、作業中の木のそれ�
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -48,12 +49,16 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 FPS = 10
-# 素材の作り方を変えたら上げる (out/fixtures の作り置きを使わず、作り直させる)。2: .vox のだまし絵の変換が閉じた空洞を埋めるようになった
+# 素材の作り方 (このファイルの build_fixture) を変えたら上げる (out/fixtures の作り置きを使わず、作り直させる)。
+# 変換コード (convert.py・mvcodec・pack_builder.py) の内容は stamp に sha1 で入るので、上げなくても作り直される
+# 2: .vox のだまし絵の変換が閉じた空洞を埋めるようになった
 FIXTURE_VERSION = 2
 FIXTURES = ("mmd40", "mmd80", "solid56", "person80", "person80_bg")
 # ゲーム内の実測 (tests/js/minecraft_mock の costs と同じ値、マイクロ秒) と、モックとゲーム内の時間の比の見積り
 COST_US = {"setBlock": 2.3, "fillCall": 15, "fillBlock": 0.55, "listCall": 15, "listBlock": 1.42}
-GAME_RATIO = (3.1, 4.3)
+# 比の根拠: 同じアドオンのゲーム内の実測 ÷ WP1 のモックの通し再生 (still) の 1 フレームの平均 =
+# 44.3 ÷ 10.1 = 4.39 (ローカルの MMD アドオン o40)、216.8 ÷ 47.5 = 4.56 (o80)。下限 3.1 はそれ以前の実測。上限はこの 2 つを含める
+GAME_RATIO = (3.1, 4.6)
 EVENT_NAMESPACE_LINE = 'const EVENT_NAMESPACE = "badapple";'
 
 
@@ -227,10 +232,23 @@ def build_fixture(name, frames, folder):
         return entries
 
 
-def ensure_fixture(name, frames, out_dir):
-    """素材を作る (同じ作り方・同じフレーム数の作り置きがあれば使う)。戻り値は (フォルダ, 動画の一覧)。"""
+def converter_source_hash(root=ROOT):
+    """変換に関わるファイル (convert.py・mvcodec/*.py・pack_builder.py) の内容の sha1。素材の作り置きを使ってよいかの判定に使う。"""
+    root = Path(root)
+    files = [root / "convert.py", root / "pack_builder.py", *sorted((root / "mvcodec").glob("*.py"))]
+    digest = hashlib.sha1()
+    for path in files:
+        if path.is_file():
+            digest.update(path.name.encode("utf-8") + b"\0")
+            # 改行コードの違い (CRLF の作業コピー) で変わらないようにする
+            digest.update(path.read_bytes().replace(b"\r\n", b"\n") + b"\0")
+    return digest.hexdigest()
+
+
+def ensure_fixture(name, frames, out_dir, source_root=ROOT):
+    """素材を作る (同じ作り方・同じフレーム数・同じ変換コードの作り置きがあれば使う)。戻り値はフォルダ。"""
     folder = out_dir / "fixtures" / name
-    stamp = {"version": FIXTURE_VERSION, "frames": frames, "fps": FPS}
+    stamp = {"version": FIXTURE_VERSION, "frames": frames, "fps": FPS, "source": converter_source_hash(source_root)}
     meta = folder / "fixture.json"
     if meta.is_file() and json.loads(meta.read_text(encoding="utf-8")) == stamp and (folder / "videos.js").is_file():
         return folder
@@ -379,7 +397,8 @@ PLAY_METRICS = (
     ("tick_p95_ms", "tick の p95 ms", lambda r: r["tickMs"]["p95"], True),
     ("tick_max_ms", "tick の最大 ms", lambda r: r["tickMs"]["max"], True),
     ("js_ms_per_frame", "JS の時間 ms/フレーム (置く費用を除く)", lambda r: r["jsMs"] / max(1, r["stats"]["frames"]), True),
-    ("api_ms_per_frame", "置く費用の見積り ms/フレーム", lambda r: r["modeledApiMs"] / max(1, r["stats"]["frames"]), True),
+    # "game": ゲーム内の実測 (COST_US) から作った値なので、モック→ゲーム内の比を掛けない (見込みの列は空)
+    ("api_ms_per_frame", "置く費用の見積り ms/フレーム", lambda r: r["modeledApiMs"] / max(1, r["stats"]["frames"]), "game"),
     ("ticks", "tick 数", lambda r: r["ticks"], False),
 )
 
@@ -412,7 +431,7 @@ def row_text(entry, is_ms, estimate=True):
     digits = 2 if is_ms else 1
     cell = lambda s: f"{s['median']:.{digits}f} ({s['min']:.{digits}f}–{s['max']:.{digits}f})"  # noqa: E731
     delta = "" if entry["delta_pct"] is None else f"{entry['delta_pct']:+.1f}%"
-    game = f"{new['median'] * GAME_RATIO[0]:.0f}–{new['median'] * GAME_RATIO[1]:.0f}" if is_ms and estimate else ""
+    game = f"{new['median'] * GAME_RATIO[0]:.0f}–{new['median'] * GAME_RATIO[1]:.0f}" if is_ms is True and estimate else ""
     return cell(base), cell(new), delta, game
 
 
@@ -426,8 +445,8 @@ def write_markdown(results, path):
         f"- 日時: {meta['date']} / node {meta['node']} (--jitless) / 繰り返し {meta['repeats']} 回 (中央値 (最小–最大)) / "
         f"再生 {meta['frames']} フレームまで",
         f"- 置く費用 (µs): {json.dumps(COST_US)}",
-        f"- ゲーム内の見込み = worktree の中央値 × {GAME_RATIO[0]}〜{GAME_RATIO[1]} (モックとゲーム内の時間の比の見積り。実測ではない。"
-        "時間の列だけ)",
+        f"- ゲーム内の見込み = worktree の中央値 × {GAME_RATIO[0]}〜{GAME_RATIO[1]} (モックの値に比を掛けた推定で、実測ではない。"
+        "モックの時間の列だけ。「置く費用の見積り」はもともとゲーム内の値なので空)",
         "",
     ]
     for name, fixture in results["fixtures"].items():

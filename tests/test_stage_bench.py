@@ -111,3 +111,49 @@ def test_person_bench_block_statistics():
     scene_b = (rng.random((90, 160, 3)) * 255).astype(np.uint8)
     cuts = person_bench.scene_cuts([scene_a, scene_a, scene_b, scene_b])
     assert cuts.tolist() == [False, False, True, False]
+
+
+def test_game_estimate_column_and_ratio():
+    """ゲーム内の見込み: 比は実機の 4.39 と 4.56 を含む。置く費用の行 (もともとゲーム内の値) には比を掛けない。"""
+    sys.path.insert(0, str(ROOT / "benchmark"))
+    import stage_bench
+
+    assert stage_bench.GAME_RATIO[0] <= 3.1 and stage_bench.GAME_RATIO[1] >= 4.56
+    entry = stage_bench.compare([10.0], [10.0])
+    metrics = {key: is_ms for key, _label, _getter, is_ms in stage_bench.PLAY_METRICS}
+    assert row_game(stage_bench, entry, metrics["avg_frame_ms"]) != ""
+    assert row_game(stage_bench, entry, metrics["api_ms_per_frame"]) == ""
+    assert row_game(stage_bench, entry, metrics["ticks"]) == ""
+
+
+def row_game(stage_bench, entry, is_ms):
+    return stage_bench.row_text(entry, is_ms)[3]
+
+
+def test_fixture_stamp_follows_the_converter_sources(tmp_path, monkeypatch):
+    """素材の作り置きは、変換コード (convert.py・mvcodec・pack_builder.py) が 1 バイトでも変わると作り直される。"""
+    sys.path.insert(0, str(ROOT / "benchmark"))
+    import stage_bench
+
+    source = tmp_path / "src"
+    (source / "mvcodec").mkdir(parents=True)
+    for name in ("convert.py", "pack_builder.py", "mvcodec/encode.py"):
+        (source / name).write_text("x = 1\n", encoding="utf-8")
+    built = []
+    monkeypatch.setattr(stage_bench, "build_fixture", lambda name, frames, folder: (folder.mkdir(parents=True), (folder / "videos.js").write_text("v"), built.append(name)))
+    out = tmp_path / "out"
+    stage_bench.ensure_fixture("mmd40", 20, out, source_root=source)
+    stage_bench.ensure_fixture("mmd40", 20, out, source_root=source)
+    assert built == ["mmd40"], "同じ内容なら作り置きを使う"
+    for name in ("convert.py", "pack_builder.py", "mvcodec/encode.py"):
+        path = source / name
+        path.write_text("x = 2\n", encoding="utf-8")
+        before = len(built)
+        stage_bench.ensure_fixture("mmd40", 20, out, source_root=source)
+        assert len(built) == before + 1, f"{name} を変えたら作り直す"
+    # 改行コードだけの違い (CRLF の作業コピー) では作り直さない
+    (source / "convert.py").write_bytes(b"x = 2\r\n")
+    before = len(built)
+    stage_bench.ensure_fixture("mmd40", 20, out, source_root=source)
+    assert len(built) == before
+
