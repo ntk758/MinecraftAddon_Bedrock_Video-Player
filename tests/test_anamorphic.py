@@ -531,6 +531,14 @@ def no_tick_budget(work):
     main.write_text(text.replace("const TICK_TIME_BUDGET_MS = 30;", "const TICK_TIME_BUDGET_MS = 1e9;"), encoding="utf-8")
 
 
+def chain(*prepares):
+    """drive の prepare を、順に全部実行する 1 つにまとめる。"""
+    def prepare(work):
+        for each in prepares:
+            each(work)
+    return prepare
+
+
 # ticks: 再生を始めてから止めるまでの tick 数。偶数は置いている途中のフレームで止まり、奇数 (21) は置き終えた直後で止まる
 # (奇数は以前も正しく描き直した)
 @pytest.mark.parametrize("ticks, leave", [(10, False), (20, False), (21, False), (30, False), (40, False), (30, True)])
@@ -572,7 +580,7 @@ def test_pause_in_the_middle_of_a_redraw_finishes_the_redraw(busy, tmp_path):
     steps = [dict(START), {"event": "badapple:setup"}, dict(WATCH), {"event": "badapple:start"}, {"tick": 6},
              {"settle": 3}, {"world": "drawn"}, dict(FAR), {"tick": 1}, {"world": "redrawing"}, PAUSE, {"tick": 30},
              {"world": "paused"}, {"snap": "anchor"}]
-    out = drive(tmp_path / "addon", {"stage": path}, steps)
+    out = drive(tmp_path / "addon", {"stage": path}, steps, prepare=no_tick_budget)
     assert out["errors"] == []
     assert out["snaps"][0]["anchor"] == anchor
     assert any("bvp.paused" in m for m in out["messages"])
@@ -715,10 +723,12 @@ def test_paused_without_moving_the_eye_is_not_counted_as_a_view_redraw(busy, tmp
     """目を動かさずに一時停止すると、捨てたフレームの仕上げの描き直しが 1 回走るが、目の動きでの描き直しには数えない。
     その投影も、再生の統計 (フレーム数・時間) には入れない。止めている間にそれ以上の描き直しはない。"""
     path, _data, _volumes = busy[20]
+    # tick の時間の上限をなくすと、1 フレームは MAX_BLOCKS_PER_TICK ごとに 2 tick で置き終わる。21 tick では置いている途中で止まる
+    # (20 や 22 では置き終えた直後で、仕上げの描き直しが無い)
     stats = {"event": "badapple:stats"}
-    steps = [dict(START), {"event": "badapple:setup"}, dict(WATCH), {"event": "badapple:start"}, {"tick": 20}, {"mark": "playing"},
+    steps = [dict(START), {"event": "badapple:setup"}, dict(WATCH), {"event": "badapple:start"}, {"tick": 21}, {"mark": "playing"},
              PAUSE, {"tick": 30}, {"mark": "paused"}, stats, {"tick": 200}, stats]
-    out = drive(tmp_path / "addon", {"stage": path}, steps, prepare=wrap_projections(0))
+    out = drive(tmp_path / "addon", {"stage": path}, steps, prepare=chain(no_tick_budget, wrap_projections(0)))
     assert out["errors"] == []
     # 前提: 止めたフレームの仕上げのために、投影はもう 1 回走る
     assert out["marks"]["paused"] == out["marks"]["playing"] + 1

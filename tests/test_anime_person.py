@@ -266,7 +266,7 @@ def test_profiles_follow_free_memory():
     assert person.profile_ladder("anime", 16 * gib, 8 * gib) == ["gpu", "cpu", "photo"]
     assert person.profile_ladder("anime", 16 * gib, 12 * gib)[0] == "full"
     assert person.profile_ladder("anime", 16 * gib, 12 * gib - 1)[0] == "gpu"
-    # 目立つ物の切り抜きは RAM を 5〜10 GB 使うので、空きが少なければ使わない
+    # 目立つ物の切り抜きは RAM の確保済みメモリを約 12 GB (実際に使う物理メモリは約 5 GB) 使うので、空きが少なければ使わない
     assert person.profile_ladder("anime", 6 * gib, 12 * gib)[0] == "gpu"
     assert person.profile_ladder("anime", 6 * gib, gib // 2)[0] == "cpu"
     assert person.profile_ladder("anime", None, None)[0] == "full"
@@ -1933,3 +1933,30 @@ def test_the_background_video_has_as_many_frames_as_were_sent_even_when_the_dura
 
     assert probe("v:0", "stream=nb_read_frames") == str(sent)
     assert float(probe("a:0", "stream=duration")) <= duration + 0.1   # 音声は duration で切る
+
+
+def test_audio_longer_than_the_video_is_cut_to_the_video_length_without_a_duration(tmp_path):
+    """duration が無いとき、背景の動画の音声は映像の長さで切る (_writer の -shortest)。音声が映像より長い動画で、音声だけ長く残らない。"""
+    import shutil
+    import subprocess
+
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("ffmpeg と ffprobe が必要")
+    source = tmp_path / "long_audio.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=64x36:rate=10:duration=3",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                    str(source)], check=True)
+    out = tmp_path / "background.mp4"
+    sent = 5   # 0.5 秒。音声は 3 秒
+    writer = person._writer(out, 64, 36, 10, "ffmpeg", audio_from=source)
+    for _ in range(sent):
+        writer.stdin.write(np.full((36, 64, 3), 90, np.uint8).tobytes())
+    writer.stdin.close()
+    assert writer.wait() == 0
+
+    def probe(stream, entries):
+        return subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", stream, "-show_entries", entries,
+                               "-of", "csv=p=0", str(out)], capture_output=True, text=True, check=True).stdout.strip()
+
+    assert probe("v:0", "stream=nb_read_frames") == str(sent)
+    assert float(probe("a:0", "stream=duration")) <= sent / 10 + 0.1
