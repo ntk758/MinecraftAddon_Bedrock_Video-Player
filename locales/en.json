@@ -330,5 +330,8 @@
   "web.preview_pause": "Pause",
   "web.preview_info": "{frames} frames at {fps} fps",
   "web.preview_thinned": "To save memory, only every {step}th frame is shown here (the add-on has them all).",
-  "web.preview_making": "Making the preview: {id}"
+  "web.preview_making": "Making the preview: {id}",
+  "after.preview": "Preview",
+  "build.preview": "Preview (how it looks in Minecraft, drawn with the game's rules): {path}",
+  "build.preview_failed": "  Could not make the preview of {id} (the add-on is fine): {error}"
 }

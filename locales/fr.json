@@ -330,5 +330,8 @@
   "web.preview_pause": "Pause",
   "web.preview_info": "{frames} images à {fps} fps",
   "web.preview_thinned": "Pour économiser la mémoire, seule 1 image sur {step} est affichée ici (le module les contient toutes).",
-  "web.preview_making": "Création de l'aperçu : {id}"
+  "web.preview_making": "Création de l'aperçu : {id}",
+  "after.preview": "Aperçu",
+  "build.preview": "Aperçu (l'apparence dans Minecraft, dessinée avec les règles du jeu) : {path}",
+  "build.preview_failed": "  Impossible de créer l'aperçu de {id} (le module est correct) : {error}"
 }

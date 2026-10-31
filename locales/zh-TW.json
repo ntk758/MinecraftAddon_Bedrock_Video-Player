@@ -330,5 +330,8 @@
   "web.preview_pause": "暫停",
   "web.preview_info": "{frames} 個影格（{fps} fps）",
   "web.preview_thinned": "為節省記憶體，這裡每 {step} 個影格顯示一個（附加元件中包含全部影格）。",
-  "web.preview_making": "正在產生預覽：{id}"
+  "web.preview_making": "正在產生預覽：{id}",
+  "after.preview": "預覽",
+  "build.preview": "預覽（依遊戲規則繪製的 Minecraft 中的樣子）：{path}",
+  "build.preview_failed": "  無法產生 {id} 的預覽（附加元件沒有問題）：{error}"
 }

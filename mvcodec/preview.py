@@ -113,3 +113,41 @@ def save_gif(preview: Preview, path, scale: int | None = None, max_side: int = 4
         images.append(image)
     duration = max(20, round(1000 / preview.fps))
     images[0].save(path, save_all=True, append_images=images[1:], duration=duration, loop=0, optimize=False)
+
+
+# Windows 版のプレビューの GIF は大きくなりすぎないよう、ブラウザ版より少なくする
+GIF_MAX_BYTES = 16 * 1024 * 1024
+GIF_MAX_VOLUME_FRAMES = 120
+
+
+def preview_gif_paths(output, video_ids):
+    """アドオン output の隣に置くプレビューの GIF の場所 (動画が 1 本なら <名前>_preview.gif)。"""
+    from pathlib import Path
+
+    output = Path(output)
+    if len(video_ids) == 1:
+        return {video_ids[0]: output.with_name(f"{output.stem}_preview.gif")}
+    return {vid: output.with_name(f"{output.stem}_preview_{vid}.gif") for vid in video_ids}
+
+
+def write_preview_gifs(output, videos, log=None):
+    """組み立てたアドオンの各動画 (pack_builder の videos、一覧に出さない背景の映像は除く) のプレビューの GIF を書く。
+
+    作れなかった動画は飛ばす (アドオンはできているので、作る処理は止めない)。書いた GIF の場所の一覧を返す。
+    """
+    import json
+
+    shown = [v for v in videos if not v.get("hidden")]
+    paths = preview_gif_paths(output, [v["id"] for v in shown])
+    written = []
+    for video in shown:
+        text = video["frames_js"]
+        try:
+            data = json.loads(text[text.index("{"):text.rindex("}") + 1])
+            preview = render_preview(data, max_bytes=GIF_MAX_BYTES, max_volume_frames=GIF_MAX_VOLUME_FRAMES)
+            save_gif(preview, paths[video["id"]])
+            written.append(paths[video["id"]])
+        except Exception as error:  # noqa: BLE001 (プレビューが作れなくてもアドオンは使える)
+            if log is not None:
+                log(video["id"], error)
+    return written

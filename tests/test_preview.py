@@ -87,3 +87,39 @@ def test_save_gif(frames_dir, tmp_path):
         assert gif.n_frames == FRAMES
         assert gif.size == (WIDTH * 15, HEIGHT * 15)  # 長い辺が 480 に収まる整数倍
         assert gif.info["duration"] == 100
+
+
+def test_write_preview_gifs_next_to_the_addon(frames_dir, tmp_path):
+    from mvcodec.preview import preview_gif_paths, write_preview_gifs
+
+    run(frames_dir, tmp_path / "a.js")
+    text = (tmp_path / "a.js").read_text(encoding="utf-8")
+    output = tmp_path / "My Pack.mcaddon"
+    assert preview_gif_paths(output, ["a"]) == {"a": tmp_path / "My Pack_preview.gif"}
+    errors = []
+    written = write_preview_gifs(output, [
+        {"id": "a", "frames_js": text},
+        {"id": "b", "frames_js": "export const FRAME_DATA = {};"},  # 壊れたデータは飛ばす
+        {"id": "a_bg", "frames_js": text, "hidden": True},  # 背景の映像は作らない
+    ], log=lambda vid, error: errors.append(vid))
+    assert written == [tmp_path / "My Pack_preview_a.gif"]
+    assert errors == ["b"]
+    assert not (tmp_path / "My Pack_preview_a_bg.gif").exists()
+
+
+def test_windows_app_writes_previews_and_logs_them(frames_dir, tmp_path):
+    """Windows 版 (video_player_gui) は、作り終えたアドオンの隣にプレビューの GIF を書き、処理ログに場所を出す。"""
+    import queue
+    from types import SimpleNamespace
+
+    pytest.importorskip("tkinter")
+    import video_player_gui
+    from gui_i18n import Translator
+
+    run(frames_dir, tmp_path / "a.js")
+    app = SimpleNamespace(messages=queue.Queue(), tr=Translator("en"))
+    output = tmp_path / "pack.mcaddon"
+    written = video_player_gui.PackBuilderApp._write_previews(
+        app, output, [{"id": "a", "frames_js": (tmp_path / "a.js").read_text(encoding="utf-8")}])
+    assert written == [tmp_path / "pack_preview.gif"] and written[0].stat().st_size > 0
+    assert str(written[0]) in app.messages.get_nowait()

@@ -330,5 +330,8 @@
   "web.preview_pause": "Пауза",
   "web.preview_info": "Кадров: {frames}, {fps} fps",
   "web.preview_thinned": "Чтобы сэкономить память, здесь показан каждый {step}-й кадр (в дополнении есть все).",
-  "web.preview_making": "Создание предпросмотра: {id}"
+  "web.preview_making": "Создание предпросмотра: {id}",
+  "after.preview": "Предпросмотр",
+  "build.preview": "Предпросмотр (как это выглядит в Minecraft, по правилам игры): {path}",
+  "build.preview_failed": "  Не удалось создать предпросмотр {id} (с дополнением всё в порядке): {error}"
 }

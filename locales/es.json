@@ -330,5 +330,8 @@
   "web.preview_pause": "Pausa",
   "web.preview_info": "{frames} fotogramas a {fps} fps",
   "web.preview_thinned": "Para ahorrar memoria, aquí solo se muestra 1 de cada {step} fotogramas (el complemento los tiene todos).",
-  "web.preview_making": "Creando la vista previa: {id}"
+  "web.preview_making": "Creando la vista previa: {id}",
+  "after.preview": "Vista previa",
+  "build.preview": "Vista previa (cómo se ve en Minecraft, dibujada con las reglas del juego): {path}",
+  "build.preview_failed": "  No se pudo crear la vista previa de {id} (el complemento está bien): {error}"
 }

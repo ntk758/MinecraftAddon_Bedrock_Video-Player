@@ -330,5 +330,8 @@
   "web.preview_pause": "一時停止",
   "web.preview_info": "{frames} コマ ({fps} fps)",
   "web.preview_thinned": "メモリを節約するため、ここでは {step} コマごとに表示しています (アドオンには全部入っています)。",
-  "web.preview_making": "プレビューを作成中: {id}"
+  "web.preview_making": "プレビューを作成中: {id}",
+  "after.preview": "プレビュー",
+  "build.preview": "プレビュー (ゲームと同じ規則で描いた Minecraft の中での見え方): {path}",
+  "build.preview_failed": "  {id} のプレビューを作れませんでした (アドオンは問題ありません): {error}"
 }

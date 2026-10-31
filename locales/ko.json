@@ -330,5 +330,8 @@
   "web.preview_pause": "일시 정지",
   "web.preview_info": "{frames} 프레임 ({fps} fps)",
   "web.preview_thinned": "메모리를 아끼기 위해 여기서는 {step} 프레임마다 하나씩 표시합니다(애드온에는 모두 들어 있습니다).",
-  "web.preview_making": "미리보기 만드는 중: {id}"
+  "web.preview_making": "미리보기 만드는 중: {id}",
+  "after.preview": "미리보기",
+  "build.preview": "미리보기 (게임과 같은 규칙으로 그린 Minecraft 안에서의 모습): {path}",
+  "build.preview_failed": "  {id}의 미리보기를 만들지 못했습니다 (애드온은 문제없습니다): {error}"
 }

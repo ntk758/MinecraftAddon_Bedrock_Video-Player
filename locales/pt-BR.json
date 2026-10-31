@@ -330,5 +330,8 @@
   "web.preview_pause": "Pausar",
   "web.preview_info": "{frames} quadros a {fps} fps",
   "web.preview_thinned": "Para economizar memória, aqui só aparece 1 a cada {step} quadros (o complemento tem todos).",
-  "web.preview_making": "Criando a prévia: {id}"
+  "web.preview_making": "Criando a prévia: {id}",
+  "after.preview": "Prévia",
+  "build.preview": "Prévia (como fica no Minecraft, desenhada com as regras do jogo): {path}",
+  "build.preview_failed": "  Não foi possível criar a prévia de {id} (o complemento está certo): {error}"
 }
