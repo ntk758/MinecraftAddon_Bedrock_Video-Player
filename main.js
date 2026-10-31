@@ -49,6 +49,9 @@ const LAYOUT_KEY = `${EVENT_NAMESPACE}:layout`;
 const TICKING_NAMES_KEY = `${EVENT_NAMESPACE}:ticking_areas`;
 const MESSAGE_PREFIX = `§b[${EVENT_NAMESPACE}]`;
 const START_LOAD_DELAY_TICKS = 5;
+// 再生を始める前に、スクリーンの範囲のチャンクが読み込まれるのを待つ最大の tick 数 (10 秒)。setup の直後は常時読み込み
+// (tickingarea) の登録が効くまで時間がかかり、読み込まれていないチャンクに置けずに最初の画面に穴が開いていた
+const CHUNK_WAIT_TICKS = 200;
 const TICKING_AREA_NAME = "badapple_area";
 
 const REMOTE_CONTROL_ITEM = "minecraft:compass";
@@ -363,6 +366,7 @@ class VideoPlayer {
 
     this.frameIterator = null;
     this.startDelayTicks = 0;
+    this.chunkWaitTicks = 0;
     this.currentJobId = null;
 
     this.tempBlockLoc = { x: 0, y: 0, z: 0 };
@@ -1340,7 +1344,7 @@ class VideoPlayer {
   tick() {
     // だまし絵の描き直しの途中なら、それを先に進める (再生中は時計も進める)
     if (this.viewIterator) {
-      if (this.running && this.startDelayTicks === 0) this.elapsedTicks++;
+      if (this.running && this.startDelayTicks === 0 && this.chunkWaitTicks === 0) this.elapsedTicks++;
       if (this.advanceJob(this.viewIterator)) this.viewIterator = null;
       return;
     }
@@ -1352,6 +1356,14 @@ class VideoPlayer {
     if (this.startDelayTicks > 0) {
       this.startDelayTicks--;
       return;
+    }
+    if (this.chunkWaitTicks > 0) {
+      // 読み込まれるまで時計を進めない (待った分だけ映像と音声が遅れないように)
+      if (!this.screenLoaded()) {
+        this.chunkWaitTicks--;
+        return;
+      }
+      this.chunkWaitTicks = 0;
     }
     this.elapsedTicks++;
 
@@ -1450,8 +1462,31 @@ class VideoPlayer {
     this.elapsedTicks = 0;
     this.running = true;
     this.startDelayTicks = START_LOAD_DELAY_TICKS;
+    this.chunkWaitTicks = CHUNK_WAIT_TICKS;
     this.placeFailureNotified = false;
     this.resetPlayStats();
+  }
+
+  /**
+   * スクリーンの範囲 (向きに合わせて回した後) のチャンクがすべて読み込まれているか。各チャンクの 1 マスを getBlock で
+   * 調べる (読み込まれていなければ undefined か例外)。getBlock が無い環境では読み込まれているとみなす。
+   */
+  screenLoaded() {
+    if (typeof this.dimension.getBlock !== "function") return true;
+    const box = worldBoxOf(this.videoData, this.anchor);
+    const loc = { x: 0, y: this.anchor.y, z: 0 };
+    for (let cz = Math.floor(box.z0 / 16); cz <= Math.floor(box.z1 / 16); cz++) {
+      for (let cx = Math.floor(box.x0 / 16); cx <= Math.floor(box.x1 / 16); cx++) {
+        loc.x = Math.min(Math.max(cx * 16, box.x0), box.x1);
+        loc.z = Math.min(Math.max(cz * 16, box.z0), box.z1);
+        try {
+          if (!this.dimension.getBlock(loc)) return false;
+        } catch (e) {
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   /** 一時停止・シーク位置から再生を続ける。 */

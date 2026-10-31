@@ -8,8 +8,9 @@ export const forms = [];
 export const stats = { setBlockCalls: 0, fillCalls: 0, blocksPlaced: 0, commandFills: 0, structurePlaces: 0 };
 // fillBlocks: false にすると fillBlocks が無い環境をまねる
 // failZ: 数値にすると z がその値以上のマスへの設置が失敗する (読み込まれていないチャンクをまねる)
+// unloadedZ: 数値にすると z がその値以上のマスは読み込まれていない (getBlock が undefined を返し、設置も失敗する)
 // costs: { setBlock, fillCall, fillBlock, listCall, listBlock } (マイクロ秒) を入れると、その時間だけ待って実機の費用をまねる
-export const options = { fillBlocks: true, failZ: undefined, costs: null };
+export const options = { fillBlocks: true, failZ: undefined, unloadedZ: undefined, costs: null };
 // フォームを開いたときの応答 (server-ui モックが先頭から順に返す。空なら「閉じた」)
 export const uiResponses = [];
 
@@ -24,6 +25,7 @@ stats.listFillCalls = 0;
 
 function checkLoaded(location) {
   if (options.failZ !== undefined && location.z >= options.failZ) throw new Error("UnloadedChunksError");
+  if (options.unloadedZ !== undefined && location.z >= options.unloadedZ) throw new Error("UnloadedChunksError");
 }
 // runCommand に渡されたコマンド (tickingarea の確認用)
 export const commands = [];
@@ -38,6 +40,10 @@ let itemUseHandler = null;
 export const dimension = {
   id: "overworld",
   heightRange: { min: -64, max: 320 },
+  getBlock(location) {
+    if (options.unloadedZ !== undefined && location.z >= options.unloadedZ) return undefined;
+    return { location: { ...location } };
+  },
   setBlockPermutation(location, permutation) {
     checkLoaded(location);
     spin(options.costs?.setBlock);

@@ -6,6 +6,7 @@
 //   {"settle": 3}                                     ブロックを置く呼び出しが 3 tick 続けて無くなるまで tick を進める
 //   {"ui": [{"selection": 0}, {"formValues": [6]}]}   リモコン (コンパス) を使い、開いたフォームへ順に応答する
 //   {"failZ": 92} / {"failZ": null}                   z がその値以上のマスへの設置を失敗させる / 元に戻す
+//   {"unloadedZ": 92} / {"unloadedZ": null}           z がその値以上のチャンクを読み込まれていないことにする / 戻す
 //   {"y": 318} / {"x": 5, "z": 100}                   プレイヤーの立つ位置を変える
 //   {"view": {"x": 1, "z": 0}}                        プレイヤーの見ている方向を変える
 //   {"snap": "名前"}                                  いま選ばれている動画の盤面 (各マスのブロック) を記録する
@@ -62,6 +63,7 @@ for (const step of steps) {
       useItem("minecraft:compass");
       for (let i = 0; i < 10; i++) await Promise.resolve();
     } else if ("failZ" in step) options.failZ = step.failZ ?? undefined;
+    else if ("unloadedZ" in step) options.unloadedZ = step.unloadedZ ?? undefined;
     else if (step.view) player.viewDirection = { y: 0, ...step.view };
     else if ("y" in step || "x" in step || "z" in step) Object.assign(player.location, step);
     else if (step.snap) snap(step.snap, step.video ?? Object.keys(VIDEOS)[0]);
