@@ -111,7 +111,7 @@ GUI は人物の切り抜きを別のプロセスで行い、処理ログには�
 | 項目 | 中身 |
 |---|---|
 | `model` `profile` `profile_reason` `profile_skipped` | 使った切り抜きのモデルと段階、その段階にした理由 (`auto` = 空きメモリから、`given` = 指定、`retry_memory` `retry_crash` = 前の段階がメモリ不足・落ちたため、`retry_model` = アニメ向けのモデルを取得できず photo の段階へ進んだため)、より重い段階にしなかった理由 |
-| `free_at_start` | 始めたときの空きの RAM と VRAM (MB。分からなければ `null`) |
+| `free_at_start` | 始めたときの空きの RAM と VRAM (MB。分からなければ `null`)。GUI が最初に測った値をやり直しの段階にもそのまま渡すので、やり直しの段階ではその段階の開始時の値ではない |
 | `sources` `flagged` | 出所ごとのフレーム数 (`anime` そのまま / `filled` 前後で埋めた / `matched` 合わせた予備 / `fallback` そのままの予備 / `rejected` 面積の上限 (0.6) か位置の検査で採らずに空にした予備。写真向けだけのときは `photo`)。`flagged` はアニメ向けが人物を見つけなかったフレームの数 |
 | `fallback` | `reasons` 予備に頼った理由 (`long_run` 見つけない連なりが 3 枚以上 / `no_neighbour` 場面や動画の端 / `no_fallback`)、`model` `why` 予備に何を選んだか (`salient` `photo` `none`) とその理由、`frames` 予備が返した数 (モデル別)、`load_s` |
 | `salient_dropped` | BiRefNet を外したフレームと理由 (`oom` メモリ不足 / `slow` 遅くなった / `error` 実行中の失敗)。外していなければ `null` |

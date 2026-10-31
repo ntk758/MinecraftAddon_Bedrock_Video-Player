@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from test_anamorphic import MOVED, PAUSE, WATCH, busy  # noqa: E402,F401  (busy は fixture)
+from test_anamorphic import MOVED, PAUSE, WATCH, busy, no_tick_budget  # noqa: E402,F401  (busy は fixture)
 from test_codec_v4 import make_scene_frames, run_convert  # noqa: E402
 from test_playback_control import drive, reference_frames  # noqa: E402
 from test_volume3d import convert_vox, make_depth_walk  # noqa: E402
@@ -149,7 +149,7 @@ def test_pause_mid_frame_and_move_the_eye_in_a_turned_stage(busy, tmp_path, name
                  turn_position(WATCH, turn), {"event": "badapple:start"}, {"tick": ticks}, PAUSE,
                  turn_position(MOVED, turn), {"tick": 30}, {"world": "paused"}, PAUSE,
                  {"until": "bvp.playback_finished"}, {"tick": 40}, {"world": "end"}]
-        out = drive(tmp_path / facing, {"stage": path}, steps)
+        out = drive(tmp_path / facing, {"stage": path}, steps, prepare=no_tick_budget)
         assert out["errors"] == []
         return out
 

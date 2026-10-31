@@ -1101,7 +1101,7 @@ class PackBuilderApp(tk.Tk):
 
         子プロセスの出力すべてと統計は、ログのファイル (new_person_log。やり直した分も続けて 1 つ) に書く。全部の段階でだめなら、
         そのログの場所を失敗の知らせに書く。"""
-        from mvcodec.person import EXIT_INPUT_ERROR, EXIT_MODEL_ERROR, EXIT_OUT_OF_MEMORY, PROFILE_NEEDS, profile_ladder
+        from mvcodec.person import EXIT_INPUT_ERROR, EXIT_MODEL_ERROR, EXIT_OUT_OF_MEMORY, profile_ladder
         from mvcodec.resources import GIB, gpu_memory, system_memory
 
         self.messages.put(self.tr("build.person_anime" if model == "anime" else "build.person"))

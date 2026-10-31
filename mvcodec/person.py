@@ -834,8 +834,9 @@ class TemporalGuard:
 
     予備の結果は採用する前に検査する (rejects_fallback): 面積が FALLBACK_MAX_AREA を超える、または同じ場面の正常なフレームの箱
     (窓の中の前後。無ければ、窓から出た FALLBACK_REF_FRAMES フレーム以内の最後の正常なフレーム) を広げた範囲と重ならない結果は
-    採用せず、空の確からしさにする (前のフレームを持ち続けると残像が出る)。人物のいない動画で、予備が背景や光の筋を人物とした塊が
-    立体になる (約 20 フレーム) のを防ぐ。判定は「空 (アニメ向け) + 面積の上限と位置 (予備)」の少ない指標にとどめた。前後のフレームとの
+    採用せず、空の確からしさにする (前のフレームを持ち続けると残像が出る)。位置の手がかりがある場面で、予備が背景や光の筋を人物とした塊が
+    立体になるのと、面積が上限を超える結果を防ぐ (人物のいない動画の約 20 フレームは位置の手がかりが無く、面積も上限未満なので
+    防げない。ローカルの測定で 21 → 21)。判定は「空 (アニメ向け) + 面積の上限と位置 (予備)」の少ない指標にとどめた。前後のフレームとの
     変化量・輪郭の不自然さなどを足した多指標の判定は、空の判定だけで改善のほとんどが得られ、しきい値が増えるほど手元の動画に
     合わせ込む (過学習) おそれがあり、ほかの動画で本物の人物を外す害のほうが大きいので採らなかった。
 
@@ -1053,11 +1054,14 @@ def _writer(path, width, height, fps, ffmpeg, audio_from=None, duration=None):
     cmd = [ffmpeg, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
            "-r", str(fps), "-i", "-"]
     if audio_from is not None:
-        # 映像は受け取ったフレームの数が正: 出力全体を -t や -shortest で切ると、duration が 1 フレームの長さの倍数でないとき
-        # (0.35 秒を 10 fps など) に最後の 1 フレームが落ちる。音声の入力だけを duration で切る
+        # 映像は受け取ったフレームの数が正: duration があるとき、出力全体を -t や -shortest で切ると、duration が 1 フレームの長さの倍数でない
+        # とき (0.35 秒を 10 fps など) に最後の 1 フレームが落ちる。音声の入力だけを duration で切る。duration が無いときは
+        # 従来どおり -shortest (音声が映像より長い動画で、音声だけ長く残らないように)
         if duration is not None:
             cmd += ["-t", str(duration)]
         cmd += ["-i", str(audio_from), "-map", "0:v", "-map", "1:a?", "-c:a", "aac"]
+        if duration is None:
+            cmd += ["-shortest"]
     # 色を正確に残す (人物の範囲は白黒、背景はブロックの色を選ぶ元になる)
     cmd += ["-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv444p", str(path)]
     return _start_ffmpeg(cmd, ffmpeg, stdin=subprocess.PIPE)
