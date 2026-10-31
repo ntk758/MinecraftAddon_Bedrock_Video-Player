@@ -1206,7 +1206,8 @@ class VideoPlayer {
     projectToStage(this.figure, this.videoData, geom, eye, this.nextBoard, this.stageWork, background?.decoded ?? null,
       background ? background.decodedFrame : 0);
     const st = this.playStats;
-    if (st) {
+    // 統計の時計が動いている間 (再生中) の投影だけ数える。止めた後の仕上げや bench の間の描き直しは、フレーム数・時間と合わない
+    if (st && st.wallStart !== null && st.wallEnd === null) {
       const projectMs = Date.now() - projectStart;
       st.stageProjMs += projectMs;
       st.stageProjMax = Math.max(st.stageProjMax, projectMs);
@@ -1238,7 +1239,8 @@ class VideoPlayer {
     const last = this.lastEye;
     const moved = eye && (!last || Math.hypot(eye.x - last.x, eye.y - last.y, eye.z - last.z) >= VIEW_REDRAW_DISTANCE);
     if (!moved && !this.viewRedrawPending) return;
-    if (this.playStats) this.playStats.viewRedraws++;
+    // 目の動きでの描き直しだけ数える (一時停止などで捨てたフレームの仕上げ (viewRedrawPending) は数えない)
+    if (moved && this.playStats) this.playStats.viewRedraws++;
     const self = this;
     this.viewIterator = (function* () {
       self.drawStage();
@@ -1669,7 +1671,8 @@ function runBenchmark(player) {
 
   notify("bench_start", side * side, rounds);
   vp.stopPlayback();
-  system.runJob((function* () {
+  // 計測の間は、一時停止で捨てたフレームの仕上げなどの描き直しを始めさせない (currentJobId が空でないと始まらない)
+  vp.currentJobId = system.runJob((function* () {
     // structure.place 用に、白と黒の板をメモリ上に作っておく (計測には含めない)
     try {
       for (let k = 0; k < 2; k++) {
@@ -1717,6 +1720,7 @@ function runBenchmark(player) {
     } else {
       notify("bench_unreliable", BENCH_MIN_TOTAL_MS);
     }
+    vp.currentJobId = null;
     notify("bench_done", currentRenderMode());
   })());
 }

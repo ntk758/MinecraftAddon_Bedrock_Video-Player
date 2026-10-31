@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from test_anamorphic import MOVED, PAUSE, WATCH, busy  # noqa: E402,F401  (busy は fixture)
 from test_codec_v4 import make_scene_frames, run_convert  # noqa: E402
 from test_playback_control import drive, reference_frames  # noqa: E402
 from test_volume3d import convert_vox, make_depth_walk  # noqa: E402
@@ -127,3 +128,40 @@ def test_video_without_audio_is_reported(videos, tmp_path, chunks, warned):
     out = drive(tmp_path / "addon", {"clip": videos["flat"]}, steps, listing_extra=extra)
     assert out["errors"] == []
     assert any("bvp.no_audio" in m for m in out["messages"]) == warned
+
+
+def turn_position(position, turn):
+    """北向きのときの位置 (足元 START からのずれを回す) を、その向きの位置にする。"""
+    dx, dz = turn(position["x"] - START["x"], position["z"] - START["z"])
+    return {**position, "x": START["x"] + dx, "z": START["z"] + dz}
+
+
+@pytest.mark.parametrize("ticks", [20, 21])
+@pytest.mark.parametrize("name", ["east", "south", "west"])
+def test_pause_mid_frame_and_move_the_eye_in_a_turned_stage(busy, tmp_path, name, ticks):
+    """setup face で回した舞台でも、描きかけのフレームで一時停止して目を動かし、再開して最後まで再生すると、止めている間と
+    最後のワールドが、北向きの結果を足元を中心に回したものと全マス一致する (目の位置を舞台の座標へ戻す回転が効いている)。"""
+    path = busy[20][0]
+
+    def run(facing):
+        view, turn = FACINGS[facing]
+        steps = [dict(START), {"view": view}, {"event": "badapple:setup", "message": "face"},
+                 turn_position(WATCH, turn), {"event": "badapple:start"}, {"tick": ticks}, PAUSE,
+                 turn_position(MOVED, turn), {"tick": 30}, {"world": "paused"}, PAUSE,
+                 {"until": "bvp.playback_finished"}, {"tick": 40}, {"world": "end"}]
+        out = drive(tmp_path / facing, {"stage": path}, steps)
+        assert out["errors"] == []
+        return out
+
+    def in_blocks(world):
+        return {(x - ORIGIN[0], y, z - ORIGIN[1]): block for x, y, z, block in world["blocks"]}
+
+    north = run("north")
+    turned = run(name)
+    turn = FACINGS[name][1]
+    for k in range(2):
+        expected = {(*turn(dx, dz)[:1], y, turn(dx, dz)[1]): block for (dx, y, dz), block in in_blocks(north["worlds"][k]).items()}
+        got = in_blocks(turned["worlds"][k])
+        assert len(got) > 1000
+        differing = sum(1 for key in set(expected) | set(got) if expected.get(key) != got.get(key))
+        assert differing == 0, (name, "paused" if k == 0 else "end", differing)

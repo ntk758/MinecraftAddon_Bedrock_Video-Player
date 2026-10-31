@@ -11,6 +11,7 @@
 //   {"view": {"x": 1, "z": 0}}                        プレイヤーの見ている方向を変える
 //   {"snap": "名前"}                                  いま選ばれている動画の盤面 (各マスのブロック) を記録する
 //   {"world": "名前"}                                 ワールドに置かれたブロックをすべて記録する (だまし絵の舞台は snap の範囲に収まらない)
+//   {"mark": "名前"}                                  いま数えている projectToStage の呼び出し回数を記録する (marks)
 import {
   board, commands, fireScriptEvent, getAnchor, messages, options, player, stats, tick as mockTick, uiResponses, useItem,
 } from "@minecraft/server";
@@ -25,6 +26,7 @@ await import("./main.js");
 const { VIDEOS } = await import("./videos.js");
 
 const snaps = [];
+const marks = {};
 function snap(label, videoId) {
   const video = VIDEOS[videoId];
   const anchor = getAnchor("badapple:anchor");
@@ -67,6 +69,7 @@ for (const step of steps) {
     else if (step.view) player.viewDirection = { y: 0, ...step.view };
     else if ("y" in step || "x" in step || "z" in step) Object.assign(player.location, step);
     else if (step.snap) snap(step.snap, step.video ?? Object.keys(VIDEOS)[0]);
+    else if (step.mark) marks[step.mark] = globalThis.__bvpProjections ?? 0;
     else if (step.world) worlds.push({ label: step.world, blocks: [...board.entries()].map(([key, id]) => [...key.split(",").map(Number), id]) });
   } catch (e) {
     errors.push(String(e?.stack ?? e));
@@ -75,7 +78,7 @@ for (const step of steps) {
 
 const allBlocks = [...board.entries()].map(([key, id]) => [...key.split(",").map(Number), id]);
 process.stdout.write(JSON.stringify({
-  snaps, worlds, ticks, stats, commands, errors, allBlocks, messages: messages.map((m) => JSON.stringify(m)),
+  snaps, worlds, marks, ticks, stats, commands, errors, allBlocks, messages: messages.map((m) => JSON.stringify(m)),
   // テストが codec.js の projectToStage を包んで数えた回数 (包んでいなければ null)
   projections: globalThis.__bvpProjections ?? null,
 }));

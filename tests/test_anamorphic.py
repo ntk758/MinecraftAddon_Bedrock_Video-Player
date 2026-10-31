@@ -10,6 +10,7 @@ import math
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -35,10 +36,13 @@ EYE_HEIGHT = 1.62
 
 def run_node(script, args=(), stdin=None):
     work = ROOT / "tests" / "js"
-    tmp = Path(subprocess.check_output(["node", "-e", "console.log(require('os').tmpdir())"], text=True).strip())
+    # 並列に走らせても codec.js を上書きし合わないよう、呼ぶたびに別のフォルダで動かす
+    with tempfile.TemporaryDirectory(prefix=f"bvp_stage_{script.replace('.', '_')}_") as folder:
+        return _run_node_in(Path(folder), work, script, args, stdin)
+
+
+def _run_node_in(run_dir, work, script, args, stdin):
     # codec.js と同じフォルダで動かす (import "./codec.js")
-    run_dir = tmp / f"bvp_stage_{script.replace('.', '_')}"
-    run_dir.mkdir(exist_ok=True)
     shutil.copy(ROOT / "codec.js", run_dir / "codec.js")
     shutil.copy(work / script, run_dir / script)
     (run_dir / "package.json").write_text(json.dumps({"type": "module"}))
@@ -518,6 +522,15 @@ def test_busy_frames_take_more_than_one_tick_to_place(busy, tmp_path):
     assert out["ticks"] - 5 >= 2 * data["frame_count"], out["ticks"]
 
 
+def no_tick_budget(work):
+    """drive の prepare に渡す。main.js の 1 tick の時間の上限 (TICK_TIME_BUDGET_MS) を事実上なくす。上限に当たると、
+    遅い機械 (CI の共有ランナーなど) では 1 フレームにかかる tick が増え、止めたフレームの番号の見積りがずれるため。"""
+    main = work / "main.js"
+    text = main.read_text(encoding="utf-8")
+    assert text.count("const TICK_TIME_BUDGET_MS = 30;") == 1
+    main.write_text(text.replace("const TICK_TIME_BUDGET_MS = 30;", "const TICK_TIME_BUDGET_MS = 1e9;"), encoding="utf-8")
+
+
 # ticks: 再生を始めてから止めるまでの tick 数。偶数は置いている途中のフレームで止まり、奇数 (21) は置き終えた直後で止まる
 # (奇数は以前も正しく描き直した)
 @pytest.mark.parametrize("ticks, leave", [(10, False), (20, False), (21, False), (30, False), (40, False), (30, True)])
@@ -531,7 +544,7 @@ def test_pause_in_the_middle_of_a_frame_redraws_for_the_moved_eye(busy, tmp_path
     steps = [dict(START), {"event": "badapple:setup"}, dict(WATCH), {"event": "badapple:start"}, {"tick": ticks}, PAUSE,
              dict(after), {"tick": 30}, {"world": "paused"}, PAUSE, {"until": "bvp.playback_finished"}, {"world": "end"},
              {"snap": "anchor"}]
-    out = drive(tmp_path / "addon", {"stage": path}, steps)
+    out = drive(tmp_path / "addon", {"stage": path}, steps, prepare=no_tick_budget)
     assert out["errors"] == []
     assert out["snaps"][0]["anchor"] == anchor
     assert any("bvp.paused" in m for m in out["messages"])
@@ -634,7 +647,7 @@ def stats_messages(out, key):
 
 def test_stats_report_how_long_the_stage_projections_took(tmp_path):
     """だまし絵を再生した後の stats に、舞台の行 (投影の平均・最大・回数、目の動きでの描き直しの回数) が出る。回数は
-    投影した回数と一致し、平均は 0 より大きい。再生が終わった後で目が動けば、描き直しが増えて、その分だけ回数も増える。"""
+    再生中に投影した回数と一致し、平均は 0 より大きい。再生が終わった後で目が動けば、描き直しの回数だけが増える。"""
     path = make_depth_walk(tmp_path)
     data = convert_vox(path, tmp_path / "walk.js", "--view", "anamorphic")
     start = {"x": 0.5, "y": 64, "z": 100.5}
@@ -649,9 +662,9 @@ def test_stats_report_how_long_the_stage_projections_took(tmp_path):
     # 再生中は、フレームが変わるたびに 1 回ずつ写す。目は動かないので、描き直しは 0 回
     assert count == data["frame_count"] and redraws == 0
     assert 2 <= average <= longest and longest >= 2
-    # 目が動いた後は、描き直しの 1 回が増え、その投影の分も回数に入る。回数は、実際に呼んだ回数
-    assert second[3] == 1 and second[2] == count + 1 == out["projections"]
-    assert second[0] >= 2
+    # 目が動いた後は、描き直しの 1 回が増える。再生が終わって統計の時計が止まっているので、その投影は回数・時間に入れない
+    assert second[3] == 1 and second[2] == count and out["projections"] == count + 1
+    assert second[0] == first[0]
     # 並び: 再生の行 → 負荷の行 → 舞台の行
     keys = [part["translate"] for message in out["messages"] for part in json.loads(message)["rawtext"]
             if isinstance(part, dict) and part.get("translate", "").startswith("bvp.stats_")]
@@ -696,3 +709,132 @@ def test_stage_stats_line_is_translated_in_every_language():
     for path in languages:
         line = next(line for line in files[path].splitlines() if line.startswith("bvp.stats_stage="))
         assert [f"%{n}" in line for n in (1, 2, 3, 4)] == [True] * 4, path
+
+
+def test_paused_without_moving_the_eye_is_not_counted_as_a_view_redraw(busy, tmp_path):
+    """目を動かさずに一時停止すると、捨てたフレームの仕上げの描き直しが 1 回走るが、目の動きでの描き直しには数えない。
+    その投影も、再生の統計 (フレーム数・時間) には入れない。止めている間にそれ以上の描き直しはない。"""
+    path, _data, _volumes = busy[20]
+    stats = {"event": "badapple:stats"}
+    steps = [dict(START), {"event": "badapple:setup"}, dict(WATCH), {"event": "badapple:start"}, {"tick": 20}, {"mark": "playing"},
+             PAUSE, {"tick": 30}, {"mark": "paused"}, stats, {"tick": 200}, stats]
+    out = drive(tmp_path / "addon", {"stage": path}, steps, prepare=wrap_projections(0))
+    assert out["errors"] == []
+    # 前提: 止めたフレームの仕上げのために、投影はもう 1 回走る
+    assert out["marks"]["paused"] == out["marks"]["playing"] + 1
+    first, second = stats_messages(out, "bvp.stats_stage")
+    assert first[3] == 0 and second == first
+    assert first[2] == out["marks"]["playing"]
+
+
+def test_benchmark_does_not_redraw_the_stage_while_it_runs(busy, tmp_path):
+    """描きかけのフレームで bench を送ると、再生を止めて捨てたフレームの仕上げの描き直しが、bench の間に始まって
+    ブロックを置いてしまわない (bench の間は、舞台の描き直しを始めない)。"""
+    path, _data, _volumes = busy[20]
+    steps = [dict(START), {"event": "badapple:setup"}, dict(WATCH), {"event": "badapple:start"}, {"tick": 20},
+             {"event": "badapple:bench"}, {"mark": "bench"}, {"tick": 1}, {"mark": "bench_tick"}]
+    out = drive(tmp_path / "addon", {"stage": path}, steps, prepare=wrap_projections(0))
+    assert out["errors"] == []
+    assert out["marks"]["bench_tick"] == out["marks"]["bench"]
+    # 前提: bench はこの 1 tick では終わらない
+    assert not any("bvp.bench_done" in m for m in out["messages"])
+
+
+@pytest.fixture(scope="module")
+def background_addon(tmp_path_factory):
+    """背景の映像 (自動パレット) 付きの舞台のアドオン。人物は 10 フレームで、背景の 5 秒の間に繰り返す。"""
+    import queue
+    import zipfile
+
+    import video_player_gui as gui
+    from gui_i18n import Translator
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg が必要")
+    tmp = tmp_path_factory.mktemp("background")
+    vox = make_depth_walk(tmp)
+    background = tmp / "bg.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10:duration=2.5",
+                    "-f", "lavfi", "-i", "mandelbrot=size=320x180:rate=10", "-f", "lavfi", "-i", "sine=frequency=440:duration=5",
+                    "-filter_complex", "[1:v]trim=duration=2.5,setpts=PTS-STARTPTS[m];[0:v][m]concat=n=2:v=1[v]",
+                    "-map", "[v]", "-map", "2:a", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                    str(background)], check=True)
+
+    class Headless:
+        def __init__(self):
+            self.tr = Translator("ja")
+            self.messages = queue.Queue()
+            self.keyframe_interval_var = _Var(30)
+            self.perceptual_var = _Var(True)
+
+        def _run(self, command):
+            gui.PackBuilderApp._run(self, command)
+
+        def _extract_audio(self, *args):
+            return gui.PackBuilderApp._extract_audio(self, *args)
+
+        def _convert_stage_background(self, *args):
+            return gui.PackBuilderApp._convert_stage_background(self, *args)
+
+    output = tmp / "stage.mcaddon"
+    gui.PackBuilderApp._build_pack(Headless(), [{"file_path": str(vox), "video_id": "walk", "thumb_sec": 0}], output,
+                                   "Stage", "badapple", 64, 48, 10, None, "auto", "none", "cpu", "screen", 16,
+                                   None, True, str(background))
+    with zipfile.ZipFile(output) as z:
+        z.extractall(tmp / "pack")
+    return next(p.parent for p in (tmp / "pack").rglob("main.js"))
+
+
+def drive_pack(pack, work, steps):
+    """drive と同じことを、組み立てたアドオン (展開したフォルダ) に対してする。main.js もそのフォルダのものを使う。"""
+    shutil.copytree(pack, work)
+    shutil.copy(ROOT / "tests" / "js" / "drive_main.mjs", work / "drive_main.mjs")
+    for module, source in (("server", "server.js"), ("server-ui", "server-ui.js")):
+        target = work / "node_modules" / "@minecraft" / module
+        target.mkdir(parents=True)
+        (target / "package.json").write_text(json.dumps({"name": f"@minecraft/{module}", "type": "module", "main": "index.js"}))
+        shutil.copy(ROOT / "tests" / "js" / "minecraft_mock" / source, target / "index.js")
+    (work / "package.json").write_text(json.dumps({"type": "module"}))
+    result = subprocess.run(["node", "drive_main.mjs", json.dumps(steps)], cwd=work, capture_output=True, text=True,
+                            encoding="utf-8", timeout=600)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["errors"] == []
+    return out
+
+
+def final_world(out):
+    return {tuple(b[:3]): b[3] for b in out["allBlocks"]}
+
+
+def count_differences(a, b):
+    return sum(1 for key in set(a) | set(b) if a.get(key) != b.get(key))
+
+
+BACKGROUND_WATCH = [{"x": 0.5, "y": 64, "z": 100.5}, {"event": "badapple:setup"}]
+BACKGROUND_FINISH = [{"until": "bvp.playback_finished"}, {"tick": 40}]
+
+
+@pytest.mark.parametrize("pauses", [[7], [7, 13, 30, 31, 55]])
+def test_pause_and_resume_with_a_background_video_ends_like_an_uninterrupted_play(background_addon, tmp_path, pauses):
+    """背景の映像付きの舞台を、一時停止と再開を挟みながら再生しても、最後のワールドは止めない再生と同じ
+    (人物のフレームを捨てて作り直す道筋が、背景のデコードと食い違わない)。"""
+    base = drive_pack(background_addon, tmp_path / "base", BACKGROUND_WATCH + [{"event": "badapple:start"}] + BACKGROUND_FINISH)
+    steps = BACKGROUND_WATCH + [{"event": "badapple:start"}]
+    now = 0
+    for k in pauses:
+        steps += [{"tick": k - now}, PAUSE, {"tick": 4}, PAUSE]
+        now = k
+    out = drive_pack(background_addon, tmp_path / "paused", steps + BACKGROUND_FINISH)
+    assert len(final_world(base)) > 1000
+    assert count_differences(final_world(base), final_world(out)) == 0
+
+
+def test_seek_back_while_paused_with_a_background_video_ends_like_an_uninterrupted_play(background_addon, tmp_path):
+    """背景の映像付きの舞台で、一時停止中に後ろへシークしてから再開しても、最後のワールドは止めない再生と同じ。"""
+    base = drive_pack(background_addon, tmp_path / "base", BACKGROUND_WATCH + [{"event": "badapple:start"}] + BACKGROUND_FINISH)
+    steps = BACKGROUND_WATCH + [{"event": "badapple:start"}, {"tick": 33}, PAUSE,
+                                {"ui": [{"selection": 5}, {"formValues": [1]}]}, {"until": "bvp.seek_done"}, {"tick": 3}, PAUSE]
+    out = drive_pack(background_addon, tmp_path / "seek", steps + BACKGROUND_FINISH)
+    assert any("bvp.seek_done" in m for m in out["messages"])
+    assert count_differences(final_world(base), final_world(out)) == 0
