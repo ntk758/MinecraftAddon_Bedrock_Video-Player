@@ -135,8 +135,8 @@ Java 版で「マップアートをプレイヤーの視点に合わせて描き
 - 2 週間後に、変換ツールの DL 数・GitHub の閲覧数・CurseForge のコメントを比べる (`scripts/traffic_report.py`)。
 - ✅ ブラウザ版を 10 言語に (GUI と同じ `locales/*.json`)。
 - ✅ ブラウザ版の簡易的な利用数 (`web/usage.js`、GoatCounter): ページを開いた回数 (`/`)、`build-start` / `build-done` / `build-error`、
-  `build-kind-<screen|3d|vox|trompe>`、`build-lang-<言語>`。使い始めるには、GoatCounter でサイトを作り、そのコード
-  (`https://<コード>.goatcounter.com` の `<コード>`) をリポジトリの変数 `GOATCOUNTER_CODE` に入れて、Pages のワークフローを実行し直す。
+  `build-kind-<screen|3d|vox|trompe>`、`build-lang-<言語>`。集計は https://nakat.goatcounter.com (Pages のワークフローの既定。
+  リポジトリの変数 `GOATCOUNTER_CODE` で別のサイトに変えられる)。
 - 目安: 作り終えた回数 (`build-done`) が CurseForge のお試し版の DL 数の 1% を超えるか。言語ごとの数で、どの言語の説明を厚くするか決める。
 
 ## 🔴 優先度: 高 (Phase 10: 画質を保ったまま軽くする)
