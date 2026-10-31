@@ -183,7 +183,7 @@ _NDIMAGE = False  # scipy.ndimage (False: まだ調べていない、None: 入�
 
 
 def _scipy_ndimage():
-    """scipy.ndimage (入っていなければ None)。scipy は必須にしていない (ブラウザ版 (pyodide) と EXE には入っていない)。"""
+    """scipy.ndimage (入っていなければ None)。scipy は必須にしていない (ブラウザ版 (pyodide) には入っていない。EXE には、ビルドする環境に scipy が無い限り入らない)。"""
     global _NDIMAGE
     if _NDIMAGE is False:
         try:
