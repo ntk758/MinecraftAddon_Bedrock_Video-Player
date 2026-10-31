@@ -20,9 +20,12 @@ from mvcodec.motion import (  # noqa: E402
     pack_vector_3d,
     unpack_vector_3d,
 )
+import mvcodec.volume as volume_module  # noqa: E402
 from mvcodec.volume import (  # noqa: E402
     AIR_LEVEL,
     distance_to_edge,
+    enclosed_air,
+    fill_enclosed_air,
     inflate_volume,
     load_vox_frames,
     relief_levels,
@@ -123,6 +126,80 @@ def test_codec_js_decodes_3d_motion(depth_walk):
     assert decoded["frames"] == [v.reshape(-1).tolist() for v, _ in iter_decoded_frames(data)]
     assert decoded["motionFrames"], "3D の動きベクトルを使ったフレームがありません"
     assert decoded["seekMismatches"] == []
+    assert decoded["dictionaryMismatches"] == []
+
+
+def make_blink_walk(path, size, frames=14, seed=3):
+    """奥から手前へ 1 マスずつ歩く物体の横で、飾りが 3 つの模様を順に繰り返し、一番奥の壁が所々塗り替わる .vox。
+    歩きは 3D の動きベクトルに、繰り返す模様はタイル辞書の参照に、壁の塗り替えは複数の行にまたがるランになる。"""
+    palette = np.zeros((256, 4), np.uint8)
+    for i, rgb in enumerate([(230, 40, 40), (240, 240, 240), (30, 60, 200), (40, 200, 60), (230, 200, 30)]):
+        palette[i] = (*rgb, 255)
+    rng = np.random.default_rng(seed)
+    sx, sy, sz = size
+    patterns = [[(x, y, z, 1 + int(rng.integers(0, 4)))
+                 for x in range(sx - 5, sx - 1) for y in range(3) for z in range(1, sz - 1) if rng.random() < 0.6]
+                for _ in range(3)]
+    wall = rng.integers(1, 5, size=sx * sz)  # 盤面の行優先の順 (vox の z は盤面の行では逆向き)
+    models = []
+    for t in range(frames):
+        for _ in range(3):
+            start = int(rng.integers(0, wall.size))
+            wall[start:start + int(rng.integers(10, 130))] = rng.integers(1, 5)
+        voxels = {(i % sx, sy - 1, sz - 1 - i // sx): int(color) for i, color in enumerate(wall)}
+        for x in range(2, min(sx - 6, 9)):
+            for y in range(6):
+                for z in range(min(sz - 1, 8)):
+                    if y + t < sy:
+                        voxels[(x, y + t, z)] = 1 + (x + 2 * z + y) % 3
+        for x, y, z, color in patterns[t % 3]:
+            voxels[(x, y, z)] = color
+        models.append((size, np.array([[*cell, color] for cell, color in voxels.items()], np.uint8)))
+    path.write_bytes(write_vox(models, palette))
+
+
+def decode_with_node(path):
+    result = subprocess.run(["node", str(ROOT / "tests" / "js" / "decode_frames.mjs"), str(path)],
+                            capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+# 立体は、そのフレームで書いたタイルだけを辞書の更新で比べる (codec.js の TileDictionary の dirty)。
+# 印の付け漏れが 1 つでもあると辞書がずれて、以後のフレームがすべて壊れるので、辞書の中身そのものも
+# 毎回すべてのタイルを比べた正解 (tests/js/decode_frames.mjs の ReferenceTiles) と照らす。
+# 幅 13・行数 242 は、タイルの大きさ (4, 8) でも動きのブリック (8) でも割り切れず、端の部分的なタイル・ブリックに当たる。
+@pytest.mark.skipif(not HAS_NODE, reason="node が必要")
+@pytest.mark.parametrize("tile", ["4", "8"])
+@pytest.mark.parametrize("size", [(13, 22, 11), (40, 30, 20)])
+def test_codec_js_tile_dictionary_follows_3d_motion(tmp_path, tile, size):
+    path = tmp_path / "blink.vox"
+    make_blink_walk(path, size)
+    out = tmp_path / "blink.js"
+    data = convert_vox(path, out, "--tile-size", tile, "--keyframe-interval", "6")
+    assert data["tile_size"] == int(tile) and data["layout"] == "volume"
+    decoded = decode_with_node(out)
+    assert decoded["frames"] == [v.reshape(-1).tolist() for v, _ in iter_decoded_frames(data)]
+    assert decoded["motionFrames"], "3D の動きベクトルを使ったフレームがありません"
+    assert decoded["tileFrames"], "タイル辞書の参照を使ったフレームがありません"
+    assert len(decoded["keyframes"]) > 1
+    assert decoded["seekMismatches"] == []
+    assert decoded["dictionaryMismatches"] == []
+    assert decoded["seekDictionaryMismatches"] == []
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node が必要")
+@pytest.mark.parametrize("tile", ["4", "8"])
+def test_codec_js_tile_dictionary_follows_depth_walk(tmp_path, tile):
+    path = make_depth_walk(tmp_path)
+    out = tmp_path / "walk.js"
+    data = convert_vox(path, out, "--tile-size", tile)
+    assert data["tile_size"] == int(tile)
+    decoded = decode_with_node(out)
+    assert decoded["frames"] == [v.reshape(-1).tolist() for v, _ in iter_decoded_frames(data)]
+    assert decoded["motionFrames"], "3D の動きベクトルを使ったフレームがありません"
+    assert decoded["seekMismatches"] == []
+    assert decoded["dictionaryMismatches"] == []
+    assert decoded["seekDictionaryMismatches"] == []
 
 
 # --- relief のヒステリシス / inflate ---
@@ -337,3 +414,182 @@ def test_mask_video_needs_extrude_or_inflate(tmp_path):
     with pytest.raises(SystemExit):
         convert.main(["--frames-dir", str(tmp_path), "--output", str(tmp_path / "x.js"), "--mode", "relief",
                       "--mask-video", "m.mp4"])
+
+
+# --- 閉じた空洞の埋め (だまし絵の変換) ---
+
+def _enclosed_air_reference(is_air):
+    """縁から 6 方向に空気をたどる幅優先探索 (遅いが単純な正解)。閉じた空洞 (縁とつながらない空気) の真偽配列。"""
+    from collections import deque
+
+    outside = np.zeros_like(is_air)
+    queue = deque()
+    for d, row, x in np.argwhere(is_air):
+        if d in (0, is_air.shape[0] - 1) or row in (0, is_air.shape[1] - 1) or x in (0, is_air.shape[2] - 1):
+            outside[d, row, x] = True
+            queue.append((d, row, x))
+    while queue:
+        d, row, x = queue.popleft()
+        for step in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)):
+            n = (d + step[0], row + step[1], x + step[2])
+            if all(0 <= v < s for v, s in zip(n, is_air.shape)) and is_air[n] and not outside[n]:
+                outside[n] = True
+                queue.append(n)
+    return is_air & ~outside
+
+
+def _hollow_cube(hole=None, wall=5, left=3):
+    """9×9×9 の空気の中の、厚さ 1 の殻の立方体 (1〜7、内側の 2〜6 が空洞)。左の壁 (x = 1) だけ別の番号。hole のマスの殻は抜く。"""
+    volume = np.full((9, 9, 9), AIR_LEVEL, np.int16)
+    volume[1:8, 1:8, 1:8] = wall
+    volume[1:8, 1:8, 1] = left
+    volume[2:7, 2:7, 2:7] = AIR_LEVEL
+    if hole is not None:
+        volume[hole] = AIR_LEVEL
+    return volume
+
+
+@pytest.fixture(params=["numpy", "scipy", "auto"])
+def backend(request, monkeypatch):
+    """閉じた空洞を求める方法: numpy だけ (scipy が無いときと同じ)、scipy.ndimage だけ (あれば)、ふだんの切り替え (あれば)。"""
+    if request.param == "numpy":
+        monkeypatch.setattr(volume_module, "_NDIMAGE", None)
+    else:
+        monkeypatch.setattr(volume_module, "_NDIMAGE", pytest.importorskip("scipy.ndimage"))
+        if request.param == "scipy":
+            monkeypatch.setattr(volume_module, "NUMPY_MAX_SWEEPS", 0)  # numpy を試さずに scipy に任せる
+    return request.param
+
+
+def test_fill_enclosed_air_fills_a_closed_cavity_from_the_left_neighbour(backend):
+    volume = _hollow_cube()
+    original = volume.copy()
+    filled = fill_enclosed_air(volume, AIR_LEVEL)
+    assert np.array_equal(volume, original), "入力は書き換えない"
+    assert filled.dtype == volume.dtype and filled.shape == volume.shape
+    expected = original.copy()
+    expected[2:7, 2:7, 2:7] = 3  # 空洞のランの左隣 (x = 1) の壁の番号
+    assert np.array_equal(filled, expected)
+
+
+@pytest.mark.parametrize("hole", [(4, 4, 1), (4, 4, 7), (1, 4, 4), (7, 4, 4), (4, 1, 4), (4, 7, 4)])
+def test_fill_enclosed_air_keeps_a_cavity_that_opens_to_the_outside(backend, hole):
+    """殻の 1 マスに穴があれば (どの壁でも)、中は外とつながっているので埋めない。"""
+    volume = _hollow_cube(hole=hole)
+    assert np.array_equal(fill_enclosed_air(volume, AIR_LEVEL), volume)
+
+
+def test_fill_enclosed_air_takes_the_value_left_of_each_run(backend):
+    """同じ x の列で、空洞のランごとに左隣の実体の値で埋める (柱をはさむ 2 つの空洞は別の値)。"""
+    volume = np.full((5, 5, 9), AIR_LEVEL, np.int16)
+    volume[1:4, 1:4, 1:8] = 6
+    volume[1:4, 1:4, 1] = 7
+    volume[1:4, 1:4, 4] = 9
+    volume[2, 2, [2, 3, 5, 6]] = AIR_LEVEL
+    filled = fill_enclosed_air(volume, AIR_LEVEL)
+    assert filled[2, 2].tolist() == [AIR_LEVEL, 7, 7, 7, 9, 9, 9, 6, AIR_LEVEL]
+    changed = np.argwhere(filled != volume)
+    assert len(changed) == 4 and set(map(tuple, changed)) == {(2, 2, x) for x in (2, 3, 5, 6)}
+
+
+def _tunnel_volume(closed):
+    """11×11×11 の詰まった塊 (1〜9) に、曲がりくねった細い通路と奥の部屋を掘る。入口 (左の面) を埋めると閉じた空洞になる。"""
+    volume = np.full((11, 11, 11), AIR_LEVEL, np.int16)
+    volume[1:10, 1:10, 1:10] = 5
+    corners = [(5, 2, 1), (5, 2, 8), (5, 4, 8), (5, 4, 2), (5, 6, 2), (5, 6, 8), (5, 8, 8), (5, 8, 3), (3, 8, 3), (3, 4, 3),
+               (3, 4, 6), (7, 4, 6), (7, 6, 6)]
+    for (d0, r0, x0), (d1, r1, x1) in zip(corners, corners[1:]):
+        volume[min(d0, d1):max(d0, d1) + 1, min(r0, r1):max(r0, r1) + 1, min(x0, x1):max(x0, x1) + 1] = AIR_LEVEL
+    if closed:
+        volume[5, 2, 1] = 5
+    return volume
+
+
+def test_fill_enclosed_air_follows_a_winding_tunnel(backend):
+    """入口のある長い曲がりくねった通路は外とつながっている (埋めない)。入口をふさぐと、通路ぜんぶが空洞になる。"""
+    opened = _tunnel_volume(closed=False)
+    assert np.array_equal(fill_enclosed_air(opened, AIR_LEVEL), opened)
+    closed = _tunnel_volume(closed=True)
+    filled = fill_enclosed_air(closed, AIR_LEVEL)
+    tunnel = closed[1:10, 1:10, 1:10] == AIR_LEVEL
+    assert tunnel.sum() > 40
+    assert (filled[1:10, 1:10, 1:10] != AIR_LEVEL).all() and (filled[0] == AIR_LEVEL).all()
+
+
+@pytest.mark.parametrize("shape", [(1, 1, 1), (3, 3, 3), (1, 5, 4), (6, 1, 2)])
+def test_fill_enclosed_air_leaves_volumes_without_cavities_alone(backend, shape):
+    air = np.full(shape, AIR_LEVEL, np.int16)
+    assert np.array_equal(fill_enclosed_air(air, AIR_LEVEL), air)
+    solid = np.full(shape, 4, np.int16)
+    assert np.array_equal(fill_enclosed_air(solid, AIR_LEVEL), solid)
+    pocket = np.full((5, 5, 5), 4, np.int16)
+    pocket[2, 2, 2] = AIR_LEVEL
+    assert fill_enclosed_air(pocket, AIR_LEVEL)[2, 2, 2] == 4
+
+
+def _random_air_masks(seed, count=120):
+    rng = np.random.default_rng(seed)
+    for trial in range(count):
+        shape = tuple(int(v) for v in rng.integers(1, 11, size=3))
+        density = rng.uniform(0.2, 0.8)
+        air = rng.random(shape) < density
+        if trial % 3 == 0:
+            # 実体を中ほどの小さな範囲にだけ置く (まわりは全部空気)
+            air = np.ones(shape, bool)
+            low = [int(rng.integers(0, s)) for s in shape]
+            high = [int(rng.integers(l, s)) + 1 for l, s in zip(low, shape)]
+            inner = tuple(slice(l, h) for l, h in zip(low, high))
+            air[inner] = rng.random(air[inner].shape) < density
+        yield air
+
+
+def test_enclosed_air_matches_the_flood_fill_reference(backend):
+    for air in _random_air_masks(11):
+        reference = _enclosed_air_reference(air)
+        assert np.array_equal(enclosed_air(air), reference)
+        assert np.array_equal(volume_module._enclosed_air_numpy(air), reference)
+
+
+def test_enclosed_air_leaves_the_long_numpy_pass_to_scipy(monkeypatch):
+    """入り組んだ立体 (ばらばらの点) は numpy の処理が長くかかるので、上限の回数で止めて、scipy があればそれに任せる。
+    scipy が無ければ numpy で最後まで続ける。どちらでも結果は同じ。"""
+    rng = np.random.default_rng(3)
+    noise = rng.random((24, 24, 24)) < 0.35
+    assert volume_module._enclosed_air_numpy(noise, volume_module.NUMPY_MAX_SWEEPS) is None
+    assert volume_module._enclosed_air_numpy(_tunnel_volume(True) == AIR_LEVEL, volume_module.NUMPY_MAX_SWEEPS) is not None
+    reference = _enclosed_air_reference(noise)
+    monkeypatch.setattr(volume_module, "_NDIMAGE", None)
+    assert np.array_equal(enclosed_air(noise), reference)
+    monkeypatch.setattr(volume_module, "_NDIMAGE", pytest.importorskip("scipy.ndimage"))
+    assert np.array_equal(enclosed_air(noise), reference)
+
+
+def test_enclosed_air_numpy_matches_scipy():
+    """scipy が無い環境 (ブラウザ版・EXE) で使う numpy の処理が、scipy.ndimage と同じ結果を返す。"""
+    ndimage = pytest.importorskip("scipy.ndimage")
+    rng = np.random.default_rng(5)
+    masks = list(_random_air_masks(23)) + [rng.random((24, 30, 20)) < p for p in (0.3, 0.6, 0.9)]
+    masks += [_tunnel_volume(closed) == AIR_LEVEL for closed in (False, True)]
+    for air in masks:
+        assert np.array_equal(volume_module._enclosed_air_numpy(air), volume_module._enclosed_air_scipy(air, ndimage))
+
+
+def _write_hollow_cube_vox(path):
+    palette = np.zeros((256, 4), np.uint8)
+    palette[0] = (230, 40, 40, 255)
+    shell = [[x, y, z, 1] for x in range(1, 8) for y in range(1, 8) for z in range(1, 8) if {x, y, z} & {1, 7}]
+    path.write_bytes(write_vox([((9, 9, 9), np.array(shell, np.uint8))], palette))
+
+
+def test_vox_conversion_fills_closed_cavities_only_for_anamorphic_view(tmp_path):
+    """だまし絵 (--view anamorphic) の .vox の変換だけが、閉じた空洞を埋める。ブロックで置く方は殻のまま。"""
+    _write_hollow_cube_vox(tmp_path / "shell.vox")
+    solid = {}
+    for view in ("blocks", "anamorphic"):
+        data = convert_vox(tmp_path / "shell.vox", tmp_path / f"{view}.js", "--view", view)
+        *_, (volume, _rgb) = iter_decoded_frames(data)
+        solid[view] = int((volume != AIR_LEVEL).sum())
+    assert solid["blocks"] == 7 ** 3 - 5 ** 3
+    assert solid["anamorphic"] == 7 ** 3
+    # 埋めたほうが符号化のランが長くなるので、データは大きくならない
+    assert (tmp_path / "anamorphic.js").stat().st_size <= (tmp_path / "blocks.js").stat().st_size

@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v6.29.2](https://img.shields.io/badge/Release-v6.29.2-blue.svg)](#-releases)
+[![Release v6.30.0](https://img.shields.io/badge/Release-v6.30.0-blue.svg)](#-releases)
 [![CI](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml/badge.svg)](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
@@ -34,7 +34,7 @@
   <b>View-dependent trompe-l'oeil</b> (real in-game recording): the dancer is not built from blocks but painted on the floor and walls exactly as the player's eye sees it, and repainted as they walk</sub>
 </p>
 
-**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.29.2.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.29.2.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.29.2-windows-x64.zip` (Python 不要) を使ってください。
+**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.30.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.30.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.30.0-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 
 [日本語](#日本語-japanese) | [English](#english) | [変更履歴 / Changelog](CHANGELOG.md)
@@ -42,7 +42,7 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
 ## 🚀 クイックスタート / Quick start
 
 **A. サンプルを試す (変換は不要・約 3 分) / Try the sample (no conversion)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.29.2.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.29.2.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.30.0.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.30.0.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
    Download a sample `.mcaddon` from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) and double-click it to import it into Minecraft Bedrock.
 2. 新しいワールドを作り、**チートを有効**、**ビヘイビアーパックとリソースパックの両方** を有効にします (スーパーフラットがおすすめ)。
    Create a world with **cheats on** and **both** the Behavior Pack and the Resource Pack enabled (a superflat world works best).
@@ -50,8 +50,8 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
    Run `/scriptevent badapple:setup` then `/scriptevent badapple:start`. Use a compass to open the remote control.
 
 **B. 自分の動画を変換する (Windows) / Convert your own video (Windows)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.29.2-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
-   Unzip `BlockVideoPlayer-v6.29.2-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.30.0-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
+   Unzip `BlockVideoPlayer-v6.30.0-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
 2. 初めて起動すると **はじめてガイド** が開きます (左上のボタンでいつでも開けます): 環境 (FFmpeg・GPU・メモリ・AI の切り抜き・保存先の空き・Minecraft) を自動で調べ、動画を選ぶと勧める設定とアドオンの大きさの見込みを出し、作り終わると「保存先を開く」「Minecraft に読み込む」と再生のコマンドを案内します。ガイドを使わないときは「動画を追加」→「動画の縦横比に合わせる」→「.mcaddon を作成」。画面の **再生負荷の目安** が「重い」なら幅・高さ・fps を下げます。
    Add a video → *Match video aspect ratio* → *Create .mcaddon*. If the **playback load estimate** says *heavy*, lower the size or fps.
 3. できた `.mcaddon` を A の 2〜3 と同じように使います。うまくいかないときは [既知の問題](docs/KNOWN_ISSUES.md) を見てください。
@@ -83,10 +83,10 @@ Python で動かす方法・GPU の設定は [インストールと使い方](#-
 リリースページでは各ファイルの横に SHA-256 が表示されます (`SHA256SUMS.txt` が付いている版はそのファイルにも)。手元のファイルの値と一致すれば、壊れても書き換えられてもいません。
 Each file on the release page shows its SHA-256; it must match the value you compute:
 ```powershell
-Get-FileHash .\BlockVideoPlayer-v6.29.2-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\BlockVideoPlayer-v6.30.0-windows-x64.zip -Algorithm SHA256
 ```
 ```bash
-sha256sum BlockVideoPlayer-v6.29.2-windows-x64.zip
+sha256sum BlockVideoPlayer-v6.30.0-windows-x64.zip
 ```
 
 ## 日本語 (Japanese)
@@ -269,7 +269,7 @@ GUI の **表示モード** で立体の作り方を選び、**奥行き (ブロ
 - 舞台は人物より大きくなります (例: 高さ 56・幅 32・奥行き 20 の人物で、幅 118・奥行き 51・壁の高さ 84 ブロック)。人物の高さは 64 くらいまでがおすすめです (実機で高さ 56 は 10 fps、96 は重すぎた)。
 - `scripts/make_demo_dancer.py` で、試しに使える踊る人物の `.vox` を作れます。
 - **MMD のモデルを踊らせる**: 動画リストに MMD のモデル (`.pmx`) を追加すると、踊り (`.vmd`) を選ぶ画面が出ます。作るときにモデルと踊りから立体のアニメを作り、ほかの立体と同じように再生します (だまし絵にもできます)。人物の高さは GUI の「高さ」(64 ブロックまで。だまし絵では 40 ブロックまで。髪やスカートの薄い面が多く、手作りの立体より重いため)。**「MMD を高解像度で (エクストリーム)」** にチェックを入れると、128 ブロックまで (だまし絵は 80 ブロックまで) にでき、顔や服の細かい所まで出ます。ただしとても重く、だまし絵で高さ 64 は 1 フレーム約 130 ms (7 fps くらいまで)、80 は実機で約 220 ms (4 fps くらいまで。サーバーの TPS も 15 くらいに落ちます) です (作るときに処理ログに見込みが出ます)。踊りがステージを歩き回っても、その場で踊ります。IK と付与は計算しますが、物理 (揺れる髪・スカート) と表情 (モーフ) は使いません。モデルと踊りは、作者の利用規約で許された範囲で使ってください (コマンドラインは `python scripts/mmd_to_vox.py model.pmx dance.vmd out.vox --height 56`。移動を残すなら `--keep-travel`)。
-- **動画の人物を切り抜いてだまし絵に**: 表示モード「人物を切り抜いて立体に (AI)」を選ぶと、AI (torchvision の DeepLabV3 MobileNetV3-Large、BSD-3、初回に約 42 MB をダウンロード) が各フレームの人物を切り抜き、その形を丸くふくらませた立体にします。「だまし絵」にチェックを入れると、人物を消した元の映像を後ろの壁に流し (音声もその映像のもの)、その前に人物が立ちます。だまし絵の立体は長い辺 80 ブロックまでに縮めます (大きいと舞台と背景の映像が広がって重くなるため。128 × 128 で試したら実機で 3 fps に落ちました)。人物が大きく映った実写の映像が向いています (アニメや 3DCG では形が崩れやすい)。**アニメ・イラストの映像は表示モード「アニメの人物を切り抜いて立体に (AI)」** を使ってください: アニメ向けのモデル (skytnt/anime-seg、Apache-2.0、初回に約 176 MB をダウンロード、GPU があれば使う) が髪や手の先まで切り抜きます。それでも人物を見つけないフレーム (3DCG の強い照明・全身が小さく映った場面) は、GPU があれば「目立つ物」を切り抜くモデル (BiRefNet_lite、MIT、初回に約 115 MB) で切り抜き、写真向けのモデルが人物らしいと見る塊だけを残します (字幕や光の筋は落とします)。GPU が無ければ写真向けのモデルを使います。切り抜きは元の縦横比のまま長い辺 640 で行い、人物を消した映像もその大きさで後ろの壁に流します。切り抜きは別のプロセスで行い、始める前に空きメモリ (RAM・GPU) を調べて重さを選びます (3DCG 用の補助モデルは RAM を 5〜10 GB 使うので、空きが 12 GB 以上のときだけ)。メモリが足りずに止まったり落ちたりしたら、GPU の補助モデルなし → CPU → 写真向けのモデルの順に軽くしてやり直します。処理中に空きの RAM が 400 MB を切ったら止めて、PC 全体が固まらないようにします。ブラウザ版にはありません (PyTorch が使えないため。コマンドラインは `scripts/make_person_videos.py` と `convert.py --mask-video`)。
+- **動画の人物を切り抜いてだまし絵に**: 表示モード「人物を切り抜いて立体に (AI)」を選ぶと、AI (torchvision の DeepLabV3 MobileNetV3-Large、BSD-3、初回に約 42 MB をダウンロード) が各フレームの人物を切り抜き、その形を丸くふくらませた立体にします。「だまし絵」にチェックを入れると、人物を消した元の映像を後ろの壁に流し (音声もその映像のもの)、その前に人物が立ちます。だまし絵の立体は長い辺 80 ブロックまでに縮めます (大きいと舞台と背景の映像が広がって重くなるため。128 × 128 で試したら実機で 3 fps に落ちました)。人物が大きく映った実写の映像が向いています (アニメや 3DCG では形が崩れやすい)。**アニメ・イラストの映像は表示モード「アニメの人物を切り抜いて立体に (AI)」** を使ってください: アニメ向けのモデル (skytnt/anime-seg、Apache-2.0、初回に約 176 MB をダウンロード、GPU があれば使う) が髪や手の先まで切り抜きます。それでも人物を見つけないフレーム (3DCG の強い照明・全身が小さく映った場面) は、GPU があれば「目立つ物」を切り抜くモデル (BiRefNet_lite、MIT、初回に約 115 MB) で切り抜き、写真向けのモデルが人物らしいと見る塊だけを残します (字幕や光の筋は落とします)。GPU が無ければ写真向けのモデルを使います。切り抜きは元の縦横比のまま長い辺 640 で行い、人物を消した映像もその大きさで後ろの壁に流します。切り抜きは別のプロセスで行い、始める前に空きメモリ (RAM・GPU) を調べて重さを選びます (3DCG 用の補助モデル (BiRefNet) を使う一番重い段階 (full) には、空きの RAM 12 GiB と空きの VRAM 12 GiB が要ります。測った 1 機種 (VRAM 16 GB) では最初の推論で VRAM を約 11 GB 使いました。足りない GPU では full を選ばず、補助モデルなしの GPU の段階になります)。メモリが足りずに止まったり落ちたりしたら、GPU の補助モデルなし → CPU → 写真向けのモデルの順に軽くしてやり直します。補助モデルは、動かしている途中でも、メモリ不足のとき・遅いとき (直近 5 回の推論の中央値が 600 ms を超えたとき。GPU のメモリがあふれると、エラーにならずに遅くなるため) ・実行中に失敗したときは自動で外し、写真向けのモデルだけで続けます (そのフレームはやり直します)。処理中に空きの RAM が 400 MB を切ったら止めて、PC 全体が固まらないようにします。アニメ向けのモデルが人物を見つけないフレームは、前後 6 フレームを先読みして、同じ場面の近いフレームで埋めたり、予備のモデルの結果を近くの人物の大きさと位置に合わせたりして安定させます (人物の範囲が 1 フレームだけ消える・別物になるちらつきが減ります。代わりに切り抜きの出力と進み具合が 6 フレーム遅れます)。予備の結果が大きすぎる・近くの人物と離れているときは採らず、そのフレームを空にします。アニメ向けのモデルを取得できないとき (ダウンロードの失敗など) は、写真向けのモデルで続けます。写真向けのモデルも取得できないときは、その旨を知らせて止めます。切り抜きの経過と結果のまとめは処理ログに数行出し、くわしい記録 (子プロセスの出力すべてと統計) は `%LOCALAPPDATA%/BlockVideoPlayer/logs/` に新しい 10 個だけ残します (入力の動画の場所が書かれるので、人に送るときは確かめてください。読み方は [docs/TESTING.md](docs/TESTING.md) の 2.2)。空きメモリの閾値は 1 機種の実測なので、環境変数 `BVP_PROFILE_NEEDS_GB` (例 `full=12:12,gpu=2:1`。段階ごとの空き RAM:VRAM を GiB で) と `BVP_MIN_FREE_RAM_MB` (処理中に止める空き RAM を MB で。0 で見張らない) で変えられます。動画ごとに写真向けかアニメ向けかを自動で選ぶことはしません。表示モードで選んでください (理由は [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md))。ブラウザ版にはありません (PyTorch が使えないため。コマンドラインは `scripts/make_person_videos.py` と `convert.py --mask-video`)。
 - **後ろの壁に背景の映像を流す**: GUI (ブラウザ版も) の「だまし絵の背景の映像」に動画を選ぶと、その映像を後ろの壁いっぱいに (はみ出した所は切って) 流し、その前で人物が踊ります。音声は背景の映像のものを鳴らし、背景の映像の方が長ければ人物のアニメを繰り返します。背景の映像はアドオンの中で人物の動画 ID + `_bg` の動画になり、一覧には出ません (コマンドラインでは、後ろの壁の大きさの平面の動画を `--fit cover` で作り、人物の変換に `--stage-background <その動画 ID>` を付けます)。
 
 コマンドラインでの例:
@@ -563,6 +563,7 @@ This project is licensed under the [MIT License](LICENSE).
 すべての版の変更点は [CHANGELOG.md](CHANGELOG.md) にあります / Full history: [CHANGELOG.md](CHANGELOG.md).
 
 
+- **v6.30.0**: だまし絵の投影・描き直し・展開を高速化 (出力のブロックは同じ。数字はモックの実測で、実機の FPS・TPS は未測定)、描きかけのフレームで一時停止したときの不具合を修正、AI の切り抜きの先読みの補修とメモリ不足・失敗の扱いを改善、統計とログを追加。
 - **v6.29.2**: setup の直後に再生すると、読み込まれていないチャンクに置けず最初の画面に穴が開く問題を修正 (読み込まれるまで最大 10 秒待つ)。
 - **v6.29.1**: iPhone の Safari・Chrome のブラウザ版で音声をデコードできなかった問題を修正 (動画から AAC の音声トラックだけを取り出してデコードする)。
 - **v6.29.0**: `setup face` (見ている方向に向けて置く)・`setup wall` (平面を壁のように立てる)。音声の入っていない動画を再生するとチャットで知らせる。音声をメモリの少ない端末でも読み込ませる。

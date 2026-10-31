@@ -24,9 +24,9 @@ from test_codec_v4 import HEIGHT, WIDTH, make_scene_frames, run_convert  # noqa:
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node が必要")
 
 
-def drive(work, videos, steps, listing_extra=None):
+def drive(work, videos, steps, prepare=None, listing_extra=None):
     """videos ({動画ID: frames_*.js}) を収録したアドオンを、steps のとおりに操作した結果を返す。
-
+    prepare(work) があれば、アドオン一式を work に置いた後、動かす前に呼ぶ (main.js・codec.js を書き換えて計測を足すときなど)。
     listing_extra: {動画ID: {項目: 値}} を VIDEO_LIST のその動画に足す (audio_chunks など)。
     """
     work.mkdir(parents=True)
@@ -50,6 +50,8 @@ def drive(work, videos, steps, listing_extra=None):
         (target / "package.json").write_text(json.dumps({"name": f"@minecraft/{module}", "type": "module", "main": "index.js"}))
         shutil.copy(ROOT / "tests" / "js" / "minecraft_mock" / source, target / "index.js")
     (work / "package.json").write_text(json.dumps({"type": "module"}))
+    if prepare:
+        prepare(work)
     result = subprocess.run(["node", "drive_main.mjs", json.dumps(steps)], cwd=work, capture_output=True, text=True,
                             encoding="utf-8", timeout=600)
     assert result.returncode == 0, result.stderr

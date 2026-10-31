@@ -48,10 +48,12 @@ from mvcodec.planes import (
     volume_change_ratio,
     volume_to_planes,
 )
+from mvcodec.resources import use_utf8_for_pipes
 from mvcodec.volume import (
     AIR_LEVEL,
     RELIEF_HYSTERESIS,
     VolumeLifter,
+    fill_enclosed_air,
     load_vox_frames_with_palettes,
     luminance01,
     nearest_levels,
@@ -629,14 +631,6 @@ def level_block_specs(palette):
     return specs
 
 
-def _use_utf8_for_pipes():
-    """GUI などからパイプ経由で起動された時、ログの日本語を UTF-8 で書き出す (cp932 で化けるのを防ぐ)。"""
-    for stream in (sys.stdout, sys.stderr):
-        if stream is not None and hasattr(stream, "reconfigure") and not stream.isatty():
-            # 行ごとに書き出す (GUI のログに進み具合がすぐ出るように。既定ではパイプ先へはまとめて書かれる)
-            stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-
-
 # 進み具合を知らせる関数 (done, total)。ブラウザ版 (web/worker.js) が進み具合のバーを動かすために設定する
 PROGRESS_HOOK = None
 
@@ -802,8 +796,11 @@ def convert_vox(args):
     encoder = make_encoder(args, width, depth * height, gop_boundaries, AIR_LEVEL, depth)
     gop_ids = iter_gop_ids(gop_boundaries)
     progress = Progress(total)
+    # だまし絵は外から見える面だけを写すので、閉じた空洞 (MMD の殻の中など) は埋めてよい (投影が調べる面が減り、速くなる)
+    anamorphic = getattr(args, "view", "blocks") == "anamorphic"
     for i, frame in enumerate(frames):
-        encoder.add(i, next(gop_ids), vox_to_volume(frame, (depth, height, width), color_table(vox_palettes[i])))
+        volume = vox_to_volume(frame, (depth, height, width), color_table(vox_palettes[i]))
+        encoder.add(i, next(gop_ids), fill_enclosed_air(volume, AIR_LEVEL) if anamorphic else volume)
         progress.update(i + 1)
     encoder = encoder.best()
     chunks, index = encoder.finish()
@@ -815,7 +812,7 @@ def convert_vox(args):
 
 def main(argv=None):
     global _tr
-    _use_utf8_for_pipes()
+    use_utf8_for_pipes()
     args = parse_args(argv)
     _tr = Translator(args.lang or detect_system_language())
     if args.mode == "vox":

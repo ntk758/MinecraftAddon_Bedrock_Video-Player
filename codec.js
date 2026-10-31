@@ -343,6 +343,10 @@ export function createStageWork(geom, wallLevel, floorLevel, sideLevel = wallLev
     surface: new Int32Array(voxels),
     faces: new Uint8Array(voxels),
     surfaceCount: 0,
+    // collectSurface が空気だけの区間を読み飛ばすための、figure を 4 ブロックずつ Float64 として見る配列と、空気 4 つ分の値
+    chunkView: null,
+    chunkAir: 0,
+    airChunk: 0,
     keys: new Int32Array(voxels),
     stamp: new Int32Array(geom.cells),
     pass: 0,
@@ -360,30 +364,57 @@ export function createStageWork(geom, wallLevel, floorLevel, sideLevel = wallLev
   };
 }
 
-/** 立体の外から見える面を持つブロックの一覧を作る (work.surface・faces・surfaceCount)。 */
+/**
+ * 立体の外から見える面を持つブロックの一覧を作る (work.surface・faces・surfaceCount)。p の昇順に並べる。
+ * 立体の大半は空気 (MMD の人物でブロックのあるのは 2〜3%) なので、figure (Int16Array) を 4 ブロック = 8 バイトずつ
+ * Float64 として見て、空気だけの 4 ブロックは 1 回の比較で読み飛ばす。違うものは、4 ブロックを 1 つずつ調べる。
+ * 4 ブロック分のビット列を実数として比べるので、次のときは使わない (1 つずつ調べる)。
+ *  - 空気 4 つ分が 0 になる air_level (実数の +0 と -0 は等しく、ビット列の違うものを空気と取り違えかねない)
+ *  - 空気 4 つ分が NaN になる air_level (どれとも等しくならず、読み飛ばせない)
+ *  - figure の先頭が 8 バイトの境目に無い (Float64Array を作れない)
+ * 端数 (ブロック数が 4 の倍数でないぶん) も 1 つずつ調べる。NaN のビット列を含む 4 ブロックは、空気 4 つ分とは等しくならず
+ * 1 つずつ調べに回るので、結果は 1 つずつ調べたときと同じ (tests/js/stage_surface.mjs が確かめる)。
+ */
 function collectSurface(figure, air, geom, work) {
   const { width, height, depth } = geom;
   const slice = width * height;
+  const total = slice * depth;
+  let chunks = null;
+  if (figure.byteOffset % 8 === 0) {
+    let view = work.chunkView;
+    // figure の配列 (buffer) か air_level が変わったら、見る配列と空気 4 つ分の値を作り直す
+    if (view === null || view.buffer !== figure.buffer || view.byteOffset !== figure.byteOffset || work.chunkAir !== air) {
+      view = work.chunkView = new Float64Array(figure.buffer, figure.byteOffset, total >> 2);
+      work.chunkAir = air;
+      work.airChunk = new Float64Array(new Int16Array(4).fill(air).buffer)[0];
+    }
+    if (work.airChunk !== 0 && work.airChunk === work.airChunk) chunks = view;
+  }
+  const airChunk = work.airChunk;
+  const whole = chunks === null ? 0 : total >> 2;
+  const groups = (total + 3) >> 2;
   let n = 0;
-  for (let d = 0; d < depth; d++) {
-    for (let row = 0; row < height; row++) {
-      for (let x = 0; x < width; x++) {
-        const p = (d * height + row) * width + x;
-        const level = figure[p];
-        if (level === air || level < 0) continue;
-        // 立体の中の番号は空気か 0 以上 (負の数は使わない) なので、空気かどうかは air と比べるだけでよい
-        let mask = 0;
-        if (x === 0 || figure[p - 1] === air) mask |= 1;
-        if (x + 1 === width || figure[p + 1] === air) mask |= 2;
-        if (row + 1 === height || figure[p + width] === air) mask |= 4;
-        if (row === 0 || figure[p - width] === air) mask |= 8;
-        if (d === 0 || figure[p - slice] === air) mask |= 16;
-        if (d + 1 === depth || figure[p + slice] === air) mask |= 32;
-        if (mask === 0) continue;
-        work.surface[n] = p;
-        work.faces[n] = mask;
-        n++;
-      }
+  for (let g = 0; g < groups; g++) {
+    if (g < whole && chunks[g] === airChunk) continue;
+    const end = Math.min(total, 4 * g + 4);
+    for (let p = 4 * g; p < end; p++) {
+      const level = figure[p];
+      if (level === air || level < 0) continue;
+      // 立体の中の番号は空気か 0 以上 (負の数は使わない) なので、空気かどうかは air と比べるだけでよい
+      const x = p % width;
+      const row = Math.floor(p / width) % height;
+      const d = Math.floor(p / slice);
+      let mask = 0;
+      if (x === 0 || figure[p - 1] === air) mask |= 1;
+      if (x + 1 === width || figure[p + 1] === air) mask |= 2;
+      if (row + 1 === height || figure[p + width] === air) mask |= 4;
+      if (row === 0 || figure[p - width] === air) mask |= 8;
+      if (d === 0 || figure[p - slice] === air) mask |= 16;
+      if (d + 1 === depth || figure[p + slice] === air) mask |= 32;
+      if (mask === 0) continue;
+      work.surface[n] = p;
+      work.faces[n] = mask;
+      n++;
     }
   }
   work.surfaceCount = n;
@@ -509,56 +540,124 @@ export function projectToStage(figure, video, geom, eye, out, work, wallImage = 
     const sBack1 = zNear + 1 < 0 ? (1 - ez) / (zNear + 1) : Infinity;
     const sSide0 = xLow < 0 ? -ex / xLow : xLow > 0 ? (stageWidth - ex) / xLow : Infinity;
     const sSide1 = xLow + 1 < 0 ? -ex / (xLow + 1) : xLow + 1 > 0 ? (stageWidth - ex) / (xLow + 1) : Infinity;
-    for (let c = 0; c < 8; c++) {
-      const cx = xLow + (c & 1);
-      const cy = yLow + ((c >> 1) & 1);
-      const cz = zNear + ((c >> 2) & 1);
-      let s = c & 2 ? sFloor1 : sFloor0;
-      let hit = FLOOR;
-      const sBack = c & 4 ? sBack1 : sBack0;
-      if (sBack < s) {
-        s = sBack;
-        hit = BACK;
-      }
-      const sSide = c & 1 ? sSide1 : sSide0;
-      if (sSide < s) {
-        s = sSide;
-        hit = cx < 0 ? LEFT : RIGHT;
-      }
-      if (s === Infinity) {
-        cornerHit[c] = NO_HIT;
-        continue;
-      }
-      cornerHit[c] = hit;
-      cornerX[c] = ex + cx * s;
-      cornerY[c] = ey + cy * s;
-      cornerZ[c] = ez + cz * s;
-      hits |= 1 << hit;
+    // 写る範囲 box (写る面ごとの u・v の最小と最大) の求め方は 2 通りあり、結果はビット単位で同じになる。
+    // どちらかを直したら、もう一方も同じように直すこと (tests/test_stage_exact.py が両方の通り道を通る目で確かめる)。
+    // (1) 近道: 8 つの角の視線がすべて同じ 1 つの面に当たるブロック (MMD の人物では約 99%) は、その面の範囲を
+    //     式 4 つの最小と最大で直接求める。
+    //     角ごとの面の選び方は下の (2) と同じ (床を先に選び、後ろの壁は < のときだけ、左右の壁は < のときだけ置き換える)。
+    //     8 つの角は床・後ろの壁・左右の壁の長さ (sFloor0/1・sBack0/1・sSide0/1) の全部の組み合わせになるので、
+    //     それぞれの組の小さい方 (Lo) と大きい方 (Hi) で、全部の角が同じ面になる条件を書ける。
+    //     式は (2) と同じ ex + cx * s で、s > 0 なので、同じ s の値は cx が 1 大きいほうが小さくない。
+    //     そのため最小は cx の小さい方の 2 つ、最大は大きい方の 2 つから選べば、(2) の 8 つの角の最小と最大に等しい。
+    const sFloorLo = sFloor0 < sFloor1 ? sFloor0 : sFloor1;
+    const sFloorHi = sFloor0 < sFloor1 ? sFloor1 : sFloor0;
+    const sBackLo = sBack0 < sBack1 ? sBack0 : sBack1;
+    const sBackHi = sBack0 < sBack1 ? sBack1 : sBack0;
+    const sSideLo = sSide0 < sSide1 ? sSide0 : sSide1;
+    const sSideHi = sSide0 < sSide1 ? sSide1 : sSide0;
+    let single = true;
+    if (sBackHi !== Infinity && sBackHi < sFloorLo && sBackHi <= sSideLo) {
+      // 後ろの壁だけ (u は x、v は y)
+      const u00 = ex + xLow * sBack0;
+      const u01 = ex + xLow * sBack1;
+      const u10 = ex + (xLow + 1) * sBack0;
+      const u11 = ex + (xLow + 1) * sBack1;
+      const v00 = ey + yLow * sBack0;
+      const v01 = ey + yLow * sBack1;
+      const v10 = ey + (yLow + 1) * sBack0;
+      const v11 = ey + (yLow + 1) * sBack1;
+      box[BACK * 4] = u00 < u01 ? u00 : u01;
+      box[BACK * 4 + 1] = u10 > u11 ? u10 : u11;
+      box[BACK * 4 + 2] = v00 < v01 ? v00 : v01;
+      box[BACK * 4 + 3] = v10 > v11 ? v10 : v11;
+      hits = 1 << BACK;
+    } else if (sFloorHi !== Infinity && sFloorHi <= sBackLo && sFloorHi <= sSideLo) {
+      // 床だけ (u は x、v は z)
+      const u00 = ex + xLow * sFloor0;
+      const u01 = ex + xLow * sFloor1;
+      const u10 = ex + (xLow + 1) * sFloor0;
+      const u11 = ex + (xLow + 1) * sFloor1;
+      const v00 = ez + zNear * sFloor0;
+      const v01 = ez + zNear * sFloor1;
+      const v10 = ez + (zNear + 1) * sFloor0;
+      const v11 = ez + (zNear + 1) * sFloor1;
+      box[FLOOR * 4] = u00 < u01 ? u00 : u01;
+      box[FLOOR * 4 + 1] = u10 > u11 ? u10 : u11;
+      box[FLOOR * 4 + 2] = v00 < v01 ? v00 : v01;
+      box[FLOOR * 4 + 3] = v10 > v11 ? v10 : v11;
+      hits = 1 << FLOOR;
+    } else if (sSideHi !== Infinity && sSideHi < sFloorLo && sSideHi < sBackLo && (xLow > 0 || xLow + 1 < 0)) {
+      // 右 (角の x がすべて正) か左 (すべて負) の壁だけ (u は z、v は y)
+      const wall = xLow > 0 ? RIGHT : LEFT;
+      const u00 = ez + zNear * sSide0;
+      const u01 = ez + zNear * sSide1;
+      const u10 = ez + (zNear + 1) * sSide0;
+      const u11 = ez + (zNear + 1) * sSide1;
+      const v00 = ey + yLow * sSide0;
+      const v01 = ey + yLow * sSide1;
+      const v10 = ey + (yLow + 1) * sSide0;
+      const v11 = ey + (yLow + 1) * sSide1;
+      box[wall * 4] = u00 < u01 ? u00 : u01;
+      box[wall * 4 + 1] = u10 > u11 ? u10 : u11;
+      box[wall * 4 + 2] = v00 < v01 ? v00 : v01;
+      box[wall * 4 + 3] = v10 > v11 ? v10 : v11;
+      hits = 1 << wall;
+    } else {
+      single = false;
     }
-    // 視線の当たった面ごとに、写る範囲を求める。当たった点のほか、隣の面 (向かい合う左右の壁どうしを除く) に
-    // 当たった点も、その面との境目の位置として範囲に入れる (隣の面の点の座標は、この面の縁の上にある)
-    for (let surface = FLOOR; surface <= RIGHT; surface++) {
-      if (!(hits & (1 << surface))) continue;
-      const opposite = surface === LEFT ? RIGHT : surface === RIGHT ? LEFT : NO_HIT;
-      let u0 = Infinity;
-      let u1 = -Infinity;
-      let v0 = Infinity;
-      let v1 = -Infinity;
+    // (2) 一般の場合: 8 つの角のそれぞれについて、視線が最初に当たる面と点を求めて範囲にする
+    if (!single) {
       for (let c = 0; c < 8; c++) {
-        const hit = cornerHit[c];
-        if (hit === NO_HIT || hit === opposite) continue;
-        const u = surface <= BACK ? cornerX[c] : cornerZ[c];
-        const v = surface === FLOOR ? cornerZ[c] : cornerY[c];
-        if (u < u0) u0 = u;
-        if (u > u1) u1 = u;
-        if (v < v0) v0 = v;
-        if (v > v1) v1 = v;
+        const cx = xLow + (c & 1);
+        const cy = yLow + ((c >> 1) & 1);
+        const cz = zNear + ((c >> 2) & 1);
+        let s = c & 2 ? sFloor1 : sFloor0;
+        let hit = FLOOR;
+        const sBack = c & 4 ? sBack1 : sBack0;
+        if (sBack < s) {
+          s = sBack;
+          hit = BACK;
+        }
+        const sSide = c & 1 ? sSide1 : sSide0;
+        if (sSide < s) {
+          s = sSide;
+          hit = cx < 0 ? LEFT : RIGHT;
+        }
+        if (s === Infinity) {
+          cornerHit[c] = NO_HIT;
+          continue;
+        }
+        cornerHit[c] = hit;
+        cornerX[c] = ex + cx * s;
+        cornerY[c] = ey + cy * s;
+        cornerZ[c] = ez + cz * s;
+        hits |= 1 << hit;
       }
-      const k = surface * 4;
-      box[k] = u0;
-      box[k + 1] = u1;
-      box[k + 2] = v0;
-      box[k + 3] = v1;
+      // 視線の当たった面ごとに、写る範囲を求める。当たった点のほか、隣の面 (向かい合う左右の壁どうしを除く) に
+      // 当たった点も、その面との境目の位置として範囲に入れる (隣の面の点の座標は、この面の縁の上にある)
+      for (let surface = FLOOR; surface <= RIGHT; surface++) {
+        if (!(hits & (1 << surface))) continue;
+        const opposite = surface === LEFT ? RIGHT : surface === RIGHT ? LEFT : NO_HIT;
+        let u0 = Infinity;
+        let u1 = -Infinity;
+        let v0 = Infinity;
+        let v1 = -Infinity;
+        for (let c = 0; c < 8; c++) {
+          const hit = cornerHit[c];
+          if (hit === NO_HIT || hit === opposite) continue;
+          const u = surface <= BACK ? cornerX[c] : cornerZ[c];
+          const v = surface === FLOOR ? cornerZ[c] : cornerY[c];
+          if (u < u0) u0 = u;
+          if (u > u1) u1 = u;
+          if (v < v0) v0 = v;
+          if (v > v1) v1 = v;
+        }
+        const k = surface * 4;
+        box[k] = u0;
+        box[k + 1] = u1;
+        box[k + 2] = v0;
+        box[k + 3] = v1;
+      }
     }
     if (hits & (1 << FLOOR)) {
       const i0 = Math.max(0, Math.floor(box[0]));
@@ -667,6 +766,10 @@ function rayEntersBox(ox, oy, oz, dx, dy, dz, x0, y0, z0) {
  *  - それ以外: 直前の盤面から内容が変わったタイルを行優先の順に登録
  *  - 端からはみ出すタイルは対象外、tile_dict_max 個に達したら次のキーフレームまで登録しない
  * 参照は「新しい方から何番目か」(0 が最新)。
+ *
+ * 立体 (3D の盤面は大きい) では、フレームごとにすべてのタイルを比べずに済ませるため、decodeFrameInto がそのフレームで
+ * 書いたかもしれないタイルに dirty の印を付ける。印の無いタイルは out.set(board) のまま前のフレームと同じなので、
+ * 比べなくても辞書の中身と順番は変わらない (update の onlyMarked)。印の付け漏れは辞書をずらし、以後のフレームをすべて壊す。
  */
 export class TileDictionary {
   constructor(video) {
@@ -676,6 +779,38 @@ export class TileDictionary {
     this.tilesY = Math.floor(boardRows(video) / this.tile);
     this.maxEntries = video.tile_dict_max;
     this.entries = [];
+    this.dirty = new Uint8Array(this.tilesX * this.tilesY);
+  }
+
+  /** 盤面の行 [r0, r1) × 列 [c0, c1) に重なるタイルに印を付ける (盤面の端からはみ出す部分は無視)。 */
+  markRect(r0, r1, c0, c1) {
+    if (r1 <= r0 || c1 <= c0) return;
+    const s = this.tile;
+    const ty1 = Math.min(this.tilesY, Math.ceil(r1 / s));
+    const tx1 = Math.min(this.tilesX, Math.ceil(c1 / s));
+    const tx0 = Math.floor(c0 / s);
+    const dirty = this.dirty;
+    for (let ty = Math.floor(r0 / s); ty < ty1; ty++) {
+      const row = ty * this.tilesX;
+      for (let tx = tx0; tx < tx1; tx++) dirty[row + tx] = 1;
+    }
+  }
+
+  /** 盤面を 1 次元に並べたときの範囲 [start, end) に重なるタイルに印を付ける (複数の行にまたがるなら、最初と最後の行は部分、間の行は全幅)。 */
+  markRange(start, end) {
+    if (end <= start) return;
+    const w = this.width;
+    const r0 = Math.floor(start / w);
+    const r1 = Math.floor((end - 1) / w);
+    const c0 = start - r0 * w;
+    const c1 = end - r1 * w;
+    if (r0 === r1) {
+      this.markRect(r0, r0 + 1, c0, c1);
+      return;
+    }
+    this.markRect(r0, r0 + 1, c0, w);
+    if (r1 > r0 + 1) this.markRect(r0 + 1, r1, 0, w);
+    this.markRect(r1, r1 + 1, 0, c1);
   }
 
   tileOrigin(t) {
@@ -706,17 +841,29 @@ export class TileDictionary {
     return false;
   }
 
-  /** フレームを復元した後に呼ぶ。prev は直前の盤面。 */
-  update(prev, next, isKeyframe) {
+  /**
+   * フレームを復元した後に呼ぶ。prev は直前の盤面。
+   * onlyMarked なら、印の付いたタイルだけを比べて印を消す (立体。印の無いタイルは prev と同じであること)。
+   */
+  update(prev, next, isKeyframe, onlyMarked = false) {
     const count = this.tilesX * this.tilesY;
     if (isKeyframe) this.entries.length = 0;
-    for (let t = 0; t < count; t++) {
-      if (isKeyframe || this.differs(prev, next, t)) this.add(next, t);
+    if (onlyMarked && !isKeyframe) {
+      const dirty = this.dirty;
+      for (let t = 0; t < count; t++) {
+        if (dirty[t] === 1 && this.differs(prev, next, t)) this.add(next, t);
+      }
+    } else {
+      for (let t = 0; t < count; t++) {
+        if (isKeyframe || this.differs(prev, next, t)) this.add(next, t);
+      }
     }
+    if (onlyMarked || isKeyframe) this.dirty.fill(0);
   }
 
-  /** out のタイル t に、辞書の新しい方から recency 番目を貼る。 */
+  /** out のタイル t に、辞書の新しい方から recency 番目を貼る (貼ったタイルには印を付ける)。 */
   apply(out, t, recency) {
+    this.dirty[t] = 1;
     const content = this.entries[this.entries.length - 1 - recency];
     const s = this.tile;
     const origin = this.tileOrigin(t);
@@ -1158,6 +1305,8 @@ export function unpackGop(container) {
  *    (立体は mv_block³ のブリックごとに 3 成分のベクトル。decodeMotion3d)
  *  - 続けてタイル辞書の参照を貼り、最後に差分ランを上書きする (v5 のランの位置は直前のランの終わりからの距離)
  *  - tiles (createTileDictionary の戻り値) を渡すと、復元後に辞書も更新する
+ *    (立体のキーフレーム以外は、out へ書いた場所に印を付けて、印の付いたタイルだけを比べる。
+ *    out へ書く場所を足したら、必ず印を付けること。付け漏れは辞書をずらして以後のフレームを壊す)
  * out と board は width*height の Int16Array などを使い回す (GC を避ける)。
  */
 export function decodeFrameInto(bytes, start, end, board, out, video, tiles = null) {
@@ -1170,11 +1319,14 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
   const hasMotion = isV5 && Math.floor(header / 2) % 2 === 1;
   const hasTiles = isV5 && Math.floor(header / 4) % 2 === 1;
 
+  // 立体のキーフレーム以外は、書いたタイルだけを辞書の更新で比べる (out.set(board) のままのタイルは前と同じ)
+  const track = tiles !== null && video.layout === "volume" && !isKeyframe;
+
   if (isKeyframe) out.fill(emptyLevel(video));
   else out.set(board);
 
   if (hasMotion && video.layout === "volume") {
-    decodeMotion3d(bytes, cursor, end, board, out, video);
+    decodeMotion3d(bytes, cursor, end, board, out, video, track ? tiles : null);
   } else if (hasMotion) {
     const block = video.mv_block;
     const span = 2 * video.mv_range + 1;
@@ -1217,9 +1369,10 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
     // v5 の位置は直前のランの終わりからの距離、v4 は絶対位置
     const start = isV5 ? previousEnd + run.position : run.position;
     out.fill(run.level, start, start + run.length);
+    if (track) tiles.markRange(start, start + run.length);
     previousEnd = start + run.length;
   }
-  if (tiles) tiles.update(board, out, isKeyframe);
+  if (tiles) tiles.update(board, out, isKeyframe, track);
   return isKeyframe;
 }
 
@@ -1228,8 +1381,9 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
  * mv_block³ のブリックごとに、board[clamp(z+dz)][clamp(y+dy)][clamp(x+dx)] を out にコピーする。
  * ブリック番号は (bz * ブリックの行数 + by) * ブリックの列数 + bx、
  * ベクトルは ((dz + r) * span + (dy + r)) * span + (dx + r) (r = mv_range)。
+ * tiles を渡すと、書いたブリックの範囲 (z ごとの行 × x の列) に重なるタイルに印を付ける。
  */
-function decodeMotion3d(bytes, cursor, end, board, out, video) {
+function decodeMotion3d(bytes, cursor, end, board, out, video, tiles = null) {
   const { width, height, depth } = video;
   const block = video.mv_block;
   const range = video.mv_range;
@@ -1260,6 +1414,7 @@ function decodeMotion3d(bytes, cursor, end, board, out, video) {
           out[dst + x] = board[src + Math.min(Math.max(x + dx, 0), width - 1)];
         }
       }
+      if (tiles !== null) tiles.markRect(z * height + y0, z * height + y1, x0, x1);
     }
   }
 }

@@ -382,7 +382,8 @@ class VideoPlayer {
     //   一時停止・シークの中断・ベンチマークなどで順番が飛んでも、applyFrameJob が直近のキーフレームから復元し直す
     // だまし絵 (view: "anamorphic") では、復元した立体 (人物) を figure に組み立て、nextBoard には人物を壁と床へ
     //   写した盤面を作る (stageWork は写すときの作業領域)。lastEye は最後に描いた目の位置 (舞台の原点から)、
-    //   viewIterator はフレームの合間に目の動きに合わせて描き直す処理
+    //   viewIterator はフレームの合間に目の動きに合わせて描き直す処理。viewRedrawPending は、描きかけのフレームや
+    //   描き直しを一時停止などで捨てたので、目が動いていなくても描き直す印 (drawStage で下ろす)
     this.figure = null;
     this.stageWork = null;
     // だまし絵の背景の映像を復元する役 (ブロックは置かない VideoPlayer)。無ければ null
@@ -391,6 +392,7 @@ class VideoPlayer {
     this.lastEye = null;
     this.viewDrawn = false;
     this.viewIterator = null;
+    this.viewRedrawPending = false;
     // だまし絵で、変わったマスを探す盤面の範囲 (行 [lo, hi)・列 [left, right))。人物を塗った所と、まだ置き終えて
     //   いない前の描画の所。盤面に「不明」のマスがあるときは全部
     this.stageRows = { lo: 0, hi: Infinity, left: 0, right: Infinity };
@@ -440,6 +442,12 @@ class VideoPlayer {
       // 一時停止の前に描きかけだったフレームは、遅れも時間も正しく測れないので数えない
       skipPartialFrame: this.frameIterator !== null,
       startFrame: this.currentFrame,
+      // だまし絵: 人物を壁と床へ写した回数と時間の合計・最大 (ms)、目の動きで描き直しを始めた回数。Date.now は 1 ms 単位
+      //   (写すのは 1 回が数 ms なので、1 回ごとの値は粗い) なので、合計を回数で割った平均で見る
+      stageProjMs: 0,
+      stageProjMax: 0,
+      stageProjCount: 0,
+      viewRedraws: 0,
     };
   }
 
@@ -471,6 +479,10 @@ class VideoPlayer {
       maxFrameMs: st.maxFrameMs,
       tps: ((st.wallEnd !== null ? st.tickEnd : this.elapsedTicks) - st.tickStart) / seconds,
       driftSeconds: seconds - videoSeconds,
+      stageProjAvg: st.stageProjCount > 0 ? st.stageProjMs / st.stageProjCount : 0,
+      stageProjMax: st.stageProjMax,
+      stageProjCount: st.stageProjCount,
+      viewRedraws: st.viewRedraws,
     };
   }
 
@@ -494,6 +506,7 @@ class VideoPlayer {
       const backgroundId = stageBackgroundOf(this.videoData);
       this.background = backgroundId ? new VideoPlayer(this.anchor, this.dimension, backgroundId) : null;
       this.viewDrawn = false;
+      this.viewRedrawPending = false;
       this.stageRows = { lo: 0, hi: Infinity, left: 0, right: Infinity };
       if (isHeightfield(this.videoData)) {
         this.decodeScratch = new Int16Array(streamPixels);
@@ -1189,12 +1202,22 @@ class VideoPlayer {
       ?? { x: geom.stageWidth / 2, y: 1 + this.videoData.height / 2, z: 1 + geom.floorRows + this.videoData.height };
     // 背景の映像のフレームが変わったときだけ後ろの壁を作り直す (decodedFrame を版にする)
     const background = this.background;
+    const projectStart = Date.now();
     projectToStage(this.figure, this.videoData, geom, eye, this.nextBoard, this.stageWork, background?.decoded ?? null,
       background ? background.decodedFrame : 0);
+    const st = this.playStats;
+    // 統計の時計が動いている間 (再生中) の投影だけ数える。止めた後の仕上げや bench の間の描き直しは、フレーム数・時間と合わない
+    if (st && st.wallStart !== null && st.wallEnd === null) {
+      const projectMs = Date.now() - projectStart;
+      st.stageProjMs += projectMs;
+      st.stageProjMax = Math.max(st.stageProjMax, projectMs);
+      st.stageProjCount++;
+    }
     const work = this.stageWork;
     if (work.rowMin <= work.rowMax) this.extendStageRows(work.rowMin, work.rowMax + 1, work.colMin, work.colMax + 1);
     this.lastEye = eye;
     this.viewDrawn = true;
+    this.viewRedrawPending = false;
   }
 
   /** だまし絵: 描いた盤面を置き終えたら、次に探す範囲を今の人物の所だけにする。 */
@@ -1205,12 +1228,19 @@ class VideoPlayer {
       : { lo: 0, hi: 0, left: 0, right: 0 };
   }
 
-  /** だまし絵: 見ている人の目が動いていれば、フレームの合間に描き直しを始める。 */
+  /**
+   * だまし絵: 見ている人の目が動いていれば、フレームの合間に描き直しを始める。一時停止などで描きかけのフレームや
+   * 描き直しを捨てた後 (viewRedrawPending) は、目が動いていなくても、残りを最後まで描く。そのとき箱の中に人がいなければ、
+   * drawStage が最後に描いた目 (lastEye) を使う。
+   */
   maybeStartViewRedraw() {
     if (!this.figure || !this.viewDrawn || this.viewIterator || this.frameIterator || this.currentJobId !== null) return;
     const eye = this.viewerEye();
     const last = this.lastEye;
-    if (!eye || (last && Math.hypot(eye.x - last.x, eye.y - last.y, eye.z - last.z) < VIEW_REDRAW_DISTANCE)) return;
+    const moved = eye && (!last || Math.hypot(eye.x - last.x, eye.y - last.y, eye.z - last.z) >= VIEW_REDRAW_DISTANCE);
+    if (!moved && !this.viewRedrawPending) return;
+    // 目の動きでの描き直しだけ数える (一時停止などで捨てたフレームの仕上げ (viewRedrawPending) は数えない)
+    if (moved && this.playStats) this.playStats.viewRedraws++;
     const self = this;
     this.viewIterator = (function* () {
       self.drawStage();
@@ -1284,6 +1314,9 @@ class VideoPlayer {
         gopBytes, entry.offset, entry.offset + entry.length, this.decoded, this.decodeScratch, this.videoData, this.tiles
       );
       this.decoded.set(this.decodeScratch);
+      // だまし絵の人物 (figure) は、立体の復元の作業用の配列でもある。applyFrameJob の外 (シークの途中で中断した後など)
+      //   で書き換わっても、次の描き直しが古い外から見える面の一覧を使わないようにする
+      if (this.stageWork && this.decodeScratch === this.figure) this.stageWork.dirty = true;
     }
     this.decodedFrame = frameIndex;
     return true;
@@ -1405,6 +1438,16 @@ class VideoPlayer {
   stopPlayback() {
     this.stopPlayStatsClock();
     this.running = false;
+    // だまし絵は、止めている間も maybeStartViewRedraw が描き直せるように、描きかけのフレームを捨てる (再開すると、その
+    //   フレームを最初からやり直す。復元は済んでいるので投影と残りの設置だけ増える)。描き直しの途中も、残りを描き直す。
+    //   平面と普通の立体は、描きかけのフレームをそのまま残して、再開で続きから置く
+    if (this.figure) {
+      if (this.frameIterator !== null) {
+        this.frameIterator = null;
+        this.viewRedrawPending = true;
+      }
+      if (this.viewIterator !== null) this.viewRedrawPending = true;
+    }
     this.viewIterator = null;
     this.currentAudioChunk = -1;
     this.cancelJob();
@@ -1473,6 +1516,7 @@ class VideoPlayer {
     this.currentFrame = 0;
     this.invalidateBoard();
     this.viewDrawn = false;
+    this.viewRedrawPending = false;
     if (!this.videoData) return;
 
     this.initPaletteCache();
@@ -1627,7 +1671,8 @@ function runBenchmark(player) {
 
   notify("bench_start", side * side, rounds);
   vp.stopPlayback();
-  system.runJob((function* () {
+  // 計測の間は、一時停止で捨てたフレームの仕上げなどの描き直しを始めさせない (currentJobId が空でないと始まらない)
+  vp.currentJobId = system.runJob((function* () {
     // structure.place 用に、白と黒の板をメモリ上に作っておく (計測には含めない)
     try {
       for (let k = 0; k < 2; k++) {
@@ -1675,6 +1720,7 @@ function runBenchmark(player) {
     } else {
       notify("bench_unreliable", BENCH_MIN_TOTAL_MS);
     }
+    vp.currentJobId = null;
     notify("bench_done", currentRenderMode());
   })());
 }
@@ -2008,6 +2054,10 @@ function showPlayStats() {
   notify("stats_play", summary.frames, fixed(summary.seconds, 1), fixed(summary.fps, 2), fixed(summary.targetFps, 2),
     fixed(summary.tps, 1), fixed(summary.driftSeconds, 2));
   notify("stats_load", summary.lateFrames, summary.maxLateTicks, fixed(summary.avgFrameMs, 1), summary.maxFrameMs);
+  // だまし絵だけ: 人物を壁と床へ写す時間の平均・最大 (ms)・回数と、目の動きでの描き直しの回数
+  if (isAnamorphic(vp.videoData)) {
+    notify("stats_stage", fixed(summary.stageProjAvg, 2), summary.stageProjMax, summary.stageProjCount, summary.viewRedraws);
+  }
 }
 
 function getActivePlayer() {

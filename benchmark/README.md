@@ -68,3 +68,57 @@ python benchmark/real_video_bench.py --out bench_out --baseline v6.7.0
 - Tears of Steel — (CC) Blender Foundation | mango.blender.org
 - Sintel (予告編) — © copyright Blender Foundation | durian.blender.org
 - Big Buck Bunny (予告編) — (c) copyright 2008, Blender Foundation | www.bigbuckbunny.org
+
+## だまし絵の前後比較 (`stage_bench.py`)
+
+立体のだまし絵 (`--view anamorphic`) の「投影・描き直し・展開・置く」の重さを、git の版 (既定 `main`) と作業中の木で比べます。出力が同じはずの変更 (投影の高速化など) では、盤面が 1 マスも違わないことも確かめます。node と ffmpeg が必要です。
+
+```bash
+python benchmark/stage_bench.py --out D:/work/stage_bench                       # main と作業中の木を比べる
+python benchmark/stage_bench.py --out D:/work/stage_bench --baseline v6.28.0    # 別の版・タグ。git worktree のフォルダも可
+python benchmark/stage_bench.py --out D:/work/stage_bench --baseline worktree   # 同じ版どうし (ノイズの大きさを測る)
+python benchmark/stage_bench.py --out D:/work/stage_bench --addon my_mmd80.mcaddon   # ローカルの第三者のアドオンも測る
+python benchmark/stage_bench.py --out D:/work/stage_bench --quick               # 確認用 (mmd40 を 20 フレームだけ、数秒)
+```
+
+`--out` はリポジトリの外にします (中だと拒否します)。結果は `<out>/results.json` と `<out>/results.md`、作った素材は `<out>/fixtures`、取り出した版は `<out>/trees` に残ります。`--baseline` の git の版は `main.js` と `codec.js` だけを `git archive` で取り出すので、コミットしていない変更は含まれません (素材は作業中の木の `convert.py` で 1 回だけ作り、両方の版で同じデータを再生します)。
+
+素材 (`--fixtures`、既定は全部。乱数の種は固定で、毎回同じものができます):
+
+| 素材 | 中身 |
+|---|---|
+| `mmd40`・`mmd80` | `tests/mmd_fixture.py` の箱人形を踊らせ (`mmd_to_vox`、高さ 40・80)、GUI の MMD のだまし絵と同じ引数で変換。表面だけの殻なので中が空洞になる (変換は閉じた空洞を埋める) |
+| `solid56` | コードで作る、中身の詰まった人型 (高さ 56、腕と脚が動く) の `.vox` |
+| `person80` | ffmpeg で作った白い人型の動画を人物の範囲にした inflate (80x45、奥行き 16) |
+| `person80_bg` | `person80` に testsrc2 の背景の映像 (後ろの壁の大きさ、`--fit cover`) を隠し項目として足したもの |
+
+測るもの (素材ごと。`--repeats` 回 (既定 5) の中央値・最小・最大と、baseline からの Δ%):
+
+- `micro` (`benchmark/js/stage_micro.mjs`、node `--jitless`): 同じプロセスで baseline と作業中の `codec.js` を 1 回ごとに交互に呼ぶ。変化のあるフレーム (最大 24) × 目 3 か所 (座標は整数でない) の投影 ms、目を (+0.3, +0.05, −0.1) 動かした描き直し ms、全フレームの `decodeFrameInto` ms (タイル辞書あり、main.js と同じ手順)、と、2 つの版で盤面が食い違うマスの数 (投影・描き直し・展開)。
+- `still`・`walk` (`benchmark/js/stage_play.mjs`): モックの上で `main.js` を最後まで再生する。置く費用はゲーム内の実測値 (setBlock 2.3 µs、fillBlocks 15 µs + 0.55 µs/ブロック、座標リスト 15 µs + 1.42 µs/ブロック)。目は `still` = 舞台の正面の決まった位置、`walk` = 1 tick に 0.2 ブロックずつ舞台の中を往復。毎回新しい一時フォルダで動かし、`stats_load` の 4 つの数 (遅れたフレーム・最大の遅れ・1 フレームの平均と最大の ms)、tick の ms (平均・p95・最大)、JS の時間と置く費用の見積り、最後の盤面の SHA-1 (再生が終わった後に目を正面へ戻して描き直しが落ち着いてから取るので、目の動かし方によらず最後のフレームの絵で比べられる) を出す。
+- 「ゲーム内の見込み」の列は、worktree の中央値 × 3.1〜4.6 です。モックとゲーム内の時間の比 (これまでの実測は 4.39 と 4.56 を含む範囲) を当てはめた**見積りで、実測ではありません**。「置く費用の見積り」の行はもともとゲーム内の実測 (µs) から作った値なので、この列は空です。素材は実在の MMD より見える面が少ないので (箱人形)、実在のモデルは `--addon` でローカルにだけ測ります。
+
+### ノイズの大きさと使い方の注意
+
+- 同じ版どうし (`--baseline worktree`) を、何も動かさない機械で 2 回続けて動かしたときの差 (2026-10-26、node v24、Windows 11、5 回の中央値どうし): 通し再生の 1 フレームの平均 ms は素材と目の動かし方によらず最大 ±4.4%、micro の baseline と worktree の差は最大 ±2.5%、micro の 2 回の間の差は最大 ±4.3%。盤面の食い違いは 0。**同じ版どうしで ±10% 以内**を目安にし、それより小さい差は信じないでください。
+- ほかの重い処理 (変換・AI の切り抜き・別のベンチマーク・ブラウザの動画など) と同時に動かさないでください。重い処理と同時に動かすと、同じ版でも ±40〜60% ぶれました。交互の A/B と 5 回の中央値は、ゆっくりした揺れを消すためのものです。
+- 1 回目の実行は 2 回目より数 % 遅くなることがあります (キャッシュ)。前後を比べるときは、同じ実行の中で baseline と worktree を比べてください。
+- 時間が決まるのは `main.js` の tick の予算 (`TICK_TIME_BUDGET_MS`) が実時間を見るためで、遅れたフレームの数は機械が遅いほど増えます。
+- 第三者の動画・MMD・アドオン (`--addon`) から作ったものは、画像・マスク・アドオンを含めて、リポジトリに書かない・コミットしない・公開しないでください。`--addon` は `--out` の下に展開し、残すのは数値だけです。
+
+### 投影が厳密なことのテスト
+
+`tests/test_stage_exact.py` (`tests/js/stage_exact.mjs`) は、乱数 (種は固定) で作った立体 (中が空洞の殻・薄い板・ばらばらの点・詰まった塊・細い棒、24×40×8 と 40×80×16) を、座標が整数でない目 20 か所 (正面・横・高い位置・ブロックの面の外) から写し、盤面の各マスの中心から目への線分を 3D DDA でたどった正解と食い違うマスが 0 であることを確かめます。目が人物のブロックの並びの中や後ろにあるときは数マスが、人物の最前面から約 0.03〜0.12 ブロック手前にあるときは数百〜千数百マス (24×40×8 の塊を目 150 か所で確かめると 1798 マス) が抜けることが分かっていて (v6.28.0 からの既知の不正確さ。既定の 20 か所には当たらない)、その確認は `xfail` にしてあります。写る範囲の求め方の近道 (床・後ろの壁・左の壁・右の壁のどれか 1 つにしか写らないブロックと、それ以外の一般の場合) は、それぞれのブロックを多く含む目 (`stage_exact.mjs --path floor|back|left|right|general`) で確かめます。外から見える面を持つブロックの一覧を作る処理 (空気だけの区間の読み飛ばし) は `tests/js/stage_surface.mjs` が、図形の置き場所・空気の番号・NaN のビット列を変えて、ブロックを 1 つずつ調べた正解と比べます。だまし絵の変換が埋める閉じた空洞 (`fill_enclosed_air`) は、埋めても投影が 1 マスも変わらず、調べる面だけが減ることを確かめます。`tests/test_stage_bench.py` は `stage_bench.py --quick` の smoke テストです。
+
+## AI の人物の切り抜きの測定 (`person_bench.py`、ローカル専用)
+
+`mvcodec/person.py` の切り抜きを、構成 (版 × メモリの段階) ごとに新しいプロセスで動かして、速さ・メモリ・マスクの安定性を測ります。CI では動かしません (モデルと GPU が要る)。動画は `--video` で渡すだけで、リポジトリには何も書きません (マスクと背景の動画は、数値を出した後に消します)。
+
+```bash
+set BVP_MODEL_DIR=D:/work/models        # モデルの置き場 (あれば)
+python benchmark/person_bench.py --out D:/work/person --video clip.mp4 --tree baseline --tree worktree --profiles gpu --duration 30 --vram
+```
+
+測るもの: wall 時間と ms/フレーム、ピークの working set と private (psutil、200 ms ごと)、`--vram` で GPU の専用メモリの最大 (Windows の `Get-Counter`)。マスクは 80×45 にボックス平均で縮めて 0.5 以上をブロックとし、空のフレーム (ブロック単位・面積 0.5% 未満)、1 フレームあたりの変わるマスと 1 フレームだけ点滅するマス (場面の切り替わりをまたぐ変化は含めない)、大きさの跳び (隣り合うフレームの |Δlog 面積| の p90) を出します。場面の切り替わりは元の動画の構図で決めます。
+
+版が `--stats` を持っていれば (v6.28.0 には無い)、子プロセスが出す統計の JSON (`person-stats-*.json`。出所ごとのフレーム数・予備に頼った理由・モデルごとの推論の中央値と p95・工程ごとの ms・自分で測った最大のメモリ) も行に入れ、`stats_check` に、統計の空のフレームの数・場面の切り替わりの数・フレーム数が、上のマスクの動画から数えた値と合っているかを出します。統計の項目は [docs/TESTING.md](../docs/TESTING.md) の 2.2 にあります。

@@ -6,6 +6,9 @@
     WMI の AdapterRAM は 4 GB で頭打ちになるので使わない)
   - VRAM の使用量: Windows の性能カウンター「GPU Adapter Memory / Dedicated Usage」(PowerShell の Get-Counter)
 調べられないときは None を返す (呼び出し側は「分からない」として扱う)。
+
+ほかに use_utf8_for_pipes: GUI からパイプ経由で起動される子プロセス (convert.py・人物の切り抜き) が日本語の出力を UTF-8 にする。
+process_memory_peaks: このプロセスの最大の working set と最大の commit (Windows の GetProcessMemoryInfo)。
 """
 import ctypes
 import os
@@ -21,6 +24,17 @@ def _subprocess_kwargs():
     if os.name == "nt":
         return {"creationflags": subprocess.CREATE_NO_WINDOW}
     return {}
+
+
+def use_utf8_for_pipes():
+    """GUI などからパイプ経由で起動された時、ログの日本語を UTF-8 で書き出す (cp932 で化けるのを防ぐ)。"""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure") and not stream.isatty():
+            try:
+                # 行ごとに書き出す (GUI のログに進み具合がすぐ出るように。既定ではパイプ先へはまとめて書かれる)
+                stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+            except (OSError, ValueError):  # 読み出しの後など、設定を変えられない流れはそのまま使う
+                pass
 
 
 def system_memory():
@@ -109,3 +123,32 @@ def gpu_memory():
     if used is None:
         return None
     return total, max(0, total - used)
+
+
+def process_memory_peaks():
+    """このプロセスの {"peak_working_set": 最大の working set, "peak_commit": 最大の commit (確保済みメモリ),
+    "working_set": 今の working set, "commit": 今の commit} のバイト数。Windows 以外や、読めなければ None。
+
+    Windows の GetProcessMemoryInfo (PeakWorkingSetSize・PeakPagefileUsage)。psutil は使わない。peak は
+    プロセスが始まってからの最大なので、一度測れば途中の山も入る (モデルの最初の推論での確保など)。"""
+    if sys.platform != "win32":
+        return None
+    from ctypes import wintypes
+
+    class Counters(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+    kernel32.K32GetProcessMemoryInfo.restype = wintypes.BOOL
+    counters = Counters()
+    counters.cb = ctypes.sizeof(Counters)
+    if not kernel32.K32GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+        return None
+    return {"peak_working_set": int(counters.PeakWorkingSetSize), "peak_commit": int(counters.PeakPagefileUsage),
+            "working_set": int(counters.WorkingSetSize), "commit": int(counters.PagefileUsage)}
