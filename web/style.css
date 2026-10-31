@@ -95,3 +95,4 @@ label.lang { flex-direction: row; align-items: center; gap: 6px; }
 #usage { margin-top: 10px; }
 #usage p { margin: 0 0 4px; }
 #usage label.check { padding-bottom: 0; }
+#loadHint { white-space: pre-line; }

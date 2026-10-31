@@ -29,7 +29,7 @@ KEY_PREFIXES = ("web", "load", "settings", "mode", "palette", "pack", "build", "
 
 def used_keys():
     html = (WEB / "index.html").read_text(encoding="utf-8")
-    keys = set(re.findall(r'data-i18n(?:-title)?="([^"]+)"', html))
+    keys = set(re.findall(r'data-i18n(?:-title|-placeholder)?="([^"]+)"', html))
     prefixes = "|".join(KEY_PREFIXES)
     for name in ("app.js", "worker.js"):
         source = (WEB / name).read_text(encoding="utf-8")
@@ -173,3 +173,12 @@ def test_usage_url_carries_no_file_details(node_results):
 
 def test_usage_kind(node_results):
     assert node_results["kindOf"] == ["screen", "3d", "screen", "trompe", "vox", "trompe"]
+
+
+def test_length_defaults_to_the_whole_video():
+    """変換する長さは既定で最後まで (上限なし)。以前は 60 秒で何も言わずに切れていた"""
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    field = re.search(r'<input[^>]*id="duration"[^>]*>', html).group(0)
+    assert "value=" not in field and "max=" not in field
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "Math.min(video.duration, durationLimit(s))" in app
