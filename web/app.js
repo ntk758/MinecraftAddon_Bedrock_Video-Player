@@ -8,6 +8,7 @@ const AUDIO_RATE = 22050; // WAV は大きいので 22.05 kHz モノラルにす
 const THUMB_SIZE = 256;
 
 const $ = (id) => document.getElementById(id);
+const t = (key, params) => I18n.t(key, params); // 翻訳 (web/i18n.js、locales/*.json)
 const videos = []; // { file, url, id, title, width, height, duration, vox }
 const isVox = (file) => /\.vox$/i.test(file.name);
 let worker = null;
@@ -28,7 +29,7 @@ function safeId(name, used) {
   return id;
 }
 
-function loadVideoElement(url) {
+function loadVideoElement(url, name = "") {
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
     video.muted = true;
@@ -36,7 +37,7 @@ function loadVideoElement(url) {
     video.playsInline = true;
     video.src = url;
     video.onloadedmetadata = () => resolve(video);
-    video.onerror = () => reject(new Error("この動画はブラウザで開けません / The browser cannot open this video"));
+    video.onerror = () => reject(new Error(t("web.cannot_open", { name })));
   });
 }
 
@@ -46,17 +47,17 @@ async function addFiles(fileList) {
     if (isVox(file)) {
       // MagicaVoxel の立体アニメ: 大きさ・コマ数は .vox のまま (設定は FPS とパレットだけを使う)
       const header = new Uint8Array(await file.slice(0, 4).arrayBuffer());
-      if (String.fromCharCode(...header) !== "VOX ") { log(`${file.name}: MagicaVoxel の .vox ではありません / not a MagicaVoxel .vox file`); continue; }
+      if (String.fromCharCode(...header) !== "VOX ") { log(t("web.not_vox", { name: file.name })); continue; }
       videos.push({ file, id: safeId(file.name, used), title: file.name.replace(/\.[^.]+$/, ""), vox: true });
       continue;
     }
     const url = URL.createObjectURL(file);
     try {
-      const el = await loadVideoElement(url);
+      const el = await loadVideoElement(url, file.name);
       videos.push({ file, url, id: safeId(file.name, used), title: file.name.replace(/\.[^.]+$/, ""),
                     width: el.videoWidth, height: el.videoHeight, duration: el.duration });
     } catch (e) {
-      log(`${file.name}: ${e.message}`);
+      log(e.message);
     }
   }
   renderList();
@@ -69,7 +70,7 @@ function renderList() {
     const li = document.createElement("li");
     const input = document.createElement("input");
     input.value = v.id;
-    input.title = "動画 ID / Video ID";
+    input.title = t("web.video_id");
     input.onchange = () => { v.id = safeId(input.value, new Set(videos.filter((o) => o !== v).map((o) => o.id))); input.value = v.id; };
     li.append(input, v.vox ? ` ${v.title} (MagicaVoxel 3D)` : ` ${v.title} (${v.width}×${v.height}, ${v.duration.toFixed(1)} s)`);
     list.append(li);
@@ -106,8 +107,8 @@ function settings() {
 function updateLoadHint() {
   const s = settings();
   const blocks = s.width * s.height * (s.mode === "screen" ? 1 : 2) * s.fps;
-  const level = blocks > 160000 ? "重い / heavy" : blocks > 60000 ? "やや重い / moderate" : "軽い / light";
-  $("loadHint").textContent = `再生負荷の目安 / Load estimate: ${blocks.toLocaleString()} blocks/s (${level})`;
+  const level = t(blocks > 160000 ? "load.heavy" : blocks > 60000 ? "load.medium" : "load.light");
+  $("loadHint").textContent = t("web.load_estimate", { blocks: blocks.toLocaleString(I18n.language), level });
 }
 
 function drawLetterboxed(ctx, source, srcW, srcH, w, h) {
@@ -186,7 +187,7 @@ async function decodeVideoAudio(file) {
     } catch (e) {
       const adts = await Mp4Audio.extractAdts(file).catch(() => null);
       if (!adts || adts.length === 0) throw e;
-      log("  音声を動画から取り出してデコード / decoding the AAC track taken out of the video");
+      log("  " + t("web.audio_aac"));
       return await context.decodeAudioData(adts.buffer.slice(adts.byteOffset, adts.byteOffset + adts.length));
     }
   } finally {
@@ -233,7 +234,7 @@ async function extractAudio(v, length) {
     }
     return chunks;
   } catch (e) {
-    log(`  音声なし / no audio (${e.message || e})`);
+    log("  " + t("web.no_audio", { error: e.message || e }));
     return [];
   }
 }
@@ -243,10 +244,11 @@ function startWorker() {
   worker = new Worker("worker.js");
   worker.onmessage = (event) => {
     const msg = event.data;
-    if (msg.type === "log") log(msg.text);
+    // worker の文はキーで受け取ってここで翻訳する (Python の出力はそのまま)
+    if (msg.type === "log") log(msg.key ? (msg.indent || "") + t(msg.key, msg.params) : msg.text);
     else if (msg.type === "progress") $("progress").value = msg.value;
     else if (msg.type === "done") finish(msg);
-    else if (msg.type === "error") { log("エラー / Error: " + msg.text); $("build").disabled = false; }
+    else if (msg.type === "error") failed(msg.text);
   };
   return worker;
 }
@@ -261,9 +263,25 @@ function finish(msg) {
   link.hidden = false;
   $("progress").value = 1;
   $("build").disabled = false;
-  log(`完成 / Done: ${(blob.size / 1024).toFixed(0)} KB`);
+  log(t("web.done", { size: (blob.size / 1024).toFixed(0) }));
   window.lastResult = msg; // テスト用
+  if (lastBuild) {
+    Usage.event("build-done");
+    Usage.event(`build-kind-${lastBuild.kind}`);
+    Usage.event(`build-lang-${lastBuild.lang}`);
+    lastBuild = null;
+  }
 }
+
+function failed(text) {
+  log(t("web.error", { error: text }));
+  $("build").disabled = false;
+  if (lastBuild) Usage.event("build-error");
+  lastBuild = null;
+}
+
+// 利用数で数える、作成中のアドオンの種類と画面の言語 (完成・失敗したときに送る)
+let lastBuild = null;
 
 // だまし絵の背景の映像のコマ: 後ろの壁の大きさは人物を変換するまで分からないので、長い辺 256 で取り出し、
 // Python (convert.py --fit cover) で後ろの壁の大きさに切り取る
@@ -272,14 +290,14 @@ const BACKGROUND_LONG_SIDE = 256;
 async function extractBackground(s) {
   const file = $("stageBackground").files[0];
   if (!s.anamorphic || !file || !videos.some((v) => v.vox || s.mode !== "screen")) return null;
-  log(`背景の映像 / background video: ${file.name}`);
+  log(t("web.background", { name: file.name }));
   const url = URL.createObjectURL(file);
-  const el = await loadVideoElement(url);
+  const el = await loadVideoElement(url, file.name);
   const scale = BACKGROUND_LONG_SIDE / Math.max(el.videoWidth, el.videoHeight);
   const size = { ...s, width: Math.max(2, Math.round(el.videoWidth * scale)), height: Math.max(2, Math.round(el.videoHeight * scale)) };
   const v = { file, url };
   const { frames, length } = await extractFrames(v, size, () => {});
-  log(`  ${frames.length} frames`);
+  log("  " + t("web.frames", { count: frames.length }));
   const sounds = await extractAudio(v, length);
   URL.revokeObjectURL(url);
   return { title: file.name.replace(/\.[^.]+$/, ""), frames, sounds };
@@ -291,6 +309,8 @@ async function build() {
   $("download").hidden = true;
   $("log").textContent = "";
   const w = startWorker();
+  lastBuild = { kind: Usage.kindOf(s, videos.some((v) => v.vox), videos.some((v) => !v.vox)), lang: I18n.language };
+  Usage.event("build-start");
   const background = await extractBackground(s);
   const jobs = [];
   for (const [n, v] of videos.entries()) {
@@ -299,9 +319,9 @@ async function build() {
       jobs.push({ id: v.id, title: v.title, vox: new Uint8Array(await v.file.arrayBuffer()), frames: [], thumbnail: null, sounds: [] });
       continue;
     }
-    log(`[${n + 1}/${videos.length}] ${v.title}: コマを取り出し中 / extracting frames…`);
+    log(t("web.extracting", { index: n + 1, total: videos.length, title: v.title }));
     const { frames, thumbnail, length } = await extractFrames(v, s, (f) => { $("progress").value = (n + f * 0.4) / videos.length; });
-    log(`  ${frames.length} frames`);
+    log("  " + t("web.frames", { count: frames.length }));
     const sounds = await extractAudio(v, length);
     jobs.push({ id: v.id, title: v.title, frames, thumbnail, sounds });
   }
@@ -316,15 +336,49 @@ async function build() {
     for (const f of background.frames) transfer.push(f.buffer);
     for (const [, , bytes] of background.sounds) transfer.push(bytes.buffer);
   }
-  w.postMessage({ type: "build", settings: s, jobs, background, lang: navigator.language.startsWith("ja") ? "ja" : "en" },
+  w.postMessage({ type: "build", settings: s, jobs, background, lang: I18n.language },
     transfer);
 }
 
 $("files").addEventListener("change", (e) => addFiles(e.target.files));
 $("fitAspect").addEventListener("click", fitAspect);
-$("build").addEventListener("click", () => build().catch((e) => { log("エラー / Error: " + e.message); $("build").disabled = false; }));
+$("build").addEventListener("click", () => build().catch((e) => failed(e.message)));
 for (const id of ["width", "height", "fps", "mode"]) $(id).addEventListener("change", updateLoadHint);
+$("namespace").addEventListener("input", renderHowto);
 $("mode").addEventListener("change", () => { if ($("mode").value !== "screen" && $("dither").value === "blue_noise") $("dither").value = "none"; });
+
+// 使い方の setup・start のコマンド (コマンドの接頭辞に合わせる)。翻訳の {setup}・{start} の所に <code> を入れる
+function renderHowto() {
+  const ns = settings().namespace;
+  const codes = { setup: `/scriptevent ${ns}:setup`, start: `/scriptevent ${ns}:start` };
+  const item = $("howtoSetup");
+  item.textContent = "";
+  for (const part of t("web.howto_setup").split(/(\{setup\}|\{start\})/)) {
+    const name = part.slice(1, -1);
+    if (part.startsWith("{") && name in codes) {
+      const code = document.createElement("code");
+      code.textContent = codes[name];
+      item.append(code);
+    } else if (part) {
+      item.append(part);
+    }
+  }
+}
+
+// 利用数: 計測先が設定されているときだけ、説明と送信を止めるチェックを見せる
+function setupUsage() {
+  if (!Usage.configured) return;
+  $("usage").hidden = false;
+  $("usageOptOut").checked = Usage.optedOut;
+  $("usageOptOut").addEventListener("change", (e) => Usage.setOptOut(e.target.checked));
+}
+
+I18n.onChange(() => { updateLoadHint(); renderHowto(); renderList(); });
+I18n.init().then(() => {
+  I18n.fillSelect($("language"));
+  setupUsage();
+  Usage.pageview(I18n.language);
+});
 updateLoadHint();
 startWorker(); // Python の読み込みを先に始める
 

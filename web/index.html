@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,83 +7,92 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!-- 文字は data-i18n のキーで locales/<言語>.json から入れる (web/i18n.js)。ここに書いた英語は読み込む前の表示 -->
 <header>
-  <h1>Block Video Player <span class="sub">Web Converter (beta)</span></h1>
-  <p>動画をブラウザの中だけで Minecraft 統合版のアドオン (.mcaddon) に変換します。ファイルはどこにも送信されません。<br>
-     Convert videos into a Minecraft Bedrock add-on entirely in your browser. Your files are never uploaded.</p>
+  <div class="topbar">
+    <h1>Block Video Player <span class="sub" data-i18n="web.subtitle">Web Converter (beta)</span></h1>
+    <label class="lang"><span data-i18n="language.label">🌐 Language</span>
+      <select id="language"></select></label>
+  </div>
+  <p data-i18n="web.intro">Turn videos into a Minecraft Bedrock add-on (.mcaddon) entirely in your browser. Your videos are never uploaded.</p>
 </header>
 
 <main>
   <section class="card">
-    <h2>1. 動画・.vox / Videos and .vox</h2>
+    <h2 data-i18n="web.section_videos">1. Videos and .vox</h2>
     <input type="file" id="files" accept="video/*,.vox" multiple>
-    <p class="hint">MagicaVoxel の立体アニメ (.vox) も追加できます。大きさとコマ数は .vox のまま使い、FPS とパレットだけが効きます。<br>
-       MagicaVoxel animations (.vox) can be added too: their size and frames are kept; only FPS and palette apply.</p>
+    <p class="hint" data-i18n="web.vox_hint">MagicaVoxel animations (.vox) can be added too: their size and frames are kept, and only FPS and palette apply.</p>
     <ul id="videoList"></ul>
   </section>
 
   <section class="card">
-    <h2>2. 設定 / Settings</h2>
+    <h2 data-i18n="web.section_settings">2. Settings</h2>
     <div class="grid">
-      <label>幅 Width <input type="number" id="width" value="128" min="8" max="256"></label>
-      <label>高さ Height <input type="number" id="height" value="72" min="8" max="256"></label>
-      <button type="button" id="fitAspect">縦横比に合わせる / Match aspect ratio</button>
-      <label>FPS <input type="number" id="fps" value="10" min="1" max="20"></label>
-      <label>長さの上限 (秒) Max length (s) <input type="number" id="duration" value="60" min="1" max="600"></label>
-      <label>表示 Display
+      <label><span data-i18n="settings.width">Width</span> <input type="number" id="width" value="128" min="8" max="256"></label>
+      <label><span data-i18n="settings.height">Height</span> <input type="number" id="height" value="72" min="8" max="256"></label>
+      <button type="button" id="fitAspect" data-i18n="settings.fit_aspect">Match video aspect ratio</button>
+      <label><span data-i18n="settings.fps">FPS</span> <input type="number" id="fps" value="10" min="1" max="20"></label>
+      <label><span data-i18n="web.max_length">Max length (s)</span> <input type="number" id="duration" value="60" min="1" max="600"></label>
+      <label><span data-i18n="settings.mode">Display mode</span>
         <select id="mode">
-          <option value="screen">平面スクリーン / Flat screen</option>
-          <option value="relief">3D レリーフ / 3D relief</option>
-          <option value="extrude">3D シルエット / 3D silhouette</option>
-          <option value="inflate">3D ふくらみ / 3D inflate</option>
+          <option value="screen" data-i18n="mode.screen">Flat screen</option>
+          <option value="relief" data-i18n="mode.relief">3D relief (brightness = depth)</option>
+          <option value="extrude" data-i18n="mode.extrude">3D silhouette (bright parts extruded)</option>
+          <option value="inflate" data-i18n="mode.inflate">3D inflate (bright parts rounded)</option>
         </select>
       </label>
-      <label>奥行き Depth <input type="number" id="depth" value="16" min="2" max="64"></label>
-      <label class="check"><input type="checkbox" id="anamorphic"> だまし絵 (立体・.vox) / Trompe-l'oeil (3D, .vox)</label>
-      <label>だまし絵の背景の映像 (任意) / Trompe-l'oeil background video (optional)
+      <label><span data-i18n="settings.depth">Depth (blocks)</span> <input type="number" id="depth" value="16" min="2" max="64"></label>
+      <label class="check"><input type="checkbox" id="anamorphic"> <span data-i18n="web.anamorphic">Trompe-l'oeil (3D and .vox only)</span></label>
+      <label><span data-i18n="web.stage_background">Trompe-l'oeil background video (optional)</span>
         <input type="file" id="stageBackground" accept="video/*"></label>
-      <label>パレット Palette
+      <label><span data-i18n="settings.palette">Palette</span>
         <select id="palette">
-          <option value="auto">自動 (おすすめ) / Auto (recommended)</option>
-          <option value="all">全ブロック / All blocks</option>
-          <option value="full">39 色 / 39 colors</option>
-          <option value="concrete">コンクリート 16 色 / Concrete 16</option>
-          <option value="glass">ステンドグラス 16 色 (3D) / Stained glass (3D)</option>
+          <option value="auto" data-i18n="palette.auto">Auto (recommended: up to 127 of 214 colors per scene)</option>
+          <option value="all" data-i18n="palette.all">All blocks, 127 colors (concrete, terracotta, wool, wood, stone, light blocks…)</option>
+          <option value="full" data-i18n="palette.full">All 39 colors (concrete + terracotta + light blocks)</option>
+          <option value="concrete" data-i18n="palette.concrete">Basic 16 colors (concrete)</option>
+          <option value="glass" data-i18n="palette.glass">Stained glass, 16 colors (translucent, for 3D holograms)</option>
         </select>
       </label>
-      <label>ディザ Dither
+      <label><span data-i18n="settings.dither">Dithering</span>
         <select id="dither">
           <option value="blue_noise">Blue Noise</option>
-          <option value="none">なし / None</option>
+          <option value="none" data-i18n="web.dither_none">None</option>
           <option value="ordered">Ordered</option>
           <option value="floyd">Floyd-Steinberg</option>
         </select>
       </label>
-      <label>パック名 Pack name <input type="text" id="packName" value="Block Video Player"></label>
-      <label>コマンドの接頭辞 Command prefix <input type="text" id="namespace" value="badapple" pattern="[a-z0-9_]+"></label>
+      <label><span data-i18n="pack.name">Pack name</span> <input type="text" id="packName" value="Block Video Player"></label>
+      <label><span data-i18n="pack.namespace">Command prefix</span> <input type="text" id="namespace" value="badapple" pattern="[a-z0-9_]+"></label>
     </div>
     <p id="loadHint" class="hint"></p>
   </section>
 
   <section class="card">
-    <h2>3. 作成 / Build</h2>
-    <button type="button" id="build" disabled>.mcaddon を作る / Create .mcaddon</button>
-    <a id="download" class="download" hidden>ダウンロード / Download</a>
+    <h2 data-i18n="web.section_build">3. Build</h2>
+    <button type="button" id="build" disabled data-i18n="build.button">Create .mcaddon</button>
+    <a id="download" class="download" hidden data-i18n="web.download">Download</a>
     <progress id="progress" max="1" value="0"></progress>
     <pre id="log"></pre>
   </section>
 
   <section class="card small">
-    <h2>使い方 / How to use</h2>
+    <h2 data-i18n="web.section_howto">How to use</h2>
     <ol>
-      <li>作った .mcaddon を開いて Minecraft にインポートし、ワールドの設定で行動パックとリソースパックを両方有効にし、チートをオンにします。</li>
-      <li>平らな場所で <code>/scriptevent badapple:setup</code> → コンパスを使うとリモコンが開きます。</li>
+      <li data-i18n="web.howto_import">Open the .mcaddon to import it into Minecraft. In the world settings, turn on both the behavior pack and the resource pack, and turn cheats on.</li>
+      <li id="howtoSetup"></li>
     </ol>
-    <p>初回は変換用の Python (約 20 MB) を読み込むので時間がかかります。ブラウザ版は CPU だけで変換し、音声は WAV になるので、
-       長い動画や大きな画面では Windows 版 (GPU 対応) の方が速く、アドオンも小さくなります。
+    <p><span data-i18n="web.howto_note">The first time, the page loads Python for the converter (about 20 MB), which takes a while.</span>
        <a href="https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player">GitHub</a></p>
+    <div id="usage" hidden>
+      <p data-i18n="web.usage_note">To learn how many people use it, this page counts page opens and finished add-ons with GoatCounter.</p>
+      <label class="check"><input type="checkbox" id="usageOptOut"> <span data-i18n="web.usage_optout">Don't send usage counts</span></label>
+    </div>
   </section>
 </main>
+<script src="config.js"></script>
+<script src="i18n.js"></script>
+<script src="usage.js"></script>
 <script src="mp4audio.js"></script>
 <script src="app.js"></script>
 </body>

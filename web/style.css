@@ -17,6 +17,8 @@
   }
 }
 * { box-sizing: border-box; }
+/* hidden を付けた要素は、display を指定していても隠す (作る前に「ダウンロード」が出ていた) */
+[hidden] { display: none !important; }
 body {
   margin: 0;
   padding: 16px;
@@ -87,3 +89,9 @@ progress { display: block; width: 100%; margin: 12px 0 6px; }
 #videoList input { width: 9em; }
 .hint { color: var(--muted); font-size: 0.85rem; margin: 10px 0 0; }
 code { font-size: 0.9em; }
+/* 見出しと言語の選択欄を横に並べる (狭い画面では折り返す) */
+.topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+label.lang { flex-direction: row; align-items: center; gap: 6px; }
+#usage { margin-top: 10px; }
+#usage p { margin: 0 0 4px; }
+#usage label.check { padding-bottom: 0; }

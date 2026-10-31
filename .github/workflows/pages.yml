@@ -41,7 +41,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      # 利用数を数えるときは、リポジトリの変数 (Settings → Secrets and variables → Actions → Variables) に
+      # GOATCOUNTER_CODE (GoatCounter のコード) を作る。無ければ数えない (web/usage.js)
       - name: Build the site
+        env:
+          BVP_GOATCOUNTER_CODE: ${{ vars.GOATCOUNTER_CODE }}
         run: python scripts/build_web.py --out web_dist
 
       - uses: actions/configure-pages@v5
