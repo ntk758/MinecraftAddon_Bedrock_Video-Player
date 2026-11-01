@@ -6,15 +6,26 @@ name: Release
 #      (scripts/repack_addon.py)、モックの Minecraft で全部の動画を最後まで再生する (scripts/play_addon_mock.py)
 #   3. SHA256SUMS.txt を作り、CHANGELOG のその版の部分を説明文にしてリリースを作る
 # 実機 (Minecraft) での確認は機械ではできないので、説明文に「未確認」と書く。
+# タグを push できないとき (タグの push が許可されていない環境など) は、Actions の画面か API から手動で起動し、
+# tag に版 (vX.Y.Z) を入れる。リリースを作るときに、起動したコミットにそのタグを付ける。
 on:
   push:
     tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'リリースする版 (vX.Y.Z)。pack_metadata.py の版と同じにする'
+        required: true
 
 permissions:
   contents: write
 
+env:
+  # タグの push なら そのタグ、手動の起動なら入力した版
+  TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -22,6 +33,12 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check the version
+        shell: bash
+        run: |
+          version=$(python -c "import pack_metadata; print('v' + pack_metadata.version_text())")
+          if [ "$version" != "$TAG" ]; then echo "pack_metadata.py is $version but the release is $TAG"; exit 1; fi
 
       - uses: actions/setup-python@v5
         with:
@@ -47,18 +64,17 @@ jobs:
 
       - name: Zip
         shell: pwsh
-        run: Compress-Archive -Path dist\BlockVideoPlayer -DestinationPath "BlockVideoPlayer-${{ github.ref_name }}-windows-x64.zip"
+        run: Compress-Archive -Path dist\BlockVideoPlayer -DestinationPath "BlockVideoPlayer-${{ env.TAG }}-windows-x64.zip"
 
       - uses: actions/upload-artifact@v4
         with:
           name: exe
-          path: BlockVideoPlayer-${{ github.ref_name }}-windows-x64.zip
+          path: BlockVideoPlayer-${{ env.TAG }}-windows-x64.zip
 
   samples:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -97,7 +113,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -124,5 +139,5 @@ jobs:
 
       - name: Create the release
         run: |
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file notes.md \
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md \
             artifacts/BlockVideoPlayer-*.zip artifacts/BlockVideoPlayer-*.mcaddon artifacts/SHA256SUMS.txt

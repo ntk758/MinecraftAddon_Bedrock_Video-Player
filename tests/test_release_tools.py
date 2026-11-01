@@ -104,6 +104,8 @@ def test_release_workflow_runs_the_tools():
     workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8"))
     triggers = workflow.get("on") or workflow.get(True)  # YAML 1.1 では on が True になる
     assert triggers["push"]["tags"] == ["v*"]
+    assert triggers["workflow_dispatch"]["inputs"]["tag"]["required"] is True
+    assert '--target "$GITHUB_SHA"' in (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     text = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     for needed in ("build_standalone.py", "scripts/repack_addon.py", "scripts/play_addon_mock.py",
                    "scripts/release_notes.py", "SHA256SUMS.txt", "--run-converter"):
