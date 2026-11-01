@@ -103,7 +103,7 @@ def test_view_without_blur_matches_plain_lab():
 def test_gray_dither_barely_leaks_into_ab():
     """反対色の行列の符号を間違えると、灰色のディザが a, b へ漏れて誤差が 2 倍近くになる (試作の初回の実例)。
 
-    今の行列でも白が反対色の 0 にならないので 26% ほど漏れる (L 3.43 に ab 0.88)。符号を 1 つ間違えると ab が L を超える (1.8 倍以上)。
+    今の行列でも白が反対色の 0 にならないので 21% ほど漏れる (L 3.63 に ab 0.76)。符号を 1 つ間違えると ab が L を超える (1.8 倍以上)。
     """
     h, w = 144, 256
     source, shown = flat_target(h, w, *GRAY), dither(h, w, *GRAY)
@@ -135,8 +135,10 @@ def test_flat_dither_disappears_far_away_but_stays_as_removed_grain():
     pixel = float(deltaE_ciede2000(rgb2lab(source), rgb2lab(shown)).mean())
     cpd = cells_per_degree(h, 4)
     error = view_error(source, shown, cpd)
-    assert error < 0.35 * pixel
-    assert grain_removed(source, shown, cpd) >= 3 * error
+    # 明るさの細い山 (重み 0.9、半値全幅 0.05 度) は k=4 でも σ≈0.5 マスなので、半分ほどは残る (実測 0.48)
+    assert error < 0.6 * pixel
+    assert error < 0.6 * view_error(source, shown, cells_per_degree(h, 1))
+    assert grain_removed(source, shown, cpd) > 1.2 * error  # 実測 1.39 倍
 
 
 @pytest.mark.parametrize("h,w", [(72, 128), (144, 256)])
