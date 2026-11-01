@@ -1,5 +1,26 @@
 # リリースの手順 / Release checklist
 
+## 自動のリリース (v6.31.0 から)
+
+版を上げる変更 (下の 1) を main に入れて CI が成功したら、版のタグを push するだけで
+[.github/workflows/release.yml](../.github/workflows/release.yml) が次を行い、GitHub のリリースを作る。
+
+- **EXE**: GitHub Actions の Windows (Python 3.12) で `build_standalone.py` (DirectML 版の PyTorch と onnxruntime を同梱)。
+  EXE の変換モード (`--run-converter`) で画像 1 枚を変換できることを確かめてから zip にする。
+- **サンプル**: 前のリリースの `sample`・`sample-3d`・`showcase` を、データ (変換した映像・音声・サムネイル) はそのままで、
+  アドオンの部分 (main.js・codec.js・manifest・翻訳・版) だけを今の版にして作り直す (`scripts/repack_addon.py`)。
+  パック名が同じなので UUID も同じで、上書きで更新できる。**データの形式を変えた版では使えない** (そのときは手で作る)。
+- **モックで再生**: サンプルの全部の動画を最後まで再生し、置いたブロックの数を参照デコーダと比べる (`scripts/play_addon_mock.py`)。
+- **SHA256SUMS.txt** と、CHANGELOG のその版の部分から作った説明文 (`scripts/release_notes.py`)。説明文の「実機」は「未確認」と書く。
+
+```bash
+git tag v6.31.0 && git push origin v6.31.0
+```
+
+実機での確認 (下の 6) と CurseForge の更新 (下の 9) は手で行う。
+
+## 手で行う場合 / Manual steps
+
 1. **版を上げる**: `pack_metadata.py` の `PACK_VERSION`、`manifest.json` の `version` (2 か所)、README の版のバッジ・
    「すぐ試す」のファイル名、`PROJECT_STATUS.md` の最新バージョン、[CHANGELOG.md](../CHANGELOG.md) の「未リリース」を版の見出しに。
 2. **自動テスト**: `pytest -q` がすべて成功し、`main` の CI が成功していること。

@@ -1,0 +1,128 @@
+name: Release
+
+# 版のタグ (vX.Y.Z) を push すると、docs/RELEASING.md の手順のうち機械でできる所を行い、GitHub のリリースを作る:
+#   1. Windows で EXE を作り (build_standalone.py、DirectML 版の PyTorch と onnxruntime を同梱)、EXE で 1 本変換して確かめる
+#   2. 前のリリースのサンプル (sample・sample-3d・showcase) を、データはそのままアドオンの部分だけ今の版にして作り直し
+#      (scripts/repack_addon.py)、モックの Minecraft で全部の動画を最後まで再生する (scripts/play_addon_mock.py)
+#   3. SHA256SUMS.txt を作り、CHANGELOG のその版の部分を説明文にしてリリースを作る
+# 実機 (Minecraft) での確認は機械ではできないので、説明文に「未確認」と書く。
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies (DirectML)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-directml.txt pyinstaller
+
+      - name: Build the EXE
+        run: python build_standalone.py
+
+      - name: Convert one picture with the EXE
+        shell: pwsh
+        run: |
+          python -c "from PIL import Image; Image.new('RGB', (64, 36), (200, 80, 40)).save('smoke.png')"
+          $p = Start-Process -FilePath dist\BlockVideoPlayer\BlockVideoPlayer.exe -Wait -PassThru -NoNewWindow `
+            -ArgumentList '--run-converter', '--input-video', 'smoke.png', '--output', 'smoke.js', '--width', '32', '--height', '18', '--fps', '10', '--device', 'cpu'
+          if ($p.ExitCode -ne 0) { throw "EXE exited with $($p.ExitCode)" }
+          if (-not (Test-Path smoke.js) -or (Get-Item smoke.js).Length -eq 0) { throw "smoke.js was not written" }
+          Get-Item smoke.js | Format-List Name, Length
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\BlockVideoPlayer -DestinationPath "BlockVideoPlayer-${{ github.ref_name }}-windows-x64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exe
+          path: BlockVideoPlayer-${{ github.ref_name }}-windows-x64.zip
+
+  samples:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Rebuild the samples from the previous release
+        run: |
+          PREV=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          echo "previous release: $PREV"
+          mkdir -p prev out
+          gh release download "$PREV" --repo "$GITHUB_REPOSITORY" --dir prev \
+            -p "BlockVideoPlayer-sample-$PREV.mcaddon" -p "BlockVideoPlayer-sample-3d-$PREV.mcaddon" -p "BlockVideoPlayer-$PREV-showcase.mcaddon"
+          python scripts/repack_addon.py "prev/BlockVideoPlayer-sample-$PREV.mcaddon" "out/BlockVideoPlayer-sample-$TAG.mcaddon"
+          python scripts/repack_addon.py "prev/BlockVideoPlayer-sample-3d-$PREV.mcaddon" "out/BlockVideoPlayer-sample-3d-$TAG.mcaddon"
+          python scripts/repack_addon.py "prev/BlockVideoPlayer-$PREV-showcase.mcaddon" "out/BlockVideoPlayer-$TAG-showcase.mcaddon"
+
+      - name: Play every video in the mock
+        run: python scripts/play_addon_mock.py out/*.mcaddon | tee out/mock.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: samples
+          path: out/
+
+  release:
+    needs: [ exe, samples ]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums and notes
+        run: |
+          cd artifacts
+          sha256sum BlockVideoPlayer-*.zip BlockVideoPlayer-*.mcaddon > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          videos=$(grep -c ': OK$' mock.txt)
+          {
+            echo "- CI (自動テスト・ブラウザ版の Pyodide) 成功。"
+            echo "- EXE を GitHub Actions の Windows で作り、EXE で画像 1 枚を変換できた。"
+            echo "- サンプル 3 本は前のリリースと同じデータで、アドオンの部分だけをこの版にした。全 ${videos} 本の動画をモックで最後まで再生し、置いたブロックの数が参照デコーダと一致した (だまし絵は置いたことだけ)。"
+            echo "- 実機 (Minecraft) では **未確認**。"
+          } > ../checks.md
+          cd ..
+          python scripts/release_notes.py "$TAG" --checks checks.md > notes.md
+          cat notes.md
+
+      - name: Create the release
+        run: |
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file notes.md \
+            artifacts/BlockVideoPlayer-*.zip artifacts/BlockVideoPlayer-*.mcaddon artifacts/SHA256SUMS.txt
