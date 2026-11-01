@@ -352,5 +352,7 @@
   "web.image_hint": "Imagens (PNG, JPEG, WebP…) também funcionam: viram arte de blocos parada que fica no lugar depois de mostrada. Com um modo 3D, viram uma escultura.",
   "web.image_item": "imagem",
   "dialog.image_files": "Imagens (arte de blocos parada)",
-  "web.audio_wav_fallback": "Não foi possível carregar o codificador OGG, então o som será salvo em WAV (maior): {error}"
+  "web.audio_wav_fallback": "Não foi possível carregar o codificador OGG, então o som será salvo em WAV (maior): {error}",
+  "settings.pair_flat": "Com um modo 3D, adicionar também o vídeo plano normal (mesmo som; a versão 2D é <ID>_flat)",
+  "build.pair_flat": "  Convertendo também a versão plana (2D): {id}"
 }

@@ -352,5 +352,7 @@
   "web.image_hint": "Les images (PNG, JPEG, WebP…) fonctionnent aussi : elles deviennent une œuvre en blocs fixe qui reste en place après l'affichage. En mode 3D, elles deviennent une sculpture.",
   "web.image_item": "image",
   "dialog.image_files": "Images (œuvre en blocs fixe)",
-  "web.audio_wav_fallback": "Impossible de charger l'encodeur OGG, le son est donc enregistré en WAV (plus volumineux) : {error}"
+  "web.audio_wav_fallback": "Impossible de charger l'encodeur OGG, le son est donc enregistré en WAV (plus volumineux) : {error}",
+  "settings.pair_flat": "En mode 3D, ajouter aussi la vidéo plate normale (même son ; la version 2D est <ID>_flat)",
+  "build.pair_flat": "  Conversion aussi de la version plate (2D) : {id}"
 }

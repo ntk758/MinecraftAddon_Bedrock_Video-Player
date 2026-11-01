@@ -352,5 +352,7 @@
   "web.image_hint": "画像 (PNG・JPEG・WebP など) も使えます。表示したあともそのまま残る、止まったブロックアートになります。立体のモードなら彫刻になります。",
   "web.image_item": "画像",
   "dialog.image_files": "画像 (止まったブロックアート)",
-  "web.audio_wav_fallback": "OGG のエンコーダーを読み込めなかったので、音声を WAV (大きめ) にします: {error}"
+  "web.audio_wav_fallback": "OGG のエンコーダーを読み込めなかったので、音声を WAV (大きめ) にします: {error}",
+  "settings.pair_flat": "立体のモードのとき、通常の平面の動画もセットで入れる (音声は共通。平面版は <動画ID>_flat)",
+  "build.pair_flat": "  平面 (2D) 版も変換しています: {id}"
 }

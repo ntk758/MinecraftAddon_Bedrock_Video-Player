@@ -48,6 +48,8 @@ function voxArgs(s, voxPath, out, lang) {
 // だまし絵にする、動画から作る立体の長い辺の上限 (Windows 版の STAGE_MAX_SIDE と同じ。舞台と背景の映像が立体に
 // 比例して広がり、重くなる)
 const STAGE_MAX_SIDE = 80;
+// 立体版と平面版をセットで入れるときの、平面版の動画 ID の末尾 (pack_builder.FLAT_PAIR_SUFFIX と同じ)
+const FLAT_PAIR_SUFFIX = "_flat";
 
 function figureSize(s) {
   if (!s.anamorphic || s.mode === "screen") return [s.width, s.height];
@@ -142,10 +144,25 @@ self.onmessage = async (event) => {
       const code = convertModule.main(pyodide.toPy(args));
       convertModule.PROGRESS_HOOK = null;
       if (code !== 0) throw new Error(`convert.py exit ${code}`);
+      // 立体版と平面版をセットにする (動画・画像を立体にするときだけ。.vox と MMD には元の平面の映像が無い)。
+      // 平面版は同じコマから変換し、音声は立体版 (だまし絵なら背景の映像) のものを鳴らす (pack_builder の audio_from)
+      const pair = s.pairFlat && s.mode !== "screen" && !job.vox && !job.mmd;
+      let flat = null;
+      if (pair) {
+        const flatId = `${job.id}${FLAT_PAIR_SUFFIX}`;
+        say("build.pair_flat", { id: flatId }, "");
+        const flatOut = `/work/frames_${flatId}.js`;
+        const flatSettings = { ...s, mode: "screen", anamorphic: false, dither: s.dither === "none" ? "blue_noise" : s.dither };
+        const flatCode = convertModule.main(pyodide.toPy(convertArgs(flatSettings, dir, flatOut, lang)));
+        if (flatCode !== 0) throw new Error(`convert.py exit ${flatCode}`);
+        flat = { id: flatId, title: `${job.title} (2D)`, frames_js: pyodide.FS.readFile(flatOut, { encoding: "utf8" }),
+                 thumbnail: job.thumbnail, sounds: [], audio_from: backgroundId || job.id, width: s.width, height: s.height };
+      }
       for (const name of pyodide.FS.readdir(dir)) if (/\.(ppm|vox)$/.test(name)) pyodide.FS.unlink(`${dir}/${name}`);
       const framesJs = pyodide.FS.readFile(out, { encoding: "utf8" });
-      videos.push({ id: job.id, title: job.title, frames_js: framesJs,
+      videos.push({ id: job.id, title: pair ? `${job.title} (3D)` : job.title, frames_js: framesJs,
                     thumbnail: job.thumbnail, sounds: job.sounds, width: figureSize(s)[0], height: figureSize(s)[1] });
+      if (flat) videos.push(flat);
       if (backgroundId) videos.push(convertBackground(pyodide, s, background, backgroundId, framesJs, lang));
       post("progress", { value: (n + 0.95) / jobs.length });
     }
