@@ -76,7 +76,7 @@ Python で動かす方法・GPU の設定は [インストールと使い方](#-
 | | 状態 / Status |
 |---|---|
 | Minecraft 統合版 Windows 11 | ✅ 作者の PC 1 台で確認 (アドオン v6.0.0、Minecraft の版は未記録) / tested on one PC |
-| Windows 10・Android・iOS・Xbox・PlayStation・Switch・BDS・Realms | ⚠️ 未確認 (安定版 API だけなので動く想定。必要な版は 1.26.10 以降) / not tested yet (stable APIs only; needs 1.21.80+) |
+| Windows 10・Android・iOS・Xbox・PlayStation・Switch・BDS・Realms | ⚠️ 未確認 (安定版 API だけなので動く想定。必要な版は 1.26.10 以降) / not tested yet (stable APIs only; needs 1.26.10+) |
 | 変換ツール: Windows 11 EXE / Python 3.12 | ✅ 作者の PC で確認 (CPU・AMD DirectML) / tested on one PC (CPU, AMD DirectML) |
 | 変換ツール: Linux (CLI) | 🧪 CI で毎回テスト / tested in CI |
 | Java 版 / Java Edition | ❌ 非対応 / not supported |
@@ -124,6 +124,16 @@ Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを
 | Python | **3.12** (3.13 でも CPU 変換は動きますが、AMD GPU 用の DirectML は 3.12 までの対応です) |
 | FFmpeg | PATH に通すか、`video_player_gui.py` と同じフォルダに `ffmpeg.exe` を置く |
 | GPU (任意) | NVIDIA / AMD / Intel。PyTorch の追加が必要 ([GPU の設定](#4-gpu-の設定-任意)) |
+
+### 🔌 使っている Script API (Script API)
+アドオンは安定版の Script API だけで動くので、「試験的な機能」(ベータ API) を有効にする必要はありません。**Minecraft 1.26.10 より古い版では読み込めないので、v6.31.0 (1.21.80 以降) を使ってください。**
+
+| モジュール | 版 | 使い道 |
+|---|---|---|
+| `@minecraft/server` | 2.6.0 | ブロックの描画 (`fillBlocks`)、チート無しのコマンド (`customCommandRegistry`)、常時読み込み (`TickingAreaManager`)、チャンクの読み込みの判定 (`isChunkLoaded`) |
+| `@minecraft/server-ui` | 2.0.0 | リモコンの画面 |
+
+これより新しい版にしていないのは、増える機能 (2.10.0 の `cloneBlocks`) の効果が小さいのに、読み込める Minecraft の版が狭まるためです。詳しくは[対応環境](docs/COMPATIBILITY.md)を見てください。
 
 ### 🚀 インストールと使い方 (Installation & Usage)
 
@@ -325,6 +335,16 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - **Minecraft**: latest Bedrock Edition (stable Script API `@minecraft/server` 2.6.0 / `@minecraft/server-ui` 2.0.0, **1.26.10 or later** — **Beta APIs are not required**)
 - **Python**: 3.12 (3.13 works for CPU conversion, but DirectML supports up to 3.12)
 - **FFmpeg**: on PATH or next to `video_player_gui.py`
+
+### 🔌 Script API
+The add-on uses stable Script API modules only, so you do not need to turn on any experimental features (Beta APIs). **It does not load on Minecraft older than 1.26.10; use v6.31.0 (1.21.80 or later) there.**
+
+| Module | Version | Used for |
+|---|---|---|
+| `@minecraft/server` | 2.6.0 | Placing blocks (`fillBlocks`), cheat-free commands (`customCommandRegistry`), keeping the screen loaded (`TickingAreaManager`), checking that chunks are loaded (`isChunkLoaded`) |
+| `@minecraft/server-ui` | 2.0.0 | The remote control screen |
+
+It stays on these versions because the main addition in newer ones (`cloneBlocks` in 2.10.0) gains little and would narrow the Minecraft versions that can load the add-on. See [compatibility](docs/COMPATIBILITY.md) for details.
 
 ### 🚀 Usage
 1. `pip install -r requirements.txt`
