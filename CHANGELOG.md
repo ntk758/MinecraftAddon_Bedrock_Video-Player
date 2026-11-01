@@ -2,6 +2,19 @@
 
 このプロジェクトの変更履歴です (新しい順)。各版のダウンロードは [GitHub Releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases) にあります。
 
+## v6.32.1
+
+### 直したこと
+
+- **リモコンで動画を選んでも変わらない問題** (アドオン): 「次の動画」「前の動画」「動画リストから選択」で動画を選ぶと、**すぐその動画に切り替えて最初から再生**するようにしました。これまでは、再生ボタンを押すまで切り替わらないうえに、次のように選んだ動画と画面の動画がずれていました。
+  - 「次の動画」を続けて押しても、同じ動画までしか進まない
+  - リモコンの【選択中】と動画リストの [選択中] が、選んだ動画に変わらない
+  - シークが、選んだ動画ではなく画面に出ている前の動画に効く
+
+### 開発者向け
+
+- 選んだ動画を `globalSelectedVideoId` だけで表すようにし、選んだときの処理を `selectVideoFromRemote` にまとめた。使わなくなった翻訳 `addon.next_video`・`addon.video_selected_hint` を消した。
+
 ## v6.32.0
 
 **Minecraft 1.26.10 以降が必要です** (v6.31.0 までは 1.21.80 以降)。それより古い Minecraft では [v6.31.0](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/tag/v6.31.0) を使ってください。
