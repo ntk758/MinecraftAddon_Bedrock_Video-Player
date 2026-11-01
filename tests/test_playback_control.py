@@ -103,6 +103,51 @@ def test_seek_places_only_the_target_frame(scene, tmp_path):
     assert out["snaps"][0]["board"] == frames[60]
 
 
+def selected_in_remote(form):
+    """リモコンの本文の【選択中】に出ている動画 ID。"""
+    return re.search(r'remote\.selected".*?"text":"(\w+)"', json.dumps(form["body"], separators=(",", ":"))).group(1)
+
+
+def test_next_video_moves_on_each_press_and_plays_at_once(scene, tmp_path):
+    """再生中に「次の動画」を続けて押すと 1 本ずつ進み、表示・画面・シークがどれも選んだ動画になる。"""
+    path, data = scene
+    frames = reference_frames(data)
+    steps = [{"event": "badapple:setup"}, {"event": "badapple:play", "message": "a"}, {"tick": 30},
+             {"ui": [{"selection": 2}, {"selection": 2}]}, {"tick": 2},
+             {"ui": [{"selection": 5}, {"formValues": [6]}]}, {"until": "bvp.seek_done"}, {"snap": "seek"}]
+    out = drive(tmp_path / "addon", {"a": path, "b": path, "c": path}, steps)
+    assert out["errors"] == []
+    selected = [m for m in out["messages"] if "bvp.video_selected" in m]
+    assert ['"a"' in selected[0], '"b"' in selected[1], '"c"' in selected[2]] == [True] * 3
+    remotes = [f for f in out["forms"] if f["kind"] == "action"]
+    assert [selected_in_remote(f) for f in remotes] == ["a", "b", "c", "c"]
+    assert out["snaps"][0]["board"] == frames[60]
+
+
+def test_library_marks_and_plays_the_chosen_video(scene, tmp_path):
+    """動画リストで選ぶとすぐ再生し、次に開いたリストの [選択中] も選んだ動画に付く。"""
+    path, _ = scene
+    steps = [{"event": "badapple:setup"}, {"event": "badapple:play", "message": "a"}, {"tick": 10},
+             {"ui": [{"selection": 6}, {"selection": 1}]}, {"tick": 2},
+             {"ui": [{"selection": 6}]}]
+    out = drive(tmp_path / "addon", {"a": path, "b": path}, steps)
+    assert out["errors"] == []
+    assert sum("bvp.starting" in m for m in out["messages"]) == 2
+    library = [f for f in out["forms"] if f["kind"] == "action" and "library.title" in json.dumps(f["title"])][-1]
+    tagged = ["selected_tag" in json.dumps(b) for b in library["buttons"]]
+    assert tagged == [False, True]
+
+
+def test_choosing_a_video_before_setup_only_asks_for_setup(scene, tmp_path):
+    """setup の前にリモコンで選んでも失敗せず、setup を促して選んだ動画を覚える。"""
+    path, _ = scene
+    steps = [{"ui": [{"selection": 2}]}]
+    out = drive(tmp_path / "addon", {"a": path, "b": path}, steps)
+    assert out["errors"] == []
+    assert any("no_anchor" in m for m in out["messages"])
+    assert selected_in_remote(out["forms"][-1]) == "b"
+
+
 def test_cells_that_failed_to_clear_are_placed_again(tmp_path):
     """停止時の塗りつぶしで置けなかったマス (読み込まれていないチャンク) は、次の再生で必ず置き直す。"""
     (tmp_path / "frames").mkdir()

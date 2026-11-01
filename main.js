@@ -2098,12 +2098,12 @@ function getActivePlayer() {
 function showRemoteControlGUI(player) {
   const vp = getActivePlayer();
   const running = vp ? vp.running : false;
-  const currentVideoId = vp ? vp.videoId : globalSelectedVideoId;
+  const currentVideoId = globalSelectedVideoId;
   const videoData = VIDEOS[currentVideoId];
   
   const statusText = tr(running ? "remote.playing" : "remote.stopped");
   const titleText = currentVideoId ? { text: currentVideoId } : tr("remote.none");
-  const currentFrame = vp ? vp.currentFrame : 0;
+  const currentFrame = vp && vp.videoId === currentVideoId ? vp.currentFrame : 0;
   const masterVolume = vp ? vp.masterVolume : 1.0;
   
   const currentSec = videoData ? Math.floor(frameToSeconds(videoData, currentFrame)) : 0;
@@ -2161,16 +2161,20 @@ function showRemoteControlGUI(player) {
   });
 }
 
+/** リモコンで選んだ動画にすぐ切り替えて再生し、リモコンを開き直す (選んだ動画と画面の動画がずれないように)。 */
+function selectVideoFromRemote(videoId, player) {
+  globalSelectedVideoId = videoId;
+  notify("video_selected", videoId);
+  startPlayback(player.dimension);
+  showRemoteControlGUI(player);
+}
+
 function switchVideoIndex(direction, player) {
   if (LISTED_VIDEOS.length === 0) return;
-  const vp = getActivePlayer();
-  const cvId = vp ? vp.videoId : globalSelectedVideoId;
-  let currentIdx = LISTED_VIDEOS.findIndex((v) => v.id === cvId);
+  let currentIdx = LISTED_VIDEOS.findIndex((v) => v.id === globalSelectedVideoId);
   if (currentIdx === -1) currentIdx = 0;
   let newIdx = (currentIdx + direction + LISTED_VIDEOS.length) % LISTED_VIDEOS.length;
-  globalSelectedVideoId = LISTED_VIDEOS[newIdx].id;
-  notify("next_video", globalSelectedVideoId);
-  showRemoteControlGUI(player);
+  selectVideoFromRemote(LISTED_VIDEOS[newIdx].id, player);
 }
 
 function showVolumeGUI(player) {
@@ -2210,12 +2214,10 @@ function showSeekGUI(player) {
 }
 
 function showVideoSelectGUI(player) {
-  const vp = getActivePlayer();
-  const cvId = vp ? vp.videoId : globalSelectedVideoId;
   const form = new ActionFormData().title(tr("library.title")).body(tr("library.body"));
   for (const v of LISTED_VIDEOS) {
     const rawtext = [{ text: v.title }];
-    if (v.id === cvId) rawtext.push({ text: " " }, tr("selected_tag"));
+    if (v.id === globalSelectedVideoId) rawtext.push({ text: " " }, tr("selected_tag"));
     rawtext.push({ text: "\n" }, tr("library.item", v.frame_count, videoSizeLabel(v)));
     form.button({ rawtext });
   }
@@ -2224,9 +2226,7 @@ function showVideoSelectGUI(player) {
     if (response.canceled) return;
     const selectedVideo = LISTED_VIDEOS[response.selection];
     if (selectedVideo) {
-      globalSelectedVideoId = selectedVideo.id;
-      notify("video_selected_hint", selectedVideo.id);
-      showRemoteControlGUI(player);
+      selectVideoFromRemote(selectedVideo.id, player);
     }
   });
 }

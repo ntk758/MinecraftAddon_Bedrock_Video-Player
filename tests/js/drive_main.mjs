@@ -15,7 +15,7 @@
 //   {"command": "badapple:setup", "args": ["face"]}   独自のコマンド (/badapple:setup face) を実行する (処理は次の tick)
 //   {"forgetTicking": true}                           ワールドを開き直したときのように、常時読み込みの区画を消す
 import {
-  board, commands, customCommands, customEnums, fireScriptEvent, forgetTicking, getAnchor, messages, options, player,
+  board, commands, customCommands, customEnums, fireScriptEvent, forgetTicking, forms, getAnchor, messages, options, player,
   runCustomCommand, stats, tick as mockTick, uiResponses, useItem,
 } from "@minecraft/server";
 
@@ -86,6 +86,7 @@ const allBlocks = [...board.entries()].map(([key, id]) => [...key.split(",").map
 process.stdout.write(JSON.stringify({
   snaps, worlds, marks, ticks, stats, commands, errors, allBlocks, messages: messages.map((m) => JSON.stringify(m)),
   commandResults,
+  forms,
   customCommands: [...customCommands.values()].map(({ command }) => command),
   customEnums: Object.fromEntries(customEnums),
   // テストが codec.js の projectToStage を包んで数えた回数 (包んでいなければ null)
