@@ -12,8 +12,11 @@
 //   {"snap": "名前"}                                  いま選ばれている動画の盤面 (各マスのブロック) を記録する
 //   {"world": "名前"}                                 ワールドに置かれたブロックをすべて記録する (だまし絵の舞台は snap の範囲に収まらない)
 //   {"mark": "名前"}                                  いま数えている projectToStage の呼び出し回数を記録する (marks)
+//   {"command": "badapple:setup", "args": ["face"]}   独自のコマンド (/badapple:setup face) を実行する (処理は次の tick)
+//   {"forgetTicking": true}                           ワールドを開き直したときのように、常時読み込みの区画を消す
 import {
-  board, commands, fireScriptEvent, getAnchor, messages, options, player, stats, tick as mockTick, uiResponses, useItem,
+  board, commands, customCommands, customEnums, fireScriptEvent, forgetTicking, getAnchor, messages, options, player,
+  runCustomCommand, stats, tick as mockTick, uiResponses, useItem,
 } from "@minecraft/server";
 
 const steps = JSON.parse(process.argv[2]);
@@ -45,9 +48,12 @@ function snap(label, videoId) {
 
 const worlds = [];
 const errors = [];
+const commandResults = [];
 for (const step of steps) {
   try {
     if (step.event) fireScriptEvent(step.event, step.message ?? "");
+    else if (step.command) commandResults.push(runCustomCommand(step.command, ...(step.args ?? [])));
+    else if (step.forgetTicking) forgetTicking();
     else if (step.tick) for (let i = 0; i < step.tick; i++) tick();
     else if (step.sleepMs) await new Promise((resolve) => setTimeout(resolve, step.sleepMs));
     else if (step.settle) {
@@ -79,6 +85,9 @@ for (const step of steps) {
 const allBlocks = [...board.entries()].map(([key, id]) => [...key.split(",").map(Number), id]);
 process.stdout.write(JSON.stringify({
   snaps, worlds, marks, ticks, stats, commands, errors, allBlocks, messages: messages.map((m) => JSON.stringify(m)),
+  commandResults,
+  customCommands: [...customCommands.values()].map(({ command }) => command),
+  customEnums: Object.fromEntries(customEnums),
   // テストが codec.js の projectToStage を包んで数えた回数 (包んでいなければ null)
   projections: globalThis.__bvpProjections ?? null,
 }));

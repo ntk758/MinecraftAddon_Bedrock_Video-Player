@@ -22,8 +22,12 @@ class RecordingForm {
     return this;
   }
 
-  slider(label) {
+  // @minecraft/server-ui 2.0.0 の書き方: slider(ラベル, 最小, 最大, { valueStep, defaultValue })。1.x の
+  // slider(ラベル, 最小, 最大, 刻み, 既定値) で呼ばれたら、実際の 2.0 と同じく使えないので失敗させる
+  slider(label, minimum, maximum, sliderOptions) {
+    if (typeof sliderOptions === "number" || arguments.length > 4) throw new Error("slider: 2.0 takes (label, min, max, options)");
     this.record.sliders.push(label);
+    this.record.sliderOptions = [...(this.record.sliderOptions ?? []), { minimum, maximum, ...(sliderOptions ?? {}) }];
     return this;
   }
 

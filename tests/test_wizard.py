@@ -35,8 +35,8 @@ def test_recommended_settings_follow_the_aspect_ratio_and_length():
 
 def test_play_commands_use_the_namespace_and_video_ids():
     commands = wizard.play_commands("mytv", ["intro", "song"])
-    assert commands == ["/scriptevent mytv:setup", "/scriptevent mytv:play intro", "/scriptevent mytv:play song",
-                        "/scriptevent mytv:stop"]
+    # 独自のコマンド (Script API 2.x) の短い書き方。/scriptevent mytv:setup も今までどおり使える
+    assert commands == ["/mytv:setup", "/mytv:play intro", "/mytv:play song", "/mytv:stop"]
 
 
 def test_format_size():
