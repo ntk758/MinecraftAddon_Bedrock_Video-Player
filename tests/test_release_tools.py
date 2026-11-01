@@ -113,3 +113,38 @@ def test_release_workflow_runs_the_tools():
     assert set(workflow["jobs"]["release"]["needs"]) == {"exe", "samples"}
     # Windows のランナーは cp1252 なので、日本語を出力するスクリプトのために UTF-8 にする
     assert workflow["jobs"]["exe"]["env"]["PYTHONUTF8"] == "1"
+
+
+def test_notes_can_be_rebuilt_keeping_the_checks(tmp_path):
+    """公開済みの説明文を作り直すとき、「確認したこと」はそのまま使い、実機の行だけ差し替える。"""
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text("# Changelog\n\n## v9.9.9\n\n### 新しいこと\n\n- fixed text\n\n## v9.9.8\n\n- old\n",
+                         encoding="utf-8")
+    old = release_notes.notes("v9.9.9", "- CI ok\n- 実機 (Minecraft) では **未確認**。", changelog).replace(
+        "### 新しいこと\n\n- fixed text", "- wrong text")
+    checks = release_notes.checks_of(old)
+    assert checks == "- CI ok\n- 実機 (Minecraft) では **未確認**。"
+    rebuilt = release_notes.notes("v9.9.9", release_notes.replace_device_line(checks, "PC で確認"), changelog)
+    assert "### 新しいこと\n\n- fixed text" in rebuilt and "wrong text" not in rebuilt
+    assert rebuilt.endswith("## 確認したこと\n- CI ok\n- 実機: PC で確認\n")
+    assert release_notes.replace_device_line("- CI ok", "") == "- CI ok\n- 実機 (Minecraft) では **未確認**。"
+    assert release_notes.checks_of("no checks here") == ""
+
+
+def test_release_workflow_can_rewrite_only_the_notes():
+    yaml = pytest.importorskip("yaml")
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8"))
+    triggers = workflow.get("on") or workflow.get(True)
+    assert triggers["workflow_dispatch"]["inputs"]["notes_only"]["type"] == "boolean"
+    jobs = workflow["jobs"]
+    # 説明文だけのときは EXE とサンプルを作らない (release は needs で一緒に飛ばされる)
+    assert jobs["exe"]["if"] == jobs["samples"]["if"] == "${{ !inputs.notes_only }}"
+    assert jobs["notes"]["if"] == "${{ inputs.notes_only }}"
+    script = "\n".join(step.get("run", "") for step in jobs["notes"]["steps"])
+    assert "--checks-from-notes" in script and "gh release edit" in script
+
+
+def test_v6_32_0_notes_do_not_contradict_the_device_check():
+    """v6.32.0 の実機の確認で、動画 ID は入力の候補に出なかった。"""
+    section = release_notes.changelog_section("v6.32.0")
+    assert "候補に出る" not in section and "候補に出ません" in section

@@ -8,6 +8,8 @@ name: Release
 # 実機 (Minecraft) での確認は機械ではできないので、手動の起動で device_check に結果を入れる。無ければ説明文に「未確認」と書く。
 # タグを push できないとき (タグの push が許可されていない環境など) は、Actions の画面か API から手動で起動し、
 # tag に版 (vX.Y.Z) を入れる。リリースを作るときに、起動したコミットにそのタグを付ける。
+# notes_only にすると、作り直すのは公開済みのリリースの説明文だけ (EXE・サンプルは作らない)。CHANGELOG を直した後に使う。
+# 「確認したこと」は今の説明文のものをそのまま使い、device_check を入れたときだけ実機の行を差し替える。
 on:
   push:
     tags: [ 'v*' ]
@@ -20,6 +22,11 @@ on:
         description: '実機で確かめた結果 (説明文の「確認したこと」に書く。空なら「実機では未確認」)'
         required: false
         default: ''
+      notes_only:
+        description: '公開済みのリリースの説明文だけを CHANGELOG から作り直す'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -34,6 +41,7 @@ concurrency:
 
 jobs:
   exe:
+    if: ${{ !inputs.notes_only }}
     runs-on: windows-latest
     env:
       # Windows のランナーの標準出力は cp1252 で、build_standalone.py などの日本語を書けずに止まる (v6.31.0 の最初の実行)
@@ -80,6 +88,7 @@ jobs:
           path: BlockVideoPlayer-${{ env.TAG }}-windows-x64.zip
 
   samples:
+    if: ${{ !inputs.notes_only }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -151,3 +160,24 @@ jobs:
         run: |
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md \
             artifacts/BlockVideoPlayer-*.zip artifacts/BlockVideoPlayer-*.mcaddon artifacts/SHA256SUMS.txt
+
+  notes:
+    if: ${{ inputs.notes_only }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rewrite the notes of the release
+        env:
+          DEVICE_CHECK: ${{ inputs.device_check }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > old.md
+          if [ -n "$DEVICE_CHECK" ]; then
+            python scripts/release_notes.py "$TAG" --checks-from-notes old.md --device-check "$DEVICE_CHECK" > notes.md
+          else
+            python scripts/release_notes.py "$TAG" --checks-from-notes old.md > notes.md
+          fi
+          cat notes.md
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
