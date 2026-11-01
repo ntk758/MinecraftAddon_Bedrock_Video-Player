@@ -48,7 +48,8 @@ git tag v6.31.0 && git push origin v6.31.0
    リリースノートは CHANGELOG の該当部分 + ダウンロードの案内 + 確認の結果 (TESTING.md の記録) にする。
 9. **配布サイト**: CurseForge にショーケース版の `.mcaddon` を更新 (MCPEDL は CurseForge から同期)。
    説明文は [docs/store/curseforge.md](store/curseforge.md) (英語) と [docs/store/crafterscolony_ja.md](store/crafterscolony_ja.md)
-   (クラコロ、日本語) を直してから貼り付ける。コマンド・必要な Minecraft の版・ショーケースの動画が、上げるファイルと合っていること。
+   (クラコロ、日本語) を直してから貼り付ける。ファイルの Changelog 欄は
+   [docs/store/curseforge_file_changelog.md](store/curseforge_file_changelog.md) を、前に上げた版からの変更に書き換えて貼る。コマンド・必要な Minecraft の版・ショーケースの動画が、上げるファイルと合っていること。
 
 GitHub はリリースの各ファイルの SHA-256 を自動で表示する (`gh release view vX.Y.Z --json assets` の `digest`) ので、
 `SHA256SUMS.txt` が無い古い版でも、利用者はそれと比べて確かめられます。
