@@ -31,6 +31,10 @@ concurrency:
 jobs:
   exe:
     runs-on: windows-latest
+    env:
+      # Windows のランナーの標準出力は cp1252 で、build_standalone.py などの日本語を書けずに止まる (v6.31.0 の最初の実行)
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
 
