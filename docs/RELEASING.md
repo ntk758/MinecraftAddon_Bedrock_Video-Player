@@ -17,6 +17,9 @@
 git tag v6.31.0 && git push origin v6.31.0
 ```
 
+タグを push できない環境では、GitHub の Actions → Release → Run workflow で `tag` に版 (例: `v6.31.0`) を入れて起動する
+(API なら `workflow_dispatch`)。起動したコミットにそのタグを付けてリリースを作る。`pack_metadata.py` の版と違えば止まる。
+
 実機での確認 (下の 6) と CurseForge の更新 (下の 9) は手で行う。
 
 ## 手で行う場合 / Manual steps
