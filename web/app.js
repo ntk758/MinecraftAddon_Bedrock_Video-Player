@@ -394,7 +394,10 @@ function finish(msg) {
   $("build").disabled = false;
   log(t("web.done", { size: (blob.size / 1024).toFixed(0) }));
   window.lastResult = msg; // テスト用
-  if (msg.previews && msg.previews.length) Preview.show(msg.previews, videos);
+  if (msg.previews && msg.previews.length) {
+    // プレビューが出せなくてもアドオンはできている (ダウンロードはそのまま)
+    Preview.show(msg.previews, videos).catch((e) => log(t("web.preview_failed", { error: e?.message || String(e) })));
+  }
   if (lastBuild) {
     Usage.event("build-done");
     Usage.event(`build-kind-${lastBuild.kind}`);

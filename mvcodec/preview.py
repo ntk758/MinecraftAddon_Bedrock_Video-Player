@@ -4,7 +4,9 @@
 1 ブロック = 1 画素で、立体 (レリーフ・押し出し・ふくらみ・.vox・だまし絵の人物) は南東の斜め上から見た等角投影
 (mvcodec.volume.iso_view) で描く。ブラウザ版の「できあがりのプレビュー」と、Windows 版のプレビューの GIF が使う。
 
-長い動画で重くならないよう、フレームを間引く (step) と、合計の大きさ (max_bytes) で上限を決める。
+render_preview は全部のフレームの絵を先に作ってメモリに置くので、長い動画ではフレームを間引く (step) と合計の大きさ
+(max_bytes) で上限を決める (Windows 版の GIF)。ブラウザ版は絵を先に作らず、再生しながら 1 コマずつゲームと同じ
+codec.js で復元して描く (web/block_preview.js)。そのための色の表などは preview_spec が作る。
 """
 from __future__ import annotations
 
@@ -14,9 +16,10 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from mvcodec.decode import iter_decoded_frames, parse_index
-from mvcodec.volume import iso_view
+from mvcodec.decode import gop_palettes
+from mvcodec.volume import AIR_LEVEL, _iso_sprite, iso_view
 
-# プレビューの絵の合計の上限 (バイト)。ブラウザのメモリに置くので控えめにする
+# プレビューの絵の合計の上限 (バイト)。全部のフレームの絵をメモリに置くので控えめにする
 DEFAULT_MAX_BYTES = 64 * 1024 * 1024
 # 立体の等角投影は 1 枚に時間がかかるので、枚数の上限を別に決める
 DEFAULT_MAX_VOLUME_FRAMES = 240
@@ -99,6 +102,38 @@ def render_preview(data, max_bytes: int = DEFAULT_MAX_BYTES, max_volume_frames: 
                    total_frames=count, volume=volume, frames=frames)
 
 
+PALETTE_ROWS = 128  # パレット番号は 7 ビット (立体の空気 127 を含む)
+
+
+def _palette_bytes(tables) -> bytes:
+    """GOP ごとの RGB の表を、どれも 128 色に広げて (足りない分は黒) 続けたバイト列。"""
+    out = []
+    for table in tables:
+        padded = np.zeros((PALETTE_ROWS, 3), np.uint8)
+        table = np.asarray(table, dtype=np.uint8)[:PALETTE_ROWS]
+        padded[:len(table)] = table
+        out.append(padded.tobytes())
+    return b"".join(out)
+
+
+def preview_spec(data) -> dict:
+    """ブラウザ版のプレビュー (web/block_preview.js) が、再生しながら 1 コマずつ描くのに要るもの。
+
+    盤面の復元はブラウザでゲームと同じ codec.js が行う。ここではブロックの色 (GOP ごとの上面・側面の表) と、
+    立体の等角投影の立方体の形 (iso_view と同じ) を渡す。描く規則は render_preview とそろえてある。
+    """
+    volume = is_volume(data)
+    spec = {"volume": volume, "fps": float(data.get("fps") or 10), "frame_count": frame_count(data),
+            "top": _palette_bytes(gop_palettes(data, "up"))}
+    if volume:
+        unit = volume_unit(data)
+        sx, sy, faces, (hw, hh, vh) = _iso_sprite(unit)
+        spec.update({"side": _palette_bytes(gop_palettes(data, "side")), "air": AIR_LEVEL,
+                     "sprite_x": [int(v) for v in sx], "sprite_y": [int(v) for v in sy],
+                     "sprite_face": [int(v) for v in faces], "hw": hw, "hh": hh, "vh": vh})
+    return spec
+
+
 def save_gif(preview: Preview, path, scale: int | None = None, max_side: int = 480) -> None:
     """プレビューを GIF に保存する (Windows 版)。平面は max_side に収まるよう整数倍に拡大する。"""
     from PIL import Image
@@ -115,7 +150,7 @@ def save_gif(preview: Preview, path, scale: int | None = None, max_side: int = 4
     images[0].save(path, save_all=True, append_images=images[1:], duration=duration, loop=0, optimize=False)
 
 
-# Windows 版のプレビューの GIF は大きくなりすぎないよう、ブラウザ版より少なくする
+# Windows 版のプレビューの GIF は大きくなりすぎないよう、上限を小さくする
 GIF_MAX_BYTES = 16 * 1024 * 1024
 GIF_MAX_VOLUME_FRAMES = 120
 
