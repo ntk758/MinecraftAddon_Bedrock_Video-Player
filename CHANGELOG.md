@@ -2,7 +2,7 @@
 
 このプロジェクトの変更履歴です (新しい順)。各版のダウンロードは [GitHub Releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases) にあります。
 
-## 未リリース
+## v6.32.0
 
 - **Script API 2.x に移行・チート無しで遊べる** (アドオン): `@minecraft/server` 2.6.0 / `@minecraft/server-ui` 2.0.0、**Minecraft 1.26.10 以降** が必要になる (以前は 1.21.80 以降)。実機で確認 (2026-11-01、利用者): チート無しのワールドで `/badapple:setup` → `/badapple:play` で映像と音が出た、リモコンの音量・シークのスライダー、ワールドを開き直した後に離れた所から再生、以前の版で setup したワールドでの setup し直し。**動画 ID は入力の候補に出なかった** (Minecraft 側の制限とみられる。docs/KNOWN_ISSUES.md)。
   - **短いコマンド**: `/badapple:setup`・`/badapple:play <動画ID>` (動画 ID は入力の候補に出る)・`/badapple:start`・`/badapple:stop`・`/badapple:list`・`/badapple:remote` など。チートを有効にしなくても使える (`cheatsRequired: false`)。`/scriptevent badapple:...` も今までどおり使える。ゲーム内の案内と Windows 版のガイド・ブラウザ版の使い方は短いコマンドを表示する。
