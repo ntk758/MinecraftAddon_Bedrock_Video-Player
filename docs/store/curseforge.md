@@ -54,7 +54,7 @@ For bigger screens, faster conversion and the AI person cutout, use the free **W
 | Command | What it does |
 |---|---|
 | `/badapple:setup` | Place the screen where you stand. Add `wall` to stand a flat screen up like a TV facing you, `face` to turn it toward where you look, `align` to shift it (up to 15 blocks) so it covers fewer chunks |
-| `/badapple:start` | Play the selected video, or resume |
+| `/badapple:start` | Play the selected video from the start (to resume after pausing, use the remote) |
 | `/badapple:play <id>` | Play a specific video |
 | `/badapple:stop` | Stop and clear the screen |
 | `/badapple:list` | List the videos and their IDs |

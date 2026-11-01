@@ -2315,7 +2315,7 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
  */
 const CUSTOM_COMMANDS = [
   ["setup", "Place the screen (options: face, wall, align)", "text"],
-  ["start", "Start or resume playback", null],
+  ["start", "Play the selected video from the start", null],
   ["play", "Play a video (by video ID)", "video"],
   ["stop", "Stop and clear the screen", null],
   ["list", "List the videos", null],
