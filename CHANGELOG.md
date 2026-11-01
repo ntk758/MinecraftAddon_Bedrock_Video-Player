@@ -4,8 +4,8 @@
 
 ## 未リリース
 
-- **Script API 2.x に移行** (アドオン): `@minecraft/server` 2.6.0 / `@minecraft/server-ui` 2.0.0、**Minecraft 1.26.10 以降** が必要になる (以前は 1.21.80 以降)。**実機では未確認** で、実機で確かめてからリリースする。
-  - **短いコマンド**: `/badapple:setup`・`/badapple:play <動画ID>` (動画 ID は入力の候補に出る)・`/badapple:start`・`/badapple:stop`・`/badapple:list`・`/badapple:remote` など。チートを有効にしなくても使えるように登録した (`cheatsRequired: false`。実機で未確認)。`/scriptevent badapple:...` も今までどおり使える。ゲーム内の案内と Windows 版のガイド・ブラウザ版の使い方は短いコマンドを表示する。
+- **Script API 2.x に移行・チート無しで遊べる** (アドオン): `@minecraft/server` 2.6.0 / `@minecraft/server-ui` 2.0.0、**Minecraft 1.26.10 以降** が必要になる (以前は 1.21.80 以降)。実機で確認 (2026-11-01、利用者): チート無しのワールドで `/badapple:setup` → `/badapple:play` で映像と音が出た、リモコンの音量・シークのスライダー、ワールドを開き直した後に離れた所から再生、以前の版で setup したワールドでの setup し直し。**動画 ID は入力の候補に出なかった** (Minecraft 側の制限とみられる。docs/KNOWN_ISSUES.md)。
+  - **短いコマンド**: `/badapple:setup`・`/badapple:play <動画ID>` (動画 ID は入力の候補に出る)・`/badapple:start`・`/badapple:stop`・`/badapple:list`・`/badapple:remote` など。チートを有効にしなくても使える (`cheatsRequired: false`)。`/scriptevent badapple:...` も今までどおり使える。ゲーム内の案内と Windows 版のガイド・ブラウザ版の使い方は短いコマンドを表示する。
   - **常時読み込み**: tickingarea コマンドの代わりに TickingAreaManager (このパック専用の枠で、ワールド全体の 10 区画の上限を使わない) で登録する。ワールドを開き直して区画が消えていたら、再生を始めるときに登録し直す。以前の版がコマンドで登録した区画は setup のときに外す。
   - 再生の前のチャンクの読み込みの判定を `isChunkLoaded` に。リモコンのスライダーを server-ui 2.0 の書き方に。
 

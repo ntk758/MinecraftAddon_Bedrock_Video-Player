@@ -44,10 +44,10 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
 **A. サンプルを試す (変換は不要・約 3 分) / Try the sample (no conversion)**
 1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.31.0.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.31.0.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
    Download a sample `.mcaddon` from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) and double-click it to import it into Minecraft Bedrock.
-2. 新しいワールドを作り、**チートを有効**、**ビヘイビアーパックとリソースパックの両方** を有効にします (スーパーフラットがおすすめ)。
-   Create a world with **cheats on** and **both** the Behavior Pack and the Resource Pack enabled (a superflat world works best).
-3. 平らな場所でチャットに `/scriptevent badapple:setup` → `/scriptevent badapple:start`。コンパスを使うとリモコンが開きます。
-   Run `/scriptevent badapple:setup` then `/scriptevent badapple:start`. Use a compass to open the remote control.
+2. 新しいワールドを作り、**ビヘイビアーパックとリソースパックの両方** を有効にします (スーパーフラットがおすすめ)。**チートは不要** です (v6.31.0 以前の版はチートが必要)。
+   Create a world with **both** the Behavior Pack and the Resource Pack enabled (a superflat world works best). **Cheats are not needed** (versions up to v6.31.0 need cheats).
+3. 平らな場所でチャットに `/badapple:setup` → `/badapple:start`。コンパスを使うとリモコンが開きます (v6.31.0 以前の版は `/scriptevent badapple:setup` → `/scriptevent badapple:start`)。
+   Run `/badapple:setup` then `/badapple:start`. Use a compass to open the remote control (up to v6.31.0: `/scriptevent badapple:setup`).
 
 **B. 自分の動画を変換する (Windows) / Convert your own video (Windows)**
 1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.31.0-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
@@ -194,7 +194,7 @@ python video_player_gui.py
 
 #### 6. Minecraft で再生
 1. 作成した `.mcaddon` をダブルクリックしてインポートします。
-2. ワールドの設定で **ビヘイビアーパック** と **リソースパック** の両方を有効にします (同じパック名で 2 つあります)。`/scriptevent` を使うため **チートを有効** にしてください。
+2. ワールドの設定で **ビヘイビアーパック** と **リソースパック** の両方を有効にします (同じパック名で 2 つあります)。チートは不要です (`/scriptevent` で操作するときと、v6.31.0 以前の版はチートが必要)。
 3. スクリーンを置きたい場所に立ち、次のコマンドを実行します (`badapple` は GUI で設定した接頭辞)。
    ```
    /scriptevent badapple:setup
@@ -330,9 +330,9 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 1. `pip install -r requirements.txt`
 2. Optional GPU: CUDA build of PyTorch (NVIDIA), ROCm build (AMD on Linux, or AMD's PyTorch for Windows), or `pip install -r requirements-directml.txt` (AMD / Intel on Windows). With **Device = Auto** the converter tries CUDA/ROCm → DirectML → CPU, runs a small self-test on the GPU and falls back to CPU if it fails. The log line `[MVCodec] Conversion device:` shows the device in use.
 3. Run `python video_player_gui.py` (switch the UI language with **🌐 Language** at the top right — it follows your Windows display language by default), add videos, choose a quality preset / palette / dithering / device, and press **".mcaddon を作成"** (Create .mcaddon).
-4. Import the `.mcaddon`, enable both the Behavior Pack and the Resource Pack, and turn on cheats (for `/scriptevent`).
-5. Stand where the screen should be and run `/scriptevent badapple:setup` (`badapple` is the command prefix set in the GUI). The screen is built horizontally at your foot level, extending east (+X) and north (−Z); blocks in that area are overwritten.
-6. Use a compass to open the remote control, or use `/scriptevent badapple:start | list | play <id> | gui | stop`.
+4. Import the `.mcaddon` and enable both the Behavior Pack and the Resource Pack. Cheats are not needed (they are for `/scriptevent` and for versions up to v6.31.0).
+5. Stand where the screen should be and run `/badapple:setup` (`badapple` is the command prefix set in the GUI; `/scriptevent badapple:setup` also works with cheats on). The screen is built horizontally at your foot level, extending east (+X) and north (−Z); blocks in that area are overwritten.
+6. Use a compass to open the remote control, or use `/badapple:start`, `/badapple:list`, `/badapple:play <id>`, `/badapple:remote`, `/badapple:stop`.
 7. **3D holograms**: choose a **Display mode** (relief / extrude / inflate) and a **Depth** in the GUI, or add a `.vox` file. `setup` builds the volume 2 blocks north of you, centred, from your feet upward (moved down if it would exceed the build height). The default `auto` render mode picks the fastest placement (boxes, per-colour position lists or one by one) for every frame from a cost model; run `/scriptevent badapple:bench` once to measure your device (saved in the world), or force a mode with `/scriptevent badapple:render rect|list|block`. 3D display modes switch dithering off by default. Preview any converted file without Minecraft: `python scripts/preview_volume.py out.js --output preview.gif`.
 
 8. **Measuring performance**: the GUI shows a **playback load estimate** for the chosen size / fps, and *Match video aspect ratio* removes black bars (e.g. 1920×1080 → 128×72). After playing, `/scriptevent badapple:stats` prints the effective fps, server TPS, how far the video has fallen behind real time, late frames and script time per frame. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for how conversion speed and in-game performance are measured.
