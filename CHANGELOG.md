@@ -2,9 +2,9 @@
 
 このプロジェクトの変更履歴です (新しい順)。各版のダウンロードは [GitHub Releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases) にあります。
 
-## 未リリース
+## v6.31.0
 
-ブラウザ版は main に入ると GitHub Pages に公開し直すので、アドオンの版とは別に反映されます。Windows 版の変更は次のリリースに入ります。
+ブラウザ版の変更は、main に入ったときに GitHub Pages で公開済みです。Windows 版 (EXE) とアドオンの変更はこの版から入ります。**実機 (Minecraft) では未確認**です。
 
 - **同じ動画の立体版と平面版をセットで入れる** (Windows 版・ブラウザ版): 立体のモードで「通常の平面の動画もセットで入れる」にチェックすると、平面版を `<動画ID>_flat` として一緒に入れる (一覧の名前は「(3D)」「(2D)」)。音声は 1 回だけ入れ、平面版は動画の一覧の新しい項目 `audio_from` で立体版 (だまし絵なら背景の映像) の音声を鳴らす (`main.js`。`audio_from` の無い古いアドオンは今までどおり)。平面版は、立体用にディザを「なし」にしていれば Blue Noise で変換する。`.vox` と MMD には元の平面の映像が無いので作らない。ゲーム内では `/scriptevent <接頭辞>:play <動画ID>_flat` かリモコンで切り替える。実機では未確認。
 - **ブラウザ版の音声を OGG に** (Windows 版と同じ 44.1 kHz ステレオの Ogg Vorbis、品質 3): これまでの WAV (22.05 kHz モノラル、10 秒で約 441 KB) が、10 秒で約 31 KB になる (音はステレオになり良くなる)。エンコーダーは npm の [wasm-media-encoders](https://www.npmjs.com/package/wasm-media-encoders) 0.7.0 (MIT) を `web/vendor/` にそのまま写したもの (外部のサーバーからは読まない。SHA-256 をテストで確かめる)。画面とは別のスレッド (`web/ogg-worker.js`) で動かす。読み込めないときは理由を出して WAV にする。
