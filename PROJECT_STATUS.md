@@ -3,7 +3,7 @@
 ## 1. プロジェクト概要
 本プロジェクトは、動画ファイル（MP4 / MKV / AVI / WEBM 等）を Minecraft Bedrock Edition（統合版）の Behavior Pack（.mcpack）へ超高速かつ最小容量で変換し、ゲーム内のブロック盤面上でスムーズに動動画再生するアドオン＆変換ツール群です。
 
-- **最新バージョン**: `v6.31.0` (できあがりのプレビュー・画像のブロックアート・立体版と平面版のセット・ブラウザ版を Windows 版にそろえた)
+- **最新バージョン**: `v6.32.0` (チート無しで遊べる短いコマンド・Script API 2.6.0、Minecraft 1.26.10 以降)
 - **対象環境**: Minecraft Bedrock Edition 最新版 (安定版 Script API `@minecraft/server` 2.6.0 / `@minecraft/server-ui` 2.0.0、1.26.10 以降。ベータ API 不要)
 - **変換GUI環境**: Python 3.12+ (PyTorch: CUDA / ROCm / DirectML, Pillow, NumPy, Tkinter, FFmpeg) または **独立スタンドアロン EXE (`BlockVideoPlayer.exe`)**
 
