@@ -6,6 +6,9 @@
 const AUDIO_CHUNK_SECONDS = 10; // pack_builder.AUDIO_CHUNK_SECONDS と同じ
 const AUDIO_RATE = 22050; // WAV は大きいので 22.05 kHz モノラルにする
 const THUMB_SIZE = 256;
+// コマのデータがこれより大きくなりそうなら注意を出す (MB)。ブラウザのタブが使えるメモリと、Pyodide (32bit の
+// WebAssembly) に同じデータを写すことを考えて決めた目安
+const MEMORY_WARNING_MB = 1000;
 
 const $ = (id) => document.getElementById(id);
 const t = (key, params) => I18n.t(key, params); // 翻訳 (web/i18n.js、locales/*.json)
@@ -61,6 +64,27 @@ async function addFiles(fileList) {
     }
   }
   renderList();
+  fillDuration();
+}
+
+// 変換する長さ: 動画を追加したら、一番長い動画の終わりの秒数を入れる (利用者が書き換えた値はそのまま)。
+// 空なら最後まで変換する (Windows 版の GUI と同じ)
+let durationEdited = false;
+
+function longestVideo() {
+  return Math.max(0, ...videos.filter((v) => !v.vox && Number.isFinite(v.duration)).map((v) => v.duration));
+}
+
+function fillDuration() {
+  if (durationEdited) return;
+  const longest = longestVideo();
+  $("duration").value = longest > 0 ? String(Math.ceil(longest * 10) / 10) : "";
+  updateLoadHint();
+}
+
+/** 変換する秒数の上限。空・0 以下なら上限なし (最後まで)。 */
+function durationLimit(s) {
+  return s.duration > 0 ? s.duration : Infinity;
 }
 
 function renderList() {
@@ -95,7 +119,7 @@ function fitAspect() {
 function settings() {
   return {
     width: Number($("width").value), height: Number($("height").value), fps: Number($("fps").value),
-    duration: Number($("duration").value), mode: $("mode").value, depth: Number($("depth").value),
+    duration: $("duration").value.trim() === "" ? 0 : Number($("duration").value), mode: $("mode").value, depth: Number($("depth").value),
     anamorphic: $("anamorphic").checked,
     palette: $("palette").value, dither: $("dither").value,
     packName: $("packName").value.trim() || "Block Video Player",
@@ -108,7 +132,13 @@ function updateLoadHint() {
   const s = settings();
   const blocks = s.width * s.height * (s.mode === "screen" ? 1 : 2) * s.fps;
   const level = t(blocks > 160000 ? "load.heavy" : blocks > 60000 ? "load.medium" : "load.light");
-  $("loadHint").textContent = t("web.load_estimate", { blocks: blocks.toLocaleString(I18n.language), level });
+  let hint = t("web.load_estimate", { blocks: blocks.toLocaleString(I18n.language), level });
+  // ブラウザ版は取り出したコマ (1 コマ 幅×高さ×3 バイト) をすべてメモリに持つので、長い動画では注意を出す
+  const seconds = videos.filter((v) => !v.vox && Number.isFinite(v.duration))
+    .reduce((sum, v) => sum + Math.min(v.duration, durationLimit(s)), 0);
+  const mb = Math.round((seconds * s.fps * s.width * s.height * 3) / 1e6);
+  if (mb >= MEMORY_WARNING_MB) hint += "\n" + t("web.memory_warning", { mb: mb.toLocaleString(I18n.language) });
+  $("loadHint").textContent = hint;
 }
 
 function drawLetterboxed(ctx, source, srcW, srcH, w, h) {
@@ -133,7 +163,7 @@ async function extractFrames(v, s, onProgress) {
   canvas.width = s.width;
   canvas.height = s.height;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  const length = Math.min(video.duration, s.duration);
+  const length = Math.min(video.duration, durationLimit(s));
   const count = Math.max(1, Math.floor(length * s.fps));
   const header = new TextEncoder().encode(`P6\n${s.width} ${s.height}\n255\n`);
   const frames = [];
@@ -343,7 +373,9 @@ async function build() {
 $("files").addEventListener("change", (e) => addFiles(e.target.files));
 $("fitAspect").addEventListener("click", fitAspect);
 $("build").addEventListener("click", () => build().catch((e) => failed(e.message)));
-for (const id of ["width", "height", "fps", "mode"]) $(id).addEventListener("change", updateLoadHint);
+for (const id of ["width", "height", "fps", "mode", "duration"]) $(id).addEventListener("change", updateLoadHint);
+// 利用者が長さを書き換えたら、動画を追加しても上書きしない。空にしたら、また動画の長さを入れる
+$("duration").addEventListener("change", () => { durationEdited = $("duration").value.trim() !== ""; if (!durationEdited) fillDuration(); });
 $("namespace").addEventListener("input", renderHowto);
 $("mode").addEventListener("change", () => { if ($("mode").value !== "screen" && $("dither").value === "blue_noise") $("dither").value = "none"; });
 

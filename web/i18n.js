@@ -59,10 +59,11 @@ const I18n = (() => {
     try { return localStorage.getItem(STORAGE_KEY); } catch (e) { return null; }
   }
 
-  /** 画面の data-i18n (文字) / data-i18n-title (title 属性) を今の言語にする。 */
+  /** 画面の data-i18n (文字) / data-i18n-title (title 属性) / data-i18n-placeholder (入力欄の薄い字) を今の言語にする。 */
   function apply(root = document) {
     for (const el of root.querySelectorAll("[data-i18n]")) el.textContent = t(el.dataset.i18n);
     for (const el of root.querySelectorAll("[data-i18n-title]")) el.title = t(el.dataset.i18nTitle);
+    for (const el of root.querySelectorAll("[data-i18n-placeholder]")) el.placeholder = t(el.dataset.i18nPlaceholder);
     document.documentElement.lang = current;
     for (const listener of listeners) listener(current);
   }
