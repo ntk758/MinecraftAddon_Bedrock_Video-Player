@@ -520,7 +520,7 @@ $("mode").addEventListener("change", () => { if ($("mode").value !== "screen" &&
 // 使い方の setup・start のコマンド (コマンドの接頭辞に合わせる)。翻訳の {setup}・{start} の所に <code> を入れる
 function renderHowto() {
   const ns = settings().namespace;
-  const codes = { setup: `/scriptevent ${ns}:setup`, start: `/scriptevent ${ns}:start` };
+  const codes = { setup: `/${ns}:setup`, start: `/${ns}:start` };
   const item = $("howtoSetup");
   item.textContent = "";
   for (const part of t("web.howto_setup").split(/(\{setup\}|\{start\})/)) {

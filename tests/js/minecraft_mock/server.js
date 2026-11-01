@@ -27,7 +27,8 @@ function checkLoaded(location) {
   if (options.failZ !== undefined && location.z >= options.failZ) throw new Error("UnloadedChunksError");
   if (options.unloadedZ !== undefined && location.z >= options.unloadedZ) throw new Error("UnloadedChunksError");
 }
-// runCommand に渡されたコマンド (tickingarea の確認用)
+// runCommand に渡されたコマンド。TickingAreaManager の登録・削除も同じ形 ("tickingarea add x0 y z0 x1 y z1 名前" /
+// "tickingarea remove 名前") で記録する (テストが区画を確かめるため)
 export const commands = [];
 
 const jobs = new Map();
@@ -44,7 +45,12 @@ export const dimension = {
     if (options.unloadedZ !== undefined && location.z >= options.unloadedZ) return undefined;
     return { location: { ...location } };
   },
+  // Script API 2.4.0
+  isChunkLoaded(location) {
+    return !(options.unloadedZ !== undefined && location.z >= options.unloadedZ);
+  },
   setBlockPermutation(location, permutation) {
+    if (restricted) throw new Error("Native function [Dimension::setBlockPermutation] does not have required privileges.");
     checkLoaded(location);
     spin(options.costs?.setBlock);
     stats.setBlockCalls++;
@@ -99,6 +105,7 @@ export const dimension = {
 
 // 立つ位置 (テストで高さの調整を確かめるため書き換えられるようにする)
 export const player = {
+  typeId: "minecraft:player",
   location: { x: 0, y: 64, z: 100 },
   dimension,
   // 見ている方向 (setup face / wall の確認用。既定は北)
@@ -116,20 +123,102 @@ export const player = {
   },
 };
 
+// TickingAreaManager (Script API 2.6.0)。このパックの枠は maxChunkCount チャンク (実際の値は公開されていないので、
+// テストでは options.tickingChunks で変えられる)。1 辺 255 チャンクまで
+options.tickingChunks = 1000;
+const tickingAreas = new Map(); // 名前 -> チャンク数
+function chunkCountOf({ from, to }) {
+  const width = Math.abs(Math.floor(to.x / 16) - Math.floor(from.x / 16)) + 1;
+  const depth = Math.abs(Math.floor(to.z / 16) - Math.floor(from.z / 16)) + 1;
+  return { width, depth, count: width * depth };
+}
+const tickingAreaManager = {
+  get maxChunkCount() { return options.tickingChunks; },
+  get chunkCount() { return [...tickingAreas.values()].reduce((a, b) => a + b, 0); },
+  hasCapacity(areaOptions) {
+    const { width, depth, count } = chunkCountOf(areaOptions);
+    return width <= 255 && depth <= 255 && this.chunkCount + count <= this.maxChunkCount;
+  },
+  createTickingArea(identifier, areaOptions) {
+    if (tickingAreas.has(identifier)) throw new Error("TickingAreaError: IdentifierAlreadyExists");
+    if (!areaOptions.dimension) throw new Error("dimension is required");
+    if (!this.hasCapacity(areaOptions)) throw new Error("TickingAreaError: OverChunkLimit");
+    const { from, to } = areaOptions;
+    tickingAreas.set(identifier, chunkCountOf(areaOptions).count);
+    commands.push(`tickingarea add ${from.x} ${from.y} ${from.z} ${to.x} ${to.y} ${to.z} ${identifier}`);
+    return Promise.resolve();
+  },
+  getAllTickingAreas() {
+    return [...tickingAreas.keys()].map((identifier) => ({ identifier }));
+  },
+  hasTickingArea(identifier) { return tickingAreas.has(identifier); },
+  removeTickingArea(identifier) {
+    const name = typeof identifier === "string" ? identifier : identifier.identifier;
+    if (!tickingAreas.delete(name)) throw new Error("TickingAreaError: UnknownIdentifier");
+    commands.push(`tickingarea remove ${name}`);
+  },
+  removeAllTickingAreas() {
+    for (const name of [...tickingAreas.keys()]) this.removeTickingArea(name);
+  },
+};
+/** ワールドを開き直したときのように、TickingAreaManager の区画を消す (テスト用)。 */
+export function forgetTicking() {
+  tickingAreas.clear();
+}
+
 export const world = {
   get structureManager() {
     return structureManager;
   },
+  get tickingAreaManager() {
+    return tickingAreaManager;
+  },
   afterEvents: { itemUse: { subscribe: (handler) => { itemUseHandler = handler; } } },
   getDynamicProperty: (key) => dynamicProperties[key],
-  setDynamicProperty: (key, value) => { dynamicProperties[key] = value; },
+  setDynamicProperty: (key, value) => {
+    if (restricted) throw new Error("Native function [World::setDynamicProperty] does not have required privileges.");
+    dynamicProperties[key] = value;
+  },
   getDimension: () => dimension,
   getAllPlayers: () => [player],
   sendMessage: (message) => messages.push(message),
 };
 
+// 独自のコマンド (Script API 2.4.0)。名前 -> { command, callback }
+export const customCommands = new Map();
+export const customEnums = new Map();
+const customCommandRegistry = {
+  registerCommand(command, callback) {
+    if (!/^[a-z0-9_]+:[a-z0-9_]+$/.test(command.name)) throw new Error(`NamespaceNameError: ${command.name}`);
+    if (command.name.startsWith("minecraft:")) throw new Error("DisallowedNamespace");
+    for (const param of command.optionalParameters ?? []) {
+      if (param.type === "Enum" && !customEnums.has(param.name)) throw new Error(`unknown enum ${param.name}`);
+    }
+    customCommands.set(command.name, { command, callback });
+  },
+  registerEnum(name, values) {
+    if (!/^[a-z0-9_]+:[a-z0-9_]+$/.test(name)) throw new Error(`NamespaceNameError: ${name}`);
+    customEnums.set(name, [...values]);
+  },
+};
+const pendingRuns = [];
+// 読み取り専用の間 (独自のコマンドの処理の中) かどうか。その間にワールドを変えると、実際の Minecraft と同じく失敗させる
+let restricted = false;
+
+export const CommandPermissionLevel = { Any: 0, GameDirectors: 1, Admin: 2, Host: 3, Owner: 4 };
+export const CustomCommandParamType = { BlockType: "BlockType", Boolean: "Boolean", EntitySelector: "EntitySelector",
+  EntityType: "EntityType", Enum: "Enum", Float: "Float", Integer: "Integer", ItemType: "ItemType", Location: "Location",
+  PlayerSelector: "PlayerSelector", String: "String" };
+export const CustomCommandStatus = { Success: 0, Failure: 1 };
+
 export const system = {
   afterEvents: { scriptEventReceive: { subscribe: (handler) => { scriptEventHandler = handler; } } },
+  // startup は main.js を読み込んだ直後に 1 回だけ呼ぶ (実際の Minecraft でもワールドを読み込む前)
+  beforeEvents: { startup: { subscribe: (handler) => { handler({ customCommandRegistry }); } } },
+  run(callback) {
+    pendingRuns.push(callback);
+    return pendingRuns.length;
+  },
   runInterval(callback) {
     intervals.push(callback);
     return intervals.length;
@@ -189,11 +278,24 @@ export function fireScriptEvent(id, message = "") {
   scriptEventHandler({ id, message, sourceEntity: player });
 }
 
+/** プレイヤーが独自のコマンドを実行する (/badapple:setup face など)。登録されていなければ例外。結果を返す。 */
+export function runCustomCommand(name, ...args) {
+  const entry = customCommands.get(name);
+  if (!entry) throw new Error(`unknown command /${name}`);
+  restricted = true;
+  try {
+    return entry.callback({ sourceEntity: player, sourceType: "Entity" }, ...args);
+  } finally {
+    restricted = false;
+  }
+}
+
 export function useItem(typeId) {
   itemUseHandler({ itemStack: { typeId }, source: player });
 }
 
 export function tick() {
+  for (const callback of pendingRuns.splice(0)) callback();
   for (const callback of intervals) callback();
   for (const [id, generator] of [...jobs]) {
     for (let i = 0; i < 8; i++) {

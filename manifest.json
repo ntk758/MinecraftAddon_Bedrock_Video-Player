@@ -5,7 +5,7 @@
     "description": "Block Video Player v6.31.0 (GUI でビルドすると名前・UUID・バージョンが置き換わります)",
     "uuid": "f20c8b97-b196-4382-b351-6f78b0799373",
     "version": [6, 31, 0],
-    "min_engine_version": [1, 21, 80]
+    "min_engine_version": [1, 26, 10]
   },
   "modules": [
     {
@@ -20,11 +20,11 @@
   "dependencies": [
     {
       "module_name": "@minecraft/server",
-      "version": "1.19.0"
+      "version": "2.6.0"
     },
     {
       "module_name": "@minecraft/server-ui",
-      "version": "1.2.0"
+      "version": "2.0.0"
     }
   ]
 }

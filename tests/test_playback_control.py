@@ -143,21 +143,60 @@ def test_switching_to_a_volume_refits_position_and_ticking_area(scene, tmp_path)
 
 
 def test_setup_elsewhere_removes_previous_ticking_areas(scene, tmp_path):
-    """別の場所でもう一度 setup すると、前の場所で登録した tickingarea をすべて外す (1 ワールド 10 区画の上限)。"""
+    """別の場所でもう一度 setup すると、前の場所で登録した常時読み込みの区画をすべて外す (このパックの枠を使い切らない)。"""
     path, _ = scene
     steps = [{"event": "badapple:setup"}, {"y": 70}, {"event": "badapple:setup"}]
     out = drive(tmp_path / "addon", {"demo": path}, steps)
-    alive = set()
+    alive = {}
     for command in out["commands"]:
-        m = re.match(r"tickingarea (add|remove) (?:.* )?(\S+)$", command)
+        m = re.match(r"tickingarea (add|remove) (?:(-?\d+) (-?\d+) .* )?(\S+)$", command)
         if not m:
             continue
-        name = m.group(2)
+        name = m.group(4)
         if m.group(1) == "add":
-            alive.add(name)
+            alive[name] = int(m.group(3))  # 区画の高さ (y)
         else:
-            alive.discard(name)
-    assert alive and all("_70_" in name for name in alive), alive
+            alive.pop(name, None)
+    # 残っているのは 2 回目の setup (高さ 70) の区画だけ
+    assert alive and set(alive.values()) == {70}, alive
+
+
+def test_legacy_command_ticking_areas_are_removed(scene, tmp_path):
+    """以前の版 (v6.31.0 まで) が tickingarea コマンドで登録した区画 (名前をワールドに保存) を、setup で外す。"""
+    path, _ = scene
+
+    def prepare(work):
+        main = (work / "main.js").read_text(encoding="utf-8")
+        # 以前の版が保存した名前の一覧を、最初の setup の前に入れておく
+        main += '\nimport { world as __w } from "@minecraft/server";\n' \
+                '__w.setDynamicProperty("badapple:ticking_areas", JSON.stringify(["badapple_area_0_64_100_0"]));\n'
+        (work / "main.js").write_text(main, encoding="utf-8")
+
+    out = drive(tmp_path / "addon", {"demo": path}, [{"event": "badapple:setup"}], prepare=prepare)
+    assert "tickingarea remove badapple_area_0_64_100_0" in out["commands"]
+
+
+def test_ticking_areas_come_back_after_reopening_the_world(scene, tmp_path):
+    """TickingAreaManager の区画は一時的 (ワールドを開き直すと消えることがある) なので、再生を始めるときに無ければ登録し直す。"""
+    path, _ = scene
+    steps = [{"event": "badapple:setup"}, {"forgetTicking": True}, {"event": "badapple:start"}, {"tick": 5}]
+    out = drive(tmp_path / "addon", {"demo": path}, steps)
+    adds = [c for c in out["commands"] if c.startswith("tickingarea add")]
+    assert len(adds) >= 2  # setup のときと、再生を始めるときの 2 回
+
+
+def test_ticking_areas_respect_the_pack_capacity(scene, tmp_path):
+    """このパックの枠 (maxChunkCount) に入る分だけ登録し、入らない分は数を知らせる。"""
+    path, _ = scene
+
+    def prepare(work):
+        server = work / "node_modules" / "@minecraft" / "server" / "index.js"
+        server.write_text(server.read_text(encoding="utf-8").replace("options.tickingChunks = 1000;",
+                                                                     "options.tickingChunks = 0;"), encoding="utf-8")
+
+    out = drive(tmp_path / "addon", {"demo": path}, [{"event": "badapple:setup"}], prepare=prepare)
+    assert not [c for c in out["commands"] if c.startswith("tickingarea add")]
+    assert any("tickingarea_partial" in m for m in out["messages"])
 
 
 def chunks_spanned(start, size):

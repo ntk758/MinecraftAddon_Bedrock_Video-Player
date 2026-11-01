@@ -162,9 +162,9 @@ def environment_checks(ffmpeg, output_path):
 
 def play_commands(namespace, video_ids):
     """ゲーム内で打つコマンドの一覧 (準備 → 再生 → 止める)。"""
-    commands = [f"/scriptevent {namespace}:setup"]
-    commands += [f"/scriptevent {namespace}:play {video_id}" for video_id in video_ids[:3]]
-    commands.append(f"/scriptevent {namespace}:stop")
+    commands = [f"/{namespace}:setup"]
+    commands += [f"/{namespace}:play {video_id}" for video_id in video_ids[:3]]
+    commands.append(f"/{namespace}:stop")
     return commands
 
 

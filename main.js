@@ -3,7 +3,10 @@
  * (v3: Object-Oriented Multi-Screen & Adaptive Palette Support)
  */
 
-import { world, system, BlockPermutation, BlockVolume, ListBlockVolume } from "@minecraft/server";
+import {
+  world, system, BlockPermutation, BlockVolume, ListBlockVolume, CommandPermissionLevel, CustomCommandParamType,
+  CustomCommandStatus,
+} from "@minecraft/server";
 import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
 import { VIDEOS, VIDEO_LIST } from "./videos.js";
 import {
@@ -82,9 +85,8 @@ const COST_MODEL_KEY = `${EVENT_NAMESPACE}:cost_model`;
 const DEFAULT_COST_MODEL = { setBlock: 2.3, fillCall: 15, fillBlock: 0.55, listCall: 15, listBlock: 1.42 };
 // bench の結果を保存するのに必要な、1 方式あたりの合計時間 (ミリ秒)。短すぎると Date.now の 1 ms 単位の誤差が大きい
 const BENCH_MIN_TOTAL_MS = 5;
-// tickingarea の上限: 1 区画 100 チャンク (10x10 に分割)、ワールド全体で 10 区画 (他のパック用に残す)
+// 常時読み込みの区画を 10x10 チャンクずつに分ける (このパックの枠に入りきらないとき、入る分だけでも登録できるように)
 const TICKING_AREA_CHUNKS_PER_SIDE = 10;
-const MAX_TICKING_AREAS = 8;
 // 盤面の比較 (変わったブロックを探す走査) をこの画素数ごとに区切って tick を跨ぐ
 const PIXELS_PER_SCAN_YIELD = 32768;
 // 何フレーム先の GOP を先読みするか
@@ -1481,7 +1483,12 @@ class VideoPlayer {
    * 調べる (読み込まれていなければ undefined か例外)。getBlock が無い環境では読み込まれているとみなす。
    */
   screenLoaded() {
-    if (typeof this.dimension.getBlock !== "function") return true;
+    // Script API 2.4.0 の isChunkLoaded で調べる (無い環境では、読み込まれていないチャンクの getBlock が undefined
+    // になることを使う)
+    const probe = typeof this.dimension.isChunkLoaded === "function"
+      ? (loc) => this.dimension.isChunkLoaded(loc)
+      : typeof this.dimension.getBlock === "function" ? (loc) => Boolean(this.dimension.getBlock(loc)) : null;
+    if (!probe) return true;
     const box = worldBoxOf(this.videoData, this.anchor);
     const loc = { x: 0, y: this.anchor.y, z: 0 };
     for (let cz = Math.floor(box.z0 / 16); cz <= Math.floor(box.z1 / 16); cz++) {
@@ -1489,7 +1496,7 @@ class VideoPlayer {
         loc.x = Math.min(Math.max(cx * 16, box.x0), box.x1);
         loc.z = Math.min(Math.max(cz * 16, box.z0), box.z1);
         try {
-          if (!this.dimension.getBlock(loc)) return false;
+          if (!probe(loc)) return false;
         } catch (e) {
           return false;
         }
@@ -1771,16 +1778,16 @@ function getAnchorKeyStr(anchor) {
 }
 
 /**
- * スクリーンの範囲が読み込まれ続けるよう tickingarea を登録する。
- * 1 区画は 100 チャンクまでなので 10x10 チャンクずつに分け、最大 MAX_TICKING_AREAS 区画まで登録する。
- * 戻り値: { added, needed }  needed > added なら一部しか常時読み込みされない (プレイヤーが近くにいれば再生はできる)
+ * 以前の版 (v6.31.0 まで) が tickingarea コマンドで登録した区画を外す。今の版は TickingAreaManager (このパック専用の
+ * 枠で、コマンドの区画とは別) を使うので、古い区画が残るとワールド全体の 10 区画の上限を使い続けてしまう。
  */
-function removeRegisteredTickingAreas(dimension) {
+function removeLegacyTickingAreas(dimension, anchor) {
   let names = [];
   try {
     names = JSON.parse(world.getDynamicProperty(TICKING_NAMES_KEY) ?? "[]");
   } catch (e) { /* 壊れた値は無視する */ }
-  for (const name of Array.isArray(names) ? names : []) {
+  if (!Array.isArray(names) || names.length === 0) return;
+  for (const name of names) {
     try {
       dimension.runCommand(`tickingarea remove ${name}`);
     } catch (e) { /* 既に無い */ }
@@ -1788,19 +1795,19 @@ function removeRegisteredTickingAreas(dimension) {
   world.setDynamicProperty(TICKING_NAMES_KEY, "[]");
 }
 
+/**
+ * スクリーンの範囲が読み込まれ続けるよう、TickingAreaManager (Script API 2.6.0) で常時読み込みの区画を登録する。
+ * 10x10 チャンクずつに分け、このパックの枠 (maxChunkCount) に入る分だけ登録する (hasCapacity で確かめる)。
+ * 区画は一時的なもので、ワールドを開き直すと消えることがあるので、再生を始めるときにも無ければ登録し直す。
+ * 戻り値: { added, needed }  needed > added なら一部しか常時読み込みされない (プレイヤーが近くにいれば再生はできる)
+ */
 function ensureTickingArea(dimension, anchor, videoData) {
   if (!videoData) return { added: 0, needed: 0 };
-  // 以前の setup (別の位置・別の大きさ) で登録した区画を外す。外さないと 1 ワールド 10 区画の上限を使い切ってしまう
-  removeRegisteredTickingAreas(dimension);
-  const prefix = `${TICKING_AREA_NAME}_${anchor.x}_${anchor.y}_${anchor.z}`;
-  for (let i = 0; i < 16; i++) {
-    try {
-      dimension.runCommand(`tickingarea remove ${prefix}_${i}`);
-    } catch (e) { /* 未登録なら削除失敗は想定内 */ }
-  }
+  removeLegacyTickingAreas(dimension, anchor);
+  const manager = world.tickingAreaManager;
   try {
-    dimension.runCommand(`tickingarea remove ${prefix}`); // 以前の版の名前
-  } catch (e) { /* 同上 */ }
+    manager.removeAllTickingAreas(); // 前の setup (別の位置・別の大きさ) の区画
+  } catch (e) { /* 何も無い */ }
 
   const box = worldBoxOf(videoData, anchor);
   const chunk0X = Math.floor(box.x0 / 16);
@@ -1819,19 +1826,31 @@ function ensureTickingArea(dimension, anchor, videoData) {
     }
   }
   let added = 0;
-  const names = [];
-  for (const [index, [fromX, fromZ, toX, toZ]] of areas.slice(0, MAX_TICKING_AREAS).entries()) {
-    const name = `${prefix}_${index}`;
+  for (const [index, [fromX, fromZ, toX, toZ]] of areas.entries()) {
+    const options = { dimension, from: { x: fromX, y: anchor.y, z: fromZ }, to: { x: toX, y: anchor.y, z: toZ } };
     try {
-      dimension.runCommand(`tickingarea add ${fromX} ${anchor.y} ${fromZ} ${toX} ${anchor.y} ${toZ} ${name}`);
-      names.push(name);
+      if (!manager.hasCapacity(options)) continue;
+      // 戻り値の Promise は区画のチャンクがすべて読み込まれたら終わる。読み込みの完了は再生の前に isChunkLoaded で待つ
+      manager.createTickingArea(`${TICKING_AREA_NAME}_${index}`, options).catch((e) => {
+        console.warn(`[${EVENT_NAMESPACE}] ticking area ${index} failed: ${e}`);
+      });
       added++;
     } catch (e) {
-      console.warn(`[${EVENT_NAMESPACE}] tickingarea add failed: ${e}`);
+      console.warn(`[${EVENT_NAMESPACE}] ticking area ${index} failed: ${e}`);
     }
   }
-  world.setDynamicProperty(TICKING_NAMES_KEY, JSON.stringify(names));
   return { added, needed: areas.length };
+}
+
+/** 再生を始めるとき、常時読み込みの区画が無ければ (ワールドを開き直して消えたなど) 登録し直す。 */
+function ensureTickingAreaForPlayback(vp) {
+  try {
+    if (world.tickingAreaManager.getAllTickingAreas().length > 0) return;
+  } catch (e) {
+    return;
+  }
+  const ticking = ensureTickingArea(vp.dimension, vp.anchor, vp.videoData);
+  if (ticking.added < ticking.needed) notify("tickingarea_partial", ticking.added, ticking.needed);
 }
 
 /**
@@ -2019,6 +2038,7 @@ function startPlayback(dimension) {
     activePlayers.set(getAnchorKeyStr(anchor), vp);
     startMainLoop();
   }
+  ensureTickingAreaForPlayback(vp);
 
   vp.restart();
   notify("starting");
@@ -2158,7 +2178,7 @@ function showVolumeGUI(player) {
   const mv = vp ? vp.masterVolume : 1.0;
   const form = new ModalFormData()
     .title(tr("volume.title"))
-    .slider(tr("volume.slider"), 0, 100, 10, Math.round(mv * 100));
+    .slider(tr("volume.slider"), 0, 100, { valueStep: 10, defaultValue: Math.round(mv * 100) });
 
   form.show(player).then((response) => {
     if (response.canceled) return;
@@ -2179,7 +2199,7 @@ function showSeekGUI(player) {
 
   const form = new ModalFormData()
     .title(tr("seek.title"))
-    .slider(tr("seek.slider"), 0, Math.max(1, maxSec), 1, currentSec);
+    .slider(tr("seek.slider"), 0, Math.max(1, maxSec), { valueStep: 1, defaultValue: currentSec });
 
   form.show(player).then((response) => {
     if (response.canceled) return;
@@ -2217,13 +2237,12 @@ world.afterEvents.itemUse.subscribe((event) => {
   }
 });
 
-system.afterEvents.scriptEventReceive.subscribe((event) => {
-  if (!event.id.startsWith(EVENT_PREFIX)) return;
-
-  const player = event.sourceEntity;
+/**
+ * コマンド (/<接頭辞>:<操作> と /scriptevent <接頭辞>:<操作>) の処理。message は操作の後ろの文字 (setup face など)。
+ */
+function runAction(action, message, player) {
   const dimension = player ? player.dimension : world.getDimension("overworld");
-  const action = event.id.slice(EVENT_PREFIX.length);
-
+  const event = { message };
   switch (action) {
     case "bench":
       runBenchmark(player);
@@ -2280,5 +2299,56 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
       break;
     default:
       break;
+  }
+}
+
+// /scriptevent <接頭辞>:<操作> [文字] (以前の版からの書き方。チートが要る)
+system.afterEvents.scriptEventReceive.subscribe((event) => {
+  if (!event.id.startsWith(EVENT_PREFIX)) return;
+  runAction(event.id.slice(EVENT_PREFIX.length), event.message ?? "", event.sourceEntity);
+});
+
+/**
+ * 独自のコマンド (Script API 2.4.0 から)。/scriptevent と違ってチートを有効にしなくても使え (cheatsRequired: false)、
+ * 動画 ID は入力の候補に出る。例: /badapple:setup face、/badapple:play sample。権限はオペレーター (GameDirectors)。
+ * [操作, 説明, 引数] の一覧。引数は "video" (動画 ID の候補) か "text" (setup face などの文字) か無し。
+ */
+const CUSTOM_COMMANDS = [
+  ["setup", "Place the screen (options: face, wall, align)", "text"],
+  ["start", "Start or resume playback", null],
+  ["play", "Play a video (by video ID)", "video"],
+  ["stop", "Stop and clear the screen", null],
+  ["list", "List the videos", null],
+  ["remote", "Open the remote control", null],
+  ["render", "Set the render mode (auto, rect, list, block)", "text"],
+  ["bench", "Measure the block placement speed", null],
+  ["stats", "Show playback statistics", null],
+];
+
+function registerCustomCommands(registry) {
+  const videoEnum = `${EVENT_NAMESPACE}:video`;
+  const videoIds = LISTED_VIDEOS.map((v) => v.id);
+  if (videoIds.length > 0) registry.registerEnum(videoEnum, videoIds);
+  for (const [action, description, argument] of CUSTOM_COMMANDS) {
+    const optionalParameters = [];
+    if (argument === "video" && videoIds.length > 0) optionalParameters.push({ name: videoEnum, type: CustomCommandParamType.Enum });
+    if (argument === "text") optionalParameters.push({ name: "options", type: CustomCommandParamType.String });
+    registry.registerCommand({
+      name: `${EVENT_NAMESPACE}:${action}`, description, permissionLevel: CommandPermissionLevel.GameDirectors,
+      cheatsRequired: false, optionalParameters,
+    }, (origin, value) => {
+      // コマンドの処理の中ではワールドを変えられない (読み取り専用) ので、次の tick で行う
+      const player = origin.sourceEntity?.typeId === "minecraft:player" ? origin.sourceEntity : undefined;
+      system.run(() => runAction(action, value === undefined ? "" : String(value), player));
+      return { status: CustomCommandStatus.Success };
+    });
+  }
+}
+
+system.beforeEvents.startup.subscribe((event) => {
+  try {
+    registerCustomCommands(event.customCommandRegistry);
+  } catch (e) {
+    console.warn(`[${EVENT_NAMESPACE}] custom commands were not registered: ${e}`);
   }
 });
