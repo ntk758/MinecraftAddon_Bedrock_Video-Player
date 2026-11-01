@@ -20,7 +20,12 @@ git tag v6.31.0 && git push origin v6.31.0
 タグを push できない環境では、GitHub の Actions → Release → Run workflow で `tag` に版 (例: `v6.31.0`) を入れて起動する
 (API なら `workflow_dispatch`)。起動したコミットにそのタグを付けてリリースを作る。`pack_metadata.py` の版と違えば止まる。
 
-実機での確認 (下の 6) と CurseForge の更新 (下の 9) は手で行う。
+実機での確認 (下の 6) と CurseForge の更新 (下の 9) は手で行う。実機の結果は起動するときの `device_check` に入れると
+説明文の「確認したこと」に書かれる。
+
+公開した後に説明文を直すときは、CHANGELOG のその版の部分を直して `main` に入れ、`tag` に版を入れ、`notes_only` に
+チェックを入れて起動する。EXE とサンプルは作り直さず、説明文だけを作り直す (「確認したこと」は今のものをそのまま使い、
+`device_check` を入れたときだけ実機の行を差し替える)。
 
 ## 手で行う場合 / Manual steps
 

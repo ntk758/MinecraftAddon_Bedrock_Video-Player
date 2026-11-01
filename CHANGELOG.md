@@ -4,10 +4,37 @@
 
 ## v6.32.0
 
-- **Script API 2.x に移行・チート無しで遊べる** (アドオン): `@minecraft/server` 2.6.0 / `@minecraft/server-ui` 2.0.0、**Minecraft 1.26.10 以降** が必要になる (以前は 1.21.80 以降)。実機で確認 (2026-11-01、利用者): チート無しのワールドで `/badapple:setup` → `/badapple:play` で映像と音が出た、リモコンの音量・シークのスライダー、ワールドを開き直した後に離れた所から再生、以前の版で setup したワールドでの setup し直し。**動画 ID は入力の候補に出なかった** (Minecraft 側の制限とみられる。docs/KNOWN_ISSUES.md)。
-  - **短いコマンド**: `/badapple:setup`・`/badapple:play <動画ID>` (動画 ID は入力の候補に出る)・`/badapple:start`・`/badapple:stop`・`/badapple:list`・`/badapple:remote` など。チートを有効にしなくても使える (`cheatsRequired: false`)。`/scriptevent badapple:...` も今までどおり使える。ゲーム内の案内と Windows 版のガイド・ブラウザ版の使い方は短いコマンドを表示する。
-  - **常時読み込み**: tickingarea コマンドの代わりに TickingAreaManager (このパック専用の枠で、ワールド全体の 10 区画の上限を使わない) で登録する。ワールドを開き直して区画が消えていたら、再生を始めるときに登録し直す。以前の版がコマンドで登録した区画は setup のときに外す。
-  - 再生の前のチャンクの読み込みの判定を `isChunkLoaded` に。リモコンのスライダーを server-ui 2.0 の書き方に。
+**Minecraft 1.26.10 以降が必要です** (v6.31.0 までは 1.21.80 以降)。それより古い Minecraft では [v6.31.0](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/tag/v6.31.0) を使ってください。
+
+### 新しいこと
+
+- **チートを有効にしなくても遊べる短いコマンド** (アドオン): ワールドのオペレーター (1 人で遊ぶなら自分) が、チートを有効にしないワールドでも使えます。これまでの `/scriptevent badapple:...` も今までどおり使えます (こちらはチートが要ります)。ゲーム内の案内・Windows 版のガイド・ブラウザ版の使い方も短いコマンドを表示します。
+
+  | コマンド | すること |
+  |---|---|
+  | `/badapple:setup` | スクリーンを置く (`wall`・`face`・`align` を後ろに付けられる) |
+  | `/badapple:play <動画ID>` | 動画を選んで再生する |
+  | `/badapple:start` / `/badapple:stop` | 再生する・続きから再生する / 止めてスクリーンを消す |
+  | `/badapple:list` | 動画の一覧と動画 ID を見る |
+  | `/badapple:remote` | リモコン (音量・シークなど) を開く |
+  | `/badapple:render`・`/badapple:bench`・`/badapple:stats` | 置き方の切り替え・置く速さの計測・再生の統計 |
+
+  `badapple` はサンプルの接頭辞です。自分で作ったアドオンでは、作るときに決めた接頭辞になります。
+- **常時読み込みがワールドの上限を使わなくなった** (アドオン): スクリーンの周りを読み込んだままにする区画を、`tickingarea` コマンドではなくこのパック専用の枠で登録します。ワールド全体の 10 区画の上限を使わないので、ほかのアドオンや自分で作った常時読み込みの区画とぶつかりません。ワールドを開き直して区画が消えていたら、再生を始めるときに登録し直します。
+
+### 前の版から更新するとき
+
+- アドオンを入れ替えたら、ワールドで一度 `/badapple:setup` をし直すのがおすすめです。以前の版がコマンドで登録した常時読み込みの区画を外します。
+- リリースのサンプルは前の版と同じパックなので、上書きで更新できます。
+
+### 既知の問題
+
+- `/badapple:play` の後ろで、**動画 ID が入力の候補に出ません** (Minecraft 側の制限とみられます)。`/badapple:list` で動画 ID を確かめてから入力してください。詳しくは [docs/KNOWN_ISSUES.md](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/blob/main/docs/KNOWN_ISSUES.md)。
+
+### 開発者向け
+
+- Script API を `@minecraft/server` 2.6.0 / `@minecraft/server-ui` 2.0.0 に (`min_engine_version` 1.26.10)。コマンドは `customCommandRegistry` で `cheatsRequired: false` で登録し、処理は次の tick に行う (コマンドの処理の中はワールドを変えられない)。動画 ID は enum `badapple:video` として登録する。
+- 常時読み込みは `TickingAreaManager`。再生の前のチャンクの読み込みの判定を `isChunkLoaded` に、リモコンのスライダーを server-ui 2.0 の書き方にした。
 
 ## v6.31.0
 
