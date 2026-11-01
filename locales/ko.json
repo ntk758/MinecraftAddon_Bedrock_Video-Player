@@ -303,7 +303,7 @@
   "web.section_howto": "사용 방법",
   "web.howto_import": "만든 .mcaddon을 열어 Minecraft로 가져온 뒤, 월드 설정에서 행동 팩과 리소스 팩을 모두 켜고 치트를 켭니다.",
   "web.howto_setup": "평평한 곳에서 {setup}, {start} 순서로 실행합니다. 나침반을 사용하면 리모컨이 열립니다.",
-  "web.howto_note": "처음에는 변환용 Python(약 20 MB)을 불러오므로 시간이 걸립니다. 브라우저 버전은 CPU로만 변환하고 소리는 WAV로 저장하므로, 긴 동영상이나 큰 화면은 Windows 버전(GPU 지원)이 더 빠르고 애드온도 더 작습니다.",
+  "web.howto_note": "처음에는 변환용 Python(약 20 MB)을 불러오므로 시간이 걸립니다. 브라우저 버전은 CPU로만 변환하므로, 긴 동영상이나 큰 화면은 Windows 버전(GPU 지원)이 더 빠르게 변환합니다.",
   "web.video_id": "동영상 ID",
   "web.load_estimate": "재생 부하 예상: 화면 전체가 바뀔 때 초당 {blocks} 블록 ({level})",
   "web.cannot_open": "{name}: 브라우저에서 이 동영상을 열 수 없습니다",
@@ -351,5 +351,6 @@
   "web.mmd_no_pmx": "이 폴더에는 .pmx 파일이 없습니다.",
   "web.image_hint": "이미지(PNG·JPEG·WebP 등)도 쓸 수 있습니다. 표시한 뒤에도 그대로 남는 정지된 블록 아트가 됩니다. 입체 모드라면 조각이 됩니다.",
   "web.image_item": "이미지",
-  "dialog.image_files": "이미지 (정지된 블록 아트)"
+  "dialog.image_files": "이미지 (정지된 블록 아트)",
+  "web.audio_wav_fallback": "OGG 인코더를 불러오지 못해 소리를 WAV(더 큼)로 저장합니다: {error}"
 }

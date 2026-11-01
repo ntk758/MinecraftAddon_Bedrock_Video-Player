@@ -303,7 +303,7 @@
   "web.section_howto": "Mode d'emploi",
   "web.howto_import": "Ouvrez le .mcaddon pour l'importer dans Minecraft. Dans les paramètres du monde, activez le pack de comportements et le pack de ressources, puis activez les commandes de triche.",
   "web.howto_setup": "Sur un terrain plat, exécutez {setup} puis {start}. Utilisez une boussole pour ouvrir la télécommande.",
-  "web.howto_note": "La première fois, la page charge Python pour le convertisseur (environ 20 Mo), ce qui prend un moment. La version web convertit uniquement avec le CPU et enregistre le son en WAV : pour les vidéos longues ou les grands écrans, l'application Windows (avec GPU) est plus rapide et produit des modules plus petits.",
+  "web.howto_note": "La première fois, la page charge Python pour le convertisseur (environ 20 Mo), ce qui prend un moment. La version web convertit uniquement avec le CPU : pour les vidéos longues ou les grands écrans, l'application Windows (avec GPU) convertit plus vite.",
   "web.video_id": "ID de la vidéo",
   "web.load_estimate": "Charge de lecture estimée : {blocks} blocs/s quand toute l'image change ({level})",
   "web.cannot_open": "{name} : le navigateur ne peut pas ouvrir cette vidéo",
@@ -351,5 +351,6 @@
   "web.mmd_no_pmx": "Ce dossier ne contient aucun fichier .pmx.",
   "web.image_hint": "Les images (PNG, JPEG, WebP…) fonctionnent aussi : elles deviennent une œuvre en blocs fixe qui reste en place après l'affichage. En mode 3D, elles deviennent une sculpture.",
   "web.image_item": "image",
-  "dialog.image_files": "Images (œuvre en blocs fixe)"
+  "dialog.image_files": "Images (œuvre en blocs fixe)",
+  "web.audio_wav_fallback": "Impossible de charger l'encodeur OGG, le son est donc enregistré en WAV (plus volumineux) : {error}"
 }

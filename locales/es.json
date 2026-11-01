@@ -303,7 +303,7 @@
   "web.section_howto": "Cómo se usa",
   "web.howto_import": "Abre el .mcaddon para importarlo en Minecraft. En los ajustes del mundo, activa el paquete de comportamiento y el de recursos, y activa los trucos.",
   "web.howto_setup": "En un terreno llano, ejecuta {setup} y luego {start}. Usa una brújula para abrir el mando.",
-  "web.howto_note": "La primera vez, la página carga Python para el conversor (unos 20 MB) y tarda un poco. La versión web convierte solo con la CPU y guarda el audio en WAV, así que para vídeos largos o pantallas grandes la aplicación de Windows (con GPU) es más rápida y crea complementos más pequeños.",
+  "web.howto_note": "La primera vez, la página carga Python para el conversor (unos 20 MB) y tarda un poco. La versión web convierte solo con la CPU, así que para vídeos largos o pantallas grandes la aplicación de Windows (con GPU) convierte más rápido.",
   "web.video_id": "ID del vídeo",
   "web.load_estimate": "Carga de reproducción estimada: {blocks} bloques/s cuando cambia toda la imagen ({level})",
   "web.cannot_open": "{name}: el navegador no puede abrir este vídeo",
@@ -351,5 +351,6 @@
   "web.mmd_no_pmx": "No hay ningún archivo .pmx en esta carpeta.",
   "web.image_hint": "También sirven imágenes (PNG, JPEG, WebP…): se convierten en arte de bloques fijo que se queda en su sitio después de mostrarse. Con un modo 3D se convierten en una escultura.",
   "web.image_item": "imagen",
-  "dialog.image_files": "Imágenes (arte de bloques fijo)"
+  "dialog.image_files": "Imágenes (arte de bloques fijo)",
+  "web.audio_wav_fallback": "No se pudo cargar el codificador OGG, así que el sonido se guarda en WAV (más grande): {error}"
 }

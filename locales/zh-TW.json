@@ -303,7 +303,7 @@
   "web.section_howto": "使用方式",
   "web.howto_import": "開啟建立的 .mcaddon 將其匯入 Minecraft，在世界設定中同時啟用行為包與資源包，並開啟作弊。",
   "web.howto_setup": "在平坦的地方依序執行 {setup} 和 {start}。使用指南針即可開啟遙控器。",
-  "web.howto_note": "第一次使用時需要載入轉換用的 Python（約 20 MB），會花一些時間。網頁版只用 CPU 轉換，音訊會存成 WAV，因此較長的影片或較大的螢幕用 Windows 版（支援 GPU）會更快，附加元件也更小。",
+  "web.howto_note": "第一次使用時需要載入轉換用的 Python（約 20 MB），會花一些時間。網頁版只用 CPU 轉換，因此較長的影片或較大的螢幕用 Windows 版（支援 GPU）轉換更快。",
   "web.video_id": "影片 ID",
   "web.load_estimate": "播放負載估計：整個畫面變化時每秒 {blocks} 個方塊（{level}）",
   "web.cannot_open": "{name}：瀏覽器無法開啟此影片",
@@ -351,5 +351,6 @@
   "web.mmd_no_pmx": "此資料夾中沒有 .pmx 檔案。",
   "web.image_hint": "也可以使用圖片（PNG、JPEG、WebP 等）：會變成顯示後一直保留的靜態方塊畫。選擇立體模式則會變成雕塑。",
   "web.image_item": "圖片",
-  "dialog.image_files": "圖片（靜態方塊畫）"
+  "dialog.image_files": "圖片（靜態方塊畫）",
+  "web.audio_wav_fallback": "無法載入 OGG 編碼器，因此音訊將存成 WAV（較大）：{error}"
 }
