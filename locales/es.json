@@ -352,5 +352,7 @@
   "web.image_hint": "También sirven imágenes (PNG, JPEG, WebP…): se convierten en arte de bloques fijo que se queda en su sitio después de mostrarse. Con un modo 3D se convierten en una escultura.",
   "web.image_item": "imagen",
   "dialog.image_files": "Imágenes (arte de bloques fijo)",
-  "web.audio_wav_fallback": "No se pudo cargar el codificador OGG, así que el sonido se guarda en WAV (más grande): {error}"
+  "web.audio_wav_fallback": "No se pudo cargar el codificador OGG, así que el sonido se guarda en WAV (más grande): {error}",
+  "settings.pair_flat": "Con un modo 3D, añadir también el vídeo plano normal (mismo sonido; la versión 2D es <ID>_flat)",
+  "build.pair_flat": "  Convirtiendo también la versión plana (2D): {id}"
 }

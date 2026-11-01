@@ -352,5 +352,7 @@
   "web.image_hint": "이미지(PNG·JPEG·WebP 등)도 쓸 수 있습니다. 표시한 뒤에도 그대로 남는 정지된 블록 아트가 됩니다. 입체 모드라면 조각이 됩니다.",
   "web.image_item": "이미지",
   "dialog.image_files": "이미지 (정지된 블록 아트)",
-  "web.audio_wav_fallback": "OGG 인코더를 불러오지 못해 소리를 WAV(더 큼)로 저장합니다: {error}"
+  "web.audio_wav_fallback": "OGG 인코더를 불러오지 못해 소리를 WAV(더 큼)로 저장합니다: {error}",
+  "settings.pair_flat": "입체 모드일 때 일반 평면 동영상도 함께 넣기 (소리는 공통, 평면판은 <동영상 ID>_flat)",
+  "build.pair_flat": "  평면(2D)판도 변환하는 중: {id}"
 }

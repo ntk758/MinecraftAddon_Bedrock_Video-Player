@@ -102,6 +102,18 @@ def videos_js(entries: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# 同じ動画の立体版と平面版をセットで入れるとき: 平面版の動画 ID の末尾と、一覧に出す名前の印
+FLAT_PAIR_SUFFIX = "_flat"
+PAIR_TITLE_3D = "{title} (3D)"
+PAIR_TITLE_2D = "{title} (2D)"
+
+
+def flat_pair_dither(dither_method: str) -> str:
+    """平面版のディザ。立体のモードではディザを「なし」にする (粒が立体の表面のノイズになる) ので、そのときは平面の
+    既定の Blue Noise にする。ほかのディザを選んでいれば、それを使う。"""
+    return "blue_noise" if dither_method == "none" else dither_method
+
+
 def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addon_language: str | None = None,
                 manifest_text: str | None = None, main_text: str | None = None, codec_text: str | None = None) -> list[dict]:
     """.mcaddon を output (パスか書き込みできるファイル) に書き、動画の一覧 (videos.js の VIDEO_LIST) を返す。
@@ -114,6 +126,8 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
         sounds      [(チャンクの番号, 拡張子 ("ogg" / "wav"), bytes), ...] (AUDIO_CHUNK_SECONDS ごと)。無ければ []
         width / height  変換時の大きさ (frames_js に無いとき用)
         hidden      True なら、ゲーム内の動画の一覧とリモコンの「次の動画」に出さない (だまし絵の背景の映像)
+        audio_from  ほかの動画の ID。その動画の音声を鳴らす (同じ動画の立体版と平面版をセットで入れるとき、音声を
+                    2 回入れない)。この動画の sounds は使わない
     """
     manifest_text = manifest_text if manifest_text is not None else MANIFEST.read_text(encoding="utf-8")
     main_text = main_text if main_text is not None else MAIN_SCRIPT.read_text(encoding="utf-8")
@@ -135,6 +149,13 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
             entry["depth"] = dims["depth"]
         # 音声の区切りの数。0 ならゲーム内で再生するときに「音声が入っていない」と知らせる
         entry["audio_chunks"] = len(video.get("sounds") or [])
+        audio_from = video.get("audio_from")
+        if audio_from:
+            source = next((v for v in videos if v["id"] == audio_from), None)
+            if source is None:
+                raise ValueError(f"audio_from の動画がありません: {video_id} -> {audio_from}")
+            entry["audio_from"] = audio_from
+            entry["audio_chunks"] = len(source.get("sounds") or [])
         if video.get("hidden"):
             # だまし絵の背景の映像など、人物の動画と一緒に再生するので一覧に出さない
             entry["hidden"] = True
@@ -142,7 +163,7 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
         put(f"BP/scripts/frames_{video_id}.js", video["frames_js"])
         if icon is None and video.get("thumbnail"):
             icon = video["thumbnail"]
-        for index, ext, data in sorted(video.get("sounds") or [], key=lambda item: item[0]):
+        for index, ext, data in sorted([] if audio_from else (video.get("sounds") or []), key=lambda item: item[0]):
             put(f"RP/sounds/music/{video_id}/chunk_{index}.{ext}", data)
             # パスは拡張子なしで書く (.ogg / .wav のどちらでもゲームが探す)
             sound_definitions[f"{namespace}.{video_id}.chunk_{index}"] = {

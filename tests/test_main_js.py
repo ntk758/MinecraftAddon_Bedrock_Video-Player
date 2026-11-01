@@ -50,8 +50,9 @@ def collect_text(value, keys, literals):
             collect_text(child, keys, literals)
 
 
-def run_addon(work, frames_js, *node_args):
-    """frames_js (convert.py の出力) を収録したアドオンを、モックの Minecraft 上で再生した結果を返す。"""
+def run_addon(work, frames_js, *node_args, audio_from=None):
+    """frames_js (convert.py の出力) を収録したアドオンを、モックの Minecraft 上で再生した結果を返す。
+    audio_from を渡すと、その動画の音声を鳴らす一覧にする (立体版と平面版のセット)。"""
     work.mkdir()
     shutil.copy(ROOT / "main.js", work / "main.js")
     shutil.copy(ROOT / "codec.js", work / "codec.js")
@@ -61,7 +62,8 @@ def run_addon(work, frames_js, *node_args):
         'import { FRAME_DATA as video_demo } from "./frames_demo.js";\n'
         'export const VIDEOS = { "demo": video_demo };\n'
         'export const VIDEO_LIST = [{ id: "demo", title: "Demo", frame_count: video_demo.frame_count, '
-        'width: video_demo.width, height: video_demo.height }];\n',
+        'width: video_demo.width, height: video_demo.height'
+        + (f', audio_from: "{audio_from}"' if audio_from else "") + ' }];\n',
         encoding="utf-8",
     )
     mock_dir = ROOT / "tests" / "js" / "minecraft_mock"

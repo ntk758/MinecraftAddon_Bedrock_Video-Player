@@ -419,9 +419,16 @@ class VideoPlayer {
     return Math.max(video.frame_count, secondsToFrame(video, frameToSeconds(background, background.frame_count)));
   }
 
-  /** 鳴らす音声の動画 ID。だまし絵に背景の映像があれば、その音声 (人物の .vox などには音声が無い)。 */
+  /**
+   * 鳴らす音声の動画 ID。だまし絵に背景の映像があれば、その音声 (人物の .vox などには音声が無い)。
+   * 同じ動画の立体版と平面版をセットで入れたときは、片方 (平面版) は一覧の audio_from の動画の音声を鳴らす
+   * (音声を 2 回入れない)。audio_from の無い古いアドオンは今までどおり。
+   */
   get audioVideoId() {
-    return (this.videoData && stageBackgroundOf(this.videoData)) ?? this.videoId;
+    const background = this.videoData && stageBackgroundOf(this.videoData);
+    if (background) return background;
+    const entry = VIDEO_LIST.find((v) => v.id === this.videoId);
+    return entry?.audio_from ?? this.videoId;
   }
 
   /** 再生の計測を始め直す。実時間は最初のフレームを描く tick から数える (読み込み待ちの tick を含めない)。 */

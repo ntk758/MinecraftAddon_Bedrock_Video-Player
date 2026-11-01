@@ -352,5 +352,7 @@
   "web.image_hint": "也可以使用圖片（PNG、JPEG、WebP 等）：會變成顯示後一直保留的靜態方塊畫。選擇立體模式則會變成雕塑。",
   "web.image_item": "圖片",
   "dialog.image_files": "圖片（靜態方塊畫）",
-  "web.audio_wav_fallback": "無法載入 OGG 編碼器，因此音訊將存成 WAV（較大）：{error}"
+  "web.audio_wav_fallback": "無法載入 OGG 編碼器，因此音訊將存成 WAV（較大）：{error}",
+  "settings.pair_flat": "選擇立體模式時，也一併加入一般的平面影片（共用音訊；平面版為 <影片ID>_flat）",
+  "build.pair_flat": "  也在轉換平面（2D）版：{id}"
 }

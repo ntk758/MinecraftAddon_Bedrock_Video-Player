@@ -352,5 +352,7 @@
   "web.image_hint": "也可以使用图片（PNG、JPEG、WebP 等）：会变成显示后一直保留的静态方块画。选择立体模式则会变成雕塑。",
   "web.image_item": "图片",
   "dialog.image_files": "图片（静态方块画）",
-  "web.audio_wav_fallback": "无法加载 OGG 编码器，因此音频将保存为 WAV（较大）：{error}"
+  "web.audio_wav_fallback": "无法加载 OGG 编码器，因此音频将保存为 WAV（较大）：{error}",
+  "settings.pair_flat": "选择立体模式时，也一并加入普通的平面视频（共用音频；平面版为 <视频ID>_flat）",
+  "build.pair_flat": "  也在转换平面（2D）版：{id}"
 }

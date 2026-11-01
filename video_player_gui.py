@@ -23,9 +23,13 @@ from gui_i18n import (
 from pack_builder import (  # noqa: F401 (stable_pack_uuid などは以前からこのモジュールにあった名前)
     AUDIO_CHUNK_SECONDS,
     BUILD_STAMP_EPOCH,
+    FLAT_PAIR_SUFFIX,
     MANIFEST_VERSION_MAX,
+    PAIR_TITLE_2D,
+    PAIR_TITLE_3D,
     build_addon,
     build_manifest_version,
+    flat_pair_dither,
     frame_data_dims,
     stable_pack_uuid,
     vox_thumbnail_png,
@@ -532,6 +536,8 @@ class PackBuilderApp(tk.Tk):
         self.anamorphic_var = tk.BooleanVar(value=False)
         # MMD を高解像度で (エクストリーム: 人物の高さの上限を上げる。重い)
         self.mmd_extreme_var = tk.BooleanVar(value=False)
+        # 立体のモードのとき、同じ動画の平面版もセットで入れる (音声は共通。pack_builder の audio_from)
+        self.pair_flat_var = tk.BooleanVar(value=False)
         # MMD のモデル (.pmx のパス) → 踊り (.vmd のパス)
         self.mmd_motions: dict[str, str] = {}
         # だまし絵の後ろの壁に流す背景の映像 (空なら壁は単色)
@@ -788,6 +794,8 @@ class PackBuilderApp(tk.Tk):
             settings, text=tr("settings.mmd_extreme", height=MMD_EXTREME_MAX_HEIGHT, stage=MMD_EXTREME_STAGE_MAX_HEIGHT),
             variable=self.mmd_extreme_var,
         ).grid(row=6, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
+        ttk.Checkbutton(settings, text=tr("settings.pair_flat"), variable=self.pair_flat_var).grid(
+            row=8, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         # 再生負荷の目安 (幅・高さ・fps・表示モード・奥行きを変えるたびに更新)
         self.load_label = ttk.Label(settings, wraplength=720)
         self.load_label.grid(row=7, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
@@ -1076,7 +1084,7 @@ class PackBuilderApp(tk.Tk):
             target=self._build_pack,
             args=(video_entries, output, pack_name, namespace, width, height, fps, duration, palette, dither_method,
                   device, mode, depth, self._addon_language(), self.anamorphic_var.get(),
-                  self.stage_background_var.get().strip() or None, self.mmd_extreme_var.get()),
+                  self.stage_background_var.get().strip() or None, self.mmd_extreme_var.get(), self.pair_flat_var.get()),
             daemon=True,
         ).start()
 
@@ -1263,6 +1271,7 @@ class PackBuilderApp(tk.Tk):
         width: int, height: int, fps: float, duration: float | None, palette: str, dither_method: str,
         device: str, mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH, addon_language: str | None = None,
         anamorphic: bool = False, stage_background: str | None = None, mmd_extreme: bool = False,
+        pair_flat: bool = False,
     ) -> None:
         try:
             ffmpeg = get_ffmpeg_path()
@@ -1356,11 +1365,28 @@ class PackBuilderApp(tk.Tk):
                         argv += ["--mask-video", str(mask_video)]
                     self._run([*converter_command(), *argv])
                     frames_js = generated_data.read_text(encoding="utf-8")
+                    # 立体版と平面版をセットにする (動画・画像を立体にするときだけ。.vox と MMD には元の平面の映像が無い)
+                    pair = pair_flat and mode != "screen" and not is_vox
                     videos.append({
-                        "id": video_id, "title": video.stem, "frames_js": frames_js,
-                        "thumbnail": thumbnail.read_bytes(), "sounds": sounds, "width": video_width,
-                        "height": video_height,
+                        "id": video_id, "title": PAIR_TITLE_3D.format(title=video.stem) if pair else video.stem,
+                        "frames_js": frames_js, "thumbnail": thumbnail.read_bytes(), "sounds": sounds,
+                        "width": video_width, "height": video_height,
                     })
+                    if pair:
+                        flat_id = f"{video_id}{FLAT_PAIR_SUFFIX}"
+                        self.messages.put(self.tr("build.pair_flat", id=flat_id))
+                        flat_data = temp / f"frames_{flat_id}.js"
+                        self._run([*converter_command(), *build_converter_args(
+                            video, flat_data, ffmpeg, width, height, fps, palette, flat_pair_dither(dither_method),
+                            self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
+                            self.tr.language, "screen", depth, False,
+                        )])
+                        # 音声は立体版 (だまし絵なら背景の映像) のものを鳴らし、2 回入れない
+                        videos.append({
+                            "id": flat_id, "title": PAIR_TITLE_2D.format(title=video.stem),
+                            "frames_js": flat_data.read_text(encoding="utf-8"), "thumbnail": thumbnail.read_bytes(),
+                            "sounds": [], "audio_from": background_id or video_id, "width": width, "height": height,
+                        })
                     if background_id:
                         videos.append(self._convert_stage_background(
                             Path(video_background), background_id, frames_js, temp, ffmpeg, fps, palette,

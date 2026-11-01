@@ -352,5 +352,7 @@
   "web.image_hint": "Pictures (PNG, JPEG, WebP…) work too: they become still block art that stays in place after it is shown. With a 3D mode they become a sculpture.",
   "web.image_item": "image",
   "dialog.image_files": "Pictures (still block art)",
-  "web.audio_wav_fallback": "The OGG encoder could not be loaded, so the sound is stored as WAV (larger): {error}"
+  "web.audio_wav_fallback": "The OGG encoder could not be loaded, so the sound is stored as WAV (larger): {error}",
+  "settings.pair_flat": "With a 3D mode, also add the normal flat video (same sound; the 2D version is listed as <ID>_flat)",
+  "build.pair_flat": "  Also converting the flat (2D) version: {id}"
 }
