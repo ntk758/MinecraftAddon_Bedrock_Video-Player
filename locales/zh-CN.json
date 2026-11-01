@@ -327,7 +327,7 @@
   "web.preview_play": "播放",
   "web.preview_pause": "暂停",
   "web.preview_info": "{frames} 帧（{fps} fps）",
-  "web.preview_thinned": "为节省内存，这里每 {step} 帧显示一帧（附加包中包含全部帧）。",
+  "web.preview_failed": "无法显示预览（附加包没有问题）：{error}",
   "web.preview_making": "正在生成预览：{id}",
   "after.preview": "预览",
   "build.preview": "预览（按游戏规则绘制的 Minecraft 中的效果）：{path}",

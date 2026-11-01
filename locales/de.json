@@ -327,7 +327,7 @@
   "web.preview_play": "Abspielen",
   "web.preview_pause": "Pause",
   "web.preview_info": "{frames} Frames mit {fps} fps",
-  "web.preview_thinned": "Um Speicher zu sparen, wird hier nur jeder {step}. Frame gezeigt (das Add-on enthält alle).",
+  "web.preview_failed": "Die Vorschau konnte nicht angezeigt werden (das Add-on ist in Ordnung): {error}",
   "web.preview_making": "Vorschau wird erstellt: {id}",
   "after.preview": "Vorschau",
   "build.preview": "Vorschau (so sieht es in Minecraft aus, nach den Regeln des Spiels gezeichnet): {path}",

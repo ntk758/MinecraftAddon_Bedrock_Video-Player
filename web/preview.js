@@ -1,13 +1,14 @@
 // Block Video Player Web Converter: できあがりのプレビュー
-// worker.js が、変換したデータを Python の参照デコーダ (ゲームと同じ規則) で絵にしたもの (mvcodec/preview.py) を
-// 受け取り、元の動画と並べて再生する。元の動画があれば、その再生位置 (音声付き・シーク可) に合わせてブロックの絵を
-// 描く。.vox のように元の動画が無ければ、自分の時計で再生する。
+// 変換したデータを、再生しながらゲームと同じ codec.js で 1 コマずつ復元して描き (web/block_preview.js)、元の動画と
+// 並べて再生する。絵を先に全部作らないので、長い動画でも全部のコマを元の fps のまま見られる。元の動画があれば、
+// その再生位置 (音声付き・シーク可) に合わせてブロックの絵を描く。.vox のように元の動画が無ければ、自分の時計で再生する。
 "use strict";
 
 const Preview = (() => {
   const $ = (id) => document.getElementById(id);
   const t = (key, params) => I18n.t(key, params);
-  let items = []; // { id, title, width, height, fps, step, count, volume, rgb }
+  let items = []; // { id, title, spec (mvcodec/preview.py の preview_spec), frameData (FRAME_DATA の JSON), player }
+  let codec = null; // ゲームと同じ codec.js (ES モジュール。組み立てのコードと一緒に app/ に置いてある)
   let current = null;
   let image = null; // 描く ImageData (1 枚分を使い回す)
   let drawn = -1;
@@ -17,22 +18,13 @@ const Preview = (() => {
 
   /** frame 番目の絵を canvas に描く (同じ番号なら描かない)。 */
   function draw(frame) {
-    if (!current || frame === drawn) return;
-    const { width, height, rgb } = current;
-    const size = width * height;
-    const from = frame * size * 3;
-    const out = image.data;
-    for (let p = 0, q = from; p < size; p++, q += 3) {
-      out[p * 4] = rgb[q];
-      out[p * 4 + 1] = rgb[q + 1];
-      out[p * 4 + 2] = rgb[q + 2];
-      out[p * 4 + 3] = 255;
-    }
+    if (!current || !current.player || frame === drawn) return;
+    current.player.render(frame, image);
     $("previewCanvas").getContext("2d").putImageData(image, 0, 0);
     drawn = frame;
   }
 
-  /** 再生位置 (秒) → プレビューの番号。プレビューの fps は元の fps ÷ 間引きの幅。 */
+  /** 再生位置 (秒) → フレームの番号。 */
   function frameAt(seconds) {
     return Math.max(0, Math.min(current.count - 1, Math.floor(seconds * current.fps + 1e-6)));
   }
@@ -66,14 +58,20 @@ const Preview = (() => {
 
   function refreshText() {
     if (!current) return;
-    let info = t("web.preview_info", { frames: current.count, fps: Number(current.fps.toFixed(2)) });
-    if (current.step > 1) info += " " + t("web.preview_thinned", { step: current.step });
-    $("previewInfo").textContent = info;
+    $("previewInfo").textContent = t("web.preview_info", { frames: current.count, fps: Number(current.fps.toFixed(2)) });
     setPlayLabel();
   }
 
   function select(id) {
+    const previous = current;
     current = items.find((p) => p.id === id) || items[0];
+    if (previous && previous !== current) previous.player = null; // 選んでいない動画の盤面は持たない
+    if (!current.player) {
+      // 選んだ動画だけを復元の準備をする (FRAME_DATA を読み、盤面 1 枚ぶんの配列を用意する)
+      current.player = BlockPreview.create(codec, current.spec, JSON.parse(current.frameData));
+      Object.assign(current, { width: current.player.width, height: current.player.height,
+                               count: current.player.count, fps: current.player.fps });
+    }
     const canvas = $("previewCanvas");
     canvas.width = current.width;
     canvas.height = current.height;
@@ -96,9 +94,10 @@ const Preview = (() => {
     refreshText();
   }
 
-  /** プレビューを見せる。videos は app.js の動画の一覧 (元の動画の URL を引く)。 */
-  function show(list, videos) {
-    items = list.map((p) => ({ ...p, rgb: p.rgb instanceof Uint8Array ? p.rgb : new Uint8Array(p.rgb) }));
+  /** プレビューを見せる。list は worker.js の previews、videos は app.js の動画の一覧 (元の動画の URL を引く)。 */
+  async function show(list, videos) {
+    if (!codec) codec = await import("./app/codec.js");
+    items = list.map(({ id, title, frameData, ...spec }) => ({ id, title, frameData, spec, player: null }));
     sourceUrls = new Map(videos.filter((v) => v.url).map((v) => [v.id, v.url]));
     const selectBox = $("previewSelect");
     selectBox.innerHTML = "";
