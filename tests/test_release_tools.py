@@ -111,3 +111,5 @@ def test_release_workflow_runs_the_tools():
                    "scripts/release_notes.py", "SHA256SUMS.txt", "--run-converter"):
         assert needed in text, needed
     assert set(workflow["jobs"]["release"]["needs"]) == {"exe", "samples"}
+    # Windows のランナーは cp1252 なので、日本語を出力するスクリプトのために UTF-8 にする
+    assert workflow["jobs"]["exe"]["env"]["PYTHONUTF8"] == "1"
