@@ -179,6 +179,20 @@ def open_folder(path):
         subprocess.Popen(["xdg-open", str(path.parent)])
 
 
+def open_file(path):
+    """ファイルを、関連付けられたアプリで開く (プレビューの GIF など)。開けなければ False。"""
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(path))  # noqa: S606 (利用者が作ったファイルを開く)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+        return True
+    except OSError:
+        return False
+
+
 def import_to_minecraft(path):
     """.mcaddon を開く (Windows では Minecraft が読み込む)。開けなければ False。"""
     if sys.platform != "win32":

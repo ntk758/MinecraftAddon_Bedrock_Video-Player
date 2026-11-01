@@ -540,6 +540,9 @@ class PackBuilderApp(tk.Tk):
         # 最後に作ったアドオン (保存先を開く・Minecraft に読み込むボタン用) と、はじめてガイドの画面
         self.building_output: Path | None = None
         self.last_output: Path | None = None
+        # 作ったアドオンのプレビューの GIF (mvcodec/preview.py)。building_previews は作っている途中の分
+        self.last_previews: list[Path] = []
+        self.building_previews: list[Path] = []
         self.wizard = None
         self._set_option_labels(DEFAULT_PALETTE, DEFAULT_DITHER, DEFAULT_DEVICE, DEFAULT_MODE)
         self.namespace_var.trace_add("write", lambda *_: self._update_command_hint())
@@ -809,6 +812,8 @@ class PackBuilderApp(tk.Tk):
             ttk.Button(build_bar, text=tr("after.open_folder"), command=self.open_output_folder, state=after_state),
             ttk.Button(build_bar, text=tr("after.import"), command=self.import_output, state=after_state),
             ttk.Button(build_bar, text=tr("after.guide_button"), command=self._show_play_guide, state=after_state),
+            ttk.Button(build_bar, text=tr("after.preview"), command=self.open_preview,
+                       state="normal" if self.last_previews else "disabled"),
         ]
         for column, button in enumerate(self.after_buttons, start=1):
             button.grid(row=0, column=column, padx=3)
@@ -830,6 +835,7 @@ class PackBuilderApp(tk.Tk):
             title=self.tr("dialog.select_videos_title"),
             filetypes=[
                 (self.tr("dialog.video_files"), "*.mp4 *.mkv *.avi *.mov *.webm"),
+                (self.tr("dialog.image_files"), "*.png *.jpg *.jpeg *.webp *.bmp"),
                 (self.tr("dialog.vox_files"), "*.vox"),
                 (self.tr("dialog.mmd_files"), "*.pmx"),
                 (self.tr("dialog.all_files"), "*.*"),
@@ -1061,6 +1067,7 @@ class PackBuilderApp(tk.Tk):
             return
 
         self.building = True
+        self.building_previews = []
         self.building_output = output
         self.build_button.configure(state="disabled")
         self.language_box.configure(state="disabled")
@@ -1362,6 +1369,7 @@ class PackBuilderApp(tk.Tk):
 
                 self.messages.put(self.tr("build.videos_index"))
                 video_index_entries = build_addon(output, videos, pack_name, namespace, addon_language)
+                self.building_previews = self._write_previews(output, videos)
 
             video_names = ", ".join(e["id"] for e in video_index_entries)
             self.messages.put((
@@ -1384,8 +1392,11 @@ class PackBuilderApp(tk.Tk):
                     ok = kind == "success"
                     if ok:
                         self.last_output = self.building_output
+                        self.last_previews = list(self.building_previews)
                         for button in self.after_buttons:
                             button.configure(state="normal")
+                        if not self.last_previews:
+                            self.after_buttons[-1].configure(state="disabled")
                         self._append_log(text)
                         self._append_log(self.play_guide_text())
                     else:
@@ -1450,6 +1461,24 @@ class PackBuilderApp(tk.Tk):
             return
         target = self.last_output if self.last_output.exists() else self.last_output.parent
         open_folder(target)
+
+    def _write_previews(self, output: Path, videos: list[dict]) -> list[Path]:
+        """できたアドオンの隣に、ゲームと同じ規則で描いたプレビューの GIF を書く (作れなくても作る処理は止めない)。"""
+        from mvcodec.preview import write_preview_gifs
+
+        def failed(video_id, error):
+            self.messages.put(self.tr("build.preview_failed", id=video_id, error=error))
+
+        written = write_preview_gifs(output, videos, log=failed)
+        for path in written:
+            self.messages.put(self.tr("build.preview", path=path))
+        return written
+
+    def open_preview(self) -> None:
+        from gui_wizard import open_file
+
+        if self.last_previews:
+            open_file(self.last_previews[0])
 
     def import_output(self) -> None:
         from gui_wizard import import_to_minecraft

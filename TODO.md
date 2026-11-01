@@ -10,6 +10,42 @@ Phase 8 の各項目の根拠 (計測結果・先行事例) は [docs/research/p
 - **リリースごと**: [docs/TESTING.md](docs/TESTING.md) の「リリースごとの記録」に自動テスト・モック・EXE・実機の結果を書く。手順は [docs/RELEASING.md](docs/RELEASING.md)。
 - **実機の計測を集める**: Windows 以外の端末での動作と、`/scriptevent <接頭辞>:stats` の結果を [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) と [docs/PERFORMANCE.md](docs/PERFORMANCE.md) に追記する (まだ Windows の `bench` しか無い)。
 
+## 🔴 優先度: 最高 (2026-10-31 の見直し: 届ける・壊れない・確かめる)
+
+GitHub のリリースの DL は 1 ファイル 1〜4 回、CurseForge は 7 日で約 1,500 回なのに変換ツールはほとんど使われていない。
+直近の画質の改善は計算上 1% 未満で、実機では確かめていない。そこで、画質の細かい改善より、作る人を増やすことと
+実機での確認を先にする。Phase 13 は 13.1 (物差しが実機の見た目と合うか) だけを行い、残りは実機の見比べで差が
+分かったときだけ進める。
+
+### Phase 14: 実機で確かめる土台
+- 今の Minecraft で v6.30 以降を動かし、`stats` を Minecraft の版と一緒に COMPATIBILITY.md に記録する (版を記録していない)。
+- スマートフォン (Android か iOS) 1 台と BDS 1 回で、平面・立体・だまし絵・画像のブロックアートのお試し版を確かめる。
+- リリースごとの確認を 10 分で終わる項目にする (読み込み・再生・音声・シーク・stats)。
+
+### Phase 15: 作る人を増やす (ブラウザ版を入口に)
+- ✅ 10 言語、簡易的な利用数 (GoatCounter `nakat`)、動画を最後まで変換。
+- ✅ Phase 17 の機能 (プレビュー・画像・カメラ・MMD・設定のそろえ)。
+- 2 週間後に `build-done` の数と言語ごとの内訳を見る。目安は CurseForge のお試し版の DL の 1%。
+- リリースは 1〜2 週間ごとにまとめる。README の最初の画面を「お試し版 → ブラウザ版」の 2 段にし、詳しい説明は docs/ へ。
+
+### Phase 16: Script API 2.x に移るかの判断 (調べて決める)
+- 安定版は `@minecraft/server` 2.11.0 (2026-10-27、npm で確認)。アドオンは 1.19.0 (Minecraft 1.21.80)。
+- 2.x の `TickingAreaManager` (2.6.0 から、Promise で登録・空きを確かめられる) と `isChunkLoaded` (2.4.0 から) で、
+  setup 直後の穴 (v6.29.2 の待ち) を書き直せる。`cloneBlocks` は 2.10.0 から (8.6 の条件: 実機で 1 ブロック 0.2 µs 以下)。
+- 2.x にすると読み込める Minecraft の版が狭まる (ゲーム機・Realms は遅れることがある)。1.19.0 で何かが壊れたか、
+  上の効果を実機で確かめたときだけ移る。移るなら 1.19.0 版と 2.x 版の 2 つを出す案も比べる。
+
+### Phase 17: ブラウザ版を Windows 版に近づける・驚く機能 (2026-10-31)
+- ✅ できあがりのプレビュー (ブラウザ版は元の動画と並べて再生、Windows 版は GIF とボタン。`mvcodec/preview.py`)。
+- ✅ 画像から止まったブロックアート (両方)。
+- ✅ カメラで撮ってそのまま変換 (ブラウザ版)。
+- ✅ MMD のモデルと踊りを立体に (ブラウザ版)。
+- ✅ 画質プリセット・ディザ・パレット・キーフレーム・知覚の最適化 (ブラウザ版)。
+- 残り: **音声を OGG に** (ブラウザ版は WAV で、Windows 版の OGG より数倍大きい)。候補は `wasm-media-encoders`
+  0.7.0 (MIT、LAME と Ogg Vorbis の WebAssembly、Vorbis の gzip 後 158 KiB)。外部のコードを動かすので、利用者の判断を待っている。
+- 残り: AI の人物の切り抜き (ブラウザ版)。onnxruntime-web とモデル (42〜176 MB) が要り、スマートフォンでは重い。見送り。
+- 残り: GPU の減色 (ブラウザ版、WebGPU)。CPU と結果をそろえる必要があり、効果を測ってから。
+
 ## 🔴 優先度: 高 (Phase 13: ディザの見え方)
 
 v6.30.1 の調査 ([phase7x.md の 28 章](docs/research/phase7x.md)) で、パレットの選び方を詰めても色差はあまり下がらないと分かった。

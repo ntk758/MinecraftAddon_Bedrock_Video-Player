@@ -185,3 +185,15 @@ def test_mmd_extreme_limits_and_estimates():
     # 実機で高さ 80 は 217 ms (平均)
     assert gui.mmd_stage_frame_ms(80) == pytest.approx(217, rel=0.05)
     assert gui.mmd_stage_max_fps(40) >= 10 and gui.mmd_stage_max_fps(64) <= 7 and gui.mmd_stage_max_fps(80) <= 4
+
+
+def test_texture_names_ignore_case_and_windows_separators(tmp_path):
+    """PMX のテクスチャ名は Windows の区切りで大文字・小文字を区別しない。macOS・Linux・ブラウザ版でも見つける。"""
+    from mvcodec.mmd import find_texture
+
+    (tmp_path / "Tex").mkdir()
+    (tmp_path / "Tex" / "Body.PNG").write_bytes(b"png")
+    assert find_texture(tmp_path, "Tex\\Body.PNG") == tmp_path / "Tex" / "Body.PNG"
+    assert find_texture(tmp_path, "tex\\body.png") == tmp_path / "Tex" / "Body.PNG"
+    assert find_texture(tmp_path, ".\\TEX/BODY.png") == tmp_path / "Tex" / "Body.PNG"
+    assert find_texture(tmp_path, "missing.png") == tmp_path / "missing.png"

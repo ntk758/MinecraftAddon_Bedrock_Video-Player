@@ -20,16 +20,55 @@
 <main>
   <section class="card">
     <h2 data-i18n="web.section_videos">1. Videos and .vox</h2>
-    <input type="file" id="files" accept="video/*,.vox" multiple>
+    <div class="row">
+      <input type="file" id="files" accept="video/*,image/*,.vox" multiple>
+      <button type="button" id="cameraOpen" data-i18n="web.camera_open">📷 Record with the camera</button>
+    </div>
+    <!-- カメラで撮る (web/camera.js) -->
+    <div id="cameraPanel" class="camera" hidden>
+      <video id="cameraLive" muted playsinline></video>
+      <div class="row">
+        <button type="button" id="cameraStart" disabled data-i18n="web.camera_start">● Start recording</button>
+        <button type="button" id="cameraStop" hidden data-i18n="web.camera_stop">■ Stop</button>
+        <button type="button" id="cameraClose" data-i18n="web.camera_close">Close</button>
+      </div>
+      <p id="cameraStatus" class="hint"></p>
+    </div>
     <p class="hint" data-i18n="web.vox_hint">MagicaVoxel animations (.vox) can be added too: their size and frames are kept, and only FPS and palette apply.</p>
+    <!-- MMD のモデルと踊りを立体に (web/mmd.js) -->
+    <details id="mmdBox" class="mmd">
+      <summary data-i18n="web.mmd_title">MMD model and dance (.pmx + .vmd) to 3D</summary>
+      <div class="grid">
+        <label><span data-i18n="web.mmd_folder">Model folder (the .pmx and its textures)</span>
+          <input type="file" id="mmdFolder" webkitdirectory multiple></label>
+        <label id="mmdPick" hidden><span data-i18n="web.mmd_model">Model</span> <select id="mmdModel"></select></label>
+        <label><span data-i18n="web.mmd_motion">Dance (.vmd)</span> <input type="file" id="mmdMotion" accept=".vmd"></label>
+        <button type="button" id="mmdAdd" disabled data-i18n="web.mmd_add">Add to the list</button>
+      </div>
+      <label class="check"><input type="checkbox" id="mmdExtreme"> <span id="mmdExtremeLabel"></span></label>
+      <p id="mmdHint" class="hint"></p>
+      <p id="mmdStatus" class="hint"></p>
+    </details>
+    <p class="hint" data-i18n="web.image_hint">Pictures (PNG, JPEG, WebP…) work too: they become still block art.</p>
     <ul id="videoList"></ul>
   </section>
 
   <section class="card">
     <h2 data-i18n="web.section_settings">2. Settings</h2>
     <div class="grid">
-      <label><span data-i18n="settings.width">Width</span> <input type="number" id="width" value="128" min="8" max="256"></label>
-      <label><span data-i18n="settings.height">Height</span> <input type="number" id="height" value="72" min="8" max="256"></label>
+      <label><span data-i18n="settings.preset">Quality preset</span>
+        <select id="preset">
+          <option value="" disabled>—</option>
+          <option value="light" data-i18n="preset.light">Light (64×64 / 20fps)</option>
+          <option value="standard" data-i18n="preset.standard">Standard (96×96 / 10fps)</option>
+          <option value="high" data-i18n="preset.high" selected>High (128×128 / 10fps)</option>
+          <option value="detail" data-i18n="preset.detail">Detailed (128×128 / 5fps)</option>
+          <option value="ultra" data-i18n="preset.ultra">Ultra (256×256 / 5fps)</option>
+          <option value="extreme" data-i18n="preset.extreme">Extreme (512×512 / 2fps)</option>
+        </select>
+      </label>
+      <label><span data-i18n="settings.width">Width</span> <input type="number" id="width" value="128" min="8" max="512"></label>
+      <label><span data-i18n="settings.height">Height</span> <input type="number" id="height" value="72" min="8" max="512"></label>
       <button type="button" id="fitAspect" data-i18n="settings.fit_aspect">Match video aspect ratio</button>
       <label><span data-i18n="settings.fps">FPS</span> <input type="number" id="fps" value="10" min="1" max="20"></label>
       <label><span data-i18n="web.max_length">Length to convert (s)</span> <input type="number" id="duration" min="0.1" step="0.1" placeholder="Whole video" data-i18n-placeholder="web.full_length"></label>
@@ -50,6 +89,7 @@
           <option value="auto" data-i18n="palette.auto">Auto (recommended: up to 127 of 214 colors per scene)</option>
           <option value="all" data-i18n="palette.all">All blocks, 127 colors (concrete, terracotta, wool, wood, stone, light blocks…)</option>
           <option value="full" data-i18n="palette.full">All 39 colors (concrete + terracotta + light blocks)</option>
+          <option value="expanded" data-i18n="palette.expanded">Extended 33 colors (concrete + terracotta)</option>
           <option value="concrete" data-i18n="palette.concrete">Basic 16 colors (concrete)</option>
           <option value="glass" data-i18n="palette.glass">Stained glass, 16 colors (translucent, for 3D holograms)</option>
         </select>
@@ -60,8 +100,13 @@
           <option value="none" data-i18n="web.dither_none">None</option>
           <option value="ordered">Ordered</option>
           <option value="floyd">Floyd-Steinberg</option>
+          <option value="atkinson">Atkinson</option>
+          <option value="burkes">Burkes</option>
+          <option value="sierra">Sierra Lite</option>
         </select>
       </label>
+      <label><span data-i18n="settings.keyframe">Keyframe interval</span> <input type="number" id="keyframe" value="30" min="0" max="300"></label>
+      <label class="check"><input type="checkbox" id="perceptual" checked> <span data-i18n="settings.perceptual">Perceptual optimization (sharper edges)</span></label>
       <label><span data-i18n="pack.name">Pack name</span> <input type="text" id="packName" value="Block Video Player"></label>
       <label><span data-i18n="pack.namespace">Command prefix</span> <input type="text" id="namespace" value="badapple" pattern="[a-z0-9_]+"></label>
     </div>
@@ -74,6 +119,21 @@
     <a id="download" class="download" hidden data-i18n="web.download">Download</a>
     <progress id="progress" max="1" value="0"></progress>
     <pre id="log"></pre>
+  </section>
+
+  <!-- できあがりのプレビュー: 作り終えたら、ゲームと同じ規則で描いた絵を元の動画と並べて再生する (web/preview.js) -->
+  <section class="card" id="previewCard" hidden>
+    <h2 data-i18n="web.preview_title">4. Preview</h2>
+    <p class="hint" data-i18n="web.preview_note">How the add-on looks in Minecraft, drawn with the same rules as the game.</p>
+    <label id="previewPick" class="inline" hidden><span data-i18n="web.preview_video">Video</span> <select id="previewSelect"></select></label>
+    <div class="preview">
+      <figure id="previewSourceBox"><figcaption data-i18n="web.preview_original">Original</figcaption>
+        <video id="previewSource" controls playsinline preload="auto"></video></figure>
+      <figure><figcaption data-i18n="web.preview_blocks">In Minecraft</figcaption>
+        <canvas id="previewCanvas" width="1" height="1"></canvas>
+        <button type="button" id="previewPlay" hidden data-i18n="web.preview_play">Play</button></figure>
+    </div>
+    <p id="previewInfo" class="hint"></p>
   </section>
 
   <section class="card small">
@@ -94,6 +154,9 @@
 <script src="i18n.js"></script>
 <script src="usage.js"></script>
 <script src="mp4audio.js"></script>
+<script src="preview.js"></script>
+<script src="camera.js"></script>
+<script src="mmd.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -64,6 +64,8 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
   It converts on the CPU only and stores audio as WAV, so the Windows app is faster and makes smaller add-ons for long videos.
 - MagicaVoxel の立体アニメ (`.vox`) もそのまま追加できます (大きさとコマ数は `.vox` のまま、サムネイルは立体を斜め上から見た絵)。
   MagicaVoxel animations (`.vox`) can be added as well (size and frames are kept; the thumbnail is an isometric view).
+- **作り終えると、ゲームの中での見え方をその場でプレビュー** できます (元の動画と並べて、音とシークに合わせて動く)。画像 (PNG・JPEG) は止まったブロックアート、カメラで撮った動画、MMD のモデルと踊り (.pmx + .vmd) も変換できます。
+  After building, **preview how it looks in Minecraft** next to the original. Pictures (still block art), camera clips and MMD models with a dance also work.
 - 画面は 10 言語で表示します (ブラウザの言語で自動、右上で切り替え)。使う人の数を知るため、ページを開いた回数とアドオンを作った回数だけを GoatCounter で数えます (Cookie なし、ファイル名や動画は送らない、ページのチェックで止められます)。
   The page is available in 10 languages. It counts only page opens and finished add-ons with GoatCounter (no cookies, no file names or videos; you can turn it off on the page).
 

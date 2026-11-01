@@ -6,6 +6,11 @@
 const AUDIO_CHUNK_SECONDS = 10; // pack_builder.AUDIO_CHUNK_SECONDS と同じ
 const AUDIO_RATE = 22050; // WAV は大きいので 22.05 kHz モノラルにする
 const THUMB_SIZE = 256;
+// 画質プリセット: キー -> [幅, 高さ, fps] (Windows 版の QUALITY_PRESETS と同じ。tests/test_web_i18n.py で確かめる)
+const QUALITY_PRESETS = {
+  light: [64, 64, 20], standard: [96, 96, 10], high: [128, 128, 10],
+  detail: [128, 128, 5], ultra: [256, 256, 5], extreme: [512, 512, 2],
+};
 // コマのデータがこれより大きくなりそうなら注意を出す (MB)。ブラウザのタブが使えるメモリと、Pyodide (32bit の
 // WebAssembly) に同じデータを写すことを考えて決めた目安
 const MEMORY_WARNING_MB = 1000;
@@ -14,6 +19,8 @@ const $ = (id) => document.getElementById(id);
 const t = (key, params) => I18n.t(key, params); // 翻訳 (web/i18n.js、locales/*.json)
 const videos = []; // { file, url, id, title, width, height, duration, vox }
 const isVox = (file) => /\.vox$/i.test(file.name);
+// 画像は 1 コマの動画にする (再生が終わってもブロックはそのまま残るので、止まったブロックアートになる)
+const isImage = (file) => /^image\//.test(file.type) || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name);
 let worker = null;
 let lastDownloadUrl = null;
 
@@ -39,12 +46,23 @@ function loadVideoElement(url, name = "") {
     video.preload = "auto";
     video.playsInline = true;
     video.src = url;
-    video.onloadedmetadata = () => resolve(video);
+    video.onloadedmetadata = () => {
+      if (Number.isFinite(video.duration)) { resolve(video); return; }
+      // MediaRecorder の WebM (カメラの録画) は長さが入っていない (Infinity)。最後へ飛ぶと本当の長さが分かる
+      video.ontimeupdate = () => {
+        video.ontimeupdate = null;
+        if (!Number.isFinite(video.duration)) { reject(new Error(t("web.cannot_open", { name }))); return; }
+        video.onseeked = () => resolve(video);
+        video.currentTime = 0;
+      };
+      video.currentTime = 1e101;
+    };
     video.onerror = () => reject(new Error(t("web.cannot_open", { name })));
   });
 }
 
 async function addFiles(fileList) {
+  const hadVideo = videos.some((v) => !v.vox);
   const used = new Set(videos.map((v) => v.id));
   for (const file of fileList) {
     if (isVox(file)) {
@@ -52,6 +70,16 @@ async function addFiles(fileList) {
       const header = new Uint8Array(await file.slice(0, 4).arrayBuffer());
       if (String.fromCharCode(...header) !== "VOX ") { log(t("web.not_vox", { name: file.name })); continue; }
       videos.push({ file, id: safeId(file.name, used), title: file.name.replace(/\.[^.]+$/, ""), vox: true });
+      continue;
+    }
+    if (isImage(file)) {
+      try {
+        const bitmap = await createImageBitmap(file);
+        videos.push({ file, id: safeId(file.name, used), title: file.name.replace(/\.[^.]+$/, ""), image: bitmap,
+                      width: bitmap.width, height: bitmap.height });
+      } catch (e) {
+        log(t("web.cannot_open", { name: file.name }));
+      }
       continue;
     }
     const url = URL.createObjectURL(file);
@@ -65,6 +93,8 @@ async function addFiles(fileList) {
   }
   renderList();
   fillDuration();
+  // 最初の動画を足したら、その縦横比に合わせる (Windows 版のはじめてガイドと同じく黒帯を出さない)
+  if (!hadVideo && videos.some((v) => !v.vox)) fitAspect();
 }
 
 // 変換する長さ: 動画を追加したら、一番長い動画の終わりの秒数を入れる (利用者が書き換えた値はそのまま)。
@@ -96,7 +126,8 @@ function renderList() {
     input.value = v.id;
     input.title = t("web.video_id");
     input.onchange = () => { v.id = safeId(input.value, new Set(videos.filter((o) => o !== v).map((o) => o.id))); input.value = v.id; };
-    li.append(input, v.vox ? ` ${v.title} (MagicaVoxel 3D)` : ` ${v.title} (${v.width}×${v.height}, ${v.duration.toFixed(1)} s)`);
+    li.append(input, v.mmd ? ` ${v.title} (MMD 3D)` : v.vox ? ` ${v.title} (MagicaVoxel 3D)`
+      : v.image ? ` ${v.title} (${t("web.image_item")}, ${v.width}×${v.height})` : ` ${v.title} (${v.width}×${v.height}, ${v.duration.toFixed(1)} s)`);
     list.append(li);
   }
   $("build").disabled = videos.length === 0;
@@ -104,10 +135,9 @@ function renderList() {
 }
 
 // GUI の「動画の縦横比に合わせる」と同じ: 長い辺をそのままに、短い辺を縦横比に合わせる (偶数にそろえる)
-function fitAspect() {
+function fitAspect(longSide = Math.max(Number($("width").value), Number($("height").value))) {
   const v = videos.find((o) => !o.vox);
   if (!v) return;
-  const longSide = Math.max(Number($("width").value), Number($("height").value));
   let w, h;
   if (v.width >= v.height) { w = longSide; h = Math.max(2, Math.round((longSide * v.height) / v.width / 2) * 2); }
   else { h = longSide; w = Math.max(2, Math.round((longSide * v.width) / v.height / 2) * 2); }
@@ -122,6 +152,7 @@ function settings() {
     duration: $("duration").value.trim() === "" ? 0 : Number($("duration").value), mode: $("mode").value, depth: Number($("depth").value),
     anamorphic: $("anamorphic").checked,
     palette: $("palette").value, dither: $("dither").value,
+    keyframe: Math.max(0, Math.round(Number($("keyframe").value) || 0)), perceptual: $("perceptual").checked,
     packName: $("packName").value.trim() || "Block Video Player",
     namespace: ($("namespace").value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "") || "badapple"),
   };
@@ -154,6 +185,36 @@ function seek(video, time) {
     video.onseeked = () => resolve();
     video.currentTime = time;
   });
+}
+
+/** canvas の絵を PPM (P6) にする (convert.py が Pillow で読める一番簡単な形式)。 */
+function canvasToPpm(ctx, width, height) {
+  const header = new TextEncoder().encode(`P6\n${width} ${height}\n255\n`);
+  const rgba = ctx.getImageData(0, 0, width, height).data;
+  const ppm = new Uint8Array(header.length + width * height * 3);
+  ppm.set(header);
+  for (let p = 0, q = header.length; p < rgba.length; p += 4) {
+    ppm[q++] = rgba[p];
+    ppm[q++] = rgba[p + 1];
+    ppm[q++] = rgba[p + 2];
+  }
+  return ppm;
+}
+
+function imageToPpm(bitmap, width, height) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  drawLetterboxed(ctx, bitmap, bitmap.width, bitmap.height, width, height);
+  return canvasToPpm(ctx, width, height);
+}
+
+async function thumbnailPng(source, srcW, srcH) {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = THUMB_SIZE;
+  drawLetterboxed(canvas.getContext("2d"), source, srcW, srcH, THUMB_SIZE, THUMB_SIZE);
+  return new Uint8Array(await (await new Promise((r) => canvas.toBlob(r, "image/png"))).arrayBuffer());
 }
 
 // 動画のコマを PPM (P6) にして返す (convert.py が Pillow で読める一番簡単な形式)
@@ -295,6 +356,7 @@ function finish(msg) {
   $("build").disabled = false;
   log(t("web.done", { size: (blob.size / 1024).toFixed(0) }));
   window.lastResult = msg; // テスト用
+  if (msg.previews && msg.previews.length) Preview.show(msg.previews, videos);
   if (lastBuild) {
     Usage.event("build-done");
     Usage.event(`build-kind-${lastBuild.kind}`);
@@ -337,6 +399,7 @@ async function build() {
   const s = settings();
   $("build").disabled = true;
   $("download").hidden = true;
+  Preview.hide();
   $("log").textContent = "";
   const w = startWorker();
   lastBuild = { kind: Usage.kindOf(s, videos.some((v) => v.vox), videos.some((v) => !v.vox)), lang: I18n.language };
@@ -344,9 +407,24 @@ async function build() {
   const background = await extractBackground(s);
   const jobs = [];
   for (const [n, v] of videos.entries()) {
+    if (v.mmd) {
+      // MMD: モデルのフォルダのファイルと踊りを渡し、worker が Python (mvcodec/mmd.py) で .vox の立体にする
+      const files = [];
+      for (const item of v.mmd.files) files.push([item.path, new Uint8Array(await item.file.arrayBuffer())]);
+      const height = Math.min(s.height, Mmd.heightLimit(s.anamorphic, v.mmd.extreme));
+      jobs.push({ id: v.id, title: v.title, frames: [], thumbnail: null, sounds: [],
+                  mmd: { files, pmx: v.mmd.pmx, motion: new Uint8Array(await v.mmd.motion.arrayBuffer()), height } });
+      continue;
+    }
     if (v.vox) {
       // .vox はそのまま渡し、変換とサムネイル (立体を斜め上から見た絵) は Python で作る。音声は無し
       jobs.push({ id: v.id, title: v.title, vox: new Uint8Array(await v.file.arrayBuffer()), frames: [], thumbnail: null, sounds: [] });
+      continue;
+    }
+    if (v.image) {
+      // 画像: 1 コマだけ (サムネイルも同じ絵)。音声は無い
+      jobs.push({ id: v.id, title: v.title, frames: [imageToPpm(v.image, s.width, s.height)],
+                  thumbnail: await thumbnailPng(v.image, v.width, v.height), sounds: [] });
       continue;
     }
     log(t("web.extracting", { index: n + 1, total: videos.length, title: v.title }));
@@ -360,6 +438,7 @@ async function build() {
     for (const f of job.frames) transfer.push(f.buffer);
     if (job.thumbnail) transfer.push(job.thumbnail.buffer);
     if (job.vox) transfer.push(job.vox.buffer);
+    if (job.mmd) transfer.push(job.mmd.motion.buffer, ...job.mmd.files.map(([, bytes]) => bytes.buffer));
     for (const [, , bytes] of job.sounds) transfer.push(bytes.buffer);
   }
   if (background) {
@@ -371,7 +450,28 @@ async function build() {
 }
 
 $("files").addEventListener("change", (e) => addFiles(e.target.files));
-$("fitAspect").addEventListener("click", fitAspect);
+Camera.onRecorded((file) => addFiles([file]));
+// MMD: .vox と同じ扱い (大きさは人物の高さで決まり、音声は無い) にして一覧に加える
+Mmd.onAdd(({ title, files, pmx, motion }) => {
+  const used = new Set(videos.map((v) => v.id));
+  videos.push({ id: safeId(title, used), title, vox: true, mmd: { files, pmx, motion, extreme: Mmd.extreme } });
+  renderList();
+});
+$("fitAspect").addEventListener("click", () => fitAspect());
+// プリセットを選ぶと幅・高さ・fps を入れ、動画があればその縦横比に合わせる (Windows 版と同じく長い辺をプリセットの値に)
+function applyPreset() {
+  const preset = QUALITY_PRESETS[$("preset").value];
+  if (!preset) return;
+  const [width, height, fps] = preset;
+  $("width").value = width;
+  $("height").value = height;
+  $("fps").value = fps;
+  fitAspect(Math.max(width, height));
+  updateLoadHint();
+}
+$("preset").addEventListener("change", applyPreset);
+// 幅・高さ・fps を手で変えたら、プリセットの表示を「—」にする
+for (const id of ["width", "height", "fps"]) $(id).addEventListener("input", () => { $("preset").value = ""; });
 $("build").addEventListener("click", () => build().catch((e) => failed(e.message)));
 for (const id of ["width", "height", "fps", "mode", "duration"]) $(id).addEventListener("change", updateLoadHint);
 // 利用者が長さを書き換えたら、動画を追加しても上書きしない。空にしたら、また動画の長さを入れる
@@ -405,7 +505,7 @@ function setupUsage() {
   $("usageOptOut").addEventListener("change", (e) => Usage.setOptOut(e.target.checked));
 }
 
-I18n.onChange(() => { updateLoadHint(); renderHowto(); renderList(); });
+I18n.onChange(() => { updateLoadHint(); renderHowto(); renderList(); Preview.refreshText(); Mmd.refreshText(); });
 I18n.init().then(() => {
   I18n.fillSelect($("language"));
   setupUsage();

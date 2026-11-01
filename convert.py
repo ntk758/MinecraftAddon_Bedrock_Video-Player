@@ -168,8 +168,18 @@ def image_dir_frame_generator(frames_dir, width, height, fit="pad"):
             yield np.asarray(letterbox_image(img, width, height, fit), dtype=np.uint8)
 
 
+def still_image_frame_generator(path, width, height, fit="pad"):
+    with Image.open(path) as img:
+        img.seek(0)  # GIF・WebP のアニメは最初のコマ
+        yield np.asarray(letterbox_image(img, width, height, fit), dtype=np.uint8)
+
+
 def make_frame_source(args):
     """呼ぶたびに先頭からフレームを流すイテレータを返す関数 (2 パス処理用)。"""
+    if args.input_video and Path(args.input_video).suffix.lower() in IMAGE_EXTENSIONS:
+        # 画像 1 枚は 1 コマの動画にする (ffmpeg の fps のフィルターは 1 枚の画像を落とすので、Pillow で読む)。
+        # 再生が終わってもブロックは残るので、止まったブロックアートになる
+        return lambda: still_image_frame_generator(args.input_video, args.width, args.height, args.fit)
     if args.input_video:
         return lambda: ffmpeg_frame_generator(
             args.input_video, args.width, args.height, args.fps, args.duration, args.ffmpeg, args.fit
