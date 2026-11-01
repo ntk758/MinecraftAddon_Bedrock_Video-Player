@@ -35,7 +35,7 @@
   |---|---|
   | `/badapple:setup` | スクリーンを置く (`wall`・`face`・`align` を後ろに付けられる) |
   | `/badapple:play <動画ID>` | 動画を選んで再生する |
-  | `/badapple:start` / `/badapple:stop` | 再生する・続きから再生する / 止めてスクリーンを消す |
+  | `/badapple:start` / `/badapple:stop` | 選んでいる動画を最初から再生する / 止めてスクリーンを消す |
   | `/badapple:list` | 動画の一覧と動画 ID を見る |
   | `/badapple:remote` | リモコン (音量・シークなど) を開く |
   | `/badapple:render`・`/badapple:bench`・`/badapple:stats` | 置き方の切り替え・置く速さの計測・再生の統計 |
