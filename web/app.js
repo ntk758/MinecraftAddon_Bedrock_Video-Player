@@ -4,7 +4,11 @@
 "use strict";
 
 const AUDIO_CHUNK_SECONDS = 10; // pack_builder.AUDIO_CHUNK_SECONDS と同じ
-const AUDIO_RATE = 22050; // WAV は大きいので 22.05 kHz モノラルにする
+// 音声は Windows 版と同じ Ogg Vorbis (44.1 kHz ステレオ、ffmpeg の libvorbis の既定と同じ品質 3) にする。
+// エンコードは web/ogg-worker.js (web/vendor/wasm-media-encoders を使う) が行う。使えなければ WAV にする
+const OGG_RATE = 44100;
+const OGG_QUALITY = 3;
+const AUDIO_RATE = 22050; // WAV にするとき (OGG のエンコーダーを使えないとき) は大きいので 22.05 kHz モノラル
 const THUMB_SIZE = 256;
 // 画質プリセット: キー -> [幅, 高さ, fps] (Windows 版の QUALITY_PRESETS と同じ。tests/test_web_i18n.py で確かめる)
 const QUALITY_PRESETS = {
@@ -313,11 +317,45 @@ async function toMono(decoded, seconds) {
   }
 }
 
-// 音声を 22.05 kHz モノラルにして AUDIO_CHUNK_SECONDS ごとの WAV にする (音声が無ければ [])
+let oggWorker = null;
+let oggWarned = false;
+
+/** 左右の音を、別のスレッド (web/ogg-worker.js) で AUDIO_CHUNK_SECONDS ごとの OGG にする。 */
+function encodeOgg(left, right) {
+  if (!oggWorker) oggWorker = new Worker("ogg-worker.js");
+  return new Promise((resolve, reject) => {
+    oggWorker.onmessage = (event) => (event.data.error ? reject(new Error(event.data.error)) : resolve(event.data.chunks));
+    oggWorker.onerror = (event) => { event.preventDefault(); oggWorker = null; reject(new Error(event.message || "ogg-worker.js")); };
+    oggWorker.postMessage({ left, right, rate: OGG_RATE, quality: OGG_QUALITY, chunkSeconds: AUDIO_CHUNK_SECONDS },
+      [left.buffer, right.buffer]);
+  });
+}
+
+/** decoded を OGG_RATE のステレオ (モノラルの音声は左右に同じ音) にする。 */
+async function toStereo(decoded, seconds) {
+  const offline = new OfflineAudioContext(2, Math.max(1, Math.ceil(seconds * OGG_RATE)), OGG_RATE);
+  const source = offline.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offline.destination);
+  source.start();
+  const rendered = await offline.startRendering();
+  // Worker に渡すと元の配列は使えなくなるので、写したものを渡す
+  return [rendered.getChannelData(0).slice(), rendered.getChannelData(1).slice()];
+}
+
+// 音声を AUDIO_CHUNK_SECONDS ごとの OGG (使えなければ 22.05 kHz モノラルの WAV) にする (音声が無ければ [])
 async function extractAudio(v, length) {
   try {
     const decoded = await decodeVideoAudio(v.file);
-    const mono = await toMono(decoded, Math.min(decoded.duration, length));
+    const seconds = Math.min(decoded.duration, length);
+    try {
+      const [left, right] = await toStereo(decoded, seconds);
+      return await encodeOgg(left, right);
+    } catch (e) {
+      if (!oggWarned) log("  " + t("web.audio_wav_fallback", { error: e.message || e }));
+      oggWarned = true;
+    }
+    const mono = await toMono(decoded, seconds);
     const chunks = [];
     const step = AUDIO_CHUNK_SECONDS * AUDIO_RATE;
     for (let start = 0, index = 0; start < mono.length; start += step, index++) {

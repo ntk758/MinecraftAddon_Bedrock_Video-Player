@@ -303,7 +303,7 @@
   "web.section_howto": "How to use",
   "web.howto_import": "Open the .mcaddon to import it into Minecraft. In the world settings, turn on both the behavior pack and the resource pack, and turn cheats on.",
   "web.howto_setup": "On flat ground, run {setup} and then {start}. Use a compass to open the remote control.",
-  "web.howto_note": "The first time, the page loads Python for the converter (about 20 MB), which takes a while. The browser version converts on the CPU only and stores audio as WAV, so for long videos or large screens the Windows app (with GPU support) is faster and makes smaller add-ons.",
+  "web.howto_note": "The first time, the page loads Python for the converter (about 20 MB), which takes a while. The browser version converts on the CPU only, so for long videos or large screens the Windows app (with GPU support) is faster.",
   "web.video_id": "Video ID",
   "web.load_estimate": "Playback load estimate: {blocks} blocks/s when the whole picture changes ({level})",
   "web.cannot_open": "{name}: the browser cannot open this video",
@@ -351,5 +351,6 @@
   "web.mmd_no_pmx": "There is no .pmx file in this folder.",
   "web.image_hint": "Pictures (PNG, JPEG, WebP…) work too: they become still block art that stays in place after it is shown. With a 3D mode they become a sculpture.",
   "web.image_item": "image",
-  "dialog.image_files": "Pictures (still block art)"
+  "dialog.image_files": "Pictures (still block art)",
+  "web.audio_wav_fallback": "The OGG encoder could not be loaded, so the sound is stored as WAV (larger): {error}"
 }

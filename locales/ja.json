@@ -303,7 +303,7 @@
   "web.section_howto": "使い方",
   "web.howto_import": "作った .mcaddon を開いて Minecraft にインポートし、ワールドの設定で行動パックとリソースパックを両方有効にし、チートをオンにします。",
   "web.howto_setup": "平らな場所で {setup} → {start} を実行します。コンパスを使うとリモコンが開きます。",
-  "web.howto_note": "初回は変換用の Python (約 20 MB) を読み込むので時間がかかります。ブラウザ版は CPU だけで変換し、音声は WAV になるので、長い動画や大きな画面では Windows 版 (GPU 対応) の方が速く、アドオンも小さくなります。",
+  "web.howto_note": "初回は変換用の Python (約 20 MB) を読み込むので時間がかかります。ブラウザ版は CPU だけで変換するので、長い動画や大きな画面では Windows 版 (GPU 対応) の方が速く変換できます。",
   "web.video_id": "動画 ID",
   "web.load_estimate": "再生負荷の目安: 画面全体が変わるとき 1 秒に {blocks} ブロック ({level})",
   "web.cannot_open": "{name}: この動画はブラウザで開けません",
@@ -351,5 +351,6 @@
   "web.mmd_no_pmx": "このフォルダには .pmx のファイルがありません。",
   "web.image_hint": "画像 (PNG・JPEG・WebP など) も使えます。表示したあともそのまま残る、止まったブロックアートになります。立体のモードなら彫刻になります。",
   "web.image_item": "画像",
-  "dialog.image_files": "画像 (止まったブロックアート)"
+  "dialog.image_files": "画像 (止まったブロックアート)",
+  "web.audio_wav_fallback": "OGG のエンコーダーを読み込めなかったので、音声を WAV (大きめ) にします: {error}"
 }

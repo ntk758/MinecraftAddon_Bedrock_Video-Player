@@ -41,8 +41,7 @@ GitHub のリリースの DL は 1 ファイル 1〜4 回、CurseForge は 7 日
 - ✅ カメラで撮ってそのまま変換 (ブラウザ版)。
 - ✅ MMD のモデルと踊りを立体に (ブラウザ版)。
 - ✅ 画質プリセット・ディザ・パレット・キーフレーム・知覚の最適化 (ブラウザ版)。
-- 残り: **音声を OGG に** (ブラウザ版は WAV で、Windows 版の OGG より数倍大きい)。候補は `wasm-media-encoders`
-  0.7.0 (MIT、LAME と Ogg Vorbis の WebAssembly、Vorbis の gzip 後 158 KiB)。外部のコードを動かすので、利用者の判断を待っている。
+- ✅ 音声を OGG に (ブラウザ版、`wasm-media-encoders` 0.7.0 を `web/vendor/` に写して別のスレッドで動かす。10 秒で 441 KB → 約 31 KB)。
 - 残り: AI の人物の切り抜き (ブラウザ版)。onnxruntime-web とモデル (42〜176 MB) が要り、スマートフォンでは重い。見送り。
 - 残り: GPU の減色 (ブラウザ版、WebGPU)。CPU と結果をそろえる必要があり、効果を測ってから。
 

@@ -303,7 +303,7 @@
   "web.section_howto": "So geht's",
   "web.howto_import": "Öffne die .mcaddon, um sie in Minecraft zu importieren. Aktiviere in den Welteinstellungen sowohl das Verhaltenspaket als auch das Ressourcenpaket und schalte Cheats ein.",
   "web.howto_setup": "Führe auf ebenem Boden {setup} und dann {start} aus. Benutze einen Kompass, um die Fernbedienung zu öffnen.",
-  "web.howto_note": "Beim ersten Mal lädt die Seite Python für den Konverter (etwa 20 MB), das dauert eine Weile. Die Browser-Version wandelt nur mit der CPU um und speichert den Ton als WAV. Für lange Videos oder große Bildschirme ist die Windows-App (mit GPU-Unterstützung) schneller und erzeugt kleinere Add-ons.",
+  "web.howto_note": "Beim ersten Mal lädt die Seite Python für den Konverter (etwa 20 MB), das dauert eine Weile. Die Browser-Version wandelt nur mit der CPU um, daher ist die Windows-App (mit GPU-Unterstützung) für lange Videos oder große Bildschirme schneller.",
   "web.video_id": "Video-ID",
   "web.load_estimate": "Geschätzte Wiedergabelast: {blocks} Blöcke/s, wenn sich das ganze Bild ändert ({level})",
   "web.cannot_open": "{name}: Der Browser kann dieses Video nicht öffnen",
@@ -351,5 +351,6 @@
   "web.mmd_no_pmx": "In diesem Ordner gibt es keine .pmx-Datei.",
   "web.image_hint": "Auch Bilder (PNG, JPEG, WebP …) gehen: Sie werden zu stehender Block-Kunst, die nach dem Anzeigen stehen bleibt. Mit einem 3D-Modus werden sie zur Skulptur.",
   "web.image_item": "Bild",
-  "dialog.image_files": "Bilder (stehende Block-Kunst)"
+  "dialog.image_files": "Bilder (stehende Block-Kunst)",
+  "web.audio_wav_fallback": "Der OGG-Encoder konnte nicht geladen werden, daher wird der Ton als WAV (größer) gespeichert: {error}"
 }
