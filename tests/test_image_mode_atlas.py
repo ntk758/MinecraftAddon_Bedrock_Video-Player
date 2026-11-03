@@ -183,3 +183,10 @@ def test_streaming_input_is_not_materialized():
             yield solid(4, 3, i)
     sheets, layout = atlas.pack_sheets(generate(), 4, 3, max_sheet=9, gutter=1)
     assert layout["frame_count"] == 10 and len(sheets) == 3
+
+
+def test_memory_report_sums_several_videos():
+    report = atlas.memory_report([layout_of(1024, 1024, 2), layout_of(512, 512, 4)])
+    assert report["texels"] == 1024 * 1024 * 2 + 512 * 512 * 4
+    assert report["handles"] == 6
+    assert report["bytes"] == report["texels"] * 4

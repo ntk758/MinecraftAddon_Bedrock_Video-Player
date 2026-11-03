@@ -205,16 +205,18 @@ def _layout(sheet: np.ndarray, cols: int, rows: int, cells: int, sheets: int, fr
             "width": width, "height": height, "gutter": gutter}
 
 
-def memory_report(layout: dict, allow_over_budget: bool = False) -> dict:
+def memory_report(layout: dict | list[dict], allow_over_budget: bool = False) -> dict:
     """シートのテクスチャが使うメモリの見積もりと、アドオンの予算 (Tier 別) に対する警告。
 
     texels = 全シートの画素数、bytes = texels * 4 (Learn の規則)、handles = シートの枚数。
     Tier 2 の予算を超えると warning (多くのスマートフォン・PS4・Xbox One)、Tier 5 を超えると error
     (allow_over_budget なら warning にとどめる)、ハンドルが 800 を超えると warning (4,000 超は error)。
+    layout は 1 つの動画の layout か、その list (アドオンに入れる全動画。予算はアドオン全体に対する値なので合計する)。
     """
-    texels = layout["sheet_width"] * layout["sheet_height"] * layout["sheets"]
+    layouts = layout if isinstance(layout, list) else [layout]
+    texels = sum(item["sheet_width"] * item["sheet_height"] * item["sheets"] for item in layouts)
     nbytes = texels * 4
-    handles = layout["sheets"]
+    handles = sum(item["sheets"] for item in layouts)
     budgets = {f"tier{tier}": {"mib": mb, "bytes": mb * MIB, "over": nbytes > mb * MIB}
                for tier, mb in TIER_BUDGETS_MB.items()}
     warnings: list[str] = []
@@ -233,7 +235,7 @@ def memory_report(layout: dict, allow_over_budget: bool = False) -> dict:
     elif handles > RECOMMENDED_HANDLES:
         warnings.append(f"テクスチャハンドルが {handles} 個で、推奨の {RECOMMENDED_HANDLES} 未満を超えます")
     report = {"texels": texels, "bytes": nbytes, "mib": round(mib, 2), "handles": handles,
-              "sheet_width": layout["sheet_width"], "sheet_height": layout["sheet_height"],
+              "sheet_sizes": sorted({(item["sheet_width"], item["sheet_height"]) for item in layouts}),
               "budgets": budgets, "warnings": warnings, "errors": errors}
     report["table"] = format_memory_report(report)
     return report
@@ -241,8 +243,9 @@ def memory_report(layout: dict, allow_over_budget: bool = False) -> dict:
 
 def format_memory_report(report: dict) -> str:
     """memory_report の結果を表示用の複数行の文字列にする。"""
+    sizes = ", ".join(f"{w}x{h}" for w, h in report["sheet_sizes"])
     lines = [
-        f"テクスチャ: {report['handles']} 枚 x {report['sheet_width']}x{report['sheet_height']} = "
+        f"テクスチャ: {report['handles']} 枚 ({sizes}) = "
         f"{report['texels']:,} 画素 = {report['bytes']:,} バイト ({report['bytes'] / MIB:.1f} MiB)",
         "予算 (Microsoft Learn Texture Budgets のアドオン):",
     ]
