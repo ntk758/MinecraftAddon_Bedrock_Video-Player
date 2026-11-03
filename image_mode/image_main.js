@@ -292,7 +292,7 @@ function setMethod(args) {
 
 function list() {
   for (const video of IMAGE_VIDEOS) {
-    notify("list_item", video.id, video.frame_count, video.fps, video.methods.join("/").toUpperCase());
+    notify("list_item", video.id, video.title, video.frame_count, video.fps);
   }
 }
 
