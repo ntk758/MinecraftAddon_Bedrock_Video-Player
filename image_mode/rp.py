@@ -161,7 +161,9 @@ def render_controller_json(video: dict, method: str, namespace: str) -> dict:
 def pre_animation(video: dict, namespace: str) -> list:
     """クライアントのコマの計算 (SPEC.md の scripts.pre_animation に数を入れたもの)。
 
-    seq が変わった時刻を覚え、そこから自分の時計 (q.life_time) で進める。
+    seq が変わった時刻を覚え、そこから自分の時計で進める。時計は vanilla の render controller (breeze・wind_charge など) と
+    同じ (math.floor(q.life_time * 20) + q.frame_alpha) / 20。q.life_time が tick (1/20 秒) ごとにしか進まなくても、
+    tick の間の割合 (q.frame_alpha) を足すので 30 fps のコマが描画ごとに変わる。
     q.life_time が 0 に戻ったとき (チャンクの読み直し) は変数も消えるので、次の回で今の frame から進め直す。
     配列の添字の折り返しには頼らず、math.min / math.floor で範囲を明示する。
     """
@@ -171,10 +173,11 @@ def pre_animation(video: dict, namespace: str) -> list:
     return [
         f"v.seq_now = q.property('{ns}:seq');",
         "v.changed = (v.seq_seen ?? -1) != v.seq_now;",
-        "v.base_time = v.changed ? q.life_time : v.base_time;",
+        "v.t = (math.floor(q.life_time * 20) + q.frame_alpha) / 20;",
+        "v.base_time = v.changed ? v.t : v.base_time;",
         f"v.base_frame = v.changed ? q.property('{ns}:frame') : v.base_frame;",
         "v.seq_seen = v.seq_now;",
-        f"v.frame = q.property('{ns}:state') == 1 ? math.min(v.base_frame + math.floor((q.life_time - v.base_time) * {_fps(video)}), {last}) : v.base_frame;",
+        f"v.frame = q.property('{ns}:state') == 1 ? math.min(v.base_frame + math.floor((v.t - v.base_time) * {_fps(video)}), {last}) : v.base_frame;",
         f"v.sheet = math.floor(v.frame / {per_sheet});",
         f"v.cell = v.frame - v.sheet * {per_sheet};",
     ]
@@ -204,8 +207,10 @@ def client_entity_json(video: dict, method: str, namespace: str) -> dict:
 def material_json() -> dict:
     """RP/materials/entity.material。方式 c 用のマテリアル (USE_UV_ANIM を足した entity_alphatest)。
 
-    注意: これは Microsoft Learn「Improving performance and resource usage」の手順にある自作マテリアルで、
-    同じ Learn が「将来のリリースで非推奨になるか削除されるかもしれない」と書いている。
+    注意: これは Microsoft Learn「Improving performance and resource usage」
+    (https://learn.microsoft.com/en-us/minecraft/creator/documents/practices/improvingperformanceandresourceusage) の手順にある
+    自作マテリアルで、Learn の「Materials」のページ (https://learn.microsoft.com/en-us/minecraft/creator/documents/materials) が
+    「自作マテリアルは将来のリリースで非推奨になるか削除されるかもしれない」と書いている。
     つまり方式 c は将来の Minecraft の更新で壊れる可能性がある。
     方式 a はマテリアルを変えず、公開されている機能だけを使うので、その心配がない。
     """

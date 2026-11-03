@@ -59,10 +59,11 @@ q.life_time はチャンクの読み直しなどで 0 に戻るが、そのと�
 ```
 v.seq_now = q.property('<ns>:seq');
 v.changed = (v.seq_seen ?? -1) != v.seq_now;
-v.base_time = v.changed ? q.life_time : v.base_time;
+v.t = (math.floor(q.life_time * 20) + q.frame_alpha) / 20;   // vanilla と同じ、tick の間も進む時計
+v.base_time = v.changed ? v.t : v.base_time;
 v.base_frame = v.changed ? q.property('<ns>:frame') : v.base_frame;
 v.seq_seen = v.seq_now;
-v.frame = q.property('<ns>:state') == 1 ? math.min(v.base_frame + math.floor((q.life_time - v.base_time) * <fps>), <frame_count - 1>) : v.base_frame;
+v.frame = q.property('<ns>:state') == 1 ? math.min(v.base_frame + math.floor((v.t - v.base_time) * <fps>), <frame_count - 1>) : v.base_frame;
 v.sheet = math.floor(v.frame / <cells_per_sheet>);
 v.cell = v.frame - v.sheet * <cells_per_sheet>;
 ```
@@ -78,7 +79,7 @@ v.cell = v.frame - v.sheet * <cells_per_sheet>;
 
 ## スクリプトとの約束 (image_main.js)
 
-- 時計は `world.getAbsoluteTime()` (tick)。再生中は 1 秒ごとに frame と seq (1 ずつ増やして 1024 で 0 に戻す) を書き直す。
+- 時計はスクリプトが再生中に数える tick (`playTicks`、1 秒ごとに保存)。`world.getAbsoluteTime()` は昼夜の時刻なので使わない。再生中は 1 秒ごとに frame と seq (1 ずつ増やして 1024 で 0 に戻す) を書き直す。
 - 状態は world の dynamic property `<ns>:image_state` に JSON で保存し、ワールドを開き直したら続きから戻す。
 - コマンド: `/<ns>:setup [動画ID] [a|c]`、`/<ns>:start`、`/<ns>:pause`、`/<ns>:resume`、`/<ns>:stop`、`/<ns>:seek <秒>`、`/<ns>:method <a|c>`、
   `/<ns>:list`。`/scriptevent <ns>:<操作>` でも同じ。
