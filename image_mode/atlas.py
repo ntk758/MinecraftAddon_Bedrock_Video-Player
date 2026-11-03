@@ -89,10 +89,17 @@ def read_frames(path, width: int, height: int, fps: float, start: float | None =
         raise RuntimeError(f"ffmpeg がエラー終了しました (code {returncode}): {stderr.strip()}")
 
 
-def grid_size(width: int, height: int, max_sheet: int, gutter: int) -> tuple[int, int]:
-    """シート 1 枚 (max_sheet 四方以内) に入るマスの列数・行数。マスの間だけに gutter を入れる (端には入れない)。"""
+# 1 枚のマスの数の上限。方式 a はマスの数だけボーンと part_visibility の式を持ち、その負荷は文書に無い (実機で未確認)
+# ので、小さなコマでも増えすぎないようにする (64x36 を 2048 のシートに詰めると 1705 マスになっていた)
+MAX_CELLS = 128
+
+
+def grid_size(width: int, height: int, max_sheet: int, gutter: int, max_cells: int = MAX_CELLS) -> tuple[int, int]:
+    """シート 1 枚 (max_sheet 四方以内、max_cells マス以内) に入るマスの列数・行数。マスの間だけに gutter を入れる。"""
     cols = (max_sheet + gutter) // (width + gutter)
     rows = (max_sheet + gutter) // (height + gutter)
+    cols = min(cols, max_cells)
+    rows = min(rows, max(1, max_cells // max(cols, 1)))
     if cols < 1 or rows < 1:
         raise ValueError(
             f"1 コマ ({width}x{height}) が max_sheet ({max_sheet}x{max_sheet}) のシートに入りません。"
@@ -120,7 +127,7 @@ def _put_cell(sheet: np.ndarray, frame: np.ndarray, index: int, cols: int, width
 
 
 def pack_sheets(frames: Iterable[np.ndarray], width: int, height: int, max_sheet: int = 2048,
-                gutter: int = 1) -> tuple[list[Image.Image], dict]:
+                gutter: int = 1, max_cells: int = MAX_CELLS) -> tuple[list[Image.Image], dict]:
     """コマを左上から右へ、行ごとに下へ、シートが埋まったら次のシートへ並べる。
 
     マス i の左上は x = (i % cols) * (width + gutter)、y = (i // cols) * (height + gutter)。
@@ -133,7 +140,7 @@ def pack_sheets(frames: Iterable[np.ndarray], width: int, height: int, max_sheet
         raise ValueError("width と height は 1 以上にしてください")
     if gutter < 0:
         raise ValueError("gutter は 0 以上にしてください")
-    max_cols, max_rows = grid_size(width, height, max_sheet, gutter)
+    max_cols, max_rows = grid_size(width, height, max_sheet, gutter, max_cells)
     full_cells = max_cols * max_rows
 
     iterator = iter(frames)

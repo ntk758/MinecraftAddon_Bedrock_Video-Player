@@ -196,12 +196,13 @@ def test_manifests(video, tmp_path):
     assert bp["header"]["min_engine_version"] == [1, 26, 10]
     assert bp["modules"][0]["entry"] == "scripts/image_main.js"
     dependencies = {d.get("module_name"): d["version"] for d in bp["dependencies"] if "module_name" in d}
-    assert dependencies == {"@minecraft/server": "2.6.0", "@minecraft/server-ui": "2.0.0"}
+    assert dependencies == {"@minecraft/server": "2.6.0"}
     assert {"uuid": rp["header"]["uuid"], "version": rp["header"]["version"]} in bp["dependencies"]
     assert rp["modules"][0]["type"] == "resources"
     assert rp["dependencies"] == [{"uuid": bp["header"]["uuid"], "version": bp["header"]["version"]}]
-    from pack_metadata import PACK_VERSION
-    assert bp["header"]["version"] == list(PACK_VERSION)
+    # 作るたびに版が上がる (ブロックモードと同じ build_manifest_version。同じ UUID でも新しい版として読み込ませる)
+    from pack_builder import build_manifest_version
+    assert bp["header"]["version"][0] == build_manifest_version()[0] and len(bp["header"]["version"]) == 3
     # 同じ入力なら UUID は同じ。ブロックモードのパックとは別の UUID
     from pack_builder import stable_pack_uuid
     assert bp["header"]["uuid"] == convert_image_mode.pack_uuid("bvpimg", "Test Pack", "bp")

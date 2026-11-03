@@ -20,7 +20,8 @@ from PIL import Image
 
 from image_mode import atlas
 from image_mode.rp import rp_files
-from pack_metadata import PACK_VERSION, manifest_description, version_text
+from pack_builder import build_manifest_version
+from pack_metadata import version_text
 
 APP_DIR = Path(__file__).resolve().parent
 IMAGE_MAIN_SCRIPT = APP_DIR / "image_mode" / "image_main.js"
@@ -143,9 +144,10 @@ def png_bytes(image: Image.Image) -> bytes:
 
 
 def manifests(namespace: str, pack_name: str) -> tuple[dict, dict]:
-    version = list(PACK_VERSION)
+    # 作るたびに版を上げる (ブロックモードと同じ)。同じ名前で作り直すと UUID が同じなので、版が同じだと古いパックが使われる
+    version = build_manifest_version()
     bp_uuid, rp_uuid = pack_uuid(namespace, pack_name, "bp"), pack_uuid(namespace, pack_name, "rp")
-    description = manifest_description()
+    description = f"Image mode (experimental): a video on a screen entity at 30 fps. Run /{namespace}:setup, then /{namespace}:start"
     bp = {
         "format_version": 2,
         "header": {"name": f"{pack_name} v{version_text()}", "description": description, "uuid": bp_uuid,
@@ -154,7 +156,6 @@ def manifests(namespace: str, pack_name: str) -> tuple[dict, dict]:
                      "uuid": pack_uuid(namespace, pack_name, "bp-script"), "version": version,
                      "entry": "scripts/image_main.js"}],
         "dependencies": [{"module_name": "@minecraft/server", "version": "2.6.0"},
-                         {"module_name": "@minecraft/server-ui", "version": "2.0.0"},
                          {"uuid": rp_uuid, "version": version}],
     }
     rp = {
@@ -215,7 +216,7 @@ def build(args: argparse.Namespace, log=print) -> dict:
                 yield frame
 
         try:
-            sheets, layout = atlas.pack_sheets(frames(), args.width, args.height, args.max_sheet, args.gutter)
+            sheets, layout = atlas.pack_sheets(frames(), args.width, args.height, args.max_sheet, args.gutter, args.max_cells)
         except ValueError as error:
             raise ConvertError(f"[{video_id}] {error}") from None
         if icon is None:
@@ -378,6 +379,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--end", type=float, default=None, help="終了位置 (秒)")
     parser.add_argument("--fit", default="pad", choices=["pad", "cover"],
                         help="縦横比の合わせ方。pad は全体を入れて余白を黒、cover は画面を埋めて中央で切る (既定 pad)")
+    parser.add_argument("--max-cells", type=_positive_int, default=atlas.MAX_CELLS,
+                        help=f"シート 1 枚のマスの数の上限 (既定 {atlas.MAX_CELLS}。方式 a のボーンの数になる)")
     parser.add_argument("--max-sheet", type=_positive_int, default=2048, help="シート 1 枚の一辺の最大画素数 (既定 2048)")
     parser.add_argument("--gutter", type=_non_negative_int, default=1,
                         help="マスの間の画素数。端の画素を繰り返して埋め、にじみを防ぐ (既定 1)")
