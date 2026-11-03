@@ -110,6 +110,12 @@
       <label class="check"><input type="checkbox" id="perceptual" checked> <span data-i18n="settings.perceptual">Perceptual optimization (sharper edges)</span></label>
       <label><span data-i18n="pack.name">Pack name</span> <input type="text" id="packName" value="Block Video Player"></label>
       <label><span data-i18n="pack.namespace">Command prefix</span> <input type="text" id="namespace" value="badapple" pattern="[a-z0-9_]+"></label>
+      <label><span data-i18n="web.target">Minecraft version</span>
+        <select id="target">
+          <option value="latest" data-i18n="web.target_latest">1.26.10 or newer (no cheats needed)</option>
+          <option value="legacy" data-i18n="web.target_legacy">1.21.80 to 1.26.0 (cheats needed)</option>
+        </select>
+      </label>
     </div>
     <p id="loadHint" class="hint"></p>
   </section>
@@ -140,7 +146,7 @@
   <section class="card small">
     <h2 data-i18n="web.section_howto">How to use</h2>
     <ol>
-      <li data-i18n="web.howto_import">Open the .mcaddon to import it into Minecraft. In the world settings, turn on both the behavior pack and the resource pack, and turn cheats on.</li>
+      <li id="howtoImport" data-i18n="web.howto_import">Open the .mcaddon to import it into Minecraft. In the world settings, turn on both the behavior pack and the resource pack, and turn cheats on.</li>
       <li id="howtoSetup"></li>
     </ol>
     <p><span data-i18n="web.howto_note">The first time, the page loads Python for the converter (about 20 MB), which takes a while.</span>

@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 # ブラウザ版が使う、リポジトリのファイル (ルートからの相対パス)
 APP_FILES = [
-    "convert.py", "gui_i18n.py", "pack_builder.py", "pack_metadata.py", "main.js", "codec.js", "manifest.json",
+    "convert.py", "gui_i18n.py", "pack_builder.py", "pack_metadata.py", "legacy_target.py", "main.js", "codec.js", "manifest.json",
     *[str(p.relative_to(ROOT)).replace("\\", "/") for p in sorted((ROOT / "mvcodec").glob("*.py"))],
     *[str(p.relative_to(ROOT)).replace("\\", "/") for p in sorted((ROOT / "locales").glob("*.json"))],
 ]
