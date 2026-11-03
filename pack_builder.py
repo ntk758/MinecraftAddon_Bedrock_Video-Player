@@ -115,7 +115,8 @@ def flat_pair_dither(dither_method: str) -> str:
 
 
 def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addon_language: str | None = None,
-                manifest_text: str | None = None, main_text: str | None = None, codec_text: str | None = None) -> list[dict]:
+                manifest_text: str | None = None, main_text: str | None = None, codec_text: str | None = None,
+                lang_transform=None) -> list[dict]:
     """.mcaddon を output (パスか書き込みできるファイル) に書き、動画の一覧 (videos.js の VIDEO_LIST) を返す。
 
     videos の各要素:
@@ -128,6 +129,8 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
         hidden      True なら、ゲーム内の動画の一覧とリモコンの「次の動画」に出さない (だまし絵の背景の映像)
         audio_from  ほかの動画の ID。その動画の音声を鳴らす (同じ動画の立体版と平面版をセットで入れるとき、音声を
                     2 回入れない)。この動画の sounds は使わない
+
+    lang_transform: 翻訳の .lang の文字列を書き換える関数 (ブラウザ版の旧版向けの出力。legacy_target.lang_text)
     """
     manifest_text = manifest_text if manifest_text is not None else MANIFEST.read_text(encoding="utf-8")
     main_text = main_text if main_text is not None else MAIN_SCRIPT.read_text(encoding="utf-8")
@@ -177,6 +180,8 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
             {"format_version": "1.14.0", "sound_definitions": sound_definitions}, ensure_ascii=False, indent=2))
     # ゲーム内表示の翻訳 (既定は各プレイヤーのゲーム言語。固定なら GUI の言語だけ)
     for relative_path, content in addon_lang_files(addon_language).items():
+        if lang_transform is not None and relative_path.endswith(".lang"):
+            content = lang_transform(content)
         put(f"RP/{relative_path}", content)
     put("BP/scripts/videos.js", videos_js(entries))
 

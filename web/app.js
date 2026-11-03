@@ -159,6 +159,8 @@ function settings() {
     keyframe: Math.max(0, Math.round(Number($("keyframe").value) || 0)), perceptual: $("perceptual").checked,
     packName: $("packName").value.trim() || "Block Video Player",
     namespace: ($("namespace").value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "") || "badapple"),
+    // 出力先の Minecraft (legacy_target.py の TARGETS)。legacy は Script API 1.x で、チートを有効にして /scriptevent で操作する
+    target: $("target").value === "legacy" ? "legacy" : "latest",
   };
 }
 
@@ -388,7 +390,9 @@ function finish(msg) {
   lastDownloadUrl = URL.createObjectURL(blob);
   const link = $("download");
   link.href = lastDownloadUrl;
-  link.download = `${settings().packName.replace(/[^\w.-]+/g, "_")}.mcaddon`;
+  const s = settings();
+  // 旧版向けはファイル名で分かるようにする (パック名は変えないので、取り込み直すと同じパックとして置き換わる)
+  link.download = `${s.packName.replace(/[^\w.-]+/g, "_")}${s.target === "legacy" ? "-mc1.21.80" : ""}.mcaddon`;
   link.hidden = false;
   $("progress").value = 1;
   $("build").disabled = false;
@@ -518,12 +522,16 @@ for (const id of ["width", "height", "fps", "mode", "duration"]) $(id).addEventL
 // 利用者が長さを書き換えたら、動画を追加しても上書きしない。空にしたら、また動画の長さを入れる
 $("duration").addEventListener("change", () => { durationEdited = $("duration").value.trim() !== ""; if (!durationEdited) fillDuration(); });
 $("namespace").addEventListener("input", renderHowto);
+$("target").addEventListener("change", renderHowto);
 $("mode").addEventListener("change", () => { if ($("mode").value !== "screen" && $("dither").value === "blue_noise") $("dither").value = "none"; });
 
 // 使い方の setup・start のコマンド (コマンドの接頭辞に合わせる)。翻訳の {setup}・{start} の所に <code> を入れる
 function renderHowto() {
-  const ns = settings().namespace;
-  const codes = { setup: `/${ns}:setup`, start: `/${ns}:start` };
+  const { namespace: ns, target } = settings();
+  // 旧版向けは独自のコマンドが無いので /scriptevent (チートが要る) で操作する
+  const command = target === "legacy" ? `/scriptevent ${ns}:` : `/${ns}:`;
+  const codes = { setup: `${command}setup`, start: `${command}start` };
+  $("howtoImport").textContent = t(target === "legacy" ? "web.howto_import_legacy" : "web.howto_import");
   const item = $("howtoSetup");
   item.textContent = "";
   for (const part of t("web.howto_setup").split(/(\{setup\}|\{start\})/)) {

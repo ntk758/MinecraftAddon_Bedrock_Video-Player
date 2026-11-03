@@ -170,6 +170,7 @@ self.onmessage = async (event) => {
     pyodide.globals.set("js_videos", pyodide.toPy(videos));
     pyodide.globals.set("pack_name", s.packName);
     pyodide.globals.set("namespace", s.namespace);
+    pyodide.globals.set("build_target", s.target || "latest");
     // できあがりのプレビュー: 絵はここで作らず、画面の側で再生しながらゲームと同じ codec.js で 1 コマずつ描く
     // (web/block_preview.js)。ここでは参照デコーダで最後まで復元できることを確かめ、色の表などを渡す
     pyodide.globals.set("preview_progress", (done, total) => post("progress", { value: 0.95 + 0.05 * Math.min(1, done / total) }));
@@ -199,7 +200,16 @@ for n, v in enumerate(js_videos):
         spec.update({"index": n, "id": v["id"], "title": v["title"]})
         previews.append(spec)
     print(f"  {v['id']}: {decoded} frames, {len(text) // 1024} KB, {len(v['sounds'])} audio chunks")
-(pack_builder.build_addon_bytes(videos, pack_name, namespace), previews)
+# 旧版の Minecraft 向けは main.js・manifest・翻訳を Script API 1.x に合わせて書き換える (legacy_target.py)
+build_options = {}
+if build_target != "latest":
+    import legacy_target
+    build_options = {
+        "main_text": legacy_target.main_text(pack_builder.MAIN_SCRIPT.read_text(encoding="utf-8"), build_target),
+        "manifest_text": legacy_target.manifest_text(pack_builder.MANIFEST.read_text(encoding="utf-8"), build_target),
+        "lang_transform": lambda text: legacy_target.lang_text(text, build_target),
+    }
+(pack_builder.build_addon_bytes(videos, pack_name, namespace, **build_options), previews)
 `);
     const [addonProxy, previewProxy] = result.toJs({ depth: 1 });
     const addon = addonProxy.toJs ? addonProxy.toJs() : addonProxy;
