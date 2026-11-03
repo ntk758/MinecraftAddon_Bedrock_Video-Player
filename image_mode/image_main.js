@@ -5,8 +5,8 @@
  * 自分の時計 (q.life_time) で行う (image_mode/SPEC.md)。このスクリプトは、どのコマから進めるか (frame) と、その書き直しの
  * 通し番号 (seq) と状態 (state) をスクリーンのエンティティのプロパティ (client_sync) に書き、音声のチャンクを鳴らすだけ。
  *
- * 時計は world.getAbsoluteTime() (tick)。ワールドを閉じている間は進まないので、開き直すと続きから再生される。状態は world の
- * dynamic property に JSON で保存する。プロパティの書き込みは次の tick に反映され、最大 20 回/秒なので、30 fps のコマを毎回
+ * 時計は、このスクリプトが再生中に数える tick (playTicks)。world.getAbsoluteTime() は昼夜の時刻で、眠る・/time set で飛び、
+ * 昼夜の進行を止めると止まるので使わない。状態は world の dynamic property に JSON で保存する (再生中は 1 秒ごと)。プロパティの書き込みは次の tick に反映され、最大 20 回/秒なので、30 fps のコマを毎回
  * 書くことはできない。代わりに 1 秒ごとに「今のコマ」を書き直して、クライアントの時計のずれを戻す。
  */
 import { world, system, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
@@ -28,7 +28,7 @@ const METHODS = ["a", "c"];
 const VIDEOS = new Map(IMAGE_VIDEOS.map((v) => [v.id, v]));
 
 /**
- * 保存する状態。mode が PLAYING のときは startTick (0 番のコマを見せる absolute time) から今のコマを決める。
+ * 保存する状態。playTicks は再生した tick の数 (今のコマは playTicks から決める)。
  * スクリプトの読み込み時 (early execution) は world を読めないので、worldLoad で読み直す。
  */
 let state = defaultState();
@@ -36,10 +36,14 @@ let loaded = false;
 // 最後に鳴らした音声のチャンク (メモリだけ。開き直したら次の境目から鳴らす)
 let playedChunk = -1;
 let ticksSinceSync = 0;
+// 画面に書けなかった (読み込まれていなかった) 変更がある。読み込まれ次第、どの状態でも書き直す
+let dirty = false;
+const SAVE_INTERVAL = 20;
+const SCREEN_FAMILY = "bvp_screen";
 
 function defaultState() {
   return { videoId: IMAGE_VIDEOS[0]?.id ?? null, method: IMAGE_VIDEOS[0]?.methods?.[0] ?? "a", entityId: null,
-           dimension: "minecraft:overworld", location: null, rotation: 0, mode: STOPPED, startTick: 0, pausedFrame: 0, seq: 0 };
+           dimension: "minecraft:overworld", location: null, rotation: 0, mode: STOPPED, playTicks: 0, pausedFrame: 0 };
 }
 
 function loadState() {
@@ -76,7 +80,7 @@ function entityType(video, method) {
 function currentFrame(video = currentVideo()) {
   if (!video) return 0;
   if (state.mode !== PLAYING) return clampFrame(video, state.pausedFrame);
-  const elapsed = (world.getAbsoluteTime() - state.startTick) / TICKS_PER_SECOND;
+  const elapsed = state.playTicks / TICKS_PER_SECOND;
   return clampFrame(video, Math.floor(elapsed * video.fps));
 }
 
@@ -101,17 +105,23 @@ function screenEntity() {
 function syncScreen() {
   const video = currentVideo();
   const entity = screenEntity();
-  if (!video || !entity) return false;
-  state.seq = (state.seq + 1) % SEQ_MODULO;
+  if (!video || !entity) {
+    dirty = true;
+    return false;
+  }
   try {
+    // seq はエンティティに残っている値から進める (スクリプトを読み込み直しても、クライアントが見た値に戻らない)
+    const seq = ((Number(entity.getProperty(PROPERTY.seq)) || 0) + 1) % SEQ_MODULO;
     // スクリプトからの書き込みは範囲の外だと例外になる (イベントの set_property と違って丸められない) ので、先に収める
     entity.setProperty(PROPERTY.state, state.mode);
     entity.setProperty(PROPERTY.frame, currentFrame(video));
-    entity.setProperty(PROPERTY.seq, state.seq);
+    entity.setProperty(PROPERTY.seq, seq);
   } catch (e) {
     console.warn(`[${NAMESPACE}] could not update the screen: ${e}`);
+    dirty = true;
     return false;
   }
+  dirty = false;
   ticksSinceSync = 0;
   return true;
 }
@@ -134,6 +144,18 @@ function removeScreen() {
   state.entityId = null;
 }
 
+/**
+ * このパックのスクリーン (family bvp_screen) のうち、今のスクリーン以外を消す。遠くで置き直したときなど、読み込まれて
+ * いなくて消せなかった古いスクリーンは、読み込まれたとき (entityLoad) にここで消える。
+ */
+function removeStrayScreens(dimension) {
+  try {
+    for (const entity of dimension.getEntities({ families: [SCREEN_FAMILY] })) {
+      if (entity.id !== state.entityId) entity.remove();
+    }
+  } catch (e) { /* 読めない */ }
+}
+
 /** 保存した位置と向きに、今の動画と方式のスクリーンを置く。 */
 function spawnScreen() {
   const video = currentVideo();
@@ -143,6 +165,7 @@ function spawnScreen() {
     const entity = dimensionOf(state.dimension).spawnEntity(entityType(video, state.method), state.location);
     entity.setRotation({ x: 0, y: state.rotation });
     state.entityId = entity.id;
+    removeStrayScreens(entity.dimension);
   } catch (e) {
     console.warn(`[${NAMESPACE}] could not place the screen: ${e}`);
     return false;
@@ -173,7 +196,7 @@ function stopAudio(video = currentVideo()) {
  */
 function updateAudio(video) {
   if (!video.audio_chunks) return;
-  const seconds = (world.getAbsoluteTime() - state.startTick) / TICKS_PER_SECOND;
+  const seconds = state.playTicks / TICKS_PER_SECOND;
   const chunk = Math.floor(seconds / video.audio_chunk_seconds);
   if (chunk === playedChunk || chunk < 0 || chunk >= video.audio_chunks) return;
   if (seconds - chunk * video.audio_chunk_seconds > AUDIO_START_WINDOW) return;
@@ -223,7 +246,7 @@ function start() {
   }
   stopAudio(video);
   state.mode = PLAYING;
-  state.startTick = world.getAbsoluteTime();
+  state.playTicks = 0;
   saveState();
   syncScreen();
   updateAudio(video);
@@ -244,7 +267,7 @@ function resume() {
   const video = currentVideo();
   if (!video || state.mode !== PAUSED) return;
   // 止めたコマを今見せていることにして、時計の起点をずらす
-  state.startTick = world.getAbsoluteTime() - Math.round((state.pausedFrame / video.fps) * TICKS_PER_SECOND);
+  state.playTicks = Math.round((state.pausedFrame / video.fps) * TICKS_PER_SECOND);
   state.mode = PLAYING;
   saveState();
   syncScreen();
@@ -267,7 +290,7 @@ function seek(args) {
   const frame = clampFrame(video, seconds * video.fps);
   stopAudio(video);
   if (state.mode === PLAYING) {
-    state.startTick = world.getAbsoluteTime() - Math.round((frame / video.fps) * TICKS_PER_SECOND);
+    state.playTicks = Math.round((frame / video.fps) * TICKS_PER_SECOND);
   } else {
     state.pausedFrame = frame;
     if (state.mode === STOPPED) state.mode = PAUSED;
@@ -283,6 +306,11 @@ function setMethod(args) {
   const video = currentVideo();
   if (!video || !video.methods.includes(method)) {
     notify("video_not_found", method, NAMESPACE);
+    return;
+  }
+  if (state.entityId && !screenEntity()) {
+    // 古いスクリーンが読み込まれていないと消せないので、近くで切り替えてもらう
+    notify("not_setup", NAMESPACE);
     return;
   }
   state.method = method;
@@ -319,8 +347,11 @@ function runAction(action, args, player) {
 system.runInterval(() => {
   if (!loaded) return;
   const video = currentVideo();
+  if (dirty && state.mode !== PLAYING) syncScreen();
   if (!video || state.mode !== PLAYING) return;
-  if ((world.getAbsoluteTime() - state.startTick) / TICKS_PER_SECOND >= video.frame_count / video.fps) {
+  state.playTicks++;
+  if (state.playTicks % SAVE_INTERVAL === 0) saveState();
+  if (state.playTicks / TICKS_PER_SECOND >= video.frame_count / video.fps) {
     // 最後のコマで止める (もう一度 start で最初から)
     state.pausedFrame = video.frame_count - 1;
     state.mode = PAUSED;
@@ -332,7 +363,7 @@ system.runInterval(() => {
   updateAudio(video);
   ticksSinceSync++;
   // エンティティが読み込まれていない間は書けないので、次の tick でもう一度試す (書けたら ticksSinceSync が 0 に戻る)
-  if (ticksSinceSync >= SYNC_INTERVAL) syncScreen();
+  if (ticksSinceSync >= SYNC_INTERVAL || dirty) syncScreen();
 }, 1);
 
 // ワールドを開き直した直後: 再生中なら続きのコマを書き直す (音声は次のチャンクの境目から)
@@ -344,6 +375,19 @@ world.afterEvents.worldLoad.subscribe(() => {
       syncScreen();
       notify("reload_resumed", currentFrame());
     }, TICKS_PER_SECOND);
+  }
+});
+
+// 読み込まれたスクリーン: 古いものは消し、今のものに書けなかった変更があれば書く
+world.afterEvents.entityLoad.subscribe((event) => {
+  const entity = event.entity;
+  if (!loaded || !entity?.isValid || !entity.typeId.startsWith(`${NAMESPACE}:screen_`)) return;
+  if (entity.id !== state.entityId) {
+    try {
+      entity.remove();
+    } catch (e) { /* もう無い */ }
+  } else {
+    syncScreen();
   }
 });
 

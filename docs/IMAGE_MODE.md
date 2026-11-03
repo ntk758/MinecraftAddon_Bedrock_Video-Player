@@ -6,7 +6,7 @@
 python convert_image_mode.py video.mp4 -o video_image.mcaddon --width 256 --height 144 --fps 30 --start 0 --end 20 --method both
 ```
 
-ゲーム内: `/bvpimg:setup [動画ID] [a|c]` → `/bvpimg:start`。`pause`・`resume`・`stop`・`seek <秒>`・`method <a|c>`・`list` (`/scriptevent bvpimg:<操作>` でも可)。
+ゲーム内: `/bvpimg:setup [動画ID]` → `/bvpimg:start`。方式は `/bvpimg:method a|c` で切り替えます。`pause`・`resume`・`stop`・`seek <秒>`・`method <a|c>`・`list` (`/scriptevent bvpimg:<操作>` でも可)。
 
 ## 方式 A と方式 C
 
@@ -22,6 +22,6 @@ python convert_image_mode.py video.mp4 -o video_image.mcaddon --width 256 --heig
 
 ## 同期と限界
 
-スクリプトは 1 秒ごとに「今のコマ」と通し番号をエンティティのプロパティに書き、クライアントはそこから自分の時計で進めます。チャンクの読み直しやワールドの開き直しの後は、最後に書いたコマから進め直し、次の書き直し (1 秒以内) で戻ります。時計は `world.getAbsoluteTime()` なので、ワールドを閉じている間は止まります。音声は 4 秒ごとのチャンクで、途中からは鳴らせないため、一時停止・シーク・途中参加の後は次の境目まで無音です。
+スクリプトは 1 秒ごとに「今のコマ」と通し番号をエンティティのプロパティに書き、クライアントはそこから自分の時計で進めます。チャンクの読み直しやワールドの開き直しの後は、最後に書いたコマから進め直し、次の書き直し (1 秒以内) で戻ります。時計はスクリプトが再生中に数える tick で、1 秒ごとに保存するので、開き直すと続きから戻ります (眠る・`/time set` の影響を受けません)。音声は 4 秒ごとのチャンクで、途中からは鳴らせないため、一時停止・シーク・途中参加の後は次の境目まで無音です。
 
 詳しい取り決めは [image_mode/SPEC.md](../image_mode/SPEC.md)、調査の根拠はフェーズ 1 の報告にあります。

@@ -25,9 +25,11 @@ let nextId = globalThis.__nextId ?? 1;
 const intervals = [];
 const timeouts = [];
 let worldLoad = null;
+let entityLoad = null;
 class Entity {
   constructor(typeId, location) { this.typeId = typeId; this.location = location; this.id = String(nextId++); globalThis.__nextId = nextId;
-    this.properties = {}; this.pending = {}; this.isValid = true; this.rotation = null; }
+    this.properties = {}; this.pending = {}; this.isValid = true; this.rotation = null; this.dimension = dimension;
+    this.loaded = true; }
   setProperty(name, value) {
     if (!Number.isInteger(value)) throw new Error("not int");
     const [lo, hi] = name.endsWith(":state") ? [0, 2] : name.endsWith(":seq") ? [0, 1023] : [0, 299];
@@ -42,6 +44,7 @@ const dimension = {
   id: "minecraft:overworld",
   spawnEntity(typeId, location) { const e = new Entity(typeId, location); entities.set(e.id, e); log.spawned.push(typeId); return e; },
   runCommand(command) { log.commands.push(command); return { successCount: 1 }; },
+  getEntities({ families }) { return [...entities.values()].filter((e) => e.loaded && families.includes("bvp_screen")); },
 };
 const player = {
   typeId: "minecraft:player", location: { x: 0, y: 64, z: 0 }, dimension,
@@ -51,9 +54,9 @@ const player = {
 export const world = {
   getAbsoluteTime: () => globalThis.__time,
   getDynamicProperty: (k) => dynamic.get(k), setDynamicProperty: (k, v) => dynamic.set(k, v),
-  getEntity: (id) => entities.get(id), getDimension: () => dimension, getAllPlayers: () => [player],
+  getEntity: (id) => { const e = entities.get(id); return e?.loaded ? e : undefined; }, getDimension: () => dimension, getAllPlayers: () => [player],
   sendMessage: (m) => log.messages.push(m.rawtext[0].translate + " " + JSON.stringify(m.rawtext[0].with ?? {})),
-  afterEvents: { worldLoad: { subscribe: (h) => { worldLoad = h; } } },
+  afterEvents: { worldLoad: { subscribe: (h) => { worldLoad = h; } }, entityLoad: { subscribe: (h) => { entityLoad = h; } } },
 };
 export const system = {
   runInterval: (f) => intervals.push(f), run: (f) => timeouts.push([0, f]), runTimeout: (f, t) => timeouts.push([t, f]),
@@ -73,7 +76,11 @@ export function tick() {
   for (const item of timeouts.splice(0)) { if (item[0] <= 0) item[1](); else timeouts.push([item[0] - 1, item[1]]); }
 }
 export function command(action, message = "") { globalThis.__script({ id: `bvpimg:${action}`, message, sourceEntity: player }); }
-export function screen() { return [...entities.values()][0]; }
+export function screen() { return [...entities.values()].find((e) => e.isValid); }
+export function screens() { return [...entities.values()].filter((e) => e.isValid); }
+// プレイヤーが離れて、スクリーンのチャンクが読み込まれていない / 戻って読み込まれた
+export function unloadAll() { for (const e of entities.values()) e.loaded = false; }
+export function loadAll() { for (const e of entities.values()) { e.loaded = true; entityLoad?.({ entity: e }); } }
 """
 
 DRIVER = r"""
@@ -95,6 +102,9 @@ await load(generation);
 for (const step of steps) {
   if (step.cmd) mock.command(step.cmd, step.arg ?? "");
   if (step.tick) for (let i = 0; i < step.tick; i++) mock.tick();
+  if (step.unload) mock.unloadAll();
+  if (step.load) mock.loadAll();
+  if (step.count) out.push({ label: step.count, screens: mock.screens().map((e) => e.typeId) });
   if ("reload" in step) { generation++; globalThis.__time += step.reload; await load(generation); }
   if (step.snap) {
     const e = mock.screen();
@@ -178,3 +188,24 @@ def test_end_of_video_stops_on_the_last_frame(tmp_path):
     out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 230}, {"snap": "end"}])
     end = props(out["snaps"][0])
     assert end["state"] == 2 and end["frame"] == 299
+
+
+def test_stop_while_far_away_reaches_the_screen_when_it_loads(tmp_path):
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 30}, {"unload": True},
+                         {"cmd": "pause"}, {"tick": 40}, {"load": True}, {"tick": 2}, {"snap": "back"}])
+    back = props(out["snaps"][0])
+    assert back["state"] == 2 and 40 <= back["frame"] <= 50
+
+
+def test_switching_method_far_away_is_refused_and_no_orphan_is_left(tmp_path):
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"unload": True}, {"cmd": "method", "arg": "c"}, {"load": True},
+                         {"tick": 2}, {"cmd": "method", "arg": "c"}, {"tick": 2}, {"count": "screens"}])
+    assert out["snaps"][0]["screens"] == ["bvpimg:screen_demo_c"]
+
+
+def test_seq_continues_from_the_screen_after_a_script_reload(tmp_path):
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 5}, {"cmd": "pause"}, {"tick": 2},
+                         {"snap": "before"}, {"reload": 0}, {"tick": 2}, {"cmd": "seek", "arg": "5"}, {"tick": 2},
+                         {"snap": "after"}])
+    before, after = (props(x) for x in out["snaps"])
+    assert after["seq"] != before["seq"] and after["frame"] == 150
