@@ -14,17 +14,26 @@ Resource Pack に同梱し、ゲーム内で切り替えて映像のように見
    （`arrays.textures.Array.frames` → `textures: ["Array.frames[q.property('bvpimg:frame')]"]`）
 4. 画面のジオメトリは 1 枚の平面（前後の面に同じ画像）で、`texture_width` / `texture_height` をフレームの大きさに合わせる
 
+本実装では**動画ごとに 1 つのエンティティ種別** `<namespace>:<動画ID>` を使い、それぞれ別の render controller とテクスチャのフォルダを持ちます。エンティティプロパティは 1 種別あたり 1 個だけ（`<namespace>:frame`）なので 32 個の上限に収まります。画面の位置はワールドの動的なプロパティ `<namespace>:screens`（動画 ID → 位置の JSON）、再生している動画の一覧は `<namespace>:playing`（動画 ID の配列の JSON）に保存します。複数の動画を同時に再生できます（動画ごとに 1 画面・1 本の `system.runInterval`）。
+
 マルチプレイでは 1 つのエンティティを全員が見るので、サーバーが書く値は 1 動画あたり 1 回/tick です。
 
 ## 作ったファイル
 
 | ファイル | 内容 |
 |---|---|
-| `image_mode/image_poc.py` | フレームの PNG を ffmpeg で書き出し、`.mcaddon` を組み立てる（解像度・fps・枚数は引数） |
-| `image_mode/scripts/image_poc_main.js` | 画面のエンティティを出す・再生・停止・1 フレーム表示のスクリプト（ブロック方式の `main.js` は使わない） |
-| `tests/test_image_mode_poc.py` | `.mcaddon` の中身の形（JSON の整合）のテスト |
+| `image_mode/frame_extract.py` | ffmpeg で動画からフレームの PNG を書き出す（解像度・fps・枚数）。`ticks_per_frame` と PNG の大きさを読むヘルパーもここ |
+| `image_mode/pack_docs.py` | BP のエンティティ定義・RP のクライアントエンティティ・render controller・ジオメトリ・テクスチャの配置を作る |
+| `image_mode/image_poc.py` | 1 動画だけの PoC の `.mcaddon`（`pack_docs` / `frame_extract` を使う） |
+| `image_mode/build_image_addon.py` | 複数動画対応の本実装の `.mcaddon`（動画ごとに 1 エンティティ・別のテクスチャフォルダ） |
+| `image_mode/scripts/image_poc_main.js` | PoC のスクリプト（出す・再生・停止・1 枚表示） |
+| `image_mode/scripts/image_main.js` | 本実装のスクリプト（動画の選択・再生・停止・次の動画・1 枚表示・除去） |
+| `tests/test_image_mode_poc.py` | PoC の `.mcaddon` の中身の形のテスト |
+| `tests/test_image_mode_addon.py` | 複数動画の `.mcaddon` の中身の形のテスト（ffmpeg が無い環境では実抽出のテストは skip） |
 
-生成されるパックの中身（`dist/` は `.gitignore` の対象なのでコミットしません）:
+`convert.py` / `main.js` / `codec.js` / `pack_builder.py` は変更していません（画像方式は独立したモジュールで zip を組む）。
+
+生成されるパックの中身（`dist/` は `.gitignore` の対象なのでコミットしません）。PoC は 1 動画 = `screen`:
 
 ```
 BP/manifest.json            @minecraft/server のみ依存 (server-ui は使わない)
@@ -34,7 +43,19 @@ RP/manifest.json
 RP/entity/screen.json       フレームの PNG を短い名前 (f0..fN) で並べる
 RP/render_controllers/screen.json  テクスチャの配列を q.property で選ぶ
 RP/models/screen.geo.json   画面の平面 (aspect ratio はフレームと同じ)
-RP/textures/bvpimg/frame_0.png ... frame_N.png
+RP/textures/bvpimg/screen/frame_0.png ... frame_N.png
+```
+
+本実装（複数動画）は動画 ID ごとに別のファイルを持つ:
+
+```
+BP/entities/<動画ID>.json        動画ごとに 1 エンティティ種別 bvpimg:<動画ID>
+BP/scripts/main.js               画像方式のスクリプト
+BP/scripts/image_videos.js       動画の一覧 IMAGE_VIDEO_LIST (id / title / frame_count / width / height / fps / ticks_per_frame)
+RP/entity/<動画ID>.json
+RP/render_controllers/<動画ID>.json
+RP/models/<動画ID>.geo.json
+RP/textures/bvpimg/<動画ID>/frame_0.png ... frame_N.png
 ```
 
 ## PoC の作り方
@@ -48,6 +69,23 @@ python image_mode/image_poc.py --frames 12 --width 192 --height 108 --fps 20 -o 
 - `--fps` 再生速度。20 が上限（1 tick に 1 フレーム）。`--fps 10` なら 2 tick に 1 フレーム
 - `--input <動画>` 指定するとその動画の最初のフレームを使う。無いときは ffmpeg の `testsrc`（動くテスト映像）
 - `--keep-frames <フォルダ>` フレームの PNG を残す（パックの中身を見たいとき）
+
+## 本実装の作り方（複数動画）
+
+```
+python image_mode/build_image_addon.py --video badapple=badapple.mp4 --video intro=intro.mp4 \
+    --width 256 --height 144 --fps 20 --limit 600 -o dist/VideoPlayerImages.mcaddon
+```
+
+- `--video <ID>=<動画のファイル>` 繰り返すと複数動画になる。ID は小文字の英数字と `_`（1〜32 文字）。エンティティ名・テクスチャのフォルダ・コマンドの enum の値にそのまま使う
+- `--sample <数>` 動画のファイルが無いときに ffmpeg の `testsrc` で試作する（`--video` とは併用できない）
+- `--width` / `--height` フレームの解像度（既定 256x144）。`scale` は `force_original_aspect_ratio=decrease` なので、元の動画が縦長なら指定より小さくなる（そのときは stderr に警告を出す）
+- `--fps` 再生速度。20 が上限（1 tick に 1 フレーム）。`--fps 6` なら 3 tick に 1 フレーム
+- `--limit` 1 動画のフレーム数の上限（既定 600、このコードの上限 2000）。テキストの総量は出力の見積り MiB を表示し、Resource Pack の Tier3（600 MiB）を超えれば警告を出す
+- `--screen-blocks` 画面の幅（ブロック数、既定 4）。高さはフレームの aspect ratio から決まる
+- `--namespace` / `--pack-name` / `-o` は PoC と同じ考え方
+
+ブロック方式のアドオンと同じ 1 つにまとめるには `pack_builder.py` の変更が必要なので、今は**別のアドオンとして並べる**（統合は大きい変更なので事前に相談します）。
 
 ## ゲームでの確認手順（実機であなたが確認する）
 
@@ -64,12 +102,29 @@ python image_mode/image_poc.py --frames 12 --width 192 --height 108 --fps 20 -o 
    - 全面が黒・壊れた模様 → ジオメトリの UV とテクスチャの大きさの対応が合っていない
    - 模様が横向きに反転して見える → 平面の前後の面の UV の向き（この PoC はどちら側からも映るように両面へ貼っている）
 
+### 複数動画のアドオンの確認手順（本実装）
+
+1. `dist/VideoPlayerImages.mcaddon` をワールドに適用する（PoC と同時に有効にすると `bvpimg:` のコマンドが衝突するので、どちらか一方だけ使う）。
+2. `/bvpimg:list` で動画の一覧と、その動画の画面の位置・再生中かどうかが出ることを確認する。
+3. `/bvpimg:setup badapple` でその動画の画面がプレイヤーの前に出る。もう 1 動画 `/bvpimg:setup intro` を立てると 2 枚の画面が並ぶ。
+4. `/bvpimg:play badapple` で再生、`/bvpimg:play intro` で別の画面も再生（2 つの再生が同時に走ることを確認する）。
+5. `/bvpimg:frame badapple 5` で 1 枚だけ表示、`/bvpimg:stop badapple` で停止。
+6. `/bvpimg:next` で「次の動画」が切り替わる（hidden の動画は出ない）。
+7. `/bvpimg:remove badapple` でその画面だけ消す（もう 1 動画の画面は残る）。`/bvpimg:remove`（引数なし）で全部消す。
+8. ワールドを出て入り直しても `/bvpimg:list` が位置を覚えていて、`/bvpimg:play badapple` が同じ位置の画面を再利用することを確認する（再生の状態はスクリプトのメモリと `bvpimg:playing` にあるので、入り直すと自動では再開しない）。
+9. うまくいかないときの切り分け（PoC と同じ）に加えて:
+   - `list` が空 · 位置を覚えていない → ワールドの動的なプロパティ（`bvpimg:screens` / `bvpimg:playing`）が読めていない
+   - 2 つ目の動画で 1 枚目の画面が消える → 画面の位置を動画ごとに保存していない（`bvpimg:screens` は動画 ID ごとに持つ）
+   - enum の引数を受け付けない → `registry.registerEnum` の登録と `enumName` の対応が合っていない
+
 **この手順を実機で確認する前は「動く」とは言いません。** 自動テストはパックの JSON の形しか確かめていません。
 
 ## 確認済みの事項（このセッションで実際に確かめたもの）
 
 - `python image_mode/image_poc.py` が 12 枚の PNG を書き出し、`.mcaddon` を作れる（SHA-256 が 12 枚すべて違う＝フレームが実際に違う内容になっている）
-- `python -m pytest tests/test_image_mode_poc.py` が通る（BP のプロパティの range と `client_sync`、RP の textures のキーと render controller の配列の対応、ジオメトリの `texture_width`/`texture_height` と UV の大きさ、manifest の BP↔RP の依存、スクリプトにプレースホルダが残っていないこと）
+- `python -m pytest tests/test_image_mode_poc.py tests/test_image_mode_addon.py` が通る（19 passed）。確かめているのは BP のプロパティの range と `client_sync`、RP の textures のキーと render controller の配列の対応、ジオメトリの `texture_width`/`texture_height` と UV の大きさ・aspect ratio、動画ごとのファイルが別名前になっていること、`image_videos.js` の `ticks_per_frame` が fps と一致すること、manifest の BP↔RP の依存、スクリプトにプレースホルダが残っていないこと、ID の形・重複・空のフレームを弾くこと
+- `python image_mode/build_image_addon.py --sample 2 --width 192 --height 108 --limit 20` が 2 動画の入った `.mcaddon` を作れる（見積 3.2 MiB、動画ごとに別の entity / render controller / ジオメトリ / テクスチャフォルダ）
+- ffmpeg による実際のフレーム抽出（`testsrc` を 96x54 で 4 枚）は、このマシンではフレームの bytes が 4 枚すべて違うことを確認した（ffmpeg が無い環境ではテストは skip）
 
 ## 未確認の事項
 
@@ -79,6 +134,11 @@ python image_mode/image_poc.py --frames 12 --width 192 --height 108 --fps 20 -o 
 - 画面のエンティティがチャンクの未読込や描画距離で消えるか
 - エンティティプロパティの client_sync が BDS・マルチプレイでどのタイミングで同期されるか
 - `format_version` の値（BP のエンティティ 1.21.0 / RP のクライアントエンティティ 1.10.0 / render controller 1.8.0 / ジオメトリ 1.16.0）が現行のエンジンで受理されるか
+- 独自コマンドの enum の引数（`registry.registerEnum` と `CustomCommandParameter.enumName`）がゲームで受け付けられるか。`enumName` は公式の型に記載があるが、Learn のページの status（安定版か preview か）は見ていない
+- ワールドの動的なプロパティ（`world.getDynamicProperty` / `setDynamicProperty`）に JSON の文字列を保存する形が現行のエンジンで動くか、ワールドを閉じた後に残るか
+- `dimension.getEntities({ location, maxDistance })` で画面のエンティティを再取得できるか（検索のプロパティは公式に記載のある `location` / `maxDistance` だけ使い、動画のエンティティは `entity.typeId` で選んでいる。`EntityQueryOptions` の `type` は公式の例に出ていますがプロパティの一覧には記載がないので使っていません）
+- 1 動画に 1 個の `system.runInterval` を複数同時に走らせることの実際の負荷、複数プレイヤー・BDS での同期のズレ
+- テクスチャの予算の**ローカル適用での強制**（公式の FAQ は「MCTools で事前に確認できる」と書いていて、ゲーム内の自動の判定は記載がない）。サブパックの `memory_performance_tier` は manifest V3 の実験的な設定なのでこのパックには入れていない
 
 ## 上限と容量（公式の値）
 
@@ -96,10 +156,16 @@ python image_mode/image_poc.py --frames 12 --width 192 --height 108 --fps 20 -o 
 - Material（ビルトインの entity material を使う理由、カスタム material の注意書き）: https://learn.microsoft.com/en-us/minecraft/creator/documents/material-files?view=minecraft-bedrock-stable
 - ジオメトリの `texture_width` / `texture_height` / 面ごとの UV: https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/geometry.v1.16.0?view=minecraft-bedrock-stable
 - テクスチャの予算（Tier の数値）: https://learn.microsoft.com/en-us/minecraft/creator/documents/texturebudgets?view=minecraft-bedrock-stable
+- 独自コマンドの引数の型（`CustomCommandParamType.Integer` / `Enum`）: https://learn.microsoft.com/en-us/minecraft/creator/scriptapi/minecraft/server/custom-command-param-type?view=minecraft-bedrock-stable
+- `CustomCommandParameter` の `enumName`（enum の型と同じ名前を別の引数名にできる）: https://learn.microsoft.com/en-us/minecraft/creator/scriptapi/minecraft/server/customcommandparameter?view=minecraft-bedrock-stable
+- ワールドの動的なプロパティ（`world.getDynamicProperty` / `setDynamicProperty`。`null` を代入するとその値が消える）: https://learn.microsoft.com/en-us/minecraft/creator/scriptapi/minecraft/server/world?view=minecraft-bedrock-stable
+- `Dimension.getEntities` と `EntityQueryOptions`（このコードは `location` / `maxDistance` のみ使う): https://learn.microsoft.com/en-us/minecraft/creator/scriptapi/minecraft/server/dimension?view=minecraft-bedrock-stable と https://learn.microsoft.com/en-us/minecraft/creator/scriptapi/minecraft/server/entityqueryoptions?view=minecraft-bedrock-stable
+- サブパックの `memory_performance_tier`（manifest V3 で実験中、値は 1〜5）: https://learn.microsoft.com/en-us/minecraft/creator/documents/buildingsubpacks?view=minecraft-bedrock-stable
 
-## 次の段階（本実装）の候補（まだ実装していません）
+## 次の段階の候補（まだ実装していません）
 
-- フレームの PNG を 1 枚のアトラスにまとめてテクスチャの枚数を減らす（テクスチャの枚数の上限が不明なので、枚数が多いときのリスクを下げる）
-- 複数動画に対応する（動画ごとに 1 エンティティ、`<ns>:frame` と `<ns>:video` のプロパティで選ぶ。32 個の上限に収める）
-- 音声（ブロック方式は RP の sounds を chunk で鳴らす。この PoC は音声を見ていません）
+- フレームの PNG を 1 枚のアトラスにまとめてテクスチャの枚数を減らす（テクスチャの枚数の上限が公式に記載されていないので、枚数が多いときのリスクを下げる。`origin/feat/image-mode` の側には `image_mode/atlas.py` の実験があります＝参照のみ、未マージ）
+- 音声（ブロック方式は RP の sounds を chunk で鳴らす。この方式は音声を見ていません。動画ごとに `sound_definitions.json` を別名で置く形が必要）
 - 20fps を超える滑らかな再生（Molang の `q.life_time` / `q.frame_alpha` で描画側が自律進行する方式。承認は取れていません）
+- ブロック方式と同じ 1 つのアドオンに統合する（`pack_builder.py` にテクスチャ・エンティティ・render controller を加える大きな変更なので、事前に相談します）
+- フレーム数・解像度を大きくしたときの実機でのメモリと読み込みの時間（`--limit` と Tier の見積りの警告はコードに入っています。実機での上限は未知）
