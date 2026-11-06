@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import sys
@@ -33,14 +34,24 @@ if str(REPO_DIR) not in sys.path:
 from pack_builder import MANIFEST, build_manifest_version, stable_pack_uuid  # noqa: E402
 from pack_metadata import changelog_markdown, manifest_description, version_text  # noqa: E402
 
-import frame_extract  # noqa: E402
-import pack_docs  # noqa: E402
+try:
+    # image_mode をパッケージとして読み込んだとき (Windows 版の EXE・ブラウザ版の Python はこう使う)
+    from . import frame_extract, pack_docs  # noqa: F401
+except ImportError:
+    # `python image_mode/build_image_addon.py` を直接実行したときは、このフォルダの名前で読む
+    if str(APP_DIR) not in sys.path:
+        sys.path.insert(0, str(APP_DIR))
+    import frame_extract, pack_docs  # noqa: F401,E402
 
-IMAGE_SCRIPT = APP_DIR / "scripts" / "image_main.js"
+# 再生のスクリプト。EXE ではバンドルの中、ソースから実行したときはリポジトリの中にある
+IMAGE_SCRIPTS = [APP_DIR / "scripts" / "image_main.js", REPO_DIR / "image_mode" / "scripts" / "image_main.js"]
 # 動画 ID の形 (Bedrock の identifier は小文字の英数字と _)。エンティティ名・テクスチャのパス・コマンドの enum に使う
 VIDEO_ID = re.compile(r"[a-z0-9_]{1,32}")
 # テクスチャの枚数の上限 (--limit)。公式に配列の枚数の上限は記載されていないので、自分で上限を設ける
 MAX_FRAMES = 2000
+# 画像方式のアドオンの、接頭辞と名前と出力ファイルの名前 (Windows 版とブラウザ版が同じ形を使う)
+IMAGE_NAMESPACE_SUFFIX = "_img"
+IMAGE_PACK_SUFFIX = "_images"
 # テクスチャの容量の見積りの目安 (Texture Budgets の Tier の値。ローカル適用での強制は未確認)
 RP_TIER_LIMITS = {"Tier1": 300, "Tier2": 450, "Tier3": 600, "Tier4": 1200, "Tier5": 1600}  # MiB
 
@@ -51,9 +62,31 @@ def image_videos_js(entries: list[dict]) -> str:
             f"{json.dumps(entries, ensure_ascii=False, separators=(',', ':'))};\n")
 
 
+def image_namespace(namespace: str) -> str:
+    """画像方式のアドオンの接頭辞。ブロック方式と同じ接頭辞だと、ゲームに登録するコマンドの名前が同じになる
+    (両方を入れると衝突する) ので、末尾に `IMAGE_NAMESPACE_SUFFIX` を足す。"""
+    return f"{namespace}{IMAGE_NAMESPACE_SUFFIX}"
+
+
+def image_pack_name(pack_name: str) -> str:
+    """画像方式のアドオンの名前 (ブロック方式のパックの名前に足す)。"""
+    return f"{pack_name}{IMAGE_PACK_SUFFIX}"
+
+
+def image_output_path(output, suffix: str = IMAGE_PACK_SUFFIX) -> Path:
+    """画像方式の .mcaddon の出力先。ブロック方式の出力と同じフォルダに `<name><suffix>.mcaddon` を置く。"""
+    path = Path(output)
+    return path.with_name(f"{path.stem}{suffix}.mcaddon")
+
+
 def image_main_text(namespace: str) -> str:
     """再生のスクリプト。テンプレートの namespace を差し替える (main.js と同じ考え方)。"""
-    text = IMAGE_SCRIPT.read_text(encoding="utf-8")
+    for candidate in IMAGE_SCRIPTS:
+        if candidate.is_file():
+            text = candidate.read_text(encoding="utf-8")
+            break
+    else:
+        raise ValueError("再生のスクリプトがありません: " + " / ".join(str(p) for p in IMAGE_SCRIPTS))
     text = text.replace("__NAMESPACE__", namespace)
     if "__NAMESPACE__" in text:
         raise ValueError("テンプレートの namespace が置き換わりませんでした")
@@ -61,8 +94,11 @@ def image_main_text(namespace: str) -> str:
 
 
 def build_image_addon(output, videos: list[dict], namespace: str = "bvpimg",
-                      pack_name: str = "Block Video Player Images", screen_blocks: float = 4.0) -> dict:
+                      pack_name: str = "Block Video Player Images", screen_blocks: float = 4.0,
+                      description: str | None = None) -> dict:
     """.mcaddon を output (パスか書き込みできるファイル) に書き、動画の一覧を返す。
+
+    description を渡すと、パックの説明にそれを使う (Windows 版とブラウザ版は画面の言語で説明を書く)。
 
     videos の各要素:
         id     動画 ID (小文字の英数字と _。エンティティ名・テクスチャのパスに使う)
@@ -129,9 +165,12 @@ def build_image_addon(output, videos: list[dict], namespace: str = "bvpimg",
     version = build_manifest_version()
     bp_uuid = stable_pack_uuid(namespace, pack_name, "bp")
     rp_uuid = stable_pack_uuid(namespace, pack_name, "rp")
+    default_description = "画像（テクスチャ）再生方式のアドオン (ブロック方式とは別方式)"
+    bp_description = description or default_description
+    rp_description = description or "画像（テクスチャ）再生方式のリソースパック"
     bp_manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     bp_manifest["header"].update({"name": f"{pack_name} v{version_text()}",
-                                  "description": "画像（テクスチャ）再生方式のアドオン (ブロック方式とは別方式)",
+                                  "description": bp_description,
                                   "uuid": bp_uuid, "version": version})
     bp_manifest["modules"][0].update({"uuid": stable_pack_uuid(namespace, pack_name, "bp-script"), "version": version,
                                       "entry": "scripts/main.js"})
@@ -142,7 +181,7 @@ def build_image_addon(output, videos: list[dict], namespace: str = "bvpimg",
     put("BP/manifest.json", json.dumps(bp_manifest, ensure_ascii=False, indent=2) + "\n")
     rp_manifest = {
         "format_version": 2,
-        "header": {"name": f"{pack_name} Res v{version_text()}", "description": "画像（テクスチャ）再生方式のリソースパック",
+        "header": {"name": f"{pack_name} Res v{version_text()}", "description": rp_description,
                    "uuid": rp_uuid, "version": version, "min_engine_version": bp_manifest["header"]["min_engine_version"]},
         # サブパックの memory_performance_tier で機種別のテクスチャの容量に分けられるが、manifest V3 の実験的な設定
         # (このアドオンは format_version 2 を使うので入れていない。docs/IMAGE_MODE.md の未確認の事項に書いた)
@@ -159,6 +198,14 @@ def build_image_addon(output, videos: list[dict], namespace: str = "bvpimg",
         for path in sorted(files):
             archive.writestr(path, files[path])
     return {"paths": sorted(files), "videos": entries, "texture_mib": texels / (1024 * 1024)}
+
+
+def build_image_addon_bytes(videos: list[dict], pack_name: str, namespace: str = "bvpimg",
+                            screen_blocks: float = 4.0, **kwargs) -> bytes:
+    """build_image_addon の結果を bytes で返す (ブラウザ版でダウンロードさせる用)。"""
+    buffer = io.BytesIO()
+    build_image_addon(buffer, videos, namespace, pack_name, screen_blocks, **kwargs)
+    return buffer.getvalue()
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
