@@ -87,6 +87,26 @@ python image_mode/build_image_addon.py --video badapple=badapple.mp4 --video int
 
 ブロック方式のアドオンと同じ 1 つにまとめるには `pack_builder.py` の変更が必要なので、今は**別のアドオンとして並べる**（統合は大きい変更なので事前に相談します）。
 
+## Windows 版（exe）での使い方
+
+画面の設定に「画像（テクスチャ）再生方式も作る」のチェックボックスを追加した（既定は off。ブロック方式の作り方は変わらない）。
+
+- チェックすると、ブロック方式のアドオンを作るの**同じ手順の後**に、画像方式のアドオンを `<出力の名前>_images.mcaddon` に作る（例: `VideoPlayer.mcaddon` → `VideoPlayer_images.mcaddon`）
+- 接頭辞はブロック方式に `_img` を足す（`badapple` → `badapple_img`）。同じ接頭辞だと 2 つのアドオンの独自コマンドの名前が衝突する
+- パック名は `<パック名>_images`、説明文は画面の言語の `pack.image_desc` を使う
+- 対応するファイル: 動画（`.mp4` など）・1 枚の画像（`.png` / `.jpg`）。立体（`.vox`）と MMD（`.pmx`）は元の映像のコマが無いので使えず、ログに理由を書く
+- フレーム数の上限: 動画の長さが分かっているときは `長さ × min(fps, 20) + 1` 枚、無いときは 600 枚（`IMAGE_MAX_FRAMES`）。アドオン側の上限は 2000 枚（`build_image_addon.py` の `MAX_FRAMES`）
+- 画像方式が失敗しても、ブロック方式のアドオンは作られているので、失敗はログに理由だけ出す（作成を止めない）
+- ffmpeg はブロック方式と同じものを使う（`ffmpeg.exe` を同梱 / 同階層 / PATH の探索はそのまま）
+
+## ブラウザ版（web/）での使い方
+
+同じチェックボックス（`画像（テクスチャ）再生方式も作る`）を足した。生成が終わると、ブロック方式のダウンロードのリンクの下に画像方式のリンクが出る（ファイル名は `<パック名>_images.mcaddon`）。
+
+- ブラウザには ffmpeg が無いので、画面が描いたコマ（`web/app.js` の `canvasToPpm` の PPM）を Python の Pillow で PNG にする（`image_mode/frame_extract.py` の `png_from_ppm`）。Windows 版は ffmpeg が直接 PNG を出すので、この経路は使わない
+- `.vox` のジョブは画像方式では使えない（ログに理由を書く）。1 枚の画像は 1 枚のアドオンになる
+- 画像方式の生成が失敗しても、ブロック方式のアドオンのダウンロードはそのまま出る
+
 ## ゲームでの確認手順（実機であなたが確認する）
 
 1. `dist/ImagePoC.mcaddon` を Minecraft のワールドに適用する（新しいワールドで作ってもよい）。
@@ -125,6 +145,12 @@ python image_mode/build_image_addon.py --video badapple=badapple.mp4 --video int
 - `python -m pytest tests/test_image_mode_poc.py tests/test_image_mode_addon.py` が通る（19 passed）。確かめているのは BP のプロパティの range と `client_sync`、RP の textures のキーと render controller の配列の対応、ジオメトリの `texture_width`/`texture_height` と UV の大きさ・aspect ratio、動画ごとのファイルが別名前になっていること、`image_videos.js` の `ticks_per_frame` が fps と一致すること、manifest の BP↔RP の依存、スクリプトにプレースホルダが残っていないこと、ID の形・重複・空のフレームを弾くこと
 - `python image_mode/build_image_addon.py --sample 2 --width 192 --height 108 --limit 20` が 2 動画の入った `.mcaddon` を作れる（見積 3.2 MiB、動画ごとに別の entity / render controller / ジオメトリ / テクスチャフォルダ）
 - ffmpeg による実際のフレーム抽出（`testsrc` を 96x54 で 4 枚）は、このマシンではフレームの bytes が 4 枚すべて違うことを確認した（ffmpeg が無い環境ではテストは skip）
+- Windows 版とブラウザ版への統合（このセッションで実際に確かめたもの）:
+  - `python -m pytest tests/test_image_mode_tools.py tests/test_gui_image_mode.py` が通る（16 passed）。別アドオンの出力名（`VideoPlayer_images.mcaddon`）・接頭辞（`badapple_img`）・パック名（`_images`）・説明文・使えない動画（`.vox` / `.pmx`）の skip・失敗時にブロック方式を止めないこと・フレーム数の上限（長さが分からなければ 600、分かっていれば `長さ × min(fps,20)+1`）を確かめている
+  - `python scripts/build_web.py --out web_dist` が `image_mode/` の `.py` と `image_mode/scripts/image_main.js` を `files.json` に入れて出力する（45 files）
+  - `node tests/js/pyodide_smoke.mjs <web_dist>` が、ブラウザ版と同じ 32bit の Pyodide で PPM → PNG（`png_from_ppm`）と `build_image_addon_bytes` を通す（`image_frames` = 20、画像アドオン 22,384 bytes）。`web/worker.js` の `runPython` の text をそのまま実行しているので、global の名前の衝突と JS の `Uint8Array` → Python の `bytes` の変換も通っている
+  - `node --check web/app.js web/worker.js image_mode/scripts/image_main.js tests/js/pyodide_smoke.mjs` が通る
+  - `python -m pytest tests/test_i18n.py` が通る（52 passed。10 言語すべてに `settings.image_mode` / `build.image_*` / `web.image_*` のキーと同じプレースホルダがある）
 
 ## 未確認の事項
 
@@ -139,6 +165,10 @@ python image_mode/build_image_addon.py --video badapple=badapple.mp4 --video int
 - `dimension.getEntities({ location, maxDistance })` で画面のエンティティを再取得できるか（検索のプロパティは公式に記載のある `location` / `maxDistance` だけ使い、動画のエンティティは `entity.typeId` で選んでいる。`EntityQueryOptions` の `type` は公式の例に出ていますがプロパティの一覧には記載がないので使っていません）
 - 1 動画に 1 個の `system.runInterval` を複数同時に走らせることの実際の負荷、複数プレイヤー・BDS での同期のズレ
 - テクスチャの予算の**ローカル適用での強制**（公式の FAQ は「MCTools で事前に確認できる」と書いていて、ゲーム内の自動の判定は記載がない）。サブパックの `memory_performance_tier` は manifest V3 の実験的な設定なのでこのパックには入れていない
+- Windows 版の EXE の中で `image_mode` が読めるか。`BlockVideoPlayer.spec` に `collect_submodules('image_mode')` と `image_mode/scripts/image_main.js` の同梱を追加したが、**このマシンで EXE の再ビルドはしていない**（torch_directml を含むビルドは重い）
+- Windows 版のチェックボックスから、実際の ffmpeg 経由で作る実行（テストは `extract_frames` を差し替えているので、画面の操作から通る経路は未実行）
+- ブラウザ版の画面でチェックしてダウンロードのリンクが出る操作（Pyodide でアドオンを作る部分は上の確認を通っているが、画面の操作は未確認）
+- ブラウザ版で多くのフレームを PPM → PNG にしたときのメモリと時間（Pyodide は 32bit。「動画の長さ」を空にすると最後まで描くので、1 動画 2000 枚を超えたときは画像方式の生成が失敗して理由を書く（アドオンの上限は `build_image_addon.py` の `MAX_FRAMES`。ブロック方式のアドオンはそのまま出せる））
 
 ## 上限と容量（公式の値）
 
