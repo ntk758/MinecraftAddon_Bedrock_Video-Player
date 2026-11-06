@@ -36,6 +36,14 @@ from pack_builder import (  # noqa: F401 (stable_pack_uuid などは以前から
 )
 from mvcodec.stage import stage_geometry
 from pack_metadata import PACK_VERSION, RELEASE_NOTES, version_text  # noqa: F401 (PACK_VERSION はテストが使う)
+# 画像（テクスチャ）再生方式 (image_mode/, docs/IMAGE_MODE.md)。ブロック方式のアドオンとは別に作る
+from image_mode import frame_extract
+from image_mode.build_image_addon import (
+    build_image_addon,
+    image_namespace,
+    image_output_path,
+    image_pack_name,
+)
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -333,6 +341,36 @@ DEFAULT_DEPTH = 16
 VOX_SUFFIX = ".vox"
 # MMD のモデル。追加するときに踊り (.vmd) も選び、作るときに立体のアニメ (.vox) にする
 PMX_SUFFIX = ".pmx"
+# 画像（テクスチャ）方式のフレーム数の上限 (動画の長さを指定しなかったときの上限。image_mode/build_image_addon.py
+# の --limit の既定と同じ)。テクスチャの容量は解像度 × 枚数で増える (docs/IMAGE_MODE.md の上限と容量)
+IMAGE_MAX_FRAMES = 600
+
+
+def image_video_specs(video_entries: list[dict]) -> tuple[list[dict], list[str]]:
+    """画像（テクスチャ）方式で使える動画だけ選ぶ。
+
+    .vox と MMD (.pmx) は元の動画のコマを持たない (立体を画像化したものしか無い) ので使えない。
+    (使える動画の指定, 使えなかった動画の ID の一覧) を返す。
+    """
+    specs: list[dict] = []
+    skipped: list[str] = []
+    for entry in video_entries:
+        path = Path(entry["file_path"])
+        if path.suffix.lower() in (VOX_SUFFIX, PMX_SUFFIX):
+            skipped.append(str(entry["video_id"]))
+            continue
+        specs.append({"id": str(entry["video_id"]), "title": str(entry["video_id"]), "source": path})
+    return specs, skipped
+
+
+def image_frame_limit(duration: float | None, fps: float) -> int:
+    """画像（テクスチャ）方式のフレーム数の上限。動画の長さが分かっているときはその長さ × fps、無いときは上限。"""
+    use_fps = min(float(fps), frame_extract.MAX_FPS)
+    if duration is None or float(duration) <= 0:
+        return IMAGE_MAX_FRAMES
+    return max(1, min(IMAGE_MAX_FRAMES, int(float(duration) * use_fps) + 1))
+
+
 # MMD の人物の高さ (ブロック) の上限。高すぎると重い (実機で高さ 56 は 10 fps、96 は重すぎた)
 MMD_MAX_HEIGHT = 64
 # だまし絵のときの上限。MMD のモデルは表面だけの殻で、髪やスカートの薄い板が多く、見える面が同じ高さの手作りの
@@ -538,6 +576,8 @@ class PackBuilderApp(tk.Tk):
         self.mmd_extreme_var = tk.BooleanVar(value=False)
         # 立体のモードのとき、同じ動画の平面版もセットで入れる (音声は共通。pack_builder の audio_from)
         self.pair_flat_var = tk.BooleanVar(value=False)
+        # 画像（テクスチャ）方式のアドオンも同じフォルダに作る (image_mode/。ブロック方式のアドオンとは別ファイル)
+        self.image_mode_var = tk.BooleanVar(value=False)
         # MMD のモデル (.pmx のパス) → 踊り (.vmd のパス)
         self.mmd_motions: dict[str, str] = {}
         # だまし絵の後ろの壁に流す背景の映像 (空なら壁は単色)
@@ -796,6 +836,9 @@ class PackBuilderApp(tk.Tk):
         ).grid(row=6, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         ttk.Checkbutton(settings, text=tr("settings.pair_flat"), variable=self.pair_flat_var).grid(
             row=8, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
+        # 画像（テクスチャ）方式のアドオンを、ブロック方式の出力の隣に作る (別ファイル・別のコマンドの接頭辞)
+        ttk.Checkbutton(settings, text=tr("settings.image_mode"), variable=self.image_mode_var).grid(
+            row=9, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         # 再生負荷の目安 (幅・高さ・fps・表示モード・奥行きを変えるたびに更新)
         self.load_label = ttk.Label(settings, wraplength=720)
         self.load_label.grid(row=7, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
@@ -1084,7 +1127,7 @@ class PackBuilderApp(tk.Tk):
             target=self._build_pack,
             args=(video_entries, output, pack_name, namespace, width, height, fps, duration, palette, dither_method,
                   device, mode, depth, self._addon_language(), self.anamorphic_var.get(),
-                  self.stage_background_var.get().strip() or None, self.mmd_extreme_var.get(), self.pair_flat_var.get()),
+                  self.stage_background_var.get().strip() or None, self.mmd_extreme_var.get(), self.pair_flat_var.get(), self.image_mode_var.get()),
             daemon=True,
         ).start()
 
@@ -1271,7 +1314,7 @@ class PackBuilderApp(tk.Tk):
         width: int, height: int, fps: float, duration: float | None, palette: str, dither_method: str,
         device: str, mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH, addon_language: str | None = None,
         anamorphic: bool = False, stage_background: str | None = None, mmd_extreme: bool = False,
-        pair_flat: bool = False,
+        pair_flat: bool = False, image_mode: bool = False,
     ) -> None:
         try:
             ffmpeg = get_ffmpeg_path()
@@ -1397,6 +1440,11 @@ class PackBuilderApp(tk.Tk):
                 video_index_entries = build_addon(output, videos, pack_name, namespace, addon_language)
                 self.building_previews = self._write_previews(output, videos)
 
+                # 画像（テクスチャ）方式のアドオンは別ファイルなので、失敗してもブロック方式のアドオンは残る
+                if image_mode:
+                    self._build_image_pack(video_entries, output, pack_name, namespace, width, height, fps, duration,
+                                           ffmpeg)
+
             video_names = ", ".join(e["id"] for e in video_index_entries)
             self.messages.put((
                 "success",
@@ -1404,6 +1452,40 @@ class PackBuilderApp(tk.Tk):
             ))
         except Exception as error:
             self.messages.put(("error", str(error)))
+
+    def _build_image_pack(self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
+                          width: int, height: int, fps: float, duration: float | None,
+                          ffmpeg: str) -> Path | None:
+        """画像（テクスチャ）方式のアドオンを、ブロック方式の出力の隣に作る (image_mode/)。
+
+        作れる動画が無かったり、作る途中で失敗したりしたときは、処理を止めずにログに理由だけ出して None を返す
+        (ブロック方式のアドオンはもう作れている)。
+        """
+        image_output = image_output_path(output)
+        try:
+            specs, skipped = image_video_specs(video_entries)
+            for video_id in skipped:
+                self.messages.put(self.tr("build.image_skipped", id=video_id))
+            if not specs:
+                self.messages.put(self.tr("build.image_none"))
+                return None
+            limit = image_frame_limit(duration, fps)
+            self.messages.put(self.tr("build.image_start", output=image_output, frames=limit))
+            videos = []
+            for spec in specs:
+                result = frame_extract.extract_frames(spec["source"], width, height, fps, limit,
+                                                     ffmpeg=ffmpeg, run_kwargs=subprocess_kwargs())
+                videos.append({"id": spec["id"], "title": spec["title"], "frames": result["frames"],
+                               "width": result["width"], "height": result["height"], "fps": result["fps"]})
+            info = build_image_addon(image_output, videos, image_namespace(namespace), image_pack_name(pack_name),
+                                    description=self.tr("pack.image_desc"))
+            self.messages.put(self.tr("build.image_done", output=image_output,
+                                      videos=", ".join(video["id"] for video in info["videos"]),
+                                      ns=image_namespace(namespace), mib=f"{info['texture_mib']:.1f}"))
+            return image_output
+        except Exception as error:
+            self.messages.put(self.tr("build.image_failed", output=image_output, error=str(error)))
+            return None
 
     def _drain_messages(self) -> None:
         try:

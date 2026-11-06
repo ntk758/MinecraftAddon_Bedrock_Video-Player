@@ -352,5 +352,18 @@
   "dialog.image_files": "Imagens (arte de blocos parada)",
   "web.audio_wav_fallback": "Não foi possível carregar o codificador OGG, então o som será salvo em WAV (maior): {error}",
   "settings.pair_flat": "Com um modo 3D, adicionar também o vídeo plano normal (mesmo som; a versão 2D é <ID>_flat)",
-  "build.pair_flat": "  Convertendo também a versão plana (2D): {id}"
+  "build.pair_flat": "  Convertendo também a versão plana (2D): {id}",
+  "settings.image_mode": "Também cria o add-on de imagens (texturas) na mesma pasta: arquivo separado, reproduzido como vídeo em textura no jogo",
+  "pack.image_desc": "Add-on de reprodução de imagens em textura: método separado do renderizador de blocos; toca os PNG no jogo",
+  "build.image_start": "Também criando o add-on de imagens: {output} (até {frames} quadros)",
+  "build.image_skipped": "  Não dá para usar no modo de imagem (.vox / MMD): {id}",
+  "build.image_none": "Nenhum vídeo serve para o modo de imagem (.vox e MMD não têm quadros originais)",
+  "build.image_done": "Add-on de imagens: {output} ({videos}); texturas ~{mib} MiB. No jogo: /{ns}:setup coloca a tela, /{ns}:play <id> reproduz",
+  "build.image_failed": "Não foi possível criar o add-on de imagens ({output}): {error}",
+  "web.image_mode": "Também cria o add-on de imagens (texturas): arquivo separado, dois downloads",
+  "web.image_skipped": "  Não dá para usar no modo de imagem (.vox / MMD): {id}",
+  "web.image_failed": "Não foi possível criar o add-on de imagens: {error}",
+  "web.image_done": "Add-on de imagens: {size} KB",
+  "web.image_download": "Baixar o add-on de imagens",
+  "web.image_howto": "O add-on de imagens é um arquivo separado. No jogo: /{ns}:setup coloca a tela, /{ns}:play <id> reproduz"
 }

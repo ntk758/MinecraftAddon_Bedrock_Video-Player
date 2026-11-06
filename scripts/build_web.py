@@ -23,6 +23,10 @@ ROOT = Path(__file__).resolve().parent.parent
 APP_FILES = [
     "convert.py", "gui_i18n.py", "pack_builder.py", "pack_metadata.py", "main.js", "codec.js", "manifest.json",
     *[str(p.relative_to(ROOT)).replace("\\", "/") for p in sorted((ROOT / "mvcodec").glob("*.py"))],
+    # 画像（テクスチャ）方式 (image_mode/)。ブラウザ版の Python はパッケージとして読む (image_mode/scripts の
+    # スクリプトは出来たアドオンの中身に入る)
+    *[str(p.relative_to(ROOT)).replace("\\", "/") for p in sorted((ROOT / "image_mode").glob("*.py"))],
+    "image_mode/scripts/image_main.js",
     *[str(p.relative_to(ROOT)).replace("\\", "/") for p in sorted((ROOT / "locales").glob("*.json"))],
 ]
 
