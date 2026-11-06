@@ -70,7 +70,7 @@ def test_zip_has_the_expected_files(built):
     assert "RP/models/screen.geo.json" in names
     assert "BP/scripts/main.js" in names
     for index in range(12):
-        assert f"RP/textures/bvpimg/frame_{index}.png" in names
+        assert f"RP/textures/bvpimg/screen/frame_{index}.png" in names
     # ブロック方式のデータは入れない (別方式なので main.js / codec.js の再生データを持たない)
     assert "BP/scripts/codec.js" not in names
     assert "BP/scripts/videos.js" not in names

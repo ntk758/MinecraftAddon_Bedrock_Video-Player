@@ -17,10 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
-import subprocess
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
 
@@ -32,128 +29,46 @@ if str(REPO_DIR) not in sys.path:
 from pack_builder import MANIFEST, build_manifest_version, stable_pack_uuid  # noqa: E402
 from pack_metadata import changelog_markdown, manifest_description, version_text  # noqa: E402
 
+import frame_extract  # noqa: E402
+import pack_docs  # noqa: E402
+
 POC_SCRIPT = APP_DIR / "scripts" / "image_poc_main.js"
-TICKS_PER_SECOND = 20
-MAX_FPS = TICKS_PER_SECOND  # 1 tick に 1 フレームが上限 (main.js と同じ前提)
+TICKS_PER_SECOND = frame_extract.TICKS_PER_SECOND
+MAX_FPS = frame_extract.MAX_FPS  # 1 tick に 1 フレームが上限 (main.js と同じ前提)
 
 # エンティティプロパティは 1 種別あたり 32 個まで (公式の上限)。この PoC は 1 個だけ使う。
-ENTITY_PROPERTY_LIMIT = 32
+ENTITY_PROPERTY_LIMIT = pack_docs.ENTITY_PROPERTY_LIMIT
 
 
 def ticks_per_frame(fps: float) -> int:
     """1 フレームを何 tick 進めるか。fps > 20 は 20 に clamp する (1 tick = 1 フレームが上限)。"""
-    limited = min(float(fps), MAX_FPS)
-    if limited <= 0:
-        raise ValueError(f"fps は 0 より大きく: {fps}")
-    return max(1, int(round(TICKS_PER_SECOND / limited)))
+    return frame_extract.ticks_per_frame(fps)
+
+
+def png_size(data: bytes) -> tuple[int, int]:
+    """PNG の IHDR から幅と高さを読む。"""
+    return frame_extract.png_size(data)
 
 
 def bp_entity_json(namespace: str, frame_count: int) -> str:
-    """BP 側のエンティティ定義。フレーム番号の int プロパティだけを宣言する。"""
-    if frame_count < 1:
-        raise ValueError(f"フレーム数は 1 以上: {frame_count}")
-    if frame_count > ENTITY_PROPERTY_LIMIT * 1024:
-        raise ValueError(f"フレーム数が大きすぎます: {frame_count}")
-    doc = {
-        "format_version": "1.21.0",
-        "minecraft:entity": {
-            "description": {
-                "identifier": f"{namespace}:screen",
-                "is_spawnable": False,
-                "is_summonable": True,
-                "is_experimental": False,
-                "properties": {
-                    f"{namespace}:frame": {
-                        "type": "int",
-                        "range": [0, frame_count - 1],
-                        "default": 0,
-                        # クライアントに同期しないと Resource Pack の描画 (q.property) はこの値を読めない
-                        "client_sync": True,
-                    }
-                },
-            },
-            "components": {
-                "minecraft:health": {"value": 1024, "max": 1024},
-                "minecraft:physics": {},
-                "minecraft:pushable": {"is_pushable": False, "is_pushable_by_piston": False},
-            },
-        },
-    }
-    return json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    """BP 側のエンティティ定義 (画面のエンティティ `namespace:screen`)。"""
+    return pack_docs.bp_entity_json(namespace, "screen", frame_count)
 
 
 def rp_entity_json(namespace: str, frame_count: int) -> str:
-    """RP 側のクライアントエンティティ定義。フレームの PNG を短い名前で並べる。"""
-    textures = {f"f{index}": f"textures/{namespace}/frame_{index}" for index in range(frame_count)}
-    doc = {
-        "format_version": "1.10.0",
-        "minecraft:client_entity": {
-            "description": {
-                "identifier": f"{namespace}:screen",
-                # ビルトインの material だけ使う (カスタム material は公式に「不安定な挙動」の注意書きがある)
-                "materials": {"default": "entity"},
-                "textures": textures,
-                "geometry": {"default": f"geometry.{namespace}.screen"},
-                "render_controllers": [f"controller.render.{namespace}.screen"],
-            }
-        },
-    }
-    return json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    """RP 側のクライアントエンティティ定義。"""
+    return pack_docs.rp_entity_json(namespace, "screen", frame_count)
 
 
 def render_controller_json(namespace: str, frame_count: int) -> str:
     """テクスチャの配列をエンティティプロパティの値で選ぶ render controller。"""
-    doc = {
-        "format_version": "1.8.0",
-        "render_controllers": {
-            f"controller.render.{namespace}.screen": {
-                "arrays": {
-                    "textures": {
-                        "Array.frames": [f"Texture.f{index}" for index in range(frame_count)]
-                    }
-                },
-                "geometry": "Geometry.default",
-                "materials": [{"*": "Material.default"}],
-                # 配列の index を q.property で選ぶ (公式の例は query.variant を使っている)
-                "textures": [f"Array.frames[q.property('{namespace}:frame')]"],
-            }
-        },
-    }
-    return json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    return pack_docs.render_controller_json(namespace, "screen", frame_count)
 
 
 def geometry_json(namespace: str, width: int, height: int) -> str:
-    """画面のジオメトリ。1 ブロック = 16 units。aspect ratio はテクスチャと同じにする。"""
-    if width <= 0 or height <= 0:
-        raise ValueError(f"画面の大きさは 0 より大きい: {width}x{height}")
-    units_x = 32
-    units_y = int(round(units_x * height / width))
-    cube = {
-        "origin": [-units_x // 2, -units_y // 2, -1],
-        "size": [units_x, max(1, units_y), 2],
-        # 前後の面に同じ画像を貼る (どちら側から見ても映る)
-        "uv": {
-            "north": {"uv": [0, 0], "uv_size": [width, height]},
-            "south": {"uv": [0, 0], "uv_size": [width, height]},
-        },
-    }
-    doc = {
-        "format_version": "1.16.0",
-        "minecraft:geometry": [
-            {
-                "description": {
-                    "identifier": f"geometry.{namespace}.screen",
-                    "texture_width": width,
-                    "texture_height": height,
-                    "visible_bounds_width": max(2, units_x // 16 + 1),
-                    "visible_bounds_height": max(2, units_y // 16 + 1),
-                    "visible_bounds_offset": [0, 1, 0],
-                },
-                "bones": [{"name": "screen", "pivot": [0, 0, 0], "cubes": [cube]}],
-            }
-        ],
-    }
-    return json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    """画面のジオメトリ (2 ブロック幅)。"""
+    return pack_docs.geometry_json(namespace, "screen", width, height)
+
 
 
 def poc_main_text(namespace: str, frame_count: int, fps: float) -> str:
@@ -183,8 +98,8 @@ def build_poc_addon(output, frames: list[bytes], width: int, height: int, fps: f
         files[path] = content.encode("utf-8") if isinstance(content, str) else bytes(content)
 
     frame_count = len(frames)
-    for index, data in enumerate(frames):
-        put(f"RP/textures/{namespace}/frame_{index}.png", data)
+    for path, data in pack_docs.texture_bytes(frames, namespace, "screen").items():
+        put(path, data)
     put("BP/entities/screen.json", bp_entity_json(namespace, frame_count))
     put("RP/entity/screen.json", rp_entity_json(namespace, frame_count))
     put("RP/render_controllers/screen.json", render_controller_json(namespace, frame_count))
@@ -227,48 +142,13 @@ def build_poc_addon(output, frames: list[bytes], width: int, height: int, fps: f
     return {"paths": sorted(files), "frame_count": frame_count, "ticks_per_frame": ticks_per_frame(fps)}
 
 
-def png_size(data: bytes) -> tuple[int, int]:
-    """PNG のヘッダーから幅と高さを読む (画像のライブラリを使わない)。"""
-    if data[:8] != b"\x89PNG\r\n\x1a\n":
-        raise ValueError("PNG の形式ではありません")
-    offset = 8
-    while offset + 8 <= len(data):
-        length = int.from_bytes(data[offset:offset + 4], "big")
-        kind = data[offset + 4:offset + 8]
-        body = data[offset + 8:offset + 8 + length]
-        if kind == b"IHDR":
-            return int.from_bytes(body[0:4], "big"), int.from_bytes(body[4:8], "big")
-        offset += 8 + length + 4
-    raise ValueError("PNG に IHDR がありません")
-
-
 def generate_frames(width: int, height: int, fps: float, count: int, source: Path | None = None) -> list[bytes]:
     """ffmpeg でフレームの PNG を書き出す。source が無いときは ffmpeg の testsrc (動くテスト映像)。"""
-    if count < 1:
-        raise ValueError(f"フレーム数は 1 以上: {count}")
-    work = Path(tempfile.mkdtemp(prefix="bvpimg-"))
-    try:
-        pattern = work / "frame_%03d.png"
-        command = ["ffmpeg", "-y", "-loglevel", "error"]
-        if source is None:
-            command += ["-f", "lavfi", "-i", f"testsrc=size={width}x{height}:rate={max(1, int(round(fps)))}"]
-        else:
-            command += ["-i", str(source), "-vf", f"fps={fps},scale={width}:{height}:force_original_aspect_ratio=decrease"]
-        command += ["-frames:v", str(count), str(pattern)]
-        result = subprocess.run(command, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"ffmpeg が失敗しました ({result.returncode}): {result.stderr.strip()[:400]}")
-        paths = sorted(work.glob("frame_*.png"))
-        if len(paths) != count:
-            raise RuntimeError(f"expected {count} frame PNGs, got {len(paths)}")
-        frames = [path.read_bytes() for path in paths]
-        sizes = {png_size(data) for data in frames}
-        if sizes and sizes != {(width, height)}:
-            print(f"[{width}x{height}] を作れません (実際: {sorted(sizes)})。testsrc のサイズ指定か --input を確認してください",
-                  file=sys.stderr)
-        return frames
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+    result = frame_extract.extract_frames(source, width, height, fps, count)
+    if (result["width"], result["height"]) != (width, height):
+        print(f"[{width}x{height}] を作れません (実際: {result['width']}x{result['height']})。"
+              "testsrc のサイズ指定か --input を確認してください", file=sys.stderr)
+    return result["frames"]
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -300,9 +180,10 @@ def main(argv: list[str]) -> int:
             (keep / f"frame_{index}.png").write_bytes(data)
         print(f"フレームを {keep} に残しました")
     info = build_poc_addon(args.output, frames, args.width, args.height, args.fps, args.namespace)
-    texels = args.width * args.height * len(frames) * 4
-    print(f"{args.output}: {info['frame_count']} フレーム, 1 フレーム {info['ticks_per_frame']} tick, "
-          f"テクスチャの見積容量 {texels / (1024 * 1024):.1f} MiB")
+    real_width, real_height = png_size(frames[0])
+    texels = real_width * real_height * len(frames) * 4
+    print(f"{args.output}: {info['frame_count']} フレーム ({real_width}x{real_height}), "
+          f"1 フレーム {info['ticks_per_frame']} tick, テクスチャの見積容量 {texels / (1024 * 1024):.1f} MiB")
     print("ゲームでの確認手順は docs/IMAGE_MODE.md に書いています (実機での動作は未確認)")
     return 0
 
