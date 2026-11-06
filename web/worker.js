@@ -111,11 +111,29 @@ mmd_to_vox(**dict(mmd_args), progress=mmd_progress)
   return voxPath;
 }
 
+// 画像（テクスチャ）方式 (image_mode/)。この動画のコマの PPM を PNG にする。ブラウザには ffmpeg が無いので
+// Pillow を使う (image_mode/frame_extract.py の png_from_ppm)。コマは既に /work/<id>/ に書いてある
+function imageFrames(pyodide, dir, width, height) {
+  pyodide.globals.set("image_dir", dir);
+  pyodide.globals.set("image_width", width);
+  pyodide.globals.set("image_height", height);
+  const proxy = pyodide.runPython(`
+import os
+from image_mode.frame_extract import png_from_ppm
+paths = sorted(p for p in os.listdir(image_dir) if p.endswith(".ppm"))
+[png_from_ppm(open(os.path.join(image_dir, p), "rb").read(), image_width, image_height) for p in paths]
+`);
+  const frames = proxy.toJs();
+  proxy.destroy();
+  return frames;
+}
+
 self.onmessage = async (event) => {
   const { settings: s, jobs, background, lang } = event.data;
   try {
     const pyodide = await ready;
     const videos = [];
+    const imageVideos = [];
     for (const [n, job] of jobs.entries()) {
       const dir = `/work/${job.id}`;
       try { pyodide.FS.mkdirTree(dir); } catch (e) { /* 既にある */ }
@@ -157,6 +175,16 @@ self.onmessage = async (event) => {
         if (flatCode !== 0) throw new Error(`convert.py exit ${flatCode}`);
         flat = { id: flatId, title: `${job.title} (2D)`, frames_js: pyodide.FS.readFile(flatOut, { encoding: "utf8" }),
                  thumbnail: job.thumbnail, sounds: [], audio_from: backgroundId || job.id, width: s.width, height: s.height };
+      }
+      // 画像（テクスチャ）方式のアドオン (別ファイル) は、この動画のコマの PNG から作る。.vox と MMD は
+      // 元の映像のコマが無いので使えない (image_mode/ と docs/IMAGE_MODE.md)
+      if (s.imageMode) {
+        if (!job.frames.length) {
+          say("web.image_skipped", { id: job.id });
+        } else {
+          imageVideos.push({ id: job.id, title: job.title, frames: imageFrames(pyodide, dir, s.width, s.height),
+                             width: s.width, height: s.height, fps: s.fps });
+        }
       }
       for (const name of pyodide.FS.readdir(dir)) if (/\.(ppm|vox)$/.test(name)) pyodide.FS.unlink(`${dir}/${name}`);
       const framesJs = pyodide.FS.readFile(out, { encoding: "utf8" });
@@ -215,7 +243,36 @@ for n, v in enumerate(js_videos):
     if (addonProxy.destroy) addonProxy.destroy();
     previewProxy.destroy();
     result.destroy();
-    post("done", { addon, previews }, [addon.buffer]);
+
+    // 画像（テクスチャ）方式のアドオンは別ファイルなので、失敗してもブロック方式のアドオンはそのまま出せる
+    let imageAddon = null;
+    if (s.imageMode && imageVideos.length) {
+      try {
+        pyodide.globals.set("img_videos", pyodide.toPy(imageVideos));
+        pyodide.globals.set("img_pack_name", s.packName);
+        pyodide.globals.set("img_namespace", s.namespace);
+        pyodide.globals.set("img_lang", lang);
+        const proxy = pyodide.runPython(`
+from gui_i18n import Translator
+from image_mode.build_image_addon import build_image_addon_bytes, image_namespace, image_pack_name
+
+videos = []
+for v in img_videos:
+    v = dict(v)
+    videos.append({"id": str(v["id"]), "title": str(v["title"]),
+                   "frames": [bytes(f) for f in v["frames"]],
+                   "width": int(v["width"]), "height": int(v["height"]), "fps": float(v["fps"])})
+build_image_addon_bytes(videos, image_pack_name(img_pack_name), image_namespace(img_namespace),
+                        description=Translator(img_lang)("pack.image_desc"))
+`);
+        imageAddon = proxy.toJs();
+        proxy.destroy();
+      } catch (e) {
+        // 画像方式は別アドオンなので、失敗してもブロック方式のアドオンはそのまま出せる
+        say("web.image_failed", { error: String(e && e.message ? e.message : e) });
+      }
+    }
+    post("done", { addon, previews, imageAddon }, [addon.buffer]);
   } catch (e) {
     post("error", { text: String(e && e.message ? e.message : e) });
   }

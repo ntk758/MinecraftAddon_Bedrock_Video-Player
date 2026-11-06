@@ -1,4 +1,4 @@
-// ブラウザ版 (web/) と同じ Pyodide (32bit の WebAssembly の Python) で、convert.py と pack_builder.py を最後まで動かす。
+// ブラウザ版 (web/) と同じ Pyodide (32bit の WebAssembly の Python) で、convert.py ・ pack_builder.py ・ image_mode/ を最後まで動かす。
 // 64bit の Python では起きない型の違い (np.intp が 32bit など) をブラウザを使わずに見つけるため (CI で実行)。
 // 使い方: node tests/js/pyodide_smoke.mjs <scripts/build_web.py で作ったフォルダ>
 import { loadPyodide } from "pyodide";
@@ -71,13 +71,51 @@ assert convert.main(["--input-vox", "/work/shell.vox", "--mode", "vox", "--view"
 text = open("/work/shell.js", encoding="utf-8").read()
 *_, (shell_volume, _rgb) = iter_decoded_frames(json.loads(text[text.index("{"):text.rindex("}") + 1]))
 counts["shell"] = int((shell_volume != 127).sum())
+# 画像（テクスチャ）再生方式。ブラウザ版と同じ PPM → PNG → 別のアドオン (web/worker.js の imageFrames と同じ経路)
+from image_mode.build_image_addon import build_image_addon_bytes, image_namespace, image_pack_name
+from image_mode.frame_extract import png_from_ppm, png_size
+
+frames = [png_from_ppm(open(f"/work/frames/f{t:03d}.ppm", "rb").read(), 64, 36) for t in range(20)]
+image_addon = build_image_addon_bytes([{"id": "clip", "title": "clip", "frames": frames,
+                                        "width": 64, "height": 36, "fps": 10}],
+                                      image_pack_name("Smoke"), image_namespace("smoke"),
+                                      description="画像方式")
+image_archive = zipfile.ZipFile(io.BytesIO(image_addon))
+names = image_archive.namelist()
+assert "BP/entities/clip.json" in names and "RP/render_controllers/clip.json" in names
+assert png_size(image_archive.read("RP/textures/smoke_img/clip/frame_0.png")) == (64, 36)
+counts["image_frames"] = sum(1 for name in names if name.startswith("RP/textures/smoke_img/clip/frame_"))
 json.dumps(counts)
 `);
 const counts = JSON.parse(result);
 console.log(JSON.stringify(counts));
+// web/worker.js が画像方式のアドオンを作る runPython をそのまま実行する (global の名前の衝突や、
+// JS の Uint8Array → Python の bytes の変換は 64bit の Python では検証できない)
+const imageFrames = pyodide.runPython("frames").toJs(); // worker.js の imageFrames() と同じ形の Uint8Array の一覧
+pyodide.globals.set("img_videos", pyodide.toPy([{ id: "clip", title: "clip", frames: imageFrames, width: 64, height: 36, fps: 10 }]));
+pyodide.globals.set("img_pack_name", "Smoke");
+pyodide.globals.set("img_namespace", "smoke");
+pyodide.globals.set("img_lang", "en");
+const imageAddon = pyodide.runPython(`
+from gui_i18n import Translator
+from image_mode.build_image_addon import build_image_addon_bytes, image_namespace, image_pack_name
+
+videos = []
+for v in img_videos:
+    v = dict(v)
+    videos.append({"id": str(v["id"]), "title": str(v["title"]),
+                   "frames": [bytes(f) for f in v["frames"]],
+                   "width": int(v["width"]), "height": int(v["height"]), "fps": float(v["fps"])})
+build_image_addon_bytes(videos, image_pack_name(img_pack_name), image_namespace(img_namespace),
+                        description=Translator(img_lang)("pack.image_desc"))
+`).toJs(); // worker.js の done の imageAddon と同じ (Uint8Array)
+console.log("image addon bytes", imageAddon.length);
+if (imageAddon.length === 0) process.exit(1);
 if (counts.screen !== 20 || counts.relief !== 20 || counts.vox !== 5) process.exit(1);
 // 7×7×7 の殻の中の閉じた空洞 (5×5×5) が埋まって、詰まった立方体 (343 マス) になる
 if (counts.shell !== 343) process.exit(1);
+// 画像（テクスチャ）方式は 20 フレームの PNG が RP のテクスチャに並ぶ
+if (counts.image_frames !== 20) process.exit(1);
 // 最後の進み具合は「全部済んだ」(各変換の最後に必ず呼ばれる)
 console.log("progress calls", progress.length);
 if (progress.length === 0 || progress.some(([done, total]) => done > total)) process.exit(1);

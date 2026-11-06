@@ -27,6 +27,13 @@ const isVox = (file) => /\.vox$/i.test(file.name);
 const isImage = (file) => /^image\//.test(file.type) || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name);
 let worker = null;
 let lastDownloadUrl = null;
+// 画像（テクスチャ）方式のアドオンの、ダウンロードのファイル名の末尾 (image_mode/build_image_addon.py の
+// IMAGE_PACK_SUFFIX と同じ。別のファイルにしないと、ゲームに入れると2つのアドオンが混ざる)
+const IMAGE_PACK_SUFFIX = "_images";
+// 画像方式のアドオンのコマンドの接頭辞の末尾 (image_mode/build_image_addon.py の IMAGE_NAMESPACE_SUFFIX と同じ。
+// ブロック方式と同じ接頭辞だと、ゲームに登録するコマンドの名前が同じで衝突する)
+const IMAGE_NAMESPACE_SUFFIX = "_img";
+let lastImageUrl = null;
 
 function log(text) {
   const el = $("log");
@@ -159,6 +166,8 @@ function settings() {
     keyframe: Math.max(0, Math.round(Number($("keyframe").value) || 0)), perceptual: $("perceptual").checked,
     packName: $("packName").value.trim() || "Block Video Player",
     namespace: ($("namespace").value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "") || "badapple"),
+    // 画像（テクスチャ）方式のアドオンを別で作る (worker.js が同じフレームの PNG を使う)
+    imageMode: $("imageMode").checked,
   };
 }
 
@@ -393,6 +402,18 @@ function finish(msg) {
   $("progress").value = 1;
   $("build").disabled = false;
   log(t("web.done", { size: (blob.size / 1024).toFixed(0) }));
+  if (msg.imageAddon) {
+    // 画像（テクスチャ）方式のアドオンは別ファイルなので、別のダウンロードのリンクを出す
+    const imageBlob = new Blob([msg.imageAddon], { type: "application/octet-stream" });
+    if (lastImageUrl) URL.revokeObjectURL(lastImageUrl);
+    lastImageUrl = URL.createObjectURL(imageBlob);
+    const imageLink = $("imageDownload");
+    imageLink.href = lastImageUrl;
+    imageLink.download = `${settings().packName.replace(/[^\w.-]+/g, "_")}${IMAGE_PACK_SUFFIX}.mcaddon`;
+    imageLink.hidden = false;
+    log(t("web.image_done", { size: (imageBlob.size / 1024).toFixed(0) }));
+    log("  " + t("web.image_howto", { ns: settings().namespace + IMAGE_NAMESPACE_SUFFIX }));
+  }
   window.lastResult = msg; // テスト用
   if (msg.previews && msg.previews.length) {
     // プレビューが出せなくてもアドオンはできている (ダウンロードはそのまま)
@@ -440,6 +461,7 @@ async function build() {
   const s = settings();
   $("build").disabled = true;
   $("download").hidden = true;
+  $("imageDownload").hidden = true;
   Preview.hide();
   $("log").textContent = "";
   const w = startWorker();
