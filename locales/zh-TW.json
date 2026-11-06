@@ -352,5 +352,18 @@
   "dialog.image_files": "圖片（靜態方塊畫）",
   "web.audio_wav_fallback": "無法載入 OGG 編碼器，因此音訊將存成 WAV（較大）：{error}",
   "settings.pair_flat": "選擇立體模式時，也一併加入一般的平面影片（共用音訊；平面版為 <影片ID>_flat）",
-  "build.pair_flat": "  也在轉換平面（2D）版：{id}"
+  "build.pair_flat": "  也在轉換平面（2D）版：{id}",
+  "settings.image_mode": "同時生成貼圖影像方式的附加內容（單獨檔案，遊戲中把影像映在貼圖播放）",
+  "pack.image_desc": "貼圖影像播放方式的附加內容：與方塊渲染器不同的做法，在遊戲內播放影格的 PNG",
+  "build.image_start": "也在生成貼圖影像方式的附加內容：{output}（最多 {frames} 影格）",
+  "build.image_skipped": "  影像方式無法使用（.vox、MMD）：{id}",
+  "build.image_none": "沒有可用於影像方式的影片（.vox、MMD 沒有原始影格）",
+  "build.image_done": "影像方式的附加內容：{output}（{videos}）貼圖預估 {mib} MiB。遊戲中用 /{ns}:setup 放置畫面，用 /{ns}:play <id> 播放",
+  "build.image_failed": "無法生成影像方式的附加內容（{output}）：{error}",
+  "web.image_mode": "同時生成貼圖影像方式的附加內容（單獨檔案，會有兩個下載）",
+  "web.image_skipped": "  影像方式無法使用（.vox、MMD）：{id}",
+  "web.image_failed": "無法生成影像方式的附加內容：{error}",
+  "web.image_done": "影像方式的附加內容：{size} KB",
+  "web.image_download": "下載影像方式的附加內容",
+  "web.image_howto": "影像方式的附加內容是單獨檔案。遊戲中用 /{ns}:setup 放置畫面，用 /{ns}:play <id> 播放"
 }

@@ -352,5 +352,18 @@
   "dialog.image_files": "Bilder (stehende Block-Kunst)",
   "web.audio_wav_fallback": "Der OGG-Encoder konnte nicht geladen werden, daher wird der Ton als WAV (größer) gespeichert: {error}",
   "settings.pair_flat": "Bei einem 3D-Modus auch das normale flache Video hinzufügen (gleicher Ton; die 2D-Version heißt <ID>_flat)",
-  "build.pair_flat": "  Die flache (2D-)Version wird ebenfalls umgewandelt: {id}"
+  "build.pair_flat": "  Die flache (2D-)Version wird ebenfalls umgewandelt: {id}",
+  "settings.image_mode": "Das Bild-Add-On (Texturen) ebenfalls im selben Ordner erstellen – separate Datei, läuft im Spiel als Textur-Video",
+  "pack.image_desc": "Bild-Add-On mit Textur-Wiedergabe: eine andere Methode als der Block-Renderer; spielt die PNG-Bilder im Spiel",
+  "build.image_start": "Das Bild-Add-On wird ebenfalls erstellt: {output} (max. {frames} Bilder)",
+  "build.image_skipped": "  Im Bildmodus nicht nutzbar (.vox / MMD): {id}",
+  "build.image_none": "Keine Videos für den Bildmodus (.vox und MMD haben keine Bild-Originale)",
+  "build.image_done": "Bild-Add-On: {output} ({videos}); Texturen geschätzt {mib} MiB. Im Spiel: /{ns}:setup setzt eine Leinwand, /{ns}:play <id> spielt sie",
+  "build.image_failed": "Das Bild-Add-On konnte nicht erstellt werden ({output}): {error}",
+  "web.image_mode": "Das Bild-Add-On (Texturen) ebenfalls erstellen – separate Datei, zwei Downloads",
+  "web.image_skipped": "  Im Bildmodus nicht nutzbar (.vox / MMD): {id}",
+  "web.image_failed": "Das Bild-Add-On konnte nicht erstellt werden: {error}",
+  "web.image_done": "Bild-Add-On: {size} KB",
+  "web.image_download": "Bild-Add-On herunterladen",
+  "web.image_howto": "Das Bild-Add-On ist eine separate Datei. Im Spiel: /{ns}:setup setzt eine Leinwand, /{ns}:play <id> spielt sie"
 }

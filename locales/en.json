@@ -352,5 +352,18 @@
   "dialog.image_files": "Pictures (still block art)",
   "web.audio_wav_fallback": "The OGG encoder could not be loaded, so the sound is stored as WAV (larger): {error}",
   "settings.pair_flat": "With a 3D mode, also add the normal flat video (same sound; the 2D version is listed as <ID>_flat)",
-  "build.pair_flat": "  Also converting the flat (2D) version: {id}"
+  "build.pair_flat": "  Also converting the flat (2D) version: {id}",
+  "settings.image_mode": "Also build the texture-image add-on in the same folder (a separate file; plays the video on a texture in-game)",
+  "pack.image_desc": "Texture-image playback add-on: a different method from the block renderer; plays the frame PNGs in-game",
+  "build.image_start": "Also building the texture-image add-on: {output} (up to {frames} frames)",
+  "build.image_skipped": "  Not usable in image mode (.vox / MMD): {id}",
+  "build.image_none": "No videos can be used in image mode (.vox and MMD have no source frames)",
+  "build.image_done": "Image-mode add-on: {output} ({videos}); textures about {mib} MiB. In-game: /{ns}:setup places a screen, /{ns}:play <id> plays it",
+  "build.image_failed": "Could not build the image-mode add-on ({output}): {error}",
+  "web.image_mode": "Also build the texture-image add-on (a separate file; you get 2 downloads)",
+  "web.image_skipped": "  Not usable in image mode (.vox / MMD): {id}",
+  "web.image_failed": "Could not build the image-mode add-on: {error}",
+  "web.image_done": "Image-mode add-on: {size} KB",
+  "web.image_download": "Download the image-mode add-on",
+  "web.image_howto": "The image add-on is a separate file. In-game: /{ns}:setup places a screen, /{ns}:play <id> plays it"
 }

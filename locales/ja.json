@@ -352,5 +352,18 @@
   "dialog.image_files": "画像 (止まったブロックアート)",
   "web.audio_wav_fallback": "OGG のエンコーダーを読み込めなかったので、音声を WAV (大きめ) にします: {error}",
   "settings.pair_flat": "立体のモードのとき、通常の平面の動画もセットで入れる (音声は共通。平面版は <動画ID>_flat)",
-  "build.pair_flat": "  平面 (2D) 版も変換しています: {id}"
+  "build.pair_flat": "  平面 (2D) 版も変換しています: {id}",
+  "settings.image_mode": "画像（テクスチャ）方式のアドオンも同じフォルダに作る（別ファイル。ゲームではテクスチャに動画を映す別の再生方式）",
+  "pack.image_desc": "画像（テクスチャ）再生方式のアドオン。ブロック方式とは別の作り方で、フレームの PNG をゲーム内で再生します",
+  "build.image_start": "画像（テクスチャ）方式のアドオンも作ります: {output} (最大 {frames} フレーム)",
+  "build.image_skipped": "  画像方式では使えません (.vox・MMD): {id}",
+  "build.image_none": "画像方式では作れる動画がありません (.vox・MMD は元の映像のコマが無い)",
+  "build.image_done": "画像方式のアドオン: {output} ({videos}) テクスチャの見積 {mib} MiB。ゲームでは /{ns}:setup で画面を置き、/{ns}:play <動画ID> で再生します",
+  "build.image_failed": "画像方式のアドオンは作れませんでした ({output}): {error}",
+  "web.image_mode": "画像（テクスチャ）方式のアドオンも作る（別ファイル。ダウンロードが 2 個になります）",
+  "web.image_skipped": "  画像方式では使えません (.vox・MMD): {id}",
+  "web.image_failed": "画像方式のアドオンは作れませんでした: {error}",
+  "web.image_done": "画像方式のアドオン: {size} KB",
+  "web.image_download": "画像方式のアドオンをダウンロード",
+  "web.image_howto": "画像方式のアドオンは別ファイルです。ゲームでは /{ns}:setup で画面を置き、/{ns}:play <動画ID> で再生します"
 }
