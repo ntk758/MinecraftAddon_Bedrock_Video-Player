@@ -74,7 +74,7 @@ def test_read_frames_failure_raises(tmp_path):
 
 
 def test_audio_chunks(video, silent_video, tmp_path):
-    chunks = atlas.extract_audio_chunks(video, tmp_path / "a", chunk_seconds=1, ffmpeg="ffmpeg")
+    chunks = atlas.extract_audio_chunks(video, tmp_path / "a", chunk_seconds=1, ffmpeg="ffmpeg", max_seconds=3)
     assert [c[0] for c in chunks] == [0, 1, 2]
     assert all(kind == "ogg" and data[:4] == b"OggS" for _, kind, data in chunks)
     trimmed = atlas.extract_audio_chunks(video, tmp_path / "b", chunk_seconds=1, start=0.5, end=2.5)

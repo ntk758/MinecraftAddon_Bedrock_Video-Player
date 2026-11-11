@@ -268,17 +268,21 @@ def format_memory_report(report: dict) -> str:
 
 
 def extract_audio_chunks(path, out_dir, chunk_seconds: float = 4, start: float | None = None,
-                         end: float | None = None, ffmpeg: str = "ffmpeg") -> list[tuple[int, str, bytes]]:
+                         end: float | None = None, ffmpeg: str = "ffmpeg",
+                         max_seconds: float | None = None) -> list[tuple[int, str, bytes]]:
     """音声を chunk_seconds 秒ごとの .ogg (44.1kHz ステレオ) に切り出す。音声のない動画なら []。
 
     ffmpeg の設定は Windows アプリ (video_player_gui.py の _extract_audio) と同じ。
     戻り値は [(チャンクの番号, "ogg", bytes), ...] (番号順)。out_dir に chunk_<n>.ogg も残る。
+    max_seconds があれば、音声をその秒数 (映像の長さ) で切る。音声のほうがわずかに長い動画で、ffmpeg の版によって
+    最後にごく短いチャンクが 1 つ増えるのを防ぐ。
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for old in out_dir.glob("chunk_*.ogg"):
         old.unlink()
-    cmd = [ffmpeg, "-y", "-v", "error", *_trim_args(start, end), "-i", str(path),
+    limit = ["-t", f"{max_seconds:g}"] if max_seconds else []
+    cmd = [ffmpeg, "-y", "-v", "error", *_trim_args(start, end), "-i", str(path), *limit,
            "-f", "segment", "-segment_time", f"{chunk_seconds:g}",
            "-vn", "-acodec", "libvorbis", "-ar", "44100", "-ac", "2", "-b:a", "192k",
            str(out_dir / "chunk_%d.ogg")]

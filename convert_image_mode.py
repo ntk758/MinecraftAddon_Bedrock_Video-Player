@@ -258,7 +258,8 @@ def build(args: argparse.Namespace, log=print) -> dict:
             video_id = video["id"]
             path = inputs[ids.index(video_id)]
             chunks = atlas.extract_audio_chunks(path, Path(temp) / video_id, args.audio_chunk_seconds,
-                                                args.start, args.end, ffmpeg)
+                                                args.start, args.end, ffmpeg,
+                                                max_seconds=video["frame_count"] / video["fps"])
             video["audio_chunks"] = len(chunks)
             log(f"[{video_id}] 音声 {len(chunks)} チャンク" + ("" if chunks else " (音声なし)"))
             for index, ext, data in chunks:
