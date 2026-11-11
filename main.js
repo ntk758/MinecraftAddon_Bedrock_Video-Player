@@ -2031,12 +2031,6 @@ function placeVideo(videoData, origin, dimension, layout) {
 }
 
 /** setup で保存した向き。無い・壊れていれば北向きの床置き (以前の版と同じ)。 */
-/** setup の足元から、その動画を置く位置を決める (align なら、その動画の大きさでチャンクにそろえてから)。 */
-function placeVideo(videoData, origin, dimension, layout) {
-  const base = layout.align ? alignOriginToChunks(videoData, origin, dimension, layout).origin : origin;
-  return anchorForVideo(videoData, base, dimension, layout);
-}
-
 function storedLayout() {
   try {
     const value = JSON.parse(world.getDynamicProperty(LAYOUT_KEY) ?? "null");
