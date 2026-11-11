@@ -140,6 +140,11 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
     def put(path: str, content) -> None:
         files[path] = content.encode("utf-8") if isinstance(content, str) else bytes(content)
 
+    ids = [video["id"] for video in videos]
+    duplicates = sorted({video_id for video_id in ids if ids.count(video_id) > 1})
+    if duplicates:
+        # 同じ ID が 2 つあると videos.js の import がぶつかり、アドオン全体が読み込めなくなる
+        raise ValueError(f"動画 ID が重複しています / duplicate video IDs: {', '.join(duplicates)}")
     entries = []
     sound_definitions = {}
     icon = None

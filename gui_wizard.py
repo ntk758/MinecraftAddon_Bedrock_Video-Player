@@ -340,8 +340,9 @@ class SetupWizard:
 
     # --- 3. 作る ---
     def build(self):
-        self.build_label.configure(text=self.app.tr("wizard.building"))
         self.app.start_build_from_wizard()
+        # 設定の誤りなどで作り始めなかったときは「作っています」にしない
+        self.build_label.configure(text=self.app.tr("wizard.building" if self.app.building else "wizard.build_hint"))
 
     # --- 4. できたら ---
     def build_finished(self, output, ok):
