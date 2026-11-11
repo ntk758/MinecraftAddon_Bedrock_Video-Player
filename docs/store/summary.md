@@ -7,4 +7,4 @@ CurseForge のプロジェクトの設定にある **Summary** (一覧と MCPEDL
 Watch videos made of real blocks with synced sound, as 3D holograms or a trompe-l'oeil. 5 demo clips included; convert your own videos free in your browser.
 ```
 
-文字数: 158 字 (CurseForge の Summary は 200 字まで。文字数の上限は CurseForge の画面で確かめる)。
+文字数: 156 字 (CurseForge の Summary は 200 字まで。文字数の上限は CurseForge の画面で確かめる)。
