@@ -8,14 +8,16 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 from mvcodec.color import (
     AUTO_PALETTE_CANDIDATES,
@@ -108,7 +110,9 @@ def build_video_filter(width, height, fps=None, fit="pad"):
         filters.append(f"scale={width}:{height}:force_original_aspect_ratio=increase")
         filters.append(f"crop={width}:{height}")
     else:
-        filters.append(f"scale={width}:{height}:force_original_aspect_ratio=decrease")
+        # 縦横比が極端だと、縮めた辺が 0 になって ffmpeg が止まる (2000x60 を 8x8 など)。1 以上に収める
+        filters.append(f"scale='max(1,min({width},iw*min({width}/iw,{height}/ih)))'"
+                       f":'max(1,min({height},ih*min({width}/iw,{height}/ih)))'")
         filters.append(f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black")
     return ",".join(filters)
 
@@ -120,6 +124,17 @@ def ffmpeg_frame_generator(video_path, width, height, fps, duration=None, ffmpeg
     cmd.extend(["-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **_subprocess_kwargs())
+    # stderr は別のスレッドで読み続ける (読まないと、壊れた動画で ffmpeg がエラーを書き続けてパイプが詰まり、
+    # ffmpeg とこちらが待ち合って止まる)。エラーの表示には最後の 8 KB だけ使う
+    stderr_tail = bytearray()
+
+    def drain_stderr():
+        for chunk in iter(lambda: proc.stderr.read(4096), b""):
+            stderr_tail.extend(chunk)
+            del stderr_tail[:-8192]
+
+    reader = threading.Thread(target=drain_stderr, daemon=True)
+    reader.start()
     frame_size = width * height * 3
     completed = False
     try:
@@ -133,17 +148,38 @@ def ffmpeg_frame_generator(video_path, width, height, fps, duration=None, ffmpeg
         if not completed:
             proc.kill()
         proc.stdout.close()
-        stderr = proc.stderr.read().decode("utf-8", errors="replace")
-        proc.stderr.close()
         returncode = proc.wait()
+        reader.join(timeout=5)
+        proc.stderr.close()
+        stderr = bytes(stderr_tail).decode("utf-8", errors="replace")
     if completed and returncode != 0:
         raise RuntimeError(f"ffmpeg がエラー終了しました (code {returncode}): {stderr.strip()}")
+
+
+def to_rgb(img):
+    """画像を 8 bit の RGB にする。写真の EXIF の向きに合わせて回し、16 bit の階調は 8 bit に縮め (そのまま RGB に
+    すると白く飛ぶ)、透明な所は黒 (余白と同じ) の上に重ねる (隠れた色が出ないように)。"""
+    img = ImageOps.exif_transpose(img)
+    if img.mode in ("I;16", "I;16B", "I;16L", "I"):
+        array = np.asarray(img, dtype=np.float64)
+        peak = 65535.0 if img.mode.startswith("I;16") or array.max() > 255 else 255.0
+        img = Image.fromarray(np.clip(array / peak * 255.0 + 0.5, 0, 255).astype(np.uint8), "L")
+    if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        canvas = Image.new("RGBA", rgba.size, (0, 0, 0, 255))
+        return Image.alpha_composite(canvas, rgba).convert("RGB")
+    return img.convert("RGB")
+
+
+def natural_key(path):
+    """ファイル名の数字を数として並べる (1, 2, 10 の順。文字の順だと 1, 10, 2 になる)。"""
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", Path(path).name)]
 
 
 def letterbox_image(img, width, height, fit="pad"):
     """FFmpeg の scale(decrease)+pad と同じ規則で画像を収める。fit="cover" なら scale(increase)+crop と同じく、
     画面を埋めるように拡大してはみ出した所を中央で切る。"""
-    img = img.convert("RGB")
+    img = to_rgb(img)
     if img.size == (width, height):
         return img
     if fit == "cover":
@@ -161,8 +197,10 @@ def letterbox_image(img, width, height, fit="pad"):
     return canvas
 
 
-def image_dir_frame_generator(frames_dir, width, height, fit="pad"):
-    files = sorted(p for p in Path(frames_dir).iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS)
+def image_dir_frame_generator(frames_dir, width, height, fit="pad", limit=None):
+    files = sorted((p for p in Path(frames_dir).iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS), key=natural_key)
+    if limit is not None:
+        files = files[:limit]
     for path in files:
         with Image.open(path) as img:
             yield np.asarray(letterbox_image(img, width, height, fit), dtype=np.uint8)
@@ -184,7 +222,9 @@ def make_frame_source(args):
         return lambda: ffmpeg_frame_generator(
             args.input_video, args.width, args.height, args.fps, args.duration, args.ffmpeg, args.fit
         )
-    return lambda: image_dir_frame_generator(args.frames_dir, args.width, args.height, args.fit)
+    # --duration は連番の画像でも効かせる (fps × 秒のコマ数まで)
+    limit = max(1, round(args.duration * args.fps)) if args.duration else None
+    return lambda: image_dir_frame_generator(args.frames_dir, args.width, args.height, args.fit, limit)
 
 
 # ---------------------------------------------------------------------------
@@ -201,9 +241,13 @@ def scene_score(a, b):
     hist_b, _ = np.histogram(b, bins=32, range=(0, 256))
     hist_diff = np.abs(hist_a - hist_b).sum() / a.size * 255.0
 
-    gx_a, gy_a = np.gradient(a.mean(axis=2))
-    gx_b, gy_b = np.gradient(b.mean(axis=2))
-    edge_diff = np.abs(np.sqrt(gx_a**2 + gy_a**2) - np.sqrt(gx_b**2 + gy_b**2)).mean()
+    if min(a.shape[:2]) < 2:
+        # 幅か高さが 1 マスでは輪郭 (勾配) を求められないので、その項は 0 にする
+        edge_diff = 0.0
+    else:
+        gx_a, gy_a = np.gradient(a.mean(axis=2))
+        gx_b, gy_b = np.gradient(b.mean(axis=2))
+        edge_diff = np.abs(np.sqrt(gx_a**2 + gy_a**2) - np.sqrt(gx_b**2 + gy_b**2)).mean()
 
     return 0.5 * sad + 0.3 * hist_diff + 0.2 * edge_diff
 
@@ -425,9 +469,15 @@ def quantize_frames_cpu(frames, gop_palettes, gop_boundaries, width, height,
 
     def finish(batch, results):
         """スレッドで減色した結果に、順番どおり条件付き更新をかける。"""
-        for (img_arr, pal, _offset), indices in zip(batch, results):
+        for (img_arr, pal, offset), indices in zip(batch, results):
             if pal is not state["palette"]:
                 state["previous"], state["palette"] = None, pal
+            last = state.get("offset", (0, 0))
+            dx, dy = offset[0] - last[0], offset[1] - last[1]
+            state["offset"] = offset
+            if (dx or dy) and state["previous"] is not None:
+                # 中身が (dx, dy) ずれたので、前フレームの番号も同じだけずらしてから比べる (GPU の処理と同じ)
+                state["previous"] = np.roll(state["previous"], shift=(-dy, -dx), axis=(0, 1))
             if temporal_hysteresis > 0 and np.asarray(img_arr).shape[:2] == indices.shape:
                 indices = keep_previous_blocks(indices, state["previous"], img_arr, prepared[id(pal)][1],
                                                temporal_hysteresis)
@@ -588,6 +638,10 @@ def parse_args(argv=None):
         parser.error("--depth-video は --mode relief でだけ使えます")
     if args.palette_colors != "auto" and args.palette_colors < 2:
         parser.error("--palette-colors は 2 以上か auto にしてください")
+    # 上限はデータの形式で決まる (立体は空気に 1 つ使う)。K-Means の後で失敗しないよう、ここで断る
+    color_limit = MAX_PALETTE_COLORS - (1 if args.mode in ("relief", "extrude", "inflate", "vox") else 0)
+    if args.palette_colors != "auto" and args.palette_colors > color_limit:
+        parser.error(f"--palette-colors は {color_limit} 以下にしてください (このモードの上限)")
     if args.temporal_hysteresis < 0:
         parser.error("--temporal-hysteresis は 0 以上にしてください")
     if args.depth_hysteresis < 0:
@@ -933,7 +987,8 @@ def main(argv=None):
     depth_frames = None
     guide_video = args.depth_video or args.mask_video
     if guide_video:
-        depth_frames = ffmpeg_frame_generator(guide_video, width, height, args.fps, args.duration, args.ffmpeg)
+        # 色の映像と同じ切り取り方 (--fit) にする (違うと、立体の形と色がずれる)
+        depth_frames = ffmpeg_frame_generator(guide_video, width, height, args.fps, args.duration, args.ffmpeg, args.fit)
 
     use_planes = volume and args.volume_encoding != "voxels" and planes_supported(args.mode, args.depth, args.hollow)
     if volume and not use_planes:
