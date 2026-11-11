@@ -87,6 +87,25 @@ jobs:
           name: exe
           path: BlockVideoPlayer-${{ env.TAG }}-windows-x64.zip
 
+  # リリースするコミットの CI (ci.yml) が成功していること。説明文に「CI 成功」と書くので、確かめてから進む
+  ci:
+    if: ${{ !inputs.notes_only }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: The CI of this commit must have succeeded
+        shell: bash
+        run: |
+          conclusions=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --json conclusion --jq '[.[].conclusion] | join(" ")')
+          echo "CI runs for $GITHUB_SHA: ${conclusions:-none}"
+          case " $conclusions " in
+            *" success "*) ;;
+            *) echo "::error::このコミットの CI (ci.yml) が成功していません。main の CI が終わってからタグを付けてください"; exit 1 ;;
+          esac
+
   samples:
     if: ${{ !inputs.notes_only }}
     runs-on: ubuntu-latest
@@ -117,7 +136,9 @@ jobs:
           python scripts/repack_addon.py "prev/BlockVideoPlayer-sample-3d-$PREV.mcaddon" "out/BlockVideoPlayer-sample-3d-$TAG.mcaddon"
           python scripts/repack_addon.py "prev/BlockVideoPlayer-$PREV-showcase.mcaddon" "out/BlockVideoPlayer-$TAG-showcase.mcaddon"
 
+      # shell: bash を書くと pipefail が付く。書かないと tee の終了コードが使われ、再生に失敗してもリリースが止まらない
       - name: Play every video in the mock
+        shell: bash
         run: python scripts/play_addon_mock.py out/*.mcaddon | tee out/mock.txt
 
       - uses: actions/upload-artifact@v4
@@ -126,7 +147,7 @@ jobs:
           path: out/
 
   release:
-    needs: [ exe, samples ]
+    needs: [ ci, exe, samples ]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
