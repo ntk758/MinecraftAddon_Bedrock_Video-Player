@@ -609,19 +609,24 @@ class PackBuilderApp(tk.Tk):
         if language == self.tr.language or self.building:
             return
         values = self._selected_values()
-        videos = [self.video_tree.item(iid)["values"] for iid in self.video_tree.get_children()]
+        videos = [self._row(iid) for iid in self.video_tree.get_children()]
         log_text = self.log.get("1.0", "end-1c")
 
         self.tr = Translator(language)
         self._set_option_labels(*values)
+        # はじめてのガイドもこのウィンドウの子なので一緒に消える。開いていたら新しい言語で開き直す
+        reopen_wizard = self.wizard is not None and self.wizard.window.winfo_exists()
         for child in self.winfo_children():
             child.destroy()
+        self.wizard = None
         self._build_ui()
         for row in videos:
             self.video_tree.insert("", "end", values=row)
         if log_text:
             self._append_log(log_text)
         self.title(self.tr("app.title"))
+        if reopen_wizard:
+            self._open_wizard()
 
         self.settings["language"] = language
         save_settings(self.settings)
@@ -862,11 +867,19 @@ class PackBuilderApp(tk.Tk):
                 self.mmd_motions[str(p)] = motion
             self.add_video_path(p)
 
+    def _row(self, iid) -> list[str]:
+        """動画リストの 1 行 (動画 ID・パス・サムネイルの秒) を文字列のまま返す。Treeview.item()["values"] は数字に見える
+        文字列を数にしてしまい ("007" が 7、"123" が int)、同じ ID の確かめをすり抜けていた。"""
+        return [str(v) for v in self.tk.splitlist(self.tk.call(self.video_tree, "item", iid, "-values"))]
+
+    def _video_ids(self, exclude=None) -> list[str]:
+        return [self._row(iid)[0] for iid in self.video_tree.get_children() if iid != exclude]
+
     def add_video_path(self, path: str | Path) -> str:
         """動画リストに 1 本足し、付けた動画 ID を返す (はじめてガイドからも使う)。"""
         p = Path(path)
         video_id = re.sub(r"[^a-z0-9_]", "_", p.stem.lower())
-        existing_ids = [self.video_tree.item(iid)["values"][0] for iid in self.video_tree.get_children()]
+        existing_ids = self._video_ids()
         if video_id in existing_ids:
             suffix = 2
             while f"{video_id}_{suffix}" in existing_ids:
@@ -892,12 +905,14 @@ class PackBuilderApp(tk.Tk):
             messagebox.showwarning(self.tr("warn.select_title"), self.tr("warn.select_edit_id"))
             return
         iid = selected[0]
-        values = self.video_tree.item(iid)["values"]
+        values = self._row(iid)
         from tkinter import simpledialog
         new_id = simpledialog.askstring(
             self.tr("edit_id.title"), self.tr("edit_id.prompt", current=values[0]), initialvalue=values[0], parent=self
         )
-        if new_id and re.fullmatch(r"[a-z0-9_]+", new_id):
+        if new_id and new_id in self._video_ids(exclude=iid):
+            messagebox.showerror(self.tr("edit_id.invalid_title"), self.tr("error.duplicate_id", id=new_id))
+        elif new_id and re.fullmatch(r"[a-z0-9_]+", new_id):
             self.video_tree.item(iid, values=(new_id, values[1], values[2]))
         elif new_id:
             messagebox.showerror(self.tr("edit_id.invalid_title"), self.tr("edit_id.invalid"))
@@ -908,7 +923,7 @@ class PackBuilderApp(tk.Tk):
             messagebox.showwarning(self.tr("warn.select_title"), self.tr("warn.select_edit_thumb"))
             return
         iid = selected[0]
-        values = self.video_tree.item(iid)["values"]
+        values = self._row(iid)
         from tkinter import simpledialog
         new_sec = simpledialog.askstring(
             self.tr("edit_thumb.title"), self.tr("edit_thumb.prompt", current=values[2]), initialvalue=str(values[2]), parent=self
@@ -938,7 +953,7 @@ class PackBuilderApp(tk.Tk):
         """選択中の動画 (無ければ一覧の先頭から) のパス。.vox は縦横比の対象外。"""
         items = list(self.video_tree.selection()) or list(self.video_tree.get_children())
         for iid in items:
-            path = str(self.video_tree.item(iid)["values"][1])
+            path = str(self._row(iid)[1])
             if not path.lower().endswith((VOX_SUFFIX, PMX_SUFFIX)):
                 return path
         return None
@@ -1013,7 +1028,7 @@ class PackBuilderApp(tk.Tk):
     def _start_build(self) -> None:
         video_entries = []
         for iid in self.video_tree.get_children():
-            vals = self.video_tree.item(iid)["values"]
+            vals = self._row(iid)
             video_entries.append({
                 "video_id": str(vals[0]),
                 "file_path": str(vals[1]),
@@ -1047,6 +1062,9 @@ class PackBuilderApp(tk.Tk):
             # 奥行きは立体のときだけ使う (平面では欄が空でも作れる)
             depth = int(self.depth_var.get()) if mode in VOLUME_MODES else DEFAULT_DEPTH
             duration = float(self.duration_var.get()) if self.duration_var.get().strip() else None
+            # キーフレームの間隔は変換の直前に読むので、ここで確かめる (空欄・負の値で、切り抜きなどの後に失敗していた)
+            if int(self.keyframe_interval_var.get()) < 0:
+                raise ValueError("keyframe")
         except (tk.TclError, ValueError):
             messagebox.showerror(self.tr("error.settings_title"), self.tr("error.settings"))
             return
@@ -1070,7 +1088,8 @@ class PackBuilderApp(tk.Tk):
         if not pack_name:
             messagebox.showerror(self.tr("error.pack_name_title"), self.tr("error.pack_name"))
             return
-        if not re.fullmatch(r"[a-z0-9_.\-]+", namespace) or namespace == "minecraft":
+        # コマンドの名前 (/<接頭辞>:setup) に使える文字だけ。ブラウザ版と同じ (- や . では独自のコマンドが登録されない)
+        if not re.fullmatch(r"[a-z0-9_]+", namespace) or namespace == "minecraft":
             messagebox.showerror(self.tr("error.namespace_title"), self.tr("error.namespace"))
             return
 
@@ -1470,7 +1489,7 @@ class PackBuilderApp(tk.Tk):
             self._start_build()
 
     def video_ids(self) -> list[str]:
-        return [str(self.video_tree.item(iid)["values"][0]) for iid in self.video_tree.get_children()]
+        return self._video_ids()
 
     def play_guide_text(self) -> str:
         """作ったアドオンを Minecraft に入れて再生するまでの案内。"""
