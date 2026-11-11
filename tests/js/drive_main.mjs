@@ -13,10 +13,11 @@
 //   {"world": "名前"}                                 ワールドに置かれたブロックをすべて記録する (だまし絵の舞台は snap の範囲に収まらない)
 //   {"mark": "名前"}                                  いま数えている projectToStage の呼び出し回数を記録する (marks)
 //   {"command": "badapple:setup", "args": ["face"]}   独自のコマンド (/badapple:setup face) を実行する (処理は次の tick)
+//   {"spawn": true}                                   プレイヤーがワールドに入る (playerSpawn、initialSpawn)
 //   {"forgetTicking": true}                           ワールドを開き直したときのように、常時読み込みの区画を消す
 import {
   board, commands, customCommands, customEnums, fireScriptEvent, forgetTicking, forms, getAnchor, messages, options, player,
-  runCustomCommand, stats, tick as mockTick, uiResponses, useItem,
+  runCustomCommand, sounds, spawnPlayer, stats, tick as mockTick, uiResponses, useItem,
 } from "@minecraft/server";
 
 const steps = JSON.parse(process.argv[2]);
@@ -54,6 +55,7 @@ for (const step of steps) {
     if (step.event) fireScriptEvent(step.event, step.message ?? "");
     else if (step.command) commandResults.push(runCustomCommand(step.command, ...(step.args ?? [])));
     else if (step.forgetTicking) forgetTicking();
+    else if (step.spawn) spawnPlayer(step.spawn !== "respawn");
     else if (step.tick) for (let i = 0; i < step.tick; i++) tick();
     else if (step.sleepMs) await new Promise((resolve) => setTimeout(resolve, step.sleepMs));
     else if (step.settle) {
@@ -86,6 +88,7 @@ const allBlocks = [...board.entries()].map(([key, id]) => [...key.split(",").map
 process.stdout.write(JSON.stringify({
   snaps, worlds, marks, ticks, stats, commands, errors, allBlocks, messages: messages.map((m) => JSON.stringify(m)),
   commandResults,
+  sounds,
   forms,
   customCommands: [...customCommands.values()].map(({ command }) => command),
   customEnums: Object.fromEntries(customEnums),

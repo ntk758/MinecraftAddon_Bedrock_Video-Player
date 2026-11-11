@@ -59,12 +59,11 @@ def version_text() -> str:
     return ".".join(str(part) for part in PACK_VERSION)
 
 
-def manifest_description() -> str:
-    note = RELEASE_NOTES[0]
-    prefix = f"v{version_text()}: "
-    if note.startswith(prefix):
-        note = note[len(prefix):]
-    return f"Block Video Player v{version_text()}: {note}"
+def manifest_description(namespace: str = "badapple") -> str:
+    """パックの一覧に出る説明。プレイヤーがアドオンを入れてから最初に見る文章なので、変更履歴 (日本語) ではなく、
+    英語の短い使い方にする。"""
+    return (f"Videos made of blocks (v{version_text()}). Turn on both packs, then run /{namespace}:setup wall and "
+            f"/{namespace}:start. The remote: /{namespace}:remote or a compass.")
 
 
 def changelog_markdown(pack_name: str) -> str:

@@ -10,6 +10,11 @@ export const stats = { setBlockCalls: 0, fillCalls: 0, blocksPlaced: 0, commandF
 // failZ: 数値にすると z がその値以上のマスへの設置が失敗する (読み込まれていないチャンクをまねる)
 // unloadedZ: 数値にすると z がその値以上のマスは読み込まれていない (getBlock が undefined を返し、設置も失敗する)
 // costs: { setBlock, fillCall, fillBlock, listCall, listBlock } (マイクロ秒) を入れると、その時間だけ待って実機の費用をまねる
+const playerSpawnHandlers = [];
+/** プレイヤーがワールドに入った (initialSpawn) ときのように、playerSpawn を送る。 */
+export function spawnPlayer(initialSpawn = true) {
+  for (const handler of playerSpawnHandlers) handler({ player, initialSpawn });
+}
 export const options = { fillBlocks: true, failZ: undefined, unloadedZ: undefined, costs: null };
 // フォームを開いたときの応答 (server-ui モックが先頭から順に返す。空なら「閉じた」)
 export const uiResponses = [];
@@ -121,6 +126,10 @@ export const player = {
   playSound(id) {
     sounds.push(id);
   },
+  dynamicProperties: new Map(),
+  getDynamicProperty(key) { return this.dynamicProperties.get(key); },
+  setDynamicProperty(key, value) { this.dynamicProperties.set(key, value); },
+  sendMessage(message) { messages.push({ to: "player", ...message }); },
 };
 
 // TickingAreaManager (Script API 2.6.0)。このパックの枠は maxChunkCount チャンク (実際の値は公開されていないので、
@@ -173,7 +182,10 @@ export const world = {
   get tickingAreaManager() {
     return tickingAreaManager;
   },
-  afterEvents: { itemUse: { subscribe: (handler) => { itemUseHandler = handler; } } },
+  afterEvents: {
+    itemUse: { subscribe: (handler) => { itemUseHandler = handler; } },
+    playerSpawn: { subscribe: (handler) => { playerSpawnHandlers.push(handler); } },
+  },
   getDynamicProperty: (key) => dynamicProperties[key],
   setDynamicProperty: (key, value) => {
     if (restricted) throw new Error("Native function [World::setDynamicProperty] does not have required privileges.");
