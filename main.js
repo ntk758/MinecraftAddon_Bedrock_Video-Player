@@ -52,6 +52,9 @@ const ORIGIN_KEY = `${EVENT_NAMESPACE}:origin`;
 const LAYOUT_KEY = `${EVENT_NAMESPACE}:layout`;
 // 登録した tickingarea の名前の一覧 (JSON)。次の setup・動画の切り替えで、別の位置の分も含めて外す
 const TICKING_NAMES_KEY = `${EVENT_NAMESPACE}:ticking_areas`;
+// 選んだ動画と音量 (ワールドを開き直しても同じ動画・同じ音量で続ける)
+const SELECTED_KEY = `${EVENT_NAMESPACE}:selected`;
+const VOLUME_KEY = `${EVENT_NAMESPACE}:volume`;
 const MESSAGE_PREFIX = `§b[${EVENT_NAMESPACE}]`;
 const START_LOAD_DELAY_TICKS = 5;
 // 再生を始める前に、スクリーンの範囲のチャンクが読み込まれるのを待つ最大の tick 数 (10 秒)。setup の直後は常時読み込み
@@ -354,7 +357,7 @@ class VideoPlayer {
     this.elapsedTicks = 0;
     this.running = false;
     this.currentAudioChunk = -1;
-    this.masterVolume = 1.0;
+    this.masterVolume = savedVolume();
 
     this.decodedIndex = null;
     this.decodedVideoId = null;
@@ -765,6 +768,9 @@ class VideoPlayer {
    */
   reportPlaceFailures(count, error) {
     if (count <= 0) return;
+    // だまし絵は次のフレームで舞台全体を見直す (置けなかったマスは盤面で「不明」にしてあるが、見る範囲を人物の
+    //   周りに絞っていたので、置き直されずに穴が残っていた)
+    this.placeFailedRecently = true;
     warnOnce("setBlock", `Failed to place ${count} block(s): ${error}`);
     if (this.playStats) this.playStats.placeFailures = (this.playStats.placeFailures ?? 0) + count;
     if (this.placeFailureNotified) return;
@@ -1012,13 +1018,23 @@ class VideoPlayer {
         try {
           self.dimension.fillBlocks(new ListBlockVolume(group.locations), permutation);
         } catch (e) {
-          failures += group.cells.length;
-          lastError = e;
-          placedLevel = -1;
+          // まとまりの一部 (読み込まれていないチャンク・世界の外) で全体が失敗するので、1 マスずつ置き直す (以前はまとまり
+          //   全部が置かれず、毎フレーム同じ失敗を繰り返していた)
           warnOnce("fill-list", `fillBlocks(ListBlockVolume) failed: ${e}`);
+          for (let i = 0; i < group.cells.length; i++) {
+            try {
+              self.dimension.setBlockPermutation(group.locations[i], permutation);
+              board[group.cells[i]] = level;
+            } catch (e2) {
+              failures++;
+              lastError = e2;
+              board[group.cells[i]] = -1;
+            }
+          }
+          placedLevel = null;
         }
       }
-      for (const cell of group.cells) board[cell] = placedLevel;
+      if (placedLevel !== null) for (const cell of group.cells) board[cell] = placedLevel;
       // 色ごとではなく、置いたブロックが BLOCKS_PER_YIELD 個たまるごとに区切る。1 tick に区切れる回数には上限
       // (MAX_YIELDS_PER_TICK) があるので、色ごとに区切ると色の多いフレーム (自動パレットで 40〜60 色) が
       // 何 tick にもまたがり、映像が遅れて音声が途切れていた (実機の録画: 128×128・10 fps で実効約 3 fps)
@@ -1089,7 +1105,8 @@ class VideoPlayer {
         backgroundSynced = yield* background.decodeTo(backgroundFrame);
       }
       // 省略フレームは盤面が変わらないので、順番どおりに来たときは何も置かない
-      if (!synced.changed && !backgroundSynced?.changed) return;
+      if (!synced.changed && !backgroundSynced?.changed && !this.forceRedraw) return;
+      this.forceRedraw = false;
 
       this.activePalette = this.videoData.adaptive_palette ? this.paletteCache[this.currentGopId] : this.paletteCache;
       const target = this.figure ?? this.nextBoard;
@@ -1234,6 +1251,11 @@ class VideoPlayer {
   /** だまし絵: 描いた盤面を置き終えたら、次に探す範囲を今の人物の所だけにする。 */
   settleStageRows() {
     const work = this.stageWork;
+    if (this.placeFailedRecently) {
+      this.placeFailedRecently = false;
+      this.stageRows = { lo: 0, hi: Infinity, left: 0, right: Infinity };
+      return;
+    }
     this.stageRows = work.rowMin <= work.rowMax
       ? { lo: work.rowMin, hi: work.rowMax + 1, left: work.colMin, right: work.colMax + 1 }
       : { lo: 0, hi: 0, left: 0, right: 0 };
@@ -1298,7 +1320,9 @@ class VideoPlayer {
     if (this.decodedFrame !== frameIndex) {
       if (this.decodedFrame !== frameIndex - 1) {
         resynced = true;
-        const start = findKeyframeAtOrBefore(this.decodedIndex, frameIndex);
+        const keyframe = findKeyframeAtOrBefore(this.decodedIndex, frameIndex);
+        // 同じ GOP の少し前まで復元してあれば、キーフレームに戻らずにそこから進める (遅れてコマを飛ばすとき)
+        const start = this.decodedFrame >= keyframe && this.decodedFrame < frameIndex ? this.decodedFrame + 1 : keyframe;
         for (let f = start; f < frameIndex; f++) {
           if (!(yield* this.decodeOnlyJob(f))) return null;
           yield DECODE_YIELD;
@@ -1391,6 +1415,14 @@ class VideoPlayer {
         this.startViewRedraw();
         return;
       }
+      // 描くのが追いつかず 2 コマ以上遅れたら、途中のコマは置かずに今のコマへ飛ぶ (盤面との差で置くので画面は正しい。
+      //   以前は全部のコマを置いて映像が遅れ続け、音声のチャンクの間が空いていた)。復元は decodeTo が順に行う
+      const scheduledFrame = this.currentFrame;
+      const dueFrame = Math.min(this.frameCount - 1, Math.floor((this.elapsedTicks - 1) / this.ticksPerFrame));
+      if (dueFrame > this.currentFrame + 1 && !this.figure) {
+        if (this.playStats) this.playStats.droppedFrames = (this.playStats.droppedFrames ?? 0) + dueFrame - this.currentFrame;
+        this.currentFrame = dueFrame;
+      }
       this.frameIterator = this.applyFrameJob(this.currentFrame);
       const st = this.playStats;
       if (st) {
@@ -1399,7 +1431,8 @@ class VideoPlayer {
           st.tickStart = this.elapsedTicks - 1;
         }
         // 予定の tick (表示時刻が来た最初の tick) から何 tick 遅れて描き始めたか
-        st.frameLate = this.elapsedTicks - (Math.floor(this.currentFrame * this.ticksPerFrame) + 1);
+        // 飛ばしたときは、飛ばす前のコマの予定から数える (遅れていたことが統計に残るように)
+        st.frameLate = this.elapsedTicks - (Math.floor(scheduledFrame * this.ticksPerFrame) + 1);
         st.frameMs = 0;
       }
     }
@@ -1526,10 +1559,20 @@ class VideoPlayer {
     return !this.running && this.currentFrame > 0 && this.videoData && this.currentFrame < this.frameCount;
   }
 
-  stopAndClear() {
+  /**
+   * 止めて、スクリーンを片付ける。keepBox (ワールドの箱) を渡すと、その中のマスは触らない (動画を切り替えたとき、新しい
+   * 動画の範囲を残して前の動画の分だけ消す)。
+   */
+  stopAndClear(keepBox = null, announce = true) {
+    // 切り替えのときは、前の動画が一度も描かれていなければ片付ける物が無い (setup の直後に別の動画を選んだときなど)
+    if (keepBox && !(this.board && this.board.some((level) => level >= 0))) {
+      this.stopPlayback();
+      return;
+    }
     this.stopPlayback();
     this.frameIterator = null;
     this.currentFrame = 0;
+    this.forceRedraw = true;
     this.invalidateBoard();
     this.viewDrawn = false;
     this.viewRedrawPending = false;
@@ -1560,6 +1603,8 @@ class VideoPlayer {
         // だまし絵の盤面の、区画の余りのマスはワールドに無い
         if (stage && isStagePadding(stage, p)) continue;
         cellToWorld(self.videoData, self.anchor, p, loc);
+        if (keepBox && loc.x >= keepBox.x0 && loc.x <= keepBox.x1 && loc.y >= keepBox.y0 && loc.y <= keepBox.y1 &&
+            loc.z >= keepBox.z0 && loc.z <= keepBox.z1) continue;
         let placed = true;
         try {
           self.dimension.setBlockPermutation(loc, clearPermutation);
@@ -1574,7 +1619,7 @@ class VideoPlayer {
         }
       }
       self.currentJobId = null;
-      notify("clear_done");
+      if (announce) notify("clear_done");
     })());
   }
 
@@ -1586,6 +1631,9 @@ class VideoPlayer {
     this.stopPlayback();
     this.frameIterator = null;
     this.currentFrame = targetFrame;
+    // 描きかけのフレームを捨てたり、止めて片付けた後でも、目的のフレームを必ず盤面との差で置く (以前は省略フレームに
+    //   シークすると何も置かず、画面が前のままだった)
+    this.forceRedraw = true;
 
     let startFrame;
     if (this.decodedIndex) {
@@ -1892,10 +1940,18 @@ function anchorForVideo(videoData, origin, dimension, layout = DEFAULT_LAYOUT) {
 }
 
 /** setup で保存した向き。無い・壊れていれば北向きの床置き (以前の版と同じ)。 */
+/** setup の足元から、その動画を置く位置を決める (align なら、その動画の大きさでチャンクにそろえてから)。 */
+function placeVideo(videoData, origin, dimension, layout) {
+  const base = layout.align ? alignOriginToChunks(videoData, origin, dimension, layout).origin : origin;
+  return anchorForVideo(videoData, base, dimension, layout);
+}
+
 function storedLayout() {
   try {
     const value = JSON.parse(world.getDynamicProperty(LAYOUT_KEY) ?? "null");
-    if (value && FACING_NAMES[value.facing] !== undefined) return { facing: value.facing, wall: !!value.wall };
+    if (value && FACING_NAMES[value.facing] !== undefined) {
+      return { facing: value.facing, wall: !!value.wall, align: !!value.align };
+    }
   } catch (e) { /* 壊れた値は無視する */ }
   return DEFAULT_LAYOUT;
 }
@@ -1970,20 +2026,24 @@ function setup(player, options = "") {
   const videoData = VIDEOS[globalSelectedVideoId];
   const words = options.toLowerCase().split(/\s+/);
   const wall = words.includes("wall");
-  const layout = { facing: wall || words.includes("face") ? facingOf(player) : 0, wall };
+  const align = words.includes("align");
+  const layout = { facing: wall || words.includes("face") ? facingOf(player) : 0, wall, align };
   world.setDynamicProperty(LAYOUT_KEY, JSON.stringify(layout));
   if (layout.facing !== 0 || wall) notify(wall ? "setup_wall" : "setup_facing", tr(`facing_${FACING_NAMES[layout.facing]}`));
   const loc = player.location;
-  let origin = { x: Math.floor(loc.x), y: Math.floor(loc.y), z: Math.floor(loc.z) };
-  if (words.includes("align")) {
+  // 保存するのは足元そのもの。チャンクにそろえる (align) ときは、動画ごとに大きさが違うので、置くたびにそろえ直す
+  const origin = { x: Math.floor(loc.x), y: Math.floor(loc.y), z: Math.floor(loc.z) };
+  if (align) {
     const aligned = alignOriginToChunks(videoData, origin, player.dimension, layout);
-    origin = aligned.origin;
     notify("setup_aligned", aligned.dx, aligned.dz, aligned.before, aligned.after);
   }
   // 建築できる高さ (オーバーワールドは Y=-64〜319) からはみ出すと置けないので、収まる高さへずらす
-  const { anchor, shifted } = anchorForVideo(videoData, origin, player.dimension, layout);
+  const { anchor, shifted } = placeVideo(videoData, origin, player.dimension, layout);
   if (shifted) notify("setup_shifted", anchor.y);
   world.setDynamicProperty(ORIGIN_KEY, origin);
+  // 前のスクリーンの再生と片付けの仕事を止める (以前は前の動画が裏で動き続け、片付けが新しい画面を上書きしていた)
+  for (const old of activePlayers.values()) old.stopPlayback();
+  activePlayers.clear();
 
   // 常時読み込みが一部しか登録できなくても、プレイヤーが近くにいれば再生できるので設置は続ける
   const ticking = ensureTickingArea(player.dimension, anchor, videoData);
@@ -2023,6 +2083,7 @@ function startPlayback(dimension) {
   // 別の動画が選ばれていたらプレイヤーを作り直す (以前は古い動画のまま再生されていた)
   if (!vp || (globalSelectedVideoId && vp.videoId !== globalSelectedVideoId)) {
     if (!globalSelectedVideoId) return;
+    const previous = vp;
     if (vp) vp.stopPlayback();
     const playbackDimension = getPlaybackDimension(dimension);
     let anchor = anchorLoc;
@@ -2030,7 +2091,7 @@ function startPlayback(dimension) {
     const videoData = VIDEOS[globalSelectedVideoId];
     if (origin && videoData) {
       // 平面と立体では置く位置・高さ・常時読み込みの範囲が違うので、setup の足元から決め直す
-      const fitted = anchorForVideo(videoData, origin, playbackDimension, storedLayout());
+      const fitted = placeVideo(videoData, origin, playbackDimension, storedLayout());
       anchor = fitted.anchor;
       if (fitted.shifted) notify("setup_shifted", anchor.y);
       const ticking = ensureTickingArea(playbackDimension, anchor, videoData);
@@ -2040,6 +2101,8 @@ function startPlayback(dimension) {
     }
     vp = new VideoPlayer(anchor, playbackDimension, globalSelectedVideoId);
     activePlayers.set(getAnchorKeyStr(anchor), vp);
+    // 前の動画のマスのうち、新しい動画の外になるものを片付ける (以前は残ったままで、停止しても消えなかった)
+    if (previous) previous.stopAndClear(worldBoxOf(vp.videoData, vp.anchor), false);
     startMainLoop();
   }
   ensureTickingAreaForPlayback(vp);
@@ -2062,15 +2125,13 @@ function resumeOrStartPlayback(dimension) {
 }
 
 function stopAndClearAll(dimension) {
-  const anchorLoc = world.getDynamicProperty(ANCHOR_KEY);
-  if (anchorLoc) {
-    const keyStr = getAnchorKeyStr(anchorLoc);
-    let vp = activePlayers.get(keyStr);
-    if (vp) {
-      vp.stopAndClear();
-      notify("clearing");
-    }
+  const vp = ensureActivePlayer(dimension);
+  if (!vp) {
+    notify("no_anchor", EVENT_PREFIX);
+    return;
   }
+  vp.stopAndClear();
+  notify("clearing");
 }
 
 /** 再生の計測結果を表示する (/scriptevent <接頭辞>:stats)。再生中でも、再生が終わった後でもよい。 */
@@ -2097,6 +2158,41 @@ function getActivePlayer() {
     return activePlayers.get(getAnchorKeyStr(anchorLoc));
   }
   return null;
+}
+
+/**
+ * 今のスクリーンのプレイヤー。ワールドを開き直した後はメモリに無いので、保存した位置から作り直す (以前は停止・シーク・
+ * 音量が黙って効かなかった)。setup していなければ null。
+ */
+function ensureActivePlayer(dimension) {
+  const existing = getActivePlayer();
+  if (existing) return existing;
+  const anchorLoc = world.getDynamicProperty(ANCHOR_KEY);
+  if (!anchorLoc || !globalSelectedVideoId || !VIDEOS[globalSelectedVideoId]) return null;
+  const vp = new VideoPlayer(anchorLoc, getPlaybackDimension(dimension), globalSelectedVideoId);
+  activePlayers.set(getAnchorKeyStr(anchorLoc), vp);
+  startMainLoop();
+  return vp;
+}
+
+function savedVolume() {
+  const value = Number(world.getDynamicProperty(VOLUME_KEY) ?? 1);
+  return Number.isFinite(value) && value >= 0 && value <= 1 ? value : 1.0;
+}
+
+/** 選んだ動画を覚える (ワールドを開き直したとき、同じ動画で続ける)。 */
+function selectVideo(videoId) {
+  globalSelectedVideoId = videoId;
+  world.setDynamicProperty(SELECTED_KEY, videoId);
+}
+
+let selectionLoaded = false;
+/** 保存した選択を読み直す (スクリプトの読み込み時は world を読めないので、最初の操作のときに)。 */
+function loadSelection() {
+  if (selectionLoaded) return;
+  selectionLoaded = true;
+  const saved = world.getDynamicProperty(SELECTED_KEY);
+  if (typeof saved === "string" && LISTED_VIDEOS.some((v) => v.id === saved)) globalSelectedVideoId = saved;
 }
 
 function showRemoteControlGUI(player) {
@@ -2167,7 +2263,7 @@ function showRemoteControlGUI(player) {
 
 /** リモコンで選んだ動画にすぐ切り替えて再生し、リモコンを開き直す (選んだ動画と画面の動画がずれないように)。 */
 function selectVideoFromRemote(videoId, player) {
-  globalSelectedVideoId = videoId;
+  selectVideo(videoId);
   notify("video_selected", videoId);
   startPlayback(player.dimension);
   showRemoteControlGUI(player);
@@ -2182,25 +2278,28 @@ function switchVideoIndex(direction, player) {
 }
 
 function showVolumeGUI(player) {
-  const vp = getActivePlayer();
-  const mv = vp ? vp.masterVolume : 1.0;
+  const vp = ensureActivePlayer(player.dimension);
+  const mv = vp ? vp.masterVolume : savedVolume();
   const form = new ModalFormData()
     .title(tr("volume.title"));
   addSlider(form, tr("volume.slider"), 0, 100, 10, Math.round(mv * 100));
 
   form.show(player).then((response) => {
     if (response.canceled) return;
+    // 音量はスクリーンごとではなく全体で持つ (動画を変えても 100% に戻らない)
+    const volume = response.formValues[0] / 100.0;
+    world.setDynamicProperty(VOLUME_KEY, volume);
     if (vp) {
-      vp.masterVolume = response.formValues[0] / 100.0;
+      vp.masterVolume = volume;
       vp.currentAudioChunk = -1;
       if (vp.running) vp.syncAudioForFrame(vp.currentFrame);
-      notify("volume_set", `${Math.round(vp.masterVolume * 100)}%`);
     }
+    notify("volume_set", `${Math.round(volume * 100)}%`);
   });
 }
 
 function showSeekGUI(player) {
-  const vp = getActivePlayer();
+  const vp = ensureActivePlayer(player.dimension);
   if (!vp || !vp.videoData) return;
   const maxSec = Math.floor(frameToSeconds(vp.videoData, vp.frameCount));
   const currentSec = Math.floor(frameToSeconds(vp.videoData, vp.currentFrame));
@@ -2236,6 +2335,7 @@ function showVideoSelectGUI(player) {
 }
 
 world.afterEvents.itemUse.subscribe((event) => {
+  loadSelection();
   if (event.itemStack.typeId === REMOTE_CONTROL_ITEM) {
     showRemoteControlGUI(event.source);
   }
@@ -2245,6 +2345,7 @@ world.afterEvents.itemUse.subscribe((event) => {
  * コマンド (/<接頭辞>:<操作> と /scriptevent <接頭辞>:<操作>) の処理。message は操作の後ろの文字 (setup face など)。
  */
 function runAction(action, message, player) {
+  loadSelection();
   const dimension = player ? player.dimension : world.getDimension("overworld");
   const event = { message };
   switch (action) {
@@ -2293,7 +2394,7 @@ function runAction(action, message, player) {
         startPlayback(dimension);
       } else {
         if (VIDEOS[videoId]) {
-          globalSelectedVideoId = videoId;
+          selectVideo(videoId);
           notify("video_selected", videoId);
           startPlayback(dimension);
         } else {

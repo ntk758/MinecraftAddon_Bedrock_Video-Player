@@ -149,7 +149,8 @@ def test_stats_command_reports_playback_measurements(tmp_path):
     load_args = re.search(r'"bvp.stats_load", "with": \{"rawtext": (\[[^\]]*\])', text)
     frames, _seconds, _fps, target, _tps, _drift = [item["text"] for item in json.loads(play_args.group(1))]
     late, max_late, avg_ms, max_ms = [float(item["text"]) for item in json.loads(load_args.group(1))]
-    assert int(frames) == load_frame_data(frames_js)["frame_count"]
+    # 描き切れない重い環境では、遅れたコマを飛ばして今のコマに追いつく (飛ばしたコマは数えない)
+    assert 0 < int(frames) <= load_frame_data(frames_js)["frame_count"]
     assert float(target) == load_frame_data(frames_js)["fps"]
     assert late > 0 and max_late >= 1 and max_ms >= avg_ms > 0
 
