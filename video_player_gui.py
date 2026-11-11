@@ -1412,7 +1412,7 @@ class PackBuilderApp(tk.Tk):
                         argv += ["--stage-background", background_id]
                     if mask_video:
                         argv += ["--mask-video", str(mask_video)]
-                    weight_mask = self._palette_weight_mask(video, video_id, mask_video, is_vox, palette, temp,
+                    weight_mask = PackBuilderApp._palette_weight_mask(self, video, video_id, mask_video, is_vox, palette, temp,
                                                             video_width, video_height, fps, duration, ffmpeg)
                     if weight_mask:
                         argv += ["--palette-weight-mask", str(weight_mask), "--palette-weight", str(PALETTE_AI_WEIGHT)]
