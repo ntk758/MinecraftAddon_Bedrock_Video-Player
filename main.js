@@ -3,10 +3,12 @@
  * (v3: Object-Oriented Multi-Screen & Adaptive Palette Support)
  */
 
+// <legacy:imports> (ブラウザ版の旧版向けの出力 (legacy_target.py) はこの範囲を 1.x の書き方に置き換える)
 import {
   world, system, BlockPermutation, BlockVolume, ListBlockVolume, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus,
 } from "@minecraft/server";
+// </legacy:imports>
 import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
 import { VIDEOS, VIDEO_LIST } from "./videos.js";
 import {
@@ -1777,6 +1779,7 @@ function getAnchorKeyStr(anchor) {
   return `${anchor.x},${anchor.y},${anchor.z}`;
 }
 
+// <legacy:ticking>
 /**
  * 以前の版 (v6.31.0 まで) が tickingarea コマンドで登録した区画を外す。今の版は TickingAreaManager (このパック専用の
  * 枠で、コマンドの区画とは別) を使うので、古い区画が残るとワールド全体の 10 区画の上限を使い続けてしまう。
@@ -1852,6 +1855,7 @@ function ensureTickingAreaForPlayback(vp) {
   const ticking = ensureTickingArea(vp.dimension, vp.anchor, vp.videoData);
   if (ticking.added < ticking.needed) notify("tickingarea_partial", ticking.added, ticking.needed);
 }
+// </legacy:ticking>
 
 /**
  * プレイヤーの足元 origin から、動画を置く位置 (盤面の 0 番のマスの座標) を決める。layout は setup で決めた向き。
@@ -2181,8 +2185,8 @@ function showVolumeGUI(player) {
   const vp = getActivePlayer();
   const mv = vp ? vp.masterVolume : 1.0;
   const form = new ModalFormData()
-    .title(tr("volume.title"))
-    .slider(tr("volume.slider"), 0, 100, { valueStep: 10, defaultValue: Math.round(mv * 100) });
+    .title(tr("volume.title"));
+  addSlider(form, tr("volume.slider"), 0, 100, 10, Math.round(mv * 100));
 
   form.show(player).then((response) => {
     if (response.canceled) return;
@@ -2202,8 +2206,8 @@ function showSeekGUI(player) {
   const currentSec = Math.floor(frameToSeconds(vp.videoData, vp.currentFrame));
 
   const form = new ModalFormData()
-    .title(tr("seek.title"))
-    .slider(tr("seek.slider"), 0, Math.max(1, maxSec), { valueStep: 1, defaultValue: currentSec });
+    .title(tr("seek.title"));
+  addSlider(form, tr("seek.slider"), 0, Math.max(1, maxSec), 1, currentSec);
 
   form.show(player).then((response) => {
     if (response.canceled) return;
@@ -2308,9 +2312,17 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
   runAction(event.id.slice(EVENT_PREFIX.length), event.message ?? "", event.sourceEntity);
 });
 
+// <legacy:slider>
+/** フォームにスライダーを足す (@minecraft/server-ui 2.0.0 の書き方)。 */
+function addSlider(form, label, minimum, maximum, step, value) {
+  return form.slider(label, minimum, maximum, { valueStep: step, defaultValue: value });
+}
+// </legacy:slider>
+
+// <legacy:commands> (旧版向けの出力では、この範囲を消して /scriptevent だけにする)
 /**
- * 独自のコマンド (Script API 2.4.0 から)。/scriptevent と違ってチートを有効にしなくても使え (cheatsRequired: false)、
- * 動画 ID は入力の候補に出る。例: /badapple:setup face、/badapple:play sample。権限はオペレーター (GameDirectors)。
+ * 独自のコマンド (Script API 2.1.0 から)。/scriptevent と違ってチートを有効にしなくても使える (cheatsRequired: false)。
+ * 動画 ID の enum も登録するが、入力の候補には出ない (docs/KNOWN_ISSUES.md)。例: /badapple:setup face、/badapple:play sample。権限はオペレーター (GameDirectors)。
  * [操作, 説明, 引数] の一覧。引数は "video" (動画 ID の候補) か "text" (setup face などの文字) か無し。
  */
 const CUSTOM_COMMANDS = [
@@ -2352,3 +2364,4 @@ system.beforeEvents.startup.subscribe((event) => {
     console.warn(`[${EVENT_NAMESPACE}] custom commands were not registered: ${e}`);
   }
 });
+// </legacy:commands>

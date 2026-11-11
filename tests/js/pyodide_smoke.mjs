@@ -62,6 +62,15 @@ text = open("/work/vox.js", encoding="utf-8").read()
 counts["vox"] = sum(1 for _ in iter_decoded_frames(json.loads(text[text.index("{"):text.rindex("}") + 1])))
 pack_builder.build_addon_bytes([{"id": "walk", "title": "walk", "frames_js": text, "thumbnail": thumb, "sounds": []}],
                                "Smoke", "smoke")
+# 旧版の Minecraft 向け (web/worker.js と同じ組み立て。legacy_target.py)
+import legacy_target
+legacy = zipfile.ZipFile(io.BytesIO(pack_builder.build_addon_bytes(
+    [{"id": "walk", "title": "walk", "frames_js": text, "thumbnail": thumb, "sounds": []}], "Smoke", "smoke",
+    main_text=legacy_target.main_text(pack_builder.MAIN_SCRIPT.read_text(encoding="utf-8")),
+    manifest_text=legacy_target.manifest_text(pack_builder.MANIFEST.read_text(encoding="utf-8")),
+    lang_transform=legacy_target.lang_text)))
+assert json.loads(legacy.read("BP/manifest.json"))["header"]["min_engine_version"] == [1, 21, 80]
+assert "CustomCommand" not in legacy.read("BP/scripts/main.js").decode("utf-8")
 # だまし絵 (--view anamorphic) の .vox は、閉じた空洞を埋める (Pyodide には scipy が無いので、numpy だけの処理が動く)
 shell = np.array([[x, y, z, 1] for x in range(1, 8) for y in range(1, 8) for z in range(1, 8) if {x, y, z} & {1, 7}], np.uint8)
 with open("/work/shell.vox", "wb") as f:

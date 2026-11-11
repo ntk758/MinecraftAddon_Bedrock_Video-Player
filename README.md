@@ -152,7 +152,7 @@ Minecraft Bedrock Edition（統合版）で、MP4 などの動画ファイルを
 | GPU (任意) | NVIDIA / AMD / Intel。PyTorch の追加が必要 ([GPU の設定](#4-gpu-の設定-任意)) |
 
 ### 🔌 使っている Script API (Script API)
-アドオンは安定版の Script API だけで動くので、「試験的な機能」(ベータ API) を有効にする必要はありません。**Minecraft 1.26.10 より古い版では読み込めないので、v6.31.0 (1.21.80 以降) を使ってください。**
+アドオンは安定版の Script API だけで動くので、「試験的な機能」(ベータ API) を有効にする必要はありません。**Minecraft 1.26.10 より古い版では読み込めません。** 1.21.80〜1.26.0 では、[ブラウザ版](https://ntk758.github.io/MinecraftAddon_Bedrock_Video-Player/)の「Minecraft の版」で「1.21.80〜1.26.0」を選んで作ったアドオンを使うか、v6.31.0 を使ってください (どちらもチートを有効にして `/scriptevent` で操作します)。
 
 | モジュール | 版 | 使い道 |
 |---|---|---|
@@ -363,7 +363,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - **FFmpeg**: on PATH or next to `video_player_gui.py`
 
 ### 🔌 Script API
-The add-on uses stable Script API modules only, so you do not need to turn on any experimental features (Beta APIs). **It does not load on Minecraft older than 1.26.10; use v6.31.0 (1.21.80 or later) there.**
+The add-on uses stable Script API modules only, so you do not need to turn on any experimental features (Beta APIs). **It does not load on Minecraft older than 1.26.10.** For 1.21.80–1.26.0, build the add-on in the [web converter](https://ntk758.github.io/MinecraftAddon_Bedrock_Video-Player/) with "Minecraft version: 1.21.80 to 1.26.0", or use v6.31.0 (both need cheats and use `/scriptevent`).
 
 | Module | Version | Used for |
 |---|---|---|
