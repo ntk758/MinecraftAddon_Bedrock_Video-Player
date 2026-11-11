@@ -208,8 +208,27 @@ def scene_score(a, b):
     return 0.5 * sad + 0.3 * hist_diff + 0.2 * edge_diff
 
 
-def analyze_gops(frames, palette_for_gop=None):
+# --palette-weight-mask: マスクの白い所がこの割合より少ないコマは、重み付けせずに今のまま使う (人物がほぼいない場面)
+PALETTE_WEIGHT_MIN_AREA = 0.005
+
+
+def weighted_sample(frame, mask, weight):
+    """パレットを選ぶためのコマの画素に、マスクの中 (人物など、大事な所) の画素を weight - 1 回ずつ足したもの (N, 1, 3)。
+    自動パレットはコマの画素から無作為に選んで代表色を求めるので、マスクの中の色が weight 倍の重みで数えられる。
+    マスクの中が少なすぎるときは frame をそのまま返す。"""
+    if mask is None or weight <= 1:
+        return frame
+    inside = np.asarray(mask)[..., 0] > 127 if np.asarray(mask).ndim == 3 else np.asarray(mask) > 127
+    if inside.mean() < PALETTE_WEIGHT_MIN_AREA:
+        return frame
+    pixels = np.asarray(frame).reshape(-1, 3)
+    extra = np.repeat(np.asarray(frame)[inside], int(weight) - 1, axis=0)
+    return np.concatenate([pixels, extra])[:, None, :]
+
+
+def analyze_gops(frames, palette_for_gop=None, weight_masks=None, palette_weight=1):
     """シーンチェンジで GOP 境界を決める。palette_for_gop(samples, first_frame) を渡すと GOP ごとに呼ぶ。
+    weight_masks (コマごとのマスク) を渡すと、パレットを選ぶ画素のうちマスクの中を palette_weight 倍に数える。
 
     戻り値: (gop_boundaries, palettes)  gop_boundaries は [0, ..., total_frames]
     """
@@ -224,7 +243,9 @@ def analyze_gops(frames, palette_for_gop=None):
         if palette_for_gop is not None and first_frame is not None:
             palettes.append(palette_for_gop(samples, first_frame))
 
+    masks = iter(weight_masks) if weight_masks is not None else None
     for i, frame in enumerate(frames):
+        mask = next(masks, None) if masks is not None else None
         if prev is not None:
             frames_since_last = i - boundaries[-1]
             is_cut = scene_score(frame, prev) > SCENE_CUT_THRESHOLD and frames_since_last >= MIN_GOP_SIZE
@@ -238,7 +259,7 @@ def analyze_gops(frames, palette_for_gop=None):
         if palette_for_gop is not None:
             offset = i - boundaries[-1]
             if offset % AUTO_PALETTE_SAMPLE_STRIDE == 0 and len(samples) < AUTO_PALETTE_MAX_SAMPLES:
-                samples.append(frame)
+                samples.append(weighted_sample(frame, mask, palette_weight))
         prev = frame
         count = i + 1
 
@@ -487,6 +508,11 @@ def parse_args(argv=None):
     parser.add_argument("--palette-space", default="rgb", choices=["rgb", "oklab"],
                         help="--palette auto で代表色を求め、ブロックを選ぶ色空間。oklab は人の目に近い色の差で選ぶ "
                              "(候補より少ない --palette-colors のときだけ結果が変わる。docs/research/palette_space.md)")
+    parser.add_argument("--palette-weight-mask", default=None,
+                        help="--palette auto で、この動画の白い所 (人物の範囲など。scripts/make_person_videos.py や Windows 版の "
+                             "AI の切り抜きで作れる) の色を重く数えてパレットを選ぶ")
+    parser.add_argument("--palette-weight", type=float, default=8.0,
+                        help="--palette-weight-mask の白い所を何倍に数えるか (既定 8。docs/research/phase7x.md の 30 章)")
     parser.add_argument("--palette-colors", type=palette_colors, default=AUTO_PALETTE_COLORS,
                         help=f"--palette auto で GOP ごとに選ぶブロックの色数の上限 (候補は {len(AUTO_PALETTE_CANDIDATES)} 色。"
                              "減らすとディザの粒・ちらつき・データが減るが、色の再現は粗くなる)。既定の auto はシーンごとに "
@@ -840,7 +866,12 @@ def main(argv=None):
                                                  side_palette(AUTO_PALETTE_CANDIDATES) if volume else None)
                        if is_adaptive_palette else None)
     print(_tr("convert.analyzing"))
-    gop_boundaries, adaptive_palettes = analyze_gops(frame_source(), palette_builder)
+    weight_masks = None
+    if args.palette_weight_mask and is_adaptive_palette:
+        # 人物の範囲などのマスクの動画 (白い所を大事な所とみなす)。色の映像と同じ大きさ・切り取り方で読む
+        weight_masks = ffmpeg_frame_generator(args.palette_weight_mask, width, height, args.fps, args.duration,
+                                              args.ffmpeg, args.fit)
+    gop_boundaries, adaptive_palettes = analyze_gops(frame_source(), palette_builder, weight_masks, args.palette_weight)
     total_frames = gop_boundaries[-1]
     if total_frames == 0:
         print(_tr("convert.no_frames"), file=sys.stderr)
