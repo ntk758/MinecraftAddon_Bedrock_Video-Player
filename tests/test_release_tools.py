@@ -110,9 +110,24 @@ def test_release_workflow_runs_the_tools():
     for needed in ("build_standalone.py", "scripts/repack_addon.py", "scripts/play_addon_mock.py",
                    "scripts/release_notes.py", "SHA256SUMS.txt", "--run-converter"):
         assert needed in text, needed
-    assert set(workflow["jobs"]["release"]["needs"]) == {"exe", "samples"}
+    assert set(workflow["jobs"]["release"]["needs"]) == {"ci", "exe", "samples"}
     # Windows のランナーは cp1252 なので、日本語を出力するスクリプトのために UTF-8 にする
     assert workflow["jobs"]["exe"]["env"]["PYTHONUTF8"] == "1"
+
+
+def test_release_stops_when_the_mock_playback_or_the_ci_failed():
+    """モックの再生の失敗 (tee に流すので pipefail が要る) と、CI が成功していないコミットでは、リリースを作らない。"""
+    text = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    step = text[text.index("- name: Play every video in the mock"):]
+    step = step[:step.index("
+
+")]
+    assert "| tee" in step and "shell: bash" in step
+    assert "needs: [ ci, exe, samples ]" in text
+    check = text[text.index("  ci:
+"):text.index("  samples:
+")]
+    assert "--workflow ci.yml" in check and '--commit "$GITHUB_SHA"' in check and "exit 1" in check
 
 
 def test_notes_can_be_rebuilt_keeping_the_checks(tmp_path):
