@@ -65,6 +65,10 @@ const TICKING_AREA_NAME = "badapple_area";
 const REMOTE_CONTROL_ITEM = "minecraft:compass";
 // video_player_gui.py が音声を切り出す長さ (-segment_time) と一致させること
 const AUDIO_CHUNK_SECONDS = 10;
+// 途中で入ってきた人に、今のチャンクを頭から鳴らしてよい遅れ (秒)。これより遅いと音がずれるので、次の境目を待つ
+const LATE_JOIN_AUDIO_SECONDS = 1;
+// ワールドに入ったときの案内を出したプレイヤーの印 (プレイヤーごとに 1 回)
+const WELCOMED_KEY = `${EVENT_NAMESPACE}:welcomed`;
 
 // 1 tick あたりのブロック設置上限。超えた分は次の tick へ持ち越す
 const MAX_BLOCKS_PER_TICK = 4000;
@@ -162,6 +166,13 @@ function textLines(...parts) {
 
 function notify(key, ...args) {
   world.sendMessage({ rawtext: [{ text: `${MESSAGE_PREFIX}§r ` }, tr(key, ...args)] });
+}
+
+/** 1 人だけに知らせる (ワールドに入ったときの案内など)。 */
+function notifyPlayer(player, key, ...args) {
+  try {
+    player.sendMessage({ rawtext: [{ text: `${MESSAGE_PREFIX}§r ` }, tr(key, ...args)] });
+  } catch (e) { /* 抜けた */ }
 }
 
 const warnedMessages = new Set();
@@ -1357,6 +1368,20 @@ class VideoPlayer {
     return true;
   }
 
+  /**
+   * 途中で入ってきた人に、今の音声のチャンクを鳴らす。途中から鳴らす API が無いので、チャンクが始まって
+   * LATE_JOIN_AUDIO_SECONDS 以内のときだけ (それより後は、次のチャンクの境目から全員と一緒に鳴る)。
+   */
+  playCurrentChunkFor(player) {
+    if (!this.running || !this.videoData || this.masterVolume <= 0 || this.currentAudioChunk < 0) return;
+    const seconds = frameToSeconds(this.videoData, this.currentFrame);
+    if (seconds - this.currentAudioChunk * AUDIO_CHUNK_SECONDS > LATE_JOIN_AUDIO_SECONDS) return;
+    const trackId = `${EVENT_NAMESPACE}.${this.audioVideoId}.chunk_${this.currentAudioChunk}`;
+    try {
+      player.playSound(trackId, { location: player.location, volume: this.masterVolume, pitch: 1.0 });
+    } catch (e) { /* 鳴らせない */ }
+  }
+
   syncAudioForFrame(frameIndex) {
     if (!this.videoData || this.masterVolume <= 0) return;
     const targetChunk = Math.floor(frameToSeconds(this.videoData, frameIndex) / AUDIO_CHUNK_SECONDS);
@@ -2058,6 +2083,10 @@ function setup(player, options = "") {
   startMainLoop();
 
   notify("setup_done", EVENT_PREFIX);
+  // 置いた画面の見方 (床に置いた平面は足元からは見えない。立体は近すぎると全体が見えない)
+  if (isAnamorphic(videoData)) return;
+  if (isVolume(videoData)) notify("setup_view_volume");
+  else if (!layout.wall) notify("setup_view_floor", EVENT_PREFIX);
 }
 
 function getPlaybackDimension(fallbackDimension) {
@@ -2333,6 +2362,21 @@ function showVideoSelectGUI(player) {
     }
   });
 }
+
+// ワールドに入ったとき: まだ画面が無ければ、使い方を 1 回だけ案内する (以前は何も出ず、コマンドの接頭辞も分からなかった)。
+// 再生中なら、途中で入った人にも今の音を鳴らす
+world.afterEvents.playerSpawn.subscribe((event) => {
+  if (!event.initialSpawn) return;
+  const player = event.player;
+  for (const vp of activePlayers.values()) vp.playCurrentChunkFor(player);
+  try {
+    if (world.getDynamicProperty(ANCHOR_KEY) || player.getDynamicProperty(WELCOMED_KEY)) return;
+    player.setDynamicProperty(WELCOMED_KEY, true);
+  } catch (e) {
+    return;
+  }
+  notifyPlayer(player, "welcome", EVENT_PREFIX);
+});
 
 world.afterEvents.itemUse.subscribe((event) => {
   loadSelection();

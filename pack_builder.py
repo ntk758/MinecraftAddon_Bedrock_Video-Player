@@ -194,14 +194,14 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
     rp_uuid = stable_pack_uuid(namespace, pack_name, "rp")
     version = build_manifest_version()
     bp_manifest = json.loads(manifest_text)
-    bp_manifest["header"].update({"name": f"{pack_name} v{version_text()}", "description": manifest_description(),
+    bp_manifest["header"].update({"name": f"{pack_name} v{version_text()}", "description": manifest_description(namespace),
                                   "uuid": bp_uuid, "version": version})
     bp_manifest["modules"][0].update({"uuid": stable_pack_uuid(namespace, pack_name, "bp-script"), "version": version})
     bp_manifest.setdefault("dependencies", []).append({"uuid": rp_uuid, "version": version})
     put("BP/manifest.json", json.dumps(bp_manifest, ensure_ascii=False, indent=2) + "\n")
     rp_manifest = {
         "format_version": 2,
-        "header": {"name": f"{pack_name} Res v{version_text()}", "description": manifest_description(), "uuid": rp_uuid,
+        "header": {"name": f"{pack_name} Res v{version_text()}", "description": manifest_description(namespace), "uuid": rp_uuid,
                    "version": version, "min_engine_version": bp_manifest["header"]["min_engine_version"]},
         "modules": [{"description": "Resources", "type": "resources",
                      "uuid": stable_pack_uuid(namespace, pack_name, "rp-resources"), "version": version}],

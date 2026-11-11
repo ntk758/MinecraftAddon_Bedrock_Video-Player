@@ -1,19 +1,22 @@
 # Block Video Player
 
-**Play your own videos in Minecraft Bedrock — built from real blocks, with synced sound.** Flat screens, walk-around 3D holograms, and a trompe-l'oeil dancer that is repainted for your eye as you move. **No cheats and no experimental toggles needed.** Converting your own video is free and runs in your browser.
+**Watch videos made of real blocks in Minecraft Bedrock, with synced sound.** Flat screens, walk-around 3D holograms, and a trompe-l'oeil dancer that is repainted for your eye as you move. **No cheats and no experimental toggles needed.** Converting your own video is free and runs in your browser.
 
-This download is the **showcase**: an original animated short, three 3D holograms and a dancing trompe-l'oeil figure.
+This download is the **showcase with 5 demo clips** (an original animated short, three 3D holograms and a dancing trompe-l'oeil figure). To play **your own** video, convert it first with the free web converter or Windows app (see below) — it is not an in-game video player for files on your device.
 
 ![Animated short as blocks](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/curseforge/gif_cat.gif)
 
 ## ▶ Try the showcase (3 minutes)
 
-1. Open the `.mcaddon` with Minecraft (double-click it).
-2. Create a world and turn on **both** the Behavior Pack and the Resource Pack (same name). A superflat world works best. **Cheats can stay off.**
-3. Stand on a flat, open spot and type **`/badapple:setup`**, then **`/badapple:start`**.
-4. Use a **compass** to open the remote: play, pause, seek, volume and switching videos.
+1. Open the `.mcaddon` with Minecraft (on a phone: tap it and choose *Open with Minecraft*; see the install guides on this page).
+2. **Use a new test world** (superflat works best) and turn on **both** the Behavior Pack and the Resource Pack (same name). **Cheats can stay off.** When you join, the add-on prints these steps in the chat.
+3. Stand on flat, open ground, **face where you want the screen**, and type **`/badapple:setup wall`**. The screen stands up in front of you like a TV. **Blocks in that area are replaced.**
+4. Type **`/badapple:start`**.
+5. To pause, seek, change the volume or switch videos, open the remote with **`/badapple:remote`** (or use a compass if you have one).
 
-**Needs Minecraft Bedrock 1.26.10 or newer.** On an older Minecraft, use [v6.31.0 from GitHub](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/tag/v6.31.0) (it needs cheats).
+**Needs Minecraft Bedrock 1.26.10 (shown as 26.10 on MCPEDL) or newer.** For 1.21.80 to 1.26.0, make your add-on in the [web converter](https://ntk758.github.io/MinecraftAddon_Bedrock_Video-Player/) with *Minecraft version: 1.21.80 to 1.26.0*, or use [v6.31.0 from GitHub](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/tag/v6.31.0). Both need cheats and use `/scriptevent badapple:setup`.
+
+The commands are for the world's operators (the host in single player). On a Realm or server, ask an operator to run `setup`; anyone can use the remote.
 
 **Showcase videos** (switch with `/badapple:play <id>` or *Choose from the list* in the remote; `/badapple:list` shows the IDs):
 
@@ -25,7 +28,7 @@ This download is the **showcase**: an original animated short, three 3D hologram
 | `bounce` | A MagicaVoxel animation of a striped ball bouncing on a floor |
 | `dancer` | A trompe-l'oeil dancing girl on a floor and back wall that plays the animated short. She keeps dancing as you walk or fly around |
 
-Where things appear: flat screens start at your feet and spread east and north. 3D holograms stand 2 blocks north of you. The `dancer` stage is about 118 × 51 blocks with an 84-block-high back wall, north of you — watch from in front of it or above the floor. The screen replaces blocks in its way, so pick an empty spot.
+Where things appear: `setup wall` stands a flat screen up 3 blocks in front of you. Plain `/badapple:setup` lays it flat at your feet (spreading east and north), so look down at it from above. 3D holograms stand 2 blocks north of you. The `dancer` stage is about 118 × 51 blocks with an 84-block-high back wall, north of you — watch from in front of it or above the floor. The screen replaces blocks in its way, so pick an empty spot.
 
 ## 🎞 Put YOUR video in Minecraft
 
