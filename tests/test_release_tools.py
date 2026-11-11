@@ -119,14 +119,10 @@ def test_release_stops_when_the_mock_playback_or_the_ci_failed():
     """モックの再生の失敗 (tee に流すので pipefail が要る) と、CI が成功していないコミットでは、リリースを作らない。"""
     text = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     step = text[text.index("- name: Play every video in the mock"):]
-    step = step[:step.index("
-
-")]
+    step = step[:step.index("\n\n")]
     assert "| tee" in step and "shell: bash" in step
     assert "needs: [ ci, exe, samples ]" in text
-    check = text[text.index("  ci:
-"):text.index("  samples:
-")]
+    check = text[text.index("  ci:\n"):text.index("  samples:\n")]
     assert "--workflow ci.yml" in check and '--commit "$GITHUB_SHA"' in check and "exit 1" in check
 
 
