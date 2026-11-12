@@ -1,6 +1,6 @@
 {
   "_language_name": "Deutsch",
-  "app.title": "Block Video Player - Paket-Builder",
+  "app.title": "Block & Image Video Player - Paket-Builder",
   "language.label": "🌐 Sprache (Language)",
   "videos.frame": "Videos (mehrere Videos pro Add-on)",
   "videos.col_id": "Video-ID",
@@ -150,7 +150,7 @@
   "addon.setup_too_tall": "§cDieses Video ist %1 Blöcke hoch, die Welt hier aber nur %2 Blöcke, es würde oben abgeschnitten. Es wurde nicht platziert. Mach es im Konverter kleiner oder führe §f/%3setup§c ohne wall aus, um es auf den Boden zu legen.",
   "addon.setup_view_floor": "§7Der Bildschirm liegt flach zu deinen Füßen. Schau von oben darauf oder führe §f/%1setup wall§7 aus, um ihn vor dir aufzustellen.",
   "addon.setup_view_volume": "§7Geh ein paar Blöcke zurück, um die ganze Figur zu sehen.",
-  "addon.welcome": "§eBlock Video Player ist bereit. Stell dich auf flaches, freies Gelände, schau dorthin, wo der Bildschirm hin soll, und führe §f/%1setup wall§e und dann §f/%1start§e aus. Blöcke in diesem Bereich werden ersetzt. Die Fernbedienung öffnest du mit §f/%1remote§e oder einem Kompass.",
+  "addon.welcome": "§eBlock & Image Video Player ist bereit. Stell dich auf flaches, freies Gelände, schau dorthin, wo der Bildschirm hin soll, und führe §f/%1setup wall§e und dann §f/%1start§e aus. Blöcke in diesem Bereich werden ersetzt. Die Fernbedienung öffnest du mit §f/%1remote§e oder einem Kompass.",
   "addon.no_anchor": "§cEs wurde noch kein Bildschirm platziert. Führe zuerst /%1setup aus",
   "addon.starting": "§aDie Wiedergabe startet nach dem Laden",
   "addon.resumed": "§aWiedergabe fortgesetzt",

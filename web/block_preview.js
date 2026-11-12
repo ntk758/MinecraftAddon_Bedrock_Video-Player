@@ -1,4 +1,4 @@
-// Block Video Player Web Converter: できあがりのプレビューの 1 コマを描く
+// Block & Image Video Player Web Converter: できあがりのプレビューの 1 コマを描く
 // 変換したデータ (FRAME_DATA) を、ゲームと同じ codec.js で再生しながら 1 コマずつ復元して描く。絵を先に全部作って
 // メモリに置かないので、長い動画でも全部のコマを元の fps のまま見られる (使うメモリは盤面 1 枚ぶん)。
 // 描く規則は mvcodec/preview.py の render_preview (Windows 版の GIF) とそろえてある:

@@ -1,4 +1,4 @@
-# Project Status — Block Video Player for Minecraft Bedrock Edition
+# Project Status — Block & Image Video Player for Minecraft Bedrock Edition
 
 ## 1. プロジェクト概要
 本プロジェクトは、動画ファイル（MP4 / MKV / AVI / WEBM 等）を Minecraft Bedrock Edition（統合版）の Behavior Pack（.mcpack）へ超高速かつ最小容量で変換し、ゲーム内のブロック盤面上でスムーズに動動画再生するアドオン＆変換ツール群です。

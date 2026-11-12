@@ -1,6 +1,6 @@
 {
   "_language_name": "한국어",
-  "app.title": "Block Video Player 팩 빌더",
+  "app.title": "Block & Image Video Player 팩 빌더",
   "language.label": "🌐 언어 (Language)",
   "videos.frame": "동영상 목록 (애드온 하나에 여러 동영상 수록 가능)",
   "videos.col_id": "동영상 ID",
@@ -150,7 +150,7 @@
   "addon.setup_too_tall": "§c이 동영상은 높이가 %1블록이지만 이곳 세계의 높이는 %2블록뿐이라 위가 잘립니다. 놓지 않았습니다. 변환에서 작게 하거나 wall 없이 §f/%3setup§c으로 바닥에 놓으세요.",
   "addon.setup_view_floor": "§7화면이 발밑에 바닥으로 놓여 있습니다. 위에서 내려다보거나 §f/%1setup wall§7로 눈앞에 세우세요.",
   "addon.setup_view_volume": "§7몇 블록 물러나면 전체가 보입니다.",
-  "addon.welcome": "§eBlock Video Player를 사용할 수 있습니다. 평평하고 트인 곳에서 화면을 둘 방향을 보고 §f/%1setup wall§e, 이어서 §f/%1start§e를 실행하세요. 그 범위의 블록은 바뀝니다. 리모컨은 §f/%1remote§e 또는 나침반으로 엽니다.",
+  "addon.welcome": "§eBlock & Image Video Player를 사용할 수 있습니다. 평평하고 트인 곳에서 화면을 둘 방향을 보고 §f/%1setup wall§e, 이어서 §f/%1start§e를 실행하세요. 그 범위의 블록은 바뀝니다. 리모컨은 §f/%1remote§e 또는 나침반으로 엽니다.",
   "addon.no_anchor": "§c화면이 아직 설치되지 않았습니다. 먼저 /%1setup 을 실행하세요",
   "addon.starting": "§a로딩이 끝나면 재생합니다",
   "addon.resumed": "§a재생을 다시 시작했습니다",

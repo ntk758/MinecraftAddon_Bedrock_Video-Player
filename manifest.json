@@ -1,8 +1,8 @@
 {
   "format_version": 2,
   "header": {
-    "name": "Block Video Player v6.35.0",
-    "description": "Block Video Player v6.35.0 (GUI でビルドすると名前・UUID・バージョンが置き換わります)",
+    "name": "Block & Image Video Player v6.35.0",
+    "description": "Block & Image Video Player v6.35.0 (GUI でビルドすると名前・UUID・バージョンが置き換わります)",
     "uuid": "f20c8b97-b196-4382-b351-6f78b0799373",
     "version": [6, 35, 0],
     "min_engine_version": [1, 26, 10]

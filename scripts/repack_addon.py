@@ -4,7 +4,7 @@ codec.js・manifest・翻訳・版) だけを今の版にして組み立て直�
 データの形式が変わっていない版どうしで使う (変換をやり直さないので、前の版と同じ映像・音声になる)。パックの UUID は
 パック名と接頭辞から決まる (pack_builder.stable_pack_uuid) ので、前の版と同じパック名にすれば上書きで更新できる。
 
-    python scripts/repack_addon.py old.mcaddon new.mcaddon [--name "Block Video Player Sample"]
+    python scripts/repack_addon.py old.mcaddon new.mcaddon [--name "Block & Image Video Player Sample"]
 """
 import argparse
 import json

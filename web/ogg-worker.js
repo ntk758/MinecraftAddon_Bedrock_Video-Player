@@ -1,4 +1,4 @@
-// Block Video Player Web Converter: 音声を Ogg Vorbis にする (画面とは別のスレッド)
+// Block & Image Video Player Web Converter: 音声を Ogg Vorbis にする (画面とは別のスレッド)
 // エンコーダーは web/vendor/wasm-media-encoders (MIT、npm の 0.7.0 をそのまま写したもの)。その UMD は大域に
 // `var e, t` を宣言するので、画面のスクリプト (app.js の t など) とぶつからないよう、この Worker の中だけで読む。
 // 受け取る: { left, right (Float32Array), rate, quality, chunkSeconds }

@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Block Video Player Web Converter</title>
+<title>Block &amp; Image Video Player Web Converter</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <!-- 文字は data-i18n のキーで locales/<言語>.json から入れる (web/i18n.js)。ここに書いた英語は読み込む前の表示 -->
 <header>
   <div class="topbar">
-    <h1>Block Video Player <span class="sub" data-i18n="web.subtitle">Web Converter (beta)</span></h1>
+    <h1>Block &amp; Image Video Player <span class="sub" data-i18n="web.subtitle">Web Converter (beta)</span></h1>
     <label class="lang"><span data-i18n="language.label">🌐 Language</span>
       <select id="language"></select></label>
   </div>
@@ -109,7 +109,7 @@
       </label>
       <label><span data-i18n="settings.keyframe">Keyframe interval</span> <input type="number" id="keyframe" value="30" min="0" max="300"></label>
       <label class="check"><input type="checkbox" id="perceptual" checked> <span data-i18n="settings.perceptual">Perceptual optimization (sharper edges)</span></label>
-      <label><span data-i18n="pack.name">Pack name</span> <input type="text" id="packName" value="Block Video Player"></label>
+      <label><span data-i18n="pack.name">Pack name</span> <input type="text" id="packName" value="Block &amp; Image Video Player"></label>
       <label><span data-i18n="pack.namespace">Command prefix</span> <input type="text" id="namespace" value="badapple" pattern="[a-z0-9_]+"></label>
       <label><span data-i18n="web.target">Minecraft version</span>
         <select id="target">

@@ -28,7 +28,7 @@ APP_DIR = Path(__file__).resolve().parent
 IMAGE_MAIN_SCRIPT = APP_DIR / "image_mode" / "image_main.js"
 
 DEFAULT_NAMESPACE = "bvpimg"
-DEFAULT_PACK_NAME = "Block Video Player Image"
+DEFAULT_PACK_NAME = "Block & Image Video Player (Image)"
 MIN_ENGINE_VERSION = [1, 26, 10]
 ID_PATTERN = re.compile(r"^[a-z0-9_]+$")
 NAMESPACE_PATTERN = re.compile(r"^[a-z0-9_]+$")
