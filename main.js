@@ -834,10 +834,11 @@ class VideoPlayer {
           try {
             this.dimension.fillBlocks(new BlockVolume(from, to), permutation);
           } catch (e) {
-            failures += area;
             lastError = e;
-            this.fillBoxCells(board, width, contiguousRows, x, x1, r, r1, slices, -1);
             warnOnce("fill", `fillBlocks failed: ${e}`);
+            // 箱の一部が読み込まれていないチャンク (大きな画面の遠い側など) にかかると、箱の全体が失敗する。1 マスずつ
+            //   置き直し、置けないマスだけを「不明」にする (以前は箱ごと置かれず、毎フレーム同じ箱で失敗していた)
+            failures += this.placeBoxCellsOneByOne(board, width, contiguousRows, x, x1, r, r1, slices, permutation, level);
           }
           operations += area;
         } else {
@@ -995,6 +996,49 @@ class VideoPlayer {
   }
 
   /** 盤面上の箱 (x0..x1 列, r0..r1 行, 奥へ slices 段) を value にする。 */
+  /**
+   * fillBoxCells と同じマスに 1 個ずつ置く。読み込まれていないチャンクのマスは試さずに「不明」(-1) にする
+   * (isChunkLoaded があるときだけ。チャンクごとに 1 回調べる)。置けなかったマスの数を返す。
+   */
+  placeBoxCellsOneByOne(board, width, sliceRows, x0, x1, r0, r1, slices, permutation, level) {
+    const loadedChunks = new Map();
+    const canCheck = typeof this.dimension.isChunkLoaded === "function";
+    let failures = 0;
+    for (let s = 0; s < slices; s++) {
+      for (let rr = r0; rr <= r1; rr++) {
+        const base = (rr + s * sliceRows) * width;
+        for (let q = base + x0; q <= base + x1; q++) {
+          const loc = cellToWorld(this.videoData, this.anchor, q, this.tempBlockLoc);
+          if (canCheck) {
+            const key = `${Math.floor(loc.x / 16)},${Math.floor(loc.z / 16)}`;
+            let loaded = loadedChunks.get(key);
+            if (loaded === undefined) {
+              try {
+                loaded = this.dimension.isChunkLoaded(loc);
+              } catch (e) {
+                loaded = false;
+              }
+              loadedChunks.set(key, loaded);
+            }
+            if (!loaded) {
+              board[q] = -1;
+              failures++;
+              continue;
+            }
+          }
+          try {
+            this.dimension.setBlockPermutation(loc, permutation);
+            board[q] = level;
+          } catch (e) {
+            board[q] = -1;
+            failures++;
+          }
+        }
+      }
+    }
+    return failures;
+  }
+
   fillBoxCells(board, width, sliceRows, x0, x1, r0, r1, slices, value) {
     for (let s = 0; s < slices; s++) {
       for (let rr = r0; rr <= r1; rr++) {
@@ -1961,16 +2005,32 @@ function anchorForVideo(videoData, origin, dimension, layout = DEFAULT_LAYOUT) {
   const fittedY = fitToBuildHeight(dimension, anchor.y, sizeY);
   const shifted = fittedY !== anchor.y;
   anchor.y = fittedY;
-  return { anchor, shifted };
+  // 世界の高さ (オーバーワールドは 384、ネザーは 128) より高いと、どこに置いても上が切れる
+  const range = dimension.heightRange;
+  const worldHeight = range ? range.max - range.min : Infinity;
+  return { anchor, shifted, sizeY, worldHeight, tooTall: sizeY > worldHeight, footprint: Math.max(sizeX, sizeZ) };
 }
 
-/** setup で保存した向き。無い・壊れていれば北向きの床置き (以前の版と同じ)。 */
+/**
+ * 置けない・見えにくい大きさを知らせる。高すぎて世界に入らないときは false を返す (置かない。以前は黙って上が切れ、
+ * 置けなかった行を毎フレーム置き直していた)。
+ */
+function checkPlacement(placement) {
+  if (placement.tooTall) {
+    notify("setup_too_tall", placement.sizeY, placement.worldHeight, EVENT_PREFIX);
+    return false;
+  }
+  if (placement.footprint > LARGE_SCREEN_BLOCKS) notify("setup_large", placement.footprint);
+  return true;
+}
+
 /** setup の足元から、その動画を置く位置を決める (align なら、その動画の大きさでチャンクにそろえてから)。 */
 function placeVideo(videoData, origin, dimension, layout) {
   const base = layout.align ? alignOriginToChunks(videoData, origin, dimension, layout).origin : origin;
   return anchorForVideo(videoData, base, dimension, layout);
 }
 
+/** setup で保存した向き。無い・壊れていれば北向きの床置き (以前の版と同じ)。 */
 function storedLayout() {
   try {
     const value = JSON.parse(world.getDynamicProperty(LAYOUT_KEY) ?? "null");
@@ -2003,6 +2063,8 @@ function fitToBuildHeight(dimension, y, sizeY) {
 // チャンク (16×16 の区画) の大きさ。ブロックを置き替えると、そのブロックがあるサブチャンク (16×16×16) が描き直され、
 // プレイヤーへ送り直される。スクリーンが区画の境目をまたがないようにそろえると、触るチャンクの数が減る
 const CHUNK_SIZE = 16;
+// これより大きい画面は、遠い端が多くの端末の描画距離 (12 チャンク前後。実際の値は端末と設定による) の外になる
+const LARGE_SCREEN_BLOCKS = 192;
 
 /** start から size マスの範囲がまたぐチャンクの数。 */
 function chunksSpanned(start, size) {
@@ -2063,7 +2125,9 @@ function setup(player, options = "") {
     notify("setup_aligned", aligned.dx, aligned.dz, aligned.before, aligned.after);
   }
   // 建築できる高さ (オーバーワールドは Y=-64〜319) からはみ出すと置けないので、収まる高さへずらす
-  const { anchor, shifted } = placeVideo(videoData, origin, player.dimension, layout);
+  const placement = placeVideo(videoData, origin, player.dimension, layout);
+  if (!checkPlacement(placement)) return;
+  const { anchor, shifted } = placement;
   if (shifted) notify("setup_shifted", anchor.y);
   world.setDynamicProperty(ORIGIN_KEY, origin);
   // 前のスクリーンの再生と片付けの仕事を止める (以前は前の動画が裏で動き続け、片付けが新しい画面を上書きしていた)
@@ -2120,7 +2184,12 @@ function startPlayback(dimension) {
     const videoData = VIDEOS[globalSelectedVideoId];
     if (origin && videoData) {
       // 平面と立体では置く位置・高さ・常時読み込みの範囲が違うので、setup の足元から決め直す
-      const fitted = placeVideo(videoData, origin, playbackDimension, storedLayout());
+      const layout = storedLayout();
+      const fitted = placeVideo(videoData, origin, playbackDimension, layout);
+      if (!checkPlacement(fitted)) {
+        if (previous) previous.running = false;
+        return;
+      }
       anchor = fitted.anchor;
       if (fitted.shifted) notify("setup_shifted", anchor.y);
       const ticking = ensureTickingArea(playbackDimension, anchor, videoData);

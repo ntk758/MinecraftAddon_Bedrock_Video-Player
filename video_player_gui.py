@@ -327,6 +327,8 @@ VOLUME_MODES = ("relief", "extrude", "inflate", "person", "person_anime")
 # 人物を切り抜くモード → 切り抜きのモデル (mvcodec/person.py の SEGMENTERS)
 PERSON_MODES = {"person": "photo", "person_anime": "anime"}
 MAX_SCREEN_SIZE = 512
+# オーバーワールドの建築できる高さ (−64〜319)。これより高い平面は、ゲームで壁に立てると上が切れるので置かれない
+WORLD_HEIGHT = 384
 MAX_DEPTH = 64
 DEFAULT_MODE = "screen"
 DEFAULT_DEPTH = 16
@@ -1079,6 +1081,11 @@ class PackBuilderApp(tk.Tk):
                              bool(self.stage_background_var.get().strip()))
         if load["level"] == "heavy" and not messagebox.askyesno(
             self.tr("warn.heavy_title"), self.tr("warn.heavy", ms=f"{load['ms_per_tick']:.0f}")
+        ):
+            return
+        # 高さが世界 (オーバーワールドは 384 ブロック) より大きい平面は、壁 (setup wall) に立てられない。床なら置ける
+        if mode == "screen" and height > WORLD_HEIGHT and not messagebox.askyesno(
+            self.tr("warn.heavy_title"), self.tr("warn.too_tall", height=height, world=WORLD_HEIGHT)
         ):
             return
 
