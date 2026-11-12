@@ -499,7 +499,8 @@ function showRemote(player) {
       { translate: "bvpimg.remote.status", with: { rawtext: [tr(statusKey)] } },
       { translate: "bvpimg.remote.selected", with: { rawtext: [video ? { text: video.title } : tr("remote.none")] } },
       tr("remote.position", video ? seconds(video, frame) : 0, video ? seconds(video, video.frame_count) : 0, frame),
-      tr("remote.volume", `${state.volume}%`),
+      // フォームの本文は % をもう一度読むので、% は %% と書く (1 つだと消えた: 実機 2026-11-13)
+      tr("remote.volume", `${state.volume}%%`),
     ));
   const actions = [];
   const button = (key, icon, action) => {
