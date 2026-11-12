@@ -187,8 +187,10 @@ def client_entity_json(video: dict, method: str, namespace: str) -> dict:
     """<ns>:screen_<id>_<m> のクライアント側の定義。スポーンエッグは作らない。"""
     _check_method(method)
     short = _short_name(video, method)
-    # 方式 c だけ自作マテリアル (USE_UV_ANIM) を使う。方式 a は標準の entity_alphatest のまま
-    material = UV_ANIM_MATERIAL if method == "c" else "entity_alphatest"
+    # 方式 c だけ自作マテリアル (USE_UV_ANIM) を使う。方式 a は標準の entity (不透明。裏から見たときに鏡写しの絵を
+    # 出さないよう、裏の面を描かない entity にする。entity_alphatest は両面を描く: 実機の録画 2026-11-12。entity が裏を
+    # 描かないことは実機で未確認)
+    material = UV_ANIM_MATERIAL if method == "c" else "entity"
     return {
         "format_version": "1.10.0",
         "minecraft:client_entity": {

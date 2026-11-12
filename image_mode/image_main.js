@@ -24,6 +24,15 @@ const PROPERTY = { state: `${NAMESPACE}:state`, frame: `${NAMESPACE}:frame`, seq
 // 音声のチャンクの頭から、この秒数以内なら鳴らし始める (途中からは鳴らせないので、遅れたら次の境目まで待つ)
 const AUDIO_START_WINDOW = 0.3;
 const METHODS = ["a", "c"];
+// 途中で入ってきた人に今のチャンクを鳴らすのは、チャンクの頭からこの秒数以内だけ (ブロックモードと同じ)
+const LATE_JOIN_SECONDS = 1;
+// 画面を壁に置くとき、壁の面から少し浮かせる (ブロックの面と重なってちらつかないように)
+const WALL_OFFSET = 0.02;
+// 壁に置くとき、見ているブロックを探す距離
+const WALL_REACH = 32;
+// 4 方向のヨー (エンティティの正面がこの向き): south +z = 0、west -x = 90、north -z = 180、east +x = -90
+const FACE_YAW = { South: 0, West: 90, North: 180, East: -90 };
+const FACE_NORMAL = { South: [0, 1], West: [-1, 0], North: [0, -1], East: [1, 0] };
 
 const VIDEOS = new Map(IMAGE_VIDEOS.map((v) => [v.id, v]));
 
@@ -43,7 +52,8 @@ const SCREEN_FAMILY = "bvp_screen";
 
 function defaultState() {
   return { videoId: IMAGE_VIDEOS[0]?.id ?? null, method: IMAGE_VIDEOS[0]?.methods?.[0] ?? "a", entityId: null,
-           dimension: "minecraft:overworld", location: null, rotation: 0, mode: STOPPED, playTicks: 0, pausedFrame: 0 };
+           dimension: "minecraft:overworld", location: null, rotation: 0, mode: STOPPED, playTicks: 0, pausedFrame: 0,
+           volume: 100 };
 }
 
 function loadState() {
@@ -201,21 +211,68 @@ function updateAudio(video) {
   if (chunk === playedChunk || chunk < 0 || chunk >= video.audio_chunks) return;
   if (seconds - chunk * video.audio_chunk_seconds > AUDIO_START_WINDOW) return;
   stopAudio(video);
-  for (const player of world.getAllPlayers()) {
-    try {
-      player.playSound(soundId(video, chunk));
-    } catch (e) { /* その人には鳴らせない */ }
-  }
+  for (const player of world.getAllPlayers()) playChunkFor(player, video, chunk);
   playedChunk = chunk;
+}
+
+function playChunkFor(player, video, chunk) {
+  if (state.volume <= 0) return;
+  try {
+    player.playSound(soundId(video, chunk), { volume: state.volume / 100 });
+  } catch (e) { /* その人には鳴らせない */ }
+}
+
+/** 途中で入ってきた人: 今のチャンクが始まって LATE_JOIN_SECONDS 以内なら鳴らす (それより後は次の境目から全員と一緒)。 */
+function playForLateJoiner(player) {
+  const video = currentVideo();
+  if (!video || state.mode !== PLAYING || !video.audio_chunks || playedChunk < 0) return;
+  const seconds = state.playTicks / TICKS_PER_SECOND;
+  if (seconds - playedChunk * video.audio_chunk_seconds > LATE_JOIN_SECONDS) return;
+  playChunkFor(player, video, playedChunk);
+}
+
+// --- 画面の置き場所 ---
+
+/** プレイヤーの前、スクリーンの幅ほど離れた所に、こちらを向けて立てる。face なら向きを東西南北にそろえる。 */
+function placeInFront(player, video, face) {
+  const view = player.getViewDirection();
+  const flat = Math.hypot(view.x, view.z) || 1;
+  const distance = Math.max(4, video.screen_blocks[0]);
+  const at = player.location;
+  let rotation = player.getRotation().y + 180;
+  if (face) rotation = Math.round(rotation / 90) * 90;
+  return { location: { x: at.x + (view.x / flat) * distance, y: at.y, z: at.z + (view.z / flat) * distance }, rotation };
+}
+
+/** 見ているブロックの横の面に、面から少し浮かせて貼る (下端はそのブロックの下の面)。横の面でなければ null。 */
+function placeOnWall(player) {
+  let hit;
+  try {
+    hit = player.getBlockFromViewDirection({ maxDistance: WALL_REACH });
+  } catch (e) {
+    return null;
+  }
+  const normal = hit && FACE_NORMAL[hit.face];
+  if (!normal) return null;
+  const b = hit.block.location;
+  const location = {
+    x: b.x + 0.5 + normal[0] * (0.5 + WALL_OFFSET),
+    y: b.y,
+    z: b.z + 0.5 + normal[1] * (0.5 + WALL_OFFSET),
+  };
+  return { location, rotation: FACE_YAW[hit.face] };
 }
 
 // --- 再生の操作 ---
 
 function setup(player, args) {
   const words = args.split(/\s+/).filter(Boolean);
+  const options = { face: false, wall: false, align: false };
   for (const word of words) {
+    const lower = word.toLowerCase();
     if (VIDEOS.has(word)) state.videoId = word;
-    else if (METHODS.includes(word.toLowerCase())) state.method = word.toLowerCase();
+    else if (METHODS.includes(lower)) state.method = lower;
+    else if (lower in options) options[lower] = true;
     else {
       notify("video_not_found", word, NAMESPACE);
       return;
@@ -224,14 +281,19 @@ function setup(player, args) {
   const video = currentVideo();
   if (!video || !player) return;
   if (!video.methods.includes(state.method)) state.method = video.methods[0];
-  // プレイヤーの前、スクリーンの幅ほど離れた所に、こちらを向けて立てる
-  const view = player.getViewDirection();
-  const flat = Math.hypot(view.x, view.z) || 1;
-  const distance = Math.max(4, video.screen_blocks[0]);
-  const at = player.location;
-  state.location = { x: at.x + (view.x / flat) * distance, y: at.y, z: at.z + (view.z / flat) * distance };
+  const placed = options.wall ? placeOnWall(player) : placeInFront(player, video, options.face);
+  if (!placed) {
+    notify("wall_not_found");
+    return;
+  }
+  state.location = placed.location;
+  state.rotation = placed.rotation;
+  // ブロックの格子にそろえる (横はブロックの中心、下端はブロックの面)。壁に貼るときは、もともとそろっている
+  if (options.align && !options.wall) {
+    const at = state.location;
+    state.location = { x: Math.floor(at.x) + 0.5, y: Math.floor(at.y), z: Math.floor(at.z) + 0.5 };
+  }
   state.dimension = player.dimension.id;
-  state.rotation = player.getRotation().y + 180;
   state.mode = STOPPED;
   state.pausedFrame = 0;
   stopAudio();
@@ -285,8 +347,13 @@ function stop() {
 
 function seek(args) {
   const video = currentVideo();
-  const seconds = Number(args.trim());
-  if (!video || !Number.isFinite(seconds)) return;
+  const text = String(args).trim();
+  const seconds = Number(text);
+  if (!video) return;
+  if (text === "" || !Number.isFinite(seconds)) {
+    notify("seek_usage");
+    return;
+  }
   const frame = clampFrame(video, seconds * video.fps);
   stopAudio(video);
   if (state.mode === PLAYING) {
@@ -318,6 +385,60 @@ function setMethod(args) {
   notify("method_set", method.toUpperCase());
 }
 
+/** 動画を選んで最初から再生する (画面はそのままの場所で、その動画のものに置き換える)。ID が無ければ start と同じ。 */
+function play(args) {
+  const id = args.trim();
+  if (!id) {
+    start();
+    return;
+  }
+  if (!VIDEOS.has(id)) {
+    notify("video_not_found", id, NAMESPACE);
+    return;
+  }
+  if (!state.location || (state.entityId && !screenEntity())) {
+    state.videoId = id;
+    notify("not_setup", NAMESPACE);
+    return;
+  }
+  stopAudio();
+  state.videoId = id;
+  const video = currentVideo();
+  if (!video.methods.includes(state.method)) state.method = video.methods[0];
+  state.mode = STOPPED;
+  state.pausedFrame = 0;
+  if (!spawnScreen()) return;
+  start();
+}
+
+function setVolume(args) {
+  const text = String(args).trim();
+  const value = Number(text);
+  if (text === "" || !Number.isFinite(value)) {
+    notify("volume_usage");
+    return;
+  }
+  state.volume = Math.max(0, Math.min(100, Math.round(value)));
+  if (state.volume === 0) stopAudio();
+  saveState();
+  notify("volume_set", state.volume);
+}
+
+function showStats() {
+  const video = currentVideo();
+  if (!video) {
+    notify("not_setup", NAMESPACE);
+    return;
+  }
+  const modeKey = state.mode === PLAYING ? "state_playing" : state.mode === PAUSED ? "state_paused" : "state_stopped";
+  const frame = currentFrame(video);
+  world.sendMessage({ rawtext: [{ translate: "bvpimg.stats", with: { rawtext: [
+    { text: video.id }, { translate: `bvpimg.${modeKey}` }, { text: String(frame) }, { text: String(video.frame_count) },
+    { text: (frame / video.fps).toFixed(1) }, { text: String(video.fps) }, { text: `${video.width}x${video.height}` },
+    { text: String(state.volume) }, { translate: screenEntity() ? "bvpimg.screen_loaded" : "bvpimg.screen_unloaded" },
+  ] } }] });
+}
+
 function list() {
   for (const video of IMAGE_VIDEOS) {
     notify("list_item", video.id, video.title, video.frame_count, video.fps);
@@ -338,6 +459,9 @@ function runAction(action, args, player) {
     case "seek": seek(args); break;
     case "method": setMethod(args); break;
     case "list": list(); break;
+    case "play": play(args); break;
+    case "volume": setVolume(args); break;
+    case "stats": showStats(); break;
     default: break;
   }
 }
@@ -391,6 +515,12 @@ world.afterEvents.entityLoad.subscribe((event) => {
   }
 });
 
+// 途中で入ってきた人には、間に合えば今の音を鳴らす
+world.afterEvents.playerSpawn?.subscribe((event) => {
+  if (!loaded || !event.initialSpawn) return;
+  playForLateJoiner(event.player);
+});
+
 // --- コマンド ---
 
 system.afterEvents.scriptEventReceive.subscribe((event) => {
@@ -400,24 +530,44 @@ system.afterEvents.scriptEventReceive.subscribe((event) => {
     event.sourceEntity?.typeId === "minecraft:player" ? event.sourceEntity : undefined);
 });
 
+// [操作, 説明, 引数の型]。引数の型は "text" (文字)・"number" (秒など、小数も可)・"int"・"video" (動画 ID の候補)・null
+// 数を "text" (String) で登録すると、/<ns>:seek 7 のように数だけを入れたときに構文エラーになる (実機の確認、2026-11-12)
 const COMMANDS = [
-  ["setup", "Place the image mode screen in front of you (options: video ID, a or c)", true],
-  ["start", "Play from the start", false],
-  ["pause", "Pause", false],
-  ["resume", "Resume", false],
-  ["stop", "Stop and hide the screen", false],
-  ["seek", "Jump to a time in seconds", true],
-  ["method", "Switch the frame method (a or c)", true],
-  ["list", "List the videos", false],
+  ["setup", "Place the screen (options: video ID, face, wall, align)", "text"],
+  ["start", "Play from the start", null],
+  ["play", "Play a video from the start (by video ID)", "video"],
+  ["pause", "Pause", null],
+  ["resume", "Resume", null],
+  ["stop", "Stop and hide the screen", null],
+  ["seek", "Jump to a time in seconds", "number"],
+  ["volume", "Set the volume (0-100)", "int"],
+  ["stats", "Show the playback status", null],
+  ["method", "Switch the frame method (a or c)", "text"],
+  ["list", "List the videos", null],
 ];
+
+function parameterFor(kind, videoEnum) {
+  if (kind === "text") return { name: "options", type: CustomCommandParamType.String };
+  if (kind === "number") return { name: "seconds", type: CustomCommandParamType.Float };
+  if (kind === "int") return { name: "volume", type: CustomCommandParamType.Integer };
+  if (kind === "video" && videoEnum) return { name: videoEnum, type: CustomCommandParamType.Enum };
+  return null;
+}
 
 system.beforeEvents.startup.subscribe((event) => {
   try {
-    for (const [action, description, takesText] of COMMANDS) {
-      event.customCommandRegistry.registerCommand({
+    const registry = event.customCommandRegistry;
+    let videoEnum = null;
+    if (IMAGE_VIDEOS.length > 0) {
+      videoEnum = `${NAMESPACE}:video`;
+      registry.registerEnum(videoEnum, IMAGE_VIDEOS.map((v) => v.id));
+    }
+    for (const [action, description, kind] of COMMANDS) {
+      const parameter = parameterFor(kind, videoEnum);
+      registry.registerCommand({
         name: `${NAMESPACE}:${action}`, description, permissionLevel: CommandPermissionLevel.GameDirectors,
         cheatsRequired: false,
-        optionalParameters: takesText ? [{ name: "options", type: CustomCommandParamType.String }] : [],
+        optionalParameters: parameter ? [parameter] : [],
       }, (origin, value) => {
         // コマンドの処理の中ではワールドを変えられないので、次の tick で行う
         const player = origin.sourceEntity?.typeId === "minecraft:player" ? origin.sourceEntity : undefined;

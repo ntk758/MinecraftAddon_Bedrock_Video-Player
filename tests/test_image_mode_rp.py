@@ -83,7 +83,8 @@ def test_identifiers_match_spec(files):
     # 方式ごとのマテリアル
     mats = {m: load(files, f"entity/screen_demo_{m}.entity.json")["minecraft:client_entity"]["description"]["materials"]
             for m in "ac"}
-    assert mats["a"] == {"default": "entity_alphatest"}
+    # 方式 a は不透明の entity (entity_alphatest は裏の面も描くので、裏から鏡写しの絵が見えた)
+    assert mats["a"] == {"default": "entity"}
     assert mats["c"] == {"default": "bvp_uv_anim"}
 
 

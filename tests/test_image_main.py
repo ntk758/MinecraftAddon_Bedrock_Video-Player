@@ -14,10 +14,12 @@ ROOT = Path(__file__).resolve().parent.parent
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node が必要")
 
 VIDEOS = [{"id": "demo", "title": "demo", "fps": 30, "frame_count": 300, "audio_chunks": 3, "audio_chunk_seconds": 4,
-           "screen_blocks": [16, 9], "methods": ["a", "c"]}]
+           "screen_blocks": [16, 9], "methods": ["a", "c"], "width": 256, "height": 144},
+          {"id": "second", "title": "second", "fps": 30, "frame_count": 300, "audio_chunks": 3, "audio_chunk_seconds": 4,
+           "screen_blocks": [16, 9], "methods": ["a"], "width": 256, "height": 144}]
 
 MOCK = r"""
-export const log = { messages: [], sounds: [], commands: [], spawned: [] };
+export const log = { messages: [], sounds: [], commands: [], spawned: [], volumes: [], placed: [] };
 const dynamic = globalThis.__dynamic ?? (globalThis.__dynamic = new Map());
 const entities = globalThis.__entities ?? (globalThis.__entities = new Map());
 globalThis.__time ??= 1000;
@@ -26,6 +28,7 @@ const intervals = [];
 const timeouts = [];
 let worldLoad = null;
 let entityLoad = null;
+let playerSpawn = null;
 class Entity {
   constructor(typeId, location) { this.typeId = typeId; this.location = location; this.id = String(nextId++); globalThis.__nextId = nextId;
     this.properties = {}; this.pending = {}; this.isValid = true; this.rotation = null; this.dimension = dimension;
@@ -37,7 +40,7 @@ class Entity {
     this.pending[name] = value;
   }
   getProperty(name) { return this.properties[name]; }
-  setRotation(r) { this.rotation = r; }
+  setRotation(r) { this.rotation = r; log.placed.push({ location: this.location, yaw: r.y }); }
   remove() { this.isValid = false; entities.delete(this.id); }
 }
 const dimension = {
@@ -49,14 +52,17 @@ const dimension = {
 const player = {
   typeId: "minecraft:player", location: { x: 0, y: 64, z: 0 }, dimension,
   getViewDirection: () => ({ x: 0, y: 0, z: -1 }), getRotation: () => ({ x: 0, y: 180 }),
-  playSound(id) { log.sounds.push([globalThis.__time, id]); },
+  playSound(id, options) { log.sounds.push([globalThis.__time, id]); log.volumes.push(options?.volume ?? null); },
+  // 見ているブロック (テストで globalThis.__lookAt に入れる)
+  getBlockFromViewDirection: () => globalThis.__lookAt ?? undefined,
 };
 export const world = {
   getAbsoluteTime: () => globalThis.__time,
   getDynamicProperty: (k) => dynamic.get(k), setDynamicProperty: (k, v) => dynamic.set(k, v),
   getEntity: (id) => { const e = entities.get(id); return e?.loaded ? e : undefined; }, getDimension: () => dimension, getAllPlayers: () => [player],
   sendMessage: (m) => log.messages.push(m.rawtext[0].translate + " " + JSON.stringify(m.rawtext[0].with ?? {})),
-  afterEvents: { worldLoad: { subscribe: (h) => { worldLoad = h; } }, entityLoad: { subscribe: (h) => { entityLoad = h; } } },
+  afterEvents: { worldLoad: { subscribe: (h) => { worldLoad = h; } }, entityLoad: { subscribe: (h) => { entityLoad = h; } },
+                 playerSpawn: { subscribe: (h) => { playerSpawn = h; } } },
 };
 export const system = {
   runInterval: (f) => intervals.push(f), run: (f) => timeouts.push([0, f]), runTimeout: (f, t) => timeouts.push([t, f]),
@@ -67,6 +73,7 @@ export const CommandPermissionLevel = { GameDirectors: 1 };
 export const CustomCommandParamType = { String: "String" };
 export const CustomCommandStatus = { Success: 0 };
 export function loadWorld() { worldLoad?.(); }
+export function join() { playerSpawn?.({ player, initialSpawn: true }); }
 // ワールドを開き直したときのように、スクリプトの登録を消す (dynamic property・時計・エンティティは残す)
 export function resetScripts() { intervals.length = 0; timeouts.length = 0; worldLoad = null; }
 export function tick() {
@@ -104,6 +111,8 @@ for (const step of steps) {
   if (step.tick) for (let i = 0; i < step.tick; i++) mock.tick();
   if (step.unload) mock.unloadAll();
   if (step.load) mock.loadAll();
+  if (step.join) mock.join();
+  if ("lookAt" in step) globalThis.__lookAt = step.lookAt;
   if (step.count) out.push({ label: step.count, screens: mock.screens().map((e) => e.typeId) });
   if ("reload" in step) { generation++; globalThis.__time += step.reload; await load(generation); }
   if (step.snap) {
@@ -209,3 +218,70 @@ def test_seq_continues_from_the_screen_after_a_script_reload(tmp_path):
                          {"snap": "after"}])
     before, after = (props(x) for x in out["snaps"])
     assert after["seq"] != before["seq"] and after["frame"] == 150
+
+
+def messages(out, key):
+    return [m for m in out["log"]["messages"] if m.startswith(f"bvpimg.{key} ")]
+
+
+def test_seek_without_a_number_explains_the_usage(tmp_path):
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "seek", "arg": ""}, {"cmd": "seek", "arg": "7.5"}, {"tick": 1},
+                         {"snap": "seek"}])
+    assert messages(out, "seek_usage")
+    assert props(out["snaps"][0])["frame"] == 225
+
+
+def test_play_switches_the_video_in_place_and_starts(tmp_path):
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "play", "arg": "second"}, {"tick": 21}, {"snap": "play"},
+                         {"cmd": "play", "arg": "nothing"}])
+    snap = out["snaps"][0]
+    assert snap["type"] == "bvpimg:screen_second_a" and props(snap)["state"] == 1
+    # 同じ場所に置き直す
+    assert out["log"]["placed"][0]["location"] == out["log"]["placed"][1]["location"]
+    assert messages(out, "video_not_found")
+
+
+def test_play_before_setup_asks_for_setup(tmp_path):
+    out = run(tmp_path, [{"cmd": "play", "arg": "second"}, {"tick": 2}])
+    assert messages(out, "not_setup") and not out["log"]["spawned"]
+
+
+def test_volume_is_used_for_the_sound_and_zero_mutes(tmp_path):
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "volume", "arg": "40"}, {"cmd": "start"}, {"tick": 2},
+                         {"cmd": "volume", "arg": "0"}, {"tick": 80}, {"cmd": "volume", "arg": "abc"}])
+    assert out["log"]["volumes"] == [0.4]
+    assert messages(out, "volume_set") and messages(out, "volume_usage")
+
+
+def test_stats_reports_the_state(tmp_path):
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 20}, {"cmd": "stats"}])
+    [line] = messages(out, "stats")
+    assert "demo" in line and "bvpimg.state_playing" in line and "bvpimg.screen_loaded" in line
+
+
+def test_late_joiner_hears_the_chunk_only_near_its_start(tmp_path):
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 10}, {"join": True},
+                         {"tick": 40}, {"join": True}])
+    sounds = [s for _, s in out["log"]["sounds"]]
+    # 開始 0.5 秒で入った人には鳴らす、2.5 秒では鳴らさない (次の境目から)
+    assert sounds == ["bvpimg.img.demo.chunk_0", "bvpimg.img.demo.chunk_0"]
+
+
+def test_setup_on_a_wall_faces_out_of_the_block(tmp_path):
+    hit = {"block": {"location": {"x": 10, "y": 64, "z": -5}}, "face": "East"}
+    out = run(tmp_path, [{"lookAt": hit}, {"cmd": "setup", "arg": "wall"}, {"tick": 2},
+                         {"lookAt": {"block": {"location": {"x": 0, "y": 63, "z": 0}}, "face": "Up"}},
+                         {"cmd": "setup", "arg": "wall"}])
+    [placed] = out["log"]["placed"]
+    assert placed["yaw"] == -90
+    assert placed["location"] == {"x": 11.02, "y": 64, "z": -4.5}
+    # 上の面は壁ではない
+    assert messages(out, "wall_not_found")
+
+
+def test_setup_face_and_align_snap_to_the_grid(tmp_path):
+    out = run(tmp_path, [{"cmd": "setup", "arg": "face align"}, {"tick": 2}])
+    [placed] = out["log"]["placed"]
+    assert placed["yaw"] % 90 == 0
+    location = placed["location"]
+    assert location["x"] % 1 == 0.5 and location["z"] % 1 == 0.5 and location["y"] % 1 == 0

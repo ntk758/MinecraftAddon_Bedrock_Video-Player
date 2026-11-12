@@ -1,5 +1,6 @@
 """convert_image_mode.py (画像モードのアドオンを作る CLI) のテスト。ffmpeg の合成動画で作る。"""
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -98,7 +99,7 @@ def test_trim_and_frame_count(video, tmp_path):
 
 def test_all_files_present(video, tmp_path):
     code, output = run(tmp_path, "--fps", 10, "--width", 64, "--height", 36, "--audio-chunk-seconds", 1,
-                       inputs=[video])
+                       "--method", "both", inputs=[video])
     assert code == 0
     archive, names = load(output)
     [info] = videos_of(archive)
@@ -133,7 +134,7 @@ def test_all_files_present(video, tmp_path):
 
 
 def test_entity_properties_match_frame_count(video, tmp_path):
-    code, output = run(tmp_path, "--fps", 10, "--width", 64, "--height", 36, inputs=[video])
+    code, output = run(tmp_path, "--fps", 10, "--width", 64, "--height", 36, "--method", "both", inputs=[video])
     archive, _ = load(output)
     [info] = videos_of(archive)
     for method in ("a", "c"):
@@ -154,7 +155,7 @@ def test_entity_properties_match_frame_count(video, tmp_path):
 
 
 def test_both_methods_share_textures(video, tmp_path):
-    code, output = run(tmp_path, "--fps", 10, "--width", 64, "--height", 36, inputs=[video])
+    code, output = run(tmp_path, "--fps", 10, "--width", 64, "--height", 36, "--method", "both", inputs=[video])
     archive, names = load(output)
     [info] = videos_of(archive)
     assert info["methods"] == ["a", "c"]
@@ -215,17 +216,27 @@ def test_report_and_lang_keys(video, tmp_path):
     assert report["videos"][0]["id"] == "clip"
     assert report["memory"]["bytes"] == report["videos"][0]["memory"]["bytes"]
     assert report["memory"]["handles"] == 1
-    assert {"bvpimg.setup_done", "bvpimg.not_setup", "bvpimg.playing", "bvpimg.paused", "bvpimg.resumed",
-            "bvpimg.stopped", "bvpimg.method_set", "bvpimg.list_item", "bvpimg.video_not_found",
-            "bvpimg.seek_done", "bvpimg.reload_resumed"} == set(report["lang_keys"])
+    assert set(report["lang_keys"]) == {"en", "ja"}
+    assert report["lang_keys"]["en"]["bvpimg.paused"] == "Paused"
+    assert report["lang_keys"]["ja"]["bvpimg.paused"] == "一時停止しました"
+    # 既定は方式 a だけ (実機の確認で a に決めた)
+    assert report["videos"][0]["methods"] == ["a"]
     archive, names = load(output)
     assert sorted(report["files"]) == sorted(names)
     en = archive.read("RP/texts/en_US.lang").decode("utf-8")
     assert "bvpimg.paused=Paused" in en
     languages = json.loads(archive.read("RP/texts/languages.json"))
-    assert languages == ["en_US", "ja_JP"]
-    for key in report["lang_keys"]:
-        assert f"{key}=" in en
+    # ブロックモードと同じ 10 言語 (地域違いを含めて 14 のゲームの言語)
+    assert {"en_US", "ja_JP", "zh_CN", "zh_TW", "ko_KR", "es_ES", "pt_BR", "fr_FR", "de_DE", "ru_RU"} <= set(languages)
+    # スクリプトが使うメッセージは、どの言語のファイルにもある
+    script = Path(convert_image_mode.IMAGE_MAIN_SCRIPT).read_text(encoding="utf-8")
+    used = set(re.findall(r'notify\("([a-z_]+)"', script)) | set(re.findall(r"bvpimg\.([a-z_]+)", script))
+    used |= set(re.findall(r'"(state_[a-z]+|screen_[a-z]+)"', script))
+    assert {"stats", "seek_usage", "volume_set", "wall_not_found"} <= used
+    for code in languages:
+        text = archive.read(f"RP/texts/{code}.lang").decode("utf-8")
+        missing = [key for key in used if f"bvpimg.{key}=" not in text]
+        assert not missing, (code, missing)
 
 
 def test_report_path_option(video, tmp_path):

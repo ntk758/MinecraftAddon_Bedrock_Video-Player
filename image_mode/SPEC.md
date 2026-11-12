@@ -81,5 +81,12 @@ v.cell = v.frame - v.sheet * <cells_per_sheet>;
 
 - 時計はスクリプトが再生中に数える tick (`playTicks`、1 秒ごとに保存)。`world.getAbsoluteTime()` は昼夜の時刻なので使わない。再生中は 1 秒ごとに frame と seq (1 ずつ増やして 1024 で 0 に戻す) を書き直す。
 - 状態は world の dynamic property `<ns>:image_state` に JSON で保存し、ワールドを開き直したら続きから戻す。
-- コマンド: `/<ns>:setup [動画ID] [a|c]`、`/<ns>:start`、`/<ns>:pause`、`/<ns>:resume`、`/<ns>:stop`、`/<ns>:seek <秒>`、`/<ns>:method <a|c>`、
-  `/<ns>:list`。`/scriptevent <ns>:<操作>` でも同じ。
+- コマンド: `/<ns>:setup [動画ID] [face] [wall] [align] [a|c]`、`/<ns>:start`、`/<ns>:play [動画ID]`、`/<ns>:pause`、`/<ns>:resume`、
+  `/<ns>:stop`、`/<ns>:seek <秒>` (小数可。数の引数として登録する: 文字の引数だと数だけで構文エラーになった)、`/<ns>:volume <0〜100>`、
+  `/<ns>:stats`、`/<ns>:method <a|c>`、`/<ns>:list`。`/scriptevent <ns>:<操作>` でも同じ。
+- setup の置き方: 何も付けなければプレイヤーの前にこちら向き。`face` は向きを東西南北にそろえる。`wall` は見ているブロックの横の面に
+  0.02 浮かせて貼る (下端はそのブロックの下の面)。`align` は位置をブロックの格子にそろえる。
+- 音量は state.volume (0〜100、保存する) を playSound の volume に。途中で入ってきた人には、チャンクが始まって 1 秒以内なら今のチャンクを鳴らす。
+- メッセージは locales/*.json の `imgaddon.*` (10 言語) から RP/texts/*.lang の `bvpimg.*` を作る。
+- 方式は既定で a だけを入れる (2026-11-12 の実機の確認で a に決めた。c は `--method c|both` のときだけ)。方式 a のマテリアルは `entity`
+  (不透明)。`entity_alphatest` は裏の面も描くため、裏から鏡写しの絵が見えた。`entity` が裏を描かないことは実機で未確認。
