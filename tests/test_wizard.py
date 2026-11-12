@@ -14,13 +14,15 @@ import gui_wizard as wizard  # noqa: E402
 
 
 def test_size_estimate_matches_the_bundled_sample():
-    """同梱のサンプル (15 秒、128 × 72、10 fps、音声付き) は 501 KB。見込みの「ふつう」が近く、範囲に入る。"""
+    """同梱のサンプル (15 秒、128 × 72、10 fps、音声付き) は 501 KB (192 kbps の音声)。音声を品質 3 にすると
+    同じ曲で 284,567 → 172,789 バイトなので約 389 KB。見込みの「ふつう」が近く、範囲に入る。"""
+    sample = 501_000 - (284_567 - 172_789)
     low, typical, high = wizard.estimate_addon_size(15, 128, 72, 10)
-    assert low < 501_000 < high
-    assert abs(typical - 501_000) / 501_000 < 0.2
+    assert low < sample < high
+    assert abs(typical - sample) / sample < 0.2
     # 立体 (2.5D) は色と高さの 2 枚分、音声なしなら音声の分だけ小さい
     assert wizard.estimate_addon_size(15, 128, 72, 10, volume=True)[1] > typical
-    assert wizard.estimate_addon_size(15, 128, 72, 10, audio=False)[1] < typical - 300_000
+    assert wizard.estimate_addon_size(15, 128, 72, 10, audio=False)[1] < typical - 150_000
 
 
 def test_recommended_settings_follow_the_aspect_ratio_and_length():
