@@ -52,8 +52,13 @@ FPS = 10
 # 素材の作り方 (このファイルの build_fixture) を変えたら上げる (out/fixtures の作り置きを使わず、作り直させる)。
 # 変換コード (convert.py・mvcodec・pack_builder.py) の内容は stamp に sha1 で入るので、上げなくても作り直される
 # 2: .vox のだまし絵の変換が閉じた空洞を埋めるようになった
-FIXTURE_VERSION = 2
-FIXTURES = ("mmd40", "mmd80", "solid56", "person80", "person80_bg")
+# 3: 平面・立体の素材 (flat128 など) を足した
+FIXTURE_VERSION = 3
+STAGE_FIXTURES = ("mmd40", "mmd80", "solid56", "person80", "person80_bg")
+# 平面・2.5D (だまし絵ではない)。場面の切れ目のある合成映像で、自動パレットの GOP が何度も変わる。micro は無い
+FLAT_FIXTURES = {"flat128": (128, 72, "screen"), "flat256": (256, 144, "screen"), "flat512": (512, 512, "screen"),
+                 "relief128": (128, 72, "relief")}
+FIXTURES = (*STAGE_FIXTURES, *FLAT_FIXTURES)
 # ゲーム内の実測 (tests/js/minecraft_mock の costs と同じ値、マイクロ秒) と、モックとゲーム内の時間の比の見積り
 COST_US = {"setBlock": 2.3, "fillCall": 15, "fillBlock": 0.55, "listCall": 15, "listBlock": 1.42}
 # 比の根拠: 同じアドオンのゲーム内の実測 ÷ WP1 のモックの通し再生 (still) の 1 フレームの平均 =
@@ -160,6 +165,19 @@ def make_testsrc_video(path, seconds):
     subprocess.run(command, check=True, capture_output=True)
 
 
+def make_cuts_video(path, seconds):
+    """場面の切れ目が 3 つある合成映像 (testsrc2 → mandelbrot → smptehdbars → testsrc2 の色違い)。他人の映像は使わない。"""
+    part = max(1.0, seconds / 4)
+    sources = [f"testsrc2=size=320x180:rate={FPS}:duration={part}", f"mandelbrot=size=320x180:rate={FPS}",
+               f"smptehdbars=size=320x180:rate={FPS}:duration={part}", f"testsrc2=size=320x180:rate={FPS}:duration={part}"]
+    command = [ffmpeg_path(), "-v", "error", "-y"]
+    for source in sources:
+        command += ["-f", "lavfi", "-t", str(part), "-i", source]
+    graph = "[3:v]hue=h=120[d];[0:v][1:v][2:v][d]concat=n=4:v=1:a=0,format=yuv420p[v]"
+    command += ["-filter_complex", graph, "-map", "[v]", "-c:v", "libx264", str(path)]
+    subprocess.run(command, check=True, capture_output=True)
+
+
 def converter_args(source, output, width, height, mode="screen", depth=16, anamorphic=False):
     """convert.py に渡す引数 (起動コマンドの部分を除く)。GUI と同じ build_converter_args で組み立てる
     (設定は GUI の既定: 自動パレット・ディザなし・キーフレーム 30・CPU)。"""
@@ -224,6 +242,13 @@ def build_fixture(name, frames, folder):
                 background = folder / f"frames_{name}_bg.js"
                 run_converter([*converter_args(source, background, geom["stageWidth"], geom["wallHeight"]), "--fit", "cover"])
                 entries.append(video_entry(f"{name}_bg", background.read_text(encoding="utf-8"), hidden=True))
+        elif name in FLAT_FIXTURES:
+            width, height, mode = FLAT_FIXTURES[name]
+            source = temp / "cuts.mp4"
+            make_cuts_video(source, seconds)
+            output = folder / f"frames_{name}.js"
+            run_converter(converter_args(source, output, width, height, mode=mode, depth=16))
+            entries.append(video_entry(name, output.read_text(encoding="utf-8")))
         else:
             raise SystemExit(f"unknown fixture: {name}")
         from pack_builder import videos_js
@@ -400,6 +425,8 @@ PLAY_METRICS = (
     # "game": ゲーム内の実測 (COST_US) から作った値なので、モック→ゲーム内の比を掛けない (見込みの列は空)
     ("api_ms_per_frame", "置く費用の見積り ms/フレーム", lambda r: r["modeledApiMs"] / max(1, r["stats"]["frames"]), "game"),
     ("ticks", "tick 数", lambda r: r["ticks"], False),
+    ("tick_blocks_max", "1 tick に置いたブロックの最大", lambda r: r.get("tickBlocks", {}).get("max", 0), False),
+    ("blocks_total", "置いたブロックの合計", lambda r: r.get("tickBlocks", {}).get("sum", 0), False),
 )
 
 
@@ -438,7 +465,7 @@ def row_text(entry, is_ms, estimate=True):
 def write_markdown(results, path):
     meta = results["meta"]
     lines = [
-        "# だまし絵のベンチマーク",
+        "# 再生のベンチマーク (だまし絵・平面・立体)",
         "",
         f"- baseline: {meta['baseline']['label']}",
         f"- worktree: {meta['worktree']['label']}",
@@ -483,7 +510,7 @@ def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", required=True, help="結果と作った素材を置くフォルダ (このリポジトリの中は拒否する)")
     parser.add_argument("--baseline", default="main", help="比べる版: git の版 (既定 main)、worktree、または main.js のあるフォルダ")
-    parser.add_argument("--fixtures", nargs="+", default=["all"], help=f"素材 ({', '.join(FIXTURES)}、既定は all。none なら --addon だけ)")
+    parser.add_argument("--fixtures", nargs="+", default=["all"], help=f"素材 ({', '.join(FIXTURES)}、all はだまし絵の 5 つ (既定)、flat は平面・2.5D の 4 つ、none なら --addon だけ)")
     parser.add_argument("--repeats", type=int, default=5, help="繰り返す回数 (中央値を取る)")
     parser.add_argument("--frames", type=int, default=100, help="素材のフレーム数と、通し再生するフレーム数の上限")
     parser.add_argument("--micro-reps", type=int, default=1, help="micro の中で全フレームを測る回数 (プロセスごと)")
@@ -503,7 +530,9 @@ def parse_args(argv):
     if args.quick:
         args.fixtures, args.repeats, args.frames, args.addon = ["mmd40"], 1, 20, []
     if args.fixtures == ["all"]:
-        args.fixtures = list(FIXTURES)
+        args.fixtures = list(STAGE_FIXTURES)  # 今までどおり、だまし絵だけ
+    elif args.fixtures == ["flat"]:
+        args.fixtures = list(FLAT_FIXTURES)
     elif args.fixtures == ["none"]:
         args.fixtures = []
     unknown = [name for name in args.fixtures if name not in FIXTURES]
@@ -519,13 +548,13 @@ def measure(label, trees, frames_js, data_dir, namespace, args, work_root):
     for repeat in range(args.repeats):
         # 繰り返しごとに baseline と worktree の順を入れ替えて、時間の流れによる偏りを消す
         roles = ["baseline", "worktree"] if repeat % 2 == 0 else ["worktree", "baseline"]
-        if "micro" in args.only:
+        if "micro" in args.only and label not in FLAT_FIXTURES:
             print(f"[{label}] micro {repeat + 1}/{args.repeats}", flush=True)
             fixture.setdefault("micro", {"runs": []})["runs"].append(
                 run_micro(frames_js, trees["baseline"], trees["worktree"], work_root, args.micro_reps))
         for kind in ("still", "walk"):
-            if kind not in args.only:
-                continue
+            if kind not in args.only or (kind == "walk" and label in FLAT_FIXTURES):
+                continue  # 平面・立体は目の位置で絵が変わらないので walk は still と同じ
             for role in roles:
                 print(f"[{label}] {kind} {role} {repeat + 1}/{args.repeats}", flush=True)
                 play_runs.setdefault(kind, {}).setdefault(role, []).append(
