@@ -326,6 +326,8 @@ MODE_VALUES = ("screen", "relief", "extrude", "inflate", "person", "person_anime
 VOLUME_MODES = ("relief", "extrude", "inflate", "person", "person_anime")
 # 人物を切り抜くモード → 切り抜きのモデル (mvcodec/person.py の SEGMENTERS)
 PERSON_MODES = {"person": "photo", "person_anime": "anime"}
+# 「人物の色を優先する (AI)」で、人物の画素を何倍に数えるか (docs/research/phase7x.md の 30 章)
+PALETTE_AI_WEIGHT = 8
 MAX_SCREEN_SIZE = 512
 # オーバーワールドの建築できる高さ (−64〜319)。これより高い平面は、ゲームで壁に立てると上が切れるので置かれない
 WORLD_HEIGHT = 384
@@ -540,6 +542,8 @@ class PackBuilderApp(tk.Tk):
         self.mmd_extreme_var = tk.BooleanVar(value=False)
         # 立体のモードのとき、同じ動画の平面版もセットで入れる (音声は共通。pack_builder の audio_from)
         self.pair_flat_var = tk.BooleanVar(value=False)
+        # 自動パレットで、AI で切り抜いた人物の色を重く数える (mvcodec/person.py の切り抜き + convert.py --palette-weight-mask)
+        self.palette_ai_var = tk.BooleanVar(value=False)
         # MMD のモデル (.pmx のパス) → 踊り (.vmd のパス)
         self.mmd_motions: dict[str, str] = {}
         # だまし絵の後ろの壁に流す背景の映像 (空なら壁は単色)
@@ -803,6 +807,8 @@ class PackBuilderApp(tk.Tk):
         ).grid(row=6, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         ttk.Checkbutton(settings, text=tr("settings.pair_flat"), variable=self.pair_flat_var).grid(
             row=8, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
+        ttk.Checkbutton(settings, text=tr("settings.palette_ai"), variable=self.palette_ai_var).grid(
+            row=9, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         # 再生負荷の目安 (幅・高さ・fps・表示モード・奥行きを変えるたびに更新)
         self.load_label = ttk.Label(settings, wraplength=720)
         self.load_label.grid(row=7, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
@@ -1129,6 +1135,23 @@ class PackBuilderApp(tk.Tk):
         mmd_to_vox(model, motion, output, height=height, fps=fps, duration=duration, progress=progress)
         return output
 
+    def _palette_weight_mask(self, video, video_id, mask_video, is_vox, palette, temp, width, height, fps, duration,
+                             ffmpeg):
+        """「人物の色を優先する (AI)」のときの、人物の範囲の動画。人物を切り抜く表示モードなら、その切り抜きを使い回す。
+        切り抜きに失敗しても止めずに、ログに書いて今のパレットの選び方で続ける (モデルが無い・メモリが足りないなど)。"""
+        variable = getattr(self, "palette_ai_var", None)
+        if variable is None or not variable.get() or palette != "auto" or is_vox:
+            return None
+        if mask_video:
+            return mask_video
+        try:
+            mask, _background = self._split_person(video, temp / f"palette_person_{video_id}", width, height, fps,
+                                                   duration, ffmpeg, "photo")
+            return mask
+        except Exception as error:  # noqa: BLE001 (どの失敗でも、色の選び方を今のままにして続ける)
+            self.messages.put(self.tr("build.palette_ai_failed", error=str(error)[:200]))
+            return None
+
     def _split_person(self, video: Path, work: Path, width: int, height: int, fps: float, duration: float | None,
                       ffmpeg: str, model: str = "photo") -> tuple[Path, Path]:
         """動画から人物を AI で切り抜き、(人物の範囲の動画, 人物を消した背景の動画) を作る (mvcodec/person.py)。
@@ -1389,6 +1412,10 @@ class PackBuilderApp(tk.Tk):
                         argv += ["--stage-background", background_id]
                     if mask_video:
                         argv += ["--mask-video", str(mask_video)]
+                    weight_mask = PackBuilderApp._palette_weight_mask(self, video, video_id, mask_video, is_vox, palette, temp,
+                                                            video_width, video_height, fps, duration, ffmpeg)
+                    if weight_mask:
+                        argv += ["--palette-weight-mask", str(weight_mask), "--palette-weight", str(PALETTE_AI_WEIGHT)]
                     self._run([*converter_command(), *argv])
                     frames_js = generated_data.read_text(encoding="utf-8")
                     # 立体版と平面版をセットにする (動画・画像を立体にするときだけ。.vox と MMD には元の平面の映像が無い)
