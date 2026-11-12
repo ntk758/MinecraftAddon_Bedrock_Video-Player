@@ -10,6 +10,7 @@
  * 書くことはできない。代わりに 1 秒ごとに「今のコマ」を書き直して、クライアントの時計のずれを戻す。
  */
 import { world, system, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
+import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
 import { IMAGE_VIDEOS, NAMESPACE } from "./image_videos.js";
 
 const TICKS_PER_SECOND = 20;
@@ -26,6 +27,9 @@ const AUDIO_START_WINDOW = 0.3;
 const METHODS = ["a", "c"];
 // 途中で入ってきた人に今のチャンクを鳴らすのは、チャンクの頭からこの秒数以内だけ (ブロックモードと同じ)
 const LATE_JOIN_SECONDS = 1;
+// リモコンを開くアイテム。ブロックモードはコンパスなので、両方のアドオンを入れても 2 つの画面が同時に開かないよう時計にする
+const REMOTE_ITEM = "minecraft:clock";
+const VOLUME_STEP = 10;
 // 画面を壁に置くとき、壁の面から少し浮かせる (ブロックの面と重なってちらつかないように)
 const WALL_OFFSET = 0.02;
 // 壁に置くとき、見ているブロックを探す距離
@@ -463,9 +467,120 @@ function runAction(action, args, player) {
     case "play": play(args); break;
     case "volume": setVolume(args); break;
     case "stats": showStats(); break;
+    case "remote": showRemote(player); break;
     default: break;
   }
 }
+
+// --- リモコン (ブロックモードと同じ並び。時計を使うか /<ns>:remote で開く) ---
+
+function lines(...parts) {
+  const rawtext = [];
+  parts.forEach((part, i) => {
+    if (i > 0) rawtext.push({ text: "\n" });
+    rawtext.push(part);
+  });
+  return { rawtext };
+}
+
+function seconds(video, frame) {
+  return Math.floor(frame / video.fps);
+}
+
+function showRemote(player) {
+  if (!player) return;
+  const video = currentVideo();
+  const placed = Boolean(state.location);
+  const statusKey = state.mode === PLAYING ? "remote.playing" : state.mode === PAUSED ? "remote.paused" : "remote.stopped";
+  const frame = video ? currentFrame(video) : 0;
+  const form = new ActionFormData()
+    .title(tr("remote.title"))
+    .body(lines(
+      { translate: "bvpimg.remote.status", with: { rawtext: [tr(statusKey)] } },
+      { translate: "bvpimg.remote.selected", with: { rawtext: [video ? { text: video.title } : tr("remote.none")] } },
+      tr("remote.position", video ? seconds(video, frame) : 0, video ? seconds(video, video.frame_count) : 0, frame),
+      tr("remote.volume", `${state.volume}%`),
+    ));
+  const actions = [];
+  const button = (key, icon, action) => {
+    form.button(tr(key), icon);
+    actions.push(action);
+  };
+  if (!placed) button("remote.setup_here", "textures/items/item_frame", () => setup(player, ""));
+  button(state.mode === PLAYING ? "remote.pause" : "remote.play", "textures/items/emerald", () => {
+    if (state.mode === PLAYING) pause();
+    else if (state.mode === PAUSED && currentFrame() < (currentVideo()?.frame_count ?? 1) - 1) resume();
+    else start();
+  });
+  button("remote.stop", "textures/blocks/redstone_block", () => stop());
+  button("remote.next", "textures/items/paper", () => switchVideo(1, player));
+  button("remote.prev", "textures/items/paper", () => switchVideo(-1, player));
+  button("remote.volume_button", "textures/items/repeater", () => showVolume(player));
+  button("remote.seek", "textures/items/clock", () => showSeek(player));
+  button("remote.library", "textures/items/book_portfolio", () => showLibrary(player));
+  if (placed) button("remote.setup_here", "textures/items/item_frame", () => setup(player, ""));
+  form.show(player).then((response) => {
+    if (response.canceled || response.selection === undefined) return;
+    actions[response.selection]?.();
+  }).catch(() => { /* 開けなかった */ });
+}
+
+/** 前後の動画へ切り替えて最初から再生し、リモコンを開き直す。 */
+function switchVideo(direction, player) {
+  if (IMAGE_VIDEOS.length === 0) return;
+  let index = IMAGE_VIDEOS.findIndex((v) => v.id === state.videoId);
+  if (index < 0) index = 0;
+  const next = IMAGE_VIDEOS[(index + direction + IMAGE_VIDEOS.length) % IMAGE_VIDEOS.length];
+  play(next.id);
+  showRemote(player);
+}
+
+function showVolume(player) {
+  const form = new ModalFormData().title(tr("volume.title"));
+  form.slider(tr("volume.slider"), 0, 100, { valueStep: VOLUME_STEP, defaultValue: state.volume });
+  form.show(player).then((response) => {
+    if (response.canceled || !response.formValues) return;
+    setVolume(String(response.formValues[0]));
+  }).catch(() => { /* 開けなかった */ });
+}
+
+function showSeek(player) {
+  const video = currentVideo();
+  if (!video) return;
+  const total = Math.max(1, seconds(video, video.frame_count));
+  const form = new ModalFormData().title(tr("seek.title"));
+  form.slider(tr("seek.slider"), 0, total, { valueStep: 1, defaultValue: Math.min(total, seconds(video, currentFrame(video))) });
+  form.show(player).then((response) => {
+    if (response.canceled || !response.formValues) return;
+    seek(String(response.formValues[0]));
+  }).catch(() => { /* 開けなかった */ });
+}
+
+function showLibrary(player) {
+  const form = new ActionFormData().title(tr("library.title")).body(tr("library.body"));
+  for (const video of IMAGE_VIDEOS) {
+    const rawtext = [{ text: video.title }];
+    if (video.id === state.videoId) rawtext.push({ text: " " }, tr("selected_tag"));
+    rawtext.push({ text: "\n" }, tr("library.item", video.frame_count, `${video.width}x${video.height}, ${video.fps} fps`));
+    form.button({ rawtext });
+  }
+  form.show(player).then((response) => {
+    if (response.canceled || response.selection === undefined) return;
+    const video = IMAGE_VIDEOS[response.selection];
+    if (!video) return;
+    play(video.id);
+    showRemote(player);
+  }).catch(() => { /* 開けなかった */ });
+}
+
+world.afterEvents.itemUse?.subscribe((event) => {
+  if (event.itemStack?.typeId !== REMOTE_ITEM) return;
+  if (!loaded) {
+    state = loadState();
+    loaded = true;
+  }
+  showRemote(event.source);
+});
 
 // --- 毎 tick ---
 
@@ -543,6 +658,7 @@ const COMMANDS = [
   ["seek", "Jump to a time in seconds", "number"],
   ["volume", "Set the volume (0-100)", "int"],
   ["stats", "Show the playback status", null],
+  ["remote", "Open the remote control (or use a clock)", null],
   ["method", "Switch the frame method (a or c)", "text"],
   ["list", "List the videos", null],
 ];

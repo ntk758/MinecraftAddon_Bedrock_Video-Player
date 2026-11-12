@@ -197,7 +197,8 @@ def test_manifests(video, tmp_path):
     assert bp["header"]["min_engine_version"] == [1, 26, 10]
     assert bp["modules"][0]["entry"] == "scripts/image_main.js"
     dependencies = {d.get("module_name"): d["version"] for d in bp["dependencies"] if "module_name" in d}
-    assert dependencies == {"@minecraft/server": "2.6.0"}
+    # リモコン (フォーム) に server-ui を使う (ブロックモードと同じ版)
+    assert dependencies == {"@minecraft/server": "2.6.0", "@minecraft/server-ui": "2.0.0"}
     assert {"uuid": rp["header"]["uuid"], "version": rp["header"]["version"]} in bp["dependencies"]
     assert rp["modules"][0]["type"] == "resources"
     assert rp["dependencies"] == [{"uuid": bp["header"]["uuid"], "version": bp["header"]["version"]}]
@@ -230,7 +231,7 @@ def test_report_and_lang_keys(video, tmp_path):
     assert {"en_US", "ja_JP", "zh_CN", "zh_TW", "ko_KR", "es_ES", "pt_BR", "fr_FR", "de_DE", "ru_RU"} <= set(languages)
     # スクリプトが使うメッセージは、どの言語のファイルにもある
     script = Path(convert_image_mode.IMAGE_MAIN_SCRIPT).read_text(encoding="utf-8")
-    used = set(re.findall(r'notify\("([a-z_]+)"', script)) | set(re.findall(r"bvpimg\.([a-z_]+)", script))
+    used = set(re.findall(r'(?:notify|tr)\("([a-z_.]+)"', script)) | set(re.findall(r"bvpimg\.([a-z_.]*[a-z])", script))
     used |= set(re.findall(r'"(state_[a-z]+|screen_[a-z]+)"', script))
     assert {"stats", "seek_usage", "volume_set", "wall_not_found"} <= used
     for code in languages:

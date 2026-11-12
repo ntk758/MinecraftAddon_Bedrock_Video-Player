@@ -145,6 +145,7 @@ def manifests(namespace: str, pack_name: str) -> tuple[dict, dict]:
                      "uuid": pack_uuid(namespace, pack_name, "bp-script"), "version": version,
                      "entry": "scripts/image_main.js"}],
         "dependencies": [{"module_name": "@minecraft/server", "version": "2.6.0"},
+                         {"module_name": "@minecraft/server-ui", "version": "2.0.0"},
                          {"uuid": rp_uuid, "version": version}],
     }
     rp = {

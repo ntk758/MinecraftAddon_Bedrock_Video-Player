@@ -84,6 +84,7 @@ v.cell = v.frame - v.sheet * <cells_per_sheet>;
 - コマンド: `/<ns>:setup [動画ID] [face] [wall] [align] [a|c]`、`/<ns>:start`、`/<ns>:play [動画ID]`、`/<ns>:pause`、`/<ns>:resume`、
   `/<ns>:stop`、`/<ns>:seek <秒>` (小数可。数の引数として登録する: 文字の引数だと数だけで構文エラーになった)、`/<ns>:volume <0〜100>`、
   `/<ns>:stats`、`/<ns>:method <a|c>`、`/<ns>:list`。`/scriptevent <ns>:<操作>` でも同じ。
+- リモコン: 時計 (`minecraft:clock`) を使うか `/<ns>:remote` で開く (@minecraft/server-ui 2.0.0)。ブロックモードはコンパスなので、両方を入れても同時に開かない。
 - setup の置き方: 何も付けなければプレイヤーの前にこちら向き。`face` は向きを東西南北にそろえる。`wall` は見ているブロックの横の面に
   0.02 浮かせて貼る (下端はそのブロックの下の面)。`align` は位置をブロックの格子にそろえる。
 - 音量は state.volume (0〜100、保存する) を playSound の volume に。途中で入ってきた人には、チャンクが始まって 1 秒以内なら今のチャンクを鳴らす。
