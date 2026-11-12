@@ -68,6 +68,22 @@ For bigger screens, faster conversion and the AI person cutout, use the free **W
 
 The old `/scriptevent badapple:...` commands still work (they need cheats). `badapple` is the showcase's prefix; add-ons you make use the prefix you choose.
 
+## 🖼 Image mode (new): smooth video as a texture
+
+The Windows app can also make an **image mode** add-on: instead of placing blocks, the video plays as a texture on a thin panel, so it is smooth (up to 30 fps) and sharp (up to 512×288 pixels).
+
+- Same controls as block mode: `/<prefix>:setup` with `wall`, `face` and `align`, `start`, `play <id>`, `volume`, `seek`, `stats`, and a remote you open with a **clock** (block mode keeps the compass, so both can be installed together).
+- Long videos don't fit in the game's texture memory. When converting, choose what to keep: **picture quality** (lower fps), **smoothness** (smaller picture) or **length**, and whether it should also run on phones and consoles.
+- Put block mode and image mode in **one `.mcaddon`**, or make them separately.
+- Not real blocks: you can't walk through or build on the picture, and there are no 3D modes yet. Tested on PC only so far.
+
+| | Block mode | Image mode |
+|---|---|---|
+| Looks like | Real blocks | A sharp, smooth picture |
+| fps | Depends on your device | Up to 30 |
+| Long videos | Fine | Limited by texture memory |
+| 3D and trompe-l'oeil | Yes | Not yet |
+
 ## 🖥 Windows app (faster, bigger, smaller add-ons)
 
 - Download `BlockVideoPlayer-…-windows-x64.zip` from the [GitHub releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest), unzip and run `BlockVideoPlayer.exe` (no Python needed).
