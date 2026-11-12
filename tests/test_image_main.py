@@ -62,7 +62,8 @@ export const world = {
   getEntity: (id) => { const e = entities.get(id); return e?.loaded ? e : undefined; }, getDimension: () => dimension, getAllPlayers: () => [player],
   sendMessage: (m) => log.messages.push(m.rawtext[0].translate + " " + JSON.stringify(m.rawtext[0].with ?? {})),
   afterEvents: { worldLoad: { subscribe: (h) => { worldLoad = h; } }, entityLoad: { subscribe: (h) => { entityLoad = h; } },
-                 playerSpawn: { subscribe: (h) => { playerSpawn = h; } } },
+                 playerSpawn: { subscribe: (h) => { playerSpawn = h; } },
+                 itemUse: { subscribe: (h) => { globalThis.__itemUse = h; } } },
 };
 export const system = {
   runInterval: (f) => intervals.push(f), run: (f) => timeouts.push([0, f]), runTimeout: (f, t) => timeouts.push([t, f]),
@@ -94,6 +95,25 @@ export function unloadAll() { for (const e of entities.values()) e.loaded = fals
 export function loadAll() { for (const e of entities.values()) { e.loaded = true; entityLoad?.({ entity: e }); } }
 """
 
+# フォーム: 開いた中身を globalThis.__forms に残し、答えは globalThis.__answers の先頭から使う (無ければ閉じた扱い)
+MOCK_UI = r"""
+class Form {
+  constructor(kind) { this.kind = kind; this.buttons = []; this.sliders = []; globalThis.__forms ??= []; }
+  title(t) { this.titleText = t; return this; }
+  body(b) { this.bodyText = b; return this; }
+  button(label) { this.buttons.push(label.rawtext?.[0]?.translate ?? label.rawtext?.[0]?.text); return this; }
+  slider(label, min, max, options) { this.sliders.push({ min, max, ...options }); return this; }
+  show() {
+    globalThis.__forms.push({ kind: this.kind, title: this.titleText?.rawtext?.[0]?.translate, buttons: this.buttons, sliders: this.sliders });
+    const answer = (globalThis.__answers ?? []).shift();
+    if (answer === undefined) return Promise.resolve({ canceled: true });
+    return Promise.resolve(this.kind === "action" ? { canceled: false, selection: answer } : { canceled: false, formValues: [answer] });
+  }
+}
+export class ActionFormData extends Form { constructor() { super("action"); } }
+export class ModalFormData extends Form { constructor() { super("modal"); } }
+"""
+
 DRIVER = r"""
 const steps = JSON.parse(process.argv[2]);
 const out = [];
@@ -111,11 +131,14 @@ async function load(n) {
 let generation = 0;
 await load(generation);
 for (const step of steps) {
-  if (step.cmd) mock.command(step.cmd, step.arg ?? "");
+  if (step.cmd) { mock.command(step.cmd, step.arg ?? ""); await new Promise((r) => setTimeout(r, 0)); }
   if (step.tick) for (let i = 0; i < step.tick; i++) mock.tick();
   if (step.unload) mock.unloadAll();
   if (step.load) mock.loadAll();
   if (step.join) mock.join();
+  if (step.answers) globalThis.__answers = [...step.answers];
+  if (step.use) { globalThis.__itemUse?.({ itemStack: { typeId: step.use }, source: mock.playerEntity }); await new Promise((r) => setTimeout(r, 0)); }
+  if (step.forms) out.push({ label: "forms", forms: globalThis.__forms ?? [] });
   if (step.custom) {
     const [name, ...values] = step.custom;
     globalThis.__commands[`bvpimg:${name}`].callback({ sourceEntity: mock.playerEntity }, ...values);
@@ -143,7 +166,9 @@ def run(tmp_path, steps):
     (work / "node_modules" / "@minecraft" / "server" / "index.js").write_text(MOCK, encoding="utf-8")
     # image_main.js の "@minecraft/server" をモックへ向ける (読み込み直しで同じモジュールの状態を使うため)
     main = (work / "image_main.js").read_text(encoding="utf-8")
+    main = main.replace('from "@minecraft/server-ui"', 'from "./mock_ui.js"')
     (work / "image_main.js").write_text(main.replace('from "@minecraft/server"', 'from "./mock_proxy.js"'), encoding="utf-8")
+    (work / "mock_ui.js").write_text(MOCK_UI, encoding="utf-8")
     (work / "mock_proxy.js").write_text(
         "const m = globalThis.__mock;\nexport const { world, system, CommandPermissionLevel, CustomCommandParamType, "
         "CustomCommandStatus } = m;\n", encoding="utf-8")
@@ -309,3 +334,35 @@ def test_custom_commands_take_several_words_and_typed_numbers(tmp_path):
     [placed] = out["log"]["placed"]
     assert placed["yaw"] % 90 == 0 and placed["location"]["x"] % 1 == 0.5
     assert props(out["snaps"][1])["frame"] == 225
+
+
+def test_clock_opens_the_remote_and_its_buttons_work(tmp_path):
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2},
+                         # 1 番目のボタン (再生) を押す
+                         {"answers": [0]}, {"use": "minecraft:clock"}, {"tick": 21}, {"snap": "play"},
+                         # 音量のスライダーで 30
+                         {"answers": [4, 30]}, {"use": "minecraft:clock"}, {"tick": 1},
+                         # シークのスライダーで 5 秒
+                         {"answers": [5, 5]}, {"use": "minecraft:clock"}, {"tick": 1}, {"snap": "seek"},
+                         # 動画リストから 2 本目
+                         {"answers": [6, 1]}, {"use": "minecraft:clock"}, {"tick": 2}, {"snap": "library"},
+                         # コンパス (ブロックモードのリモコン) では開かない
+                         {"answers": []}, {"use": "minecraft:compass"}, {"forms": True}])
+    snaps = {x["label"]: x for x in out["snaps"]}
+    assert props(snaps["play"])["state"] == 1
+    assert messages(out, "volume_set") and "30" in messages(out, "volume_set")[0]
+    assert 150 <= props(snaps["seek"])["frame"] <= 152
+    assert snaps["library"]["type"] == "bvpimg:screen_second_a"
+    forms = snaps["forms"]["forms"]
+    remote = forms[0]
+    assert remote["title"] == "bvpimg.remote.title"
+    assert remote["buttons"][:3] == ["bvpimg.remote.play", "bvpimg.remote.stop", "bvpimg.remote.next"]
+    assert {"kind": "modal"}.items() <= forms[2].items() and forms[2]["sliders"][0]["max"] == 100
+    # 時計で開いた回数だけリモコンが開いている (コンパスでは開かない)。動画リストの後はリモコンを開き直す
+    assert sum(1 for f in forms if f["title"] == "bvpimg.remote.title") == 5
+
+
+def test_remote_before_setup_offers_to_place_the_screen(tmp_path):
+    out = run(tmp_path, [{"answers": [0]}, {"cmd": "remote"}, {"tick": 3}, {"snap": "placed"}, {"forms": True}])
+    assert out["snaps"][0]["type"] == "bvpimg:screen_demo_a"
+    assert out["snaps"][1]["forms"][0]["buttons"][0] == "bvpimg.remote.setup_here"
