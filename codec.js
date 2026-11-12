@@ -1308,8 +1308,10 @@ export function unpackGop(container) {
  *    (立体のキーフレーム以外は、out へ書いた場所に印を付けて、印の付いたタイルだけを比べる。
  *    out へ書く場所を足したら、必ず印を付けること。付け漏れは辞書をずらして以後のフレームを壊す)
  * out と board は width*height の Int16Array などを使い回す (GC を避ける)。
+ * rows ({ lo, hi }) を渡すと、out へ書いたかもしれない行 [lo, hi) を足し込む (キーフレームは全行)。平面の再生が、
+ * 変わったマスを探す行を絞るのに使う。out へ書く場所を足したら、ここにも足すこと (漏れは前の絵を残す)。
  */
-export function decodeFrameInto(bytes, start, end, board, out, video, tiles = null) {
+export function decodeFrameInto(bytes, start, end, board, out, video, tiles = null, rows = null) {
   const width = video.width;
   const height = boardRows(video);
   const cursor = { pos: start };
@@ -1324,6 +1326,11 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
 
   if (isKeyframe) out.fill(emptyLevel(video));
   else out.set(board);
+  const mark = rows === null ? null : (r0, r1) => {
+    if (r0 < rows.lo) rows.lo = r0;
+    if (r1 > rows.hi) rows.hi = r1;
+  };
+  if (mark && isKeyframe) mark(0, height);
 
   if (hasMotion && video.layout === "volume") {
     decodeMotion3d(bytes, cursor, end, board, out, video, track ? tiles : null);
@@ -1342,6 +1349,7 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
       const y0 = Math.floor(mb / mbCols) * block;
       const x1 = Math.min(x0 + block, width);
       const y1 = Math.min(y0 + block, height);
+      if (mark) mark(y0, y1);
       for (let y = y0; y < y1; y++) {
         const sy = Math.min(Math.max(y + dy, 0), height - 1);
         for (let x = x0; x < x1; x++) {
@@ -1357,6 +1365,10 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
     let tileIndex = -1;
     for (let k = 0; k < count; k++) {
       tileIndex += readVarint(bytes, cursor, end) + 1;
+      if (mark) {
+        const r0 = Math.floor(tileIndex / tiles.tilesX) * tiles.tile;
+        mark(r0, r0 + tiles.tile);
+      }
       tiles.apply(out, tileIndex, readVarint(bytes, cursor, end));
     }
   }
@@ -1370,6 +1382,7 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
     const start = isV5 ? previousEnd + run.position : run.position;
     out.fill(run.level, start, start + run.length);
     if (track) tiles.markRange(start, start + run.length);
+    if (mark && run.length > 0) mark(Math.floor(start / width), Math.floor((start + run.length - 1) / width) + 1);
     previousEnd = start + run.length;
   }
   if (tiles) tiles.update(board, out, isKeyframe, track);

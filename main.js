@@ -414,6 +414,7 @@ class VideoPlayer {
     // だまし絵で、変わったマスを探す盤面の範囲 (行 [lo, hi)・列 [left, right))。人物を塗った所と、まだ置き終えて
     //   いない前の描画の所。盤面に「不明」のマスがあるときは全部
     this.stageRows = { lo: 0, hi: Infinity, left: 0, right: Infinity };
+    this.resetFlatRows();
     this.board = null;
     this.decoded = null;
     this.nextBoard = null;
@@ -541,6 +542,7 @@ class VideoPlayer {
         this.decodeScratch = this.figure ?? this.nextBoard;
         this.expandedPlanes = null;
       }
+      this.flatRows = !this.figure && !this.expandedPlanes && !placesVolume(this.videoData) ? { lo: 0, hi: Infinity } : null;
       this.tiles = createTileDictionary(this.videoData);
       this.decodedFrame = -1;
       this.decodedBinary = null;
@@ -718,11 +720,30 @@ class VideoPlayer {
   invalidateBoard() {
     if (this.board) this.board.fill(-1);
     this.stageRows = { lo: 0, hi: Infinity, left: 0, right: Infinity };
+    this.resetFlatRows();
   }
 
-  /** 変わったマスを探す盤面の範囲 [行の始め, 終わり, 列の始め, 終わり)。平面と立体は全部、だまし絵は this.stageRows。 */
+  /**
+   * 変わったマスを探す盤面の範囲 [行の始め, 終わり, 列の始め, 終わり)。立体と 2.5D は全部、だまし絵は this.stageRows、
+   * 平面は this.flatRows (前に置き終えてから復元で書いた行。盤面を「不明」にしたときと置けなかったマスがあるときは全部)。
+   */
+  resetFlatRows() {
+    if (this.flatRows) this.flatRows = { lo: 0, hi: Infinity };
+  }
+
+  /** 平面: 置き終えたら探す行を空にする。置けなかったマスがあれば、次も全部を調べる。 */
+  settleFlatRows() {
+    if (!this.flatRows) return;
+    this.flatRows = this.flatPlaceFailed ? { lo: 0, hi: Infinity } : { lo: Infinity, hi: 0 };
+    this.flatPlaceFailed = false;
+  }
+
   scanRange(rows, width) {
-    if (!this.figure) return [0, rows, 0, width];
+    if (!this.figure && !this.flatRows) return [0, rows, 0, width];
+    if (!this.figure) {
+      const { lo, hi } = this.flatRows;
+      return lo < hi ? [Math.min(rows, lo), Math.min(rows, hi), 0, width] : [0, 0, 0, width];
+    }
     const range = this.stageRows;
     return [Math.min(rows, range.lo), Math.min(rows, range.hi), Math.min(width, range.left), Math.min(width, range.right)];
   }
@@ -790,7 +811,11 @@ class VideoPlayer {
     if (this.useFill === undefined) this.useFill = typeof this.dimension.fillBlocks === "function";
     let mode = this.useFill ? currentRenderMode() : "block";
     if (mode === "auto") mode = yield* this.chooseRenderMode(width);
-    if (mode === "none") return;
+    if (mode === "none") {
+      // 置かなかったので、次に置くときは全部を調べる
+      this.flatPlaceFailed = true;
+      return;
+    }
     if (mode === "list") {
       yield* this.placeChangedBlocksAsLists(width);
       return;
@@ -807,6 +832,7 @@ class VideoPlayer {
     // だまし絵は次のフレームで舞台全体を見直す (置けなかったマスは盤面で「不明」にしてあるが、見る範囲を人物の
     //   周りに絞っていたので、置き直されずに穴が残っていた)
     this.placeFailedRecently = true;
+    this.flatPlaceFailed = true;
     warnOnce("setBlock", `Failed to place ${count} block(s): ${error}`);
     if (this.playStats) this.playStats.placeFailures = (this.playStats.placeFailures ?? 0) + count;
     if (this.placeFailureNotified) return;
@@ -1202,6 +1228,8 @@ class VideoPlayer {
       // 自動パレットで GOP が変わると同じ番号でも別のブロックになるので、表示中の盤面を「不明」にする
       if (this.videoData.adaptive_palette && entry.gopId !== this.boardGopId) {
         this.invalidateForPaletteChange(this.boardGopId ?? -1, entry.gopId);
+        // 付け替えられなかったマスは「不明」になり、どの行にもありうる
+        this.resetFlatRows();
       }
       this.boardGopId = entry.gopId;
       if (backgroundSynced && this.background.videoData.adaptive_palette && this.background.currentGopId !== this.backgroundGopId) {
@@ -1210,6 +1238,7 @@ class VideoPlayer {
       this.backgroundGopId = this.background?.currentGopId ?? -1;
       yield* this.placeChangedBlocks(width);
       if (this.figure) this.settleStageRows();
+      else this.settleFlatRows();
       return;
     }
 
@@ -1428,7 +1457,8 @@ class VideoPlayer {
       const gopBytes = yield* this.gopBytesJob(entry.gopId, entry.offset + entry.length);
       if (!gopBytes) return false;
       decodeFrameInto(
-        gopBytes, entry.offset, entry.offset + entry.length, this.decoded, this.decodeScratch, this.videoData, this.tiles
+        gopBytes, entry.offset, entry.offset + entry.length, this.decoded, this.decodeScratch, this.videoData, this.tiles,
+        this.flatRows
       );
       this.decoded.set(this.decodeScratch);
       // だまし絵の人物 (figure) は、立体の復元の作業用の配列でもある。applyFrameJob の外 (シークの途中で中断した後など)
