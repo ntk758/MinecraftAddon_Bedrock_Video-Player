@@ -1295,7 +1295,7 @@ class PackBuilderApp(tk.Tk):
                 ffmpeg, "-y", "-i", str(video),
                 "-f", "segment", "-segment_time", str(AUDIO_CHUNK_SECONDS),
                 "-vn", "-acodec", "libvorbis",
-                "-ar", "44100", "-ac", "2", "-b:a", "192k",
+                "-ar", "44100", "-ac", "2", "-q:a", "3",
                 str(sounds_dir / "chunk_%d.ogg")
             ])
         except Exception as e:

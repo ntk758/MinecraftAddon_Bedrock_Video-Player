@@ -18,9 +18,9 @@ from pathlib import Path
 # アドオンの大きさの見込み: 1 マス 1 フレームあたりのデータ (base64 の文字数)。評価用の実写・ジャンル 40 本 (Blue Noise、
 # 自動パレット) の 2 割点・中央・9 割点。立体 (2.5D) は色と高さの 2 枚分
 SIZE_BYTES_PER_CELL_FRAME = (0.06, 0.15, 0.30)
-# .mcaddon (zip) にすると base64 の文字は約 0.76 倍になる。音声は 192 kbps の ogg (1 秒 24 KB)。スクリプトなど約 40 KB
+# .mcaddon (zip) にすると base64 の文字は約 0.76 倍になる。音声は品質 3 の ogg (自作の曲で 1 秒約 11.5 KB)。スクリプトなど約 40 KB
 ZIP_RATIO = 0.76
-AUDIO_BYTES_PER_SECOND = 24_000
+AUDIO_BYTES_PER_SECOND = 12_000
 ADDON_OVERHEAD_BYTES = 40_000
 # 勧める設定: 長い辺 128 ブロック・10 fps。長い動画 (5 分を超える) は 5 fps
 RECOMMENDED_LONG_SIDE = 128

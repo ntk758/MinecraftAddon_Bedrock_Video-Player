@@ -284,7 +284,7 @@ def extract_audio_chunks(path, out_dir, chunk_seconds: float = 4, start: float |
     limit = ["-t", f"{max_seconds:g}"] if max_seconds else []
     cmd = [ffmpeg, "-y", "-v", "error", *_trim_args(start, end), "-i", str(path), *limit,
            "-f", "segment", "-segment_time", f"{chunk_seconds:g}",
-           "-vn", "-acodec", "libvorbis", "-ar", "44100", "-ac", "2", "-b:a", "192k",
+           "-vn", "-acodec", "libvorbis", "-ar", "44100", "-ac", "2", "-q:a", "3",
            str(out_dir / "chunk_%d.ogg")]
     result = subprocess.run(cmd, capture_output=True, **_subprocess_kwargs())
     files = sorted(out_dir.glob("chunk_*.ogg"), key=lambda f: int(f.stem.split("_")[1]))
