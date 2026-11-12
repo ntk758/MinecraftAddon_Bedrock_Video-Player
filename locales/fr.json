@@ -365,5 +365,17 @@
   "dialog.image_files": "Images (œuvre en blocs fixe)",
   "web.audio_wav_fallback": "Impossible de charger l'encodeur OGG, le son est donc enregistré en WAV (plus volumineux) : {error}",
   "settings.pair_flat": "En mode 3D, ajouter aussi la vidéo plate normale (même son ; la version 2D est <ID>_flat)",
-  "build.pair_flat": "  Conversion aussi de la version plate (2D) : {id}"
+  "build.pair_flat": "  Conversion aussi de la version plate (2D) : {id}",
+  "settings.image_mode": "Crée aussi l'add-on d'images (textures) dans le même dossier : fichier séparé, lu comme vidéo texturée dans le jeu",
+  "build.image_start": "Création de l'add-on d'images : {output} ({width}×{height} px, {fps} ips)",
+  "build.image_skipped": "  Inutilisable en mode image (.vox / MMD) : {id}",
+  "build.image_none": "Aucune vidéo utilisable en mode image (.vox et MMD n'ont pas d'images d'origine)",
+  "build.image_done": "Add-on d'images : {output} ({mib} Mio). Dans le jeu : /{ns}:setup puis /{ns}:start (pas encore testé dans Minecraft)",
+  "build.image_failed": "Add-on d'images impossible ({output}) : {error}",
+  "web.image_mode": "Crée aussi l'add-on d'images (textures) : fichier séparé, deux téléchargements",
+  "web.image_skipped": "  Inutilisable en mode image (.vox / MMD) : {id}",
+  "web.image_failed": "Add-on d'images impossible : {error}",
+  "web.image_done": "Add-on d'images : {size} KB",
+  "web.image_download": "Télécharger l'add-on d'images",
+  "web.image_howto": "L'add-on d'images est un fichier séparé. Dans le jeu : /{ns}:setup puis /{ns}:start"
 }

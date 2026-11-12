@@ -365,5 +365,17 @@
   "dialog.image_files": "图片（静态方块画）",
   "web.audio_wav_fallback": "无法加载 OGG 编码器，因此音频将保存为 WAV（较大）：{error}",
   "settings.pair_flat": "选择立体模式时，也一并加入普通的平面视频（共用音频；平面版为 <视频ID>_flat）",
-  "build.pair_flat": "  也在转换平面（2D）版：{id}"
+  "build.pair_flat": "  也在转换平面（2D）版：{id}",
+  "settings.image_mode": "同时生成贴图影像方式的附加内容（单独文件，游戏中把影像映在贴图播放）",
+  "build.image_start": "正在生成影像方式的附加内容：{output}（{width}×{height} 像素，{fps} fps）",
+  "build.image_skipped": "  影像方式无法使用（.vox、MMD）：{id}",
+  "build.image_none": "没有可用于影像方式的视频（.vox、MMD 没有原始帧）",
+  "build.image_done": "影像方式的附加内容：{output}（{mib} MiB）。游戏中：/{ns}:setup → /{ns}:start（尚未在实际的 Minecraft 中确认）",
+  "build.image_failed": "无法生成影像方式的附加内容（{output}）：{error}",
+  "web.image_mode": "同时生成贴图影像方式的附加内容（单独文件，会有两个下载）",
+  "web.image_skipped": "  影像方式无法使用（.vox、MMD）：{id}",
+  "web.image_failed": "无法生成影像方式的附加内容：{error}",
+  "web.image_done": "影像方式的附加内容：{size} KB",
+  "web.image_download": "下载影像方式的附加内容",
+  "web.image_howto": "影像方式的附加内容是单独的文件。游戏中：/{ns}:setup → /{ns}:start"
 }

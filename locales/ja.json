@@ -365,5 +365,17 @@
   "dialog.image_files": "画像 (止まったブロックアート)",
   "web.audio_wav_fallback": "OGG のエンコーダーを読み込めなかったので、音声を WAV (大きめ) にします: {error}",
   "settings.pair_flat": "立体のモードのとき、通常の平面の動画もセットで入れる (音声は共通。平面版は <動画ID>_flat)",
-  "build.pair_flat": "  平面 (2D) 版も変換しています: {id}"
+  "build.pair_flat": "  平面 (2D) 版も変換しています: {id}",
+  "settings.image_mode": "画像モードのアドオンも作る (試作・別ファイル。動画をテクスチャで最大 30 fps で再生)",
+  "build.image_start": "画像モードのアドオンを作っています: {output} ({width}×{height} 画素, {fps} fps)",
+  "build.image_skipped": "  画像モードでは使えません (.vox・MMD): {id}",
+  "build.image_none": "画像モードでは作れる動画がありません (.vox・MMD は元の映像のコマが無い)",
+  "build.image_done": "画像モードのアドオン: {output} ({mib} MiB)。ゲームでは /{ns}:setup → /{ns}:start (実機では未確認)",
+  "build.image_failed": "画像モードのアドオンは作れませんでした ({output}): {error}",
+  "web.image_mode": "画像モードのアドオンも作る (試作・別ファイル。ダウンロードが 2 個になります)",
+  "web.image_skipped": "  画像モードでは使えません (.vox・MMD): {id}",
+  "web.image_failed": "画像モードのアドオンは作れませんでした: {error}",
+  "web.image_done": "画像モードのアドオン: {size} KB",
+  "web.image_download": "画像モードのアドオンをダウンロード",
+  "web.image_howto": "画像モードのアドオンは別ファイルです。ゲームでは /{ns}:setup → /{ns}:start"
 }

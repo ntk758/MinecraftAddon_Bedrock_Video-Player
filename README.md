@@ -98,7 +98,7 @@ sha256sum BlockVideoPlayer-v6.34.0-windows-x64.zip
 
 ### 🖼 画像モード (試作) / Image mode (experimental)
 
-動画のコマを PNG のアトラスにしてリソースパックに入れ、板状のエンティティに表示する方式です。コマはクライアントの Molang が切り替えるので 30 fps で再生でき、ブロックを置き換えないのでサーバーの負荷も小さくなります。`convert_image_mode.py` で作ります (詳しくは [docs/IMAGE_MODE.md](docs/IMAGE_MODE.md)、確かめ方は [docs/TESTING.md の 5](docs/TESTING.md))。**実機ではまだ確かめていません。**
+動画のコマを PNG のアトラスにしてリソースパックに入れ、板状のエンティティに表示する方式です。コマはクライアントの Molang が切り替えるので 30 fps で再生でき、ブロックを置き換えないのでサーバーの負荷も小さくなります。`convert_image_mode.py` か、Windows 版の画面・ブラウザ版の「画像モードのアドオンも作る」で作ります (詳しくは [docs/IMAGE_MODE.md](docs/IMAGE_MODE.md)、確かめ方は [docs/TESTING.md の 5](docs/TESTING.md))。**実機ではまだ確かめていません。**
 
 | | ブロックモード | 画像モード |
 |---|---|---|

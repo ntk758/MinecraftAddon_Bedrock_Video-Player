@@ -10,6 +10,11 @@ const OGG_RATE = 44100;
 const OGG_QUALITY = 3;
 const AUDIO_RATE = 22050; // WAV にするとき (OGG のエンコーダーを使えないとき) は大きいので 22.05 kHz モノラル
 const THUMB_SIZE = 256;
+// 画像モードのアドオン (別ファイル) のファイル名・コマンドの接頭辞の末尾 (video_player_gui.py の IMAGE_MODE_SUFFIX・
+// IMAGE_NAMESPACE_SUFFIX と同じ)
+const IMAGE_MODE_SUFFIX = "_image";
+const IMAGE_NAMESPACE_SUFFIX = "_img";
+let lastImageUrl = null;
 // 画質プリセット: キー -> [幅, 高さ, fps] (Windows 版の QUALITY_PRESETS と同じ。tests/test_web_i18n.py で確かめる)
 const QUALITY_PRESETS = {
   light: [64, 64, 20], standard: [96, 96, 10], high: [128, 128, 10],
@@ -154,7 +159,7 @@ function settings() {
   return {
     width: Number($("width").value), height: Number($("height").value), fps: Number($("fps").value),
     duration: $("duration").value.trim() === "" ? 0 : Number($("duration").value), mode: $("mode").value, depth: Number($("depth").value),
-    anamorphic: $("anamorphic").checked, pairFlat: $("pairFlat").checked,
+    anamorphic: $("anamorphic").checked, pairFlat: $("pairFlat").checked, imageMode: $("imageMode").checked,
     palette: $("palette").value, dither: $("dither").value,
     keyframe: Math.max(0, Math.round(Number($("keyframe").value) || 0)), perceptual: $("perceptual").checked,
     packName: $("packName").value.trim() || "Block Video Player",
@@ -394,6 +399,18 @@ function finish(msg) {
   // 旧版向けはファイル名で分かるようにする (パック名は変えないので、取り込み直すと同じパックとして置き換わる)
   link.download = `${s.packName.replace(/[^\w.-]+/g, "_")}${s.target === "legacy" ? "-mc1.21.80" : ""}.mcaddon`;
   link.hidden = false;
+  if (msg.imageAddon) {
+    // 画像モードのアドオンは別ファイルなので、別のダウンロードのリンクを出す
+    const imageBlob = new Blob([msg.imageAddon], { type: "application/octet-stream" });
+    if (lastImageUrl) URL.revokeObjectURL(lastImageUrl);
+    lastImageUrl = URL.createObjectURL(imageBlob);
+    const imageLink = $("imageDownload");
+    imageLink.href = lastImageUrl;
+    imageLink.download = `${s.packName.replace(/[^\w.-]+/g, "_")}${IMAGE_MODE_SUFFIX}.mcaddon`;
+    imageLink.hidden = false;
+    log(t("web.image_done", { size: (imageBlob.size / 1024).toFixed(0) }));
+    log("  " + t("web.image_howto", { ns: s.namespace + IMAGE_NAMESPACE_SUFFIX }));
+  }
   $("progress").value = 1;
   $("build").disabled = false;
   log(t("web.done", { size: (blob.size / 1024).toFixed(0) }));
@@ -444,6 +461,7 @@ async function build() {
   const s = settings();
   $("build").disabled = true;
   $("download").hidden = true;
+  $("imageDownload").hidden = true;
   Preview.hide();
   $("log").textContent = "";
   const w = startWorker();
