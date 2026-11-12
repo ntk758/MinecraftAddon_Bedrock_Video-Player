@@ -4,7 +4,7 @@ CurseForge のプロジェクトの設定にある **Summary** (一覧と MCPEDL
 今の文「Play any video with sound …」は、どの動画もゲームの中で再生できるように読めるので直す。
 
 ```
-Watch videos made of real blocks with synced sound, as 3D holograms or a trompe-l'oeil. 5 demo clips included; convert your own videos free in your browser.
+Watch videos in Minecraft with synced sound: made of real blocks (even 3D holograms) or as smooth 30 fps textures. 5 demo clips included; convert your own videos for free.
 ```
 
-文字数: 156 字 (CurseForge の Summary は 200 字まで。文字数の上限は CurseForge の画面で確かめる)。
+文字数: 171 字 (CurseForge の Summary は 200 字まで。文字数の上限は CurseForge の画面で確かめる)。
