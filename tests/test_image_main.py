@@ -67,13 +67,17 @@ export const world = {
 export const system = {
   runInterval: (f) => intervals.push(f), run: (f) => timeouts.push([0, f]), runTimeout: (f, t) => timeouts.push([t, f]),
   afterEvents: { scriptEventReceive: { subscribe: (h) => { globalThis.__script = h; } } },
-  beforeEvents: { startup: { subscribe: () => {} } },
+  // 独自のコマンドの登録を覚えておき、テストから引数つきで呼ぶ
+  beforeEvents: { startup: { subscribe: (h) => h({ customCommandRegistry: {
+    registerEnum() {}, registerCommand(definition, callback) { (globalThis.__commands ??= {})[definition.name] = { definition, callback }; },
+  } }) } },
 };
 export const CommandPermissionLevel = { GameDirectors: 1 };
-export const CustomCommandParamType = { String: "String" };
+export const CustomCommandParamType = { String: "String", Float: "Float", Integer: "Integer", Enum: "Enum" };
 export const CustomCommandStatus = { Success: 0 };
 export function loadWorld() { worldLoad?.(); }
 export function join() { playerSpawn?.({ player, initialSpawn: true }); }
+export const playerEntity = player;
 // ワールドを開き直したときのように、スクリプトの登録を消す (dynamic property・時計・エンティティは残す)
 export function resetScripts() { intervals.length = 0; timeouts.length = 0; worldLoad = null; }
 export function tick() {
@@ -112,6 +116,12 @@ for (const step of steps) {
   if (step.unload) mock.unloadAll();
   if (step.load) mock.loadAll();
   if (step.join) mock.join();
+  if (step.custom) {
+    const [name, ...values] = step.custom;
+    globalThis.__commands[`bvpimg:${name}`].callback({ sourceEntity: mock.playerEntity }, ...values);
+  }
+  if (step.defs) out.push({ label: "defs", defs: Object.fromEntries(Object.entries(globalThis.__commands)
+    .map(([k, v]) => [k, v.definition.optionalParameters.map((x) => x.type)])) });
   if ("lookAt" in step) globalThis.__lookAt = step.lookAt;
   if (step.count) out.push({ label: step.count, screens: mock.screens().map((e) => e.typeId) });
   if ("reload" in step) { generation++; globalThis.__time += step.reload; await load(generation); }
@@ -156,7 +166,9 @@ def test_play_pause_resume_and_seek(tmp_path):
                          {"cmd": "resume"}, {"tick": 21}, {"snap": "resumed"},
                          {"cmd": "seek", "arg": "8"}, {"tick": 1}, {"snap": "seek"}])
     snaps = {s["label"]: s for s in out["snaps"]}
-    assert snaps["setup"]["type"] == "bvpimg:screen_demo_a" and props(snaps["setup"])["state"] == 0
+    # 置いた直後は最初のコマを止めたまま見せる (置き場所が分かるように)
+    assert snaps["setup"]["type"] == "bvpimg:screen_demo_a" and props(snaps["setup"])["state"] == 2
+    assert props(snaps["setup"])["frame"] == 0
     # 2 秒 (40 tick) で 60 コマ前後。書き直しは 1 秒ごと
     two = props(snaps["2s"])
     assert two["state"] == 1 and 55 <= two["frame"] <= 61
@@ -285,3 +297,15 @@ def test_setup_face_and_align_snap_to_the_grid(tmp_path):
     assert placed["yaw"] % 90 == 0
     location = placed["location"]
     assert location["x"] % 1 == 0.5 and location["z"] % 1 == 0.5 and location["y"] % 1 == 0
+
+
+def test_custom_commands_take_several_words_and_typed_numbers(tmp_path):
+    out = run(tmp_path, [{"defs": True}, {"custom": ["setup", "face", "align"]}, {"tick": 2},
+                         {"custom": ["seek", 7.5]}, {"tick": 2}, {"snap": "seek"}])
+    defs = out["snaps"][0]["defs"]
+    # 文字の引数は 4 語まで、seek は小数、volume は整数
+    assert defs["bvpimg:setup"] == ["String"] * 4
+    assert defs["bvpimg:seek"] == ["Float"] and defs["bvpimg:volume"] == ["Integer"]
+    [placed] = out["log"]["placed"]
+    assert placed["yaw"] % 90 == 0 and placed["location"]["x"] % 1 == 0.5
+    assert props(out["snaps"][1])["frame"] == 225

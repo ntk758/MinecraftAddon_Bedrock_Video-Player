@@ -294,7 +294,8 @@ function setup(player, args) {
     state.location = { x: Math.floor(at.x) + 0.5, y: Math.floor(at.y), z: Math.floor(at.z) + 0.5 };
   }
   state.dimension = player.dimension.id;
-  state.mode = STOPPED;
+  // 置いた場所が分かるよう、最初のコマを止めたまま見せる (停止のままだと画面が見えず、壁に貼れたか分からなかった: 実機 2026-11-12)
+  state.mode = PAUSED;
   state.pausedFrame = 0;
   stopAudio();
   if (spawnScreen()) notify("setup_done", video.id, state.method.toUpperCase(), NAMESPACE);
@@ -546,8 +547,20 @@ const COMMANDS = [
   ["list", "List the videos", null],
 ];
 
+// String の引数は 1 語だけなので、setup face align のように並べられるよう、文字の引数は TEXT_WORDS 個まで受ける
+// (1 個だけだと 2 語目が構文エラーになった: 実機 2026-11-12)
+const TEXT_WORDS = 4;
+
+function parametersFor(kind, videoEnum) {
+  if (kind === "text") {
+    return Array.from({ length: TEXT_WORDS }, (_, i) => ({ name: i === 0 ? "options" : `option${i + 1}`,
+                                                          type: CustomCommandParamType.String }));
+  }
+  const parameter = parameterFor(kind, videoEnum);
+  return parameter ? [parameter] : [];
+}
+
 function parameterFor(kind, videoEnum) {
-  if (kind === "text") return { name: "options", type: CustomCommandParamType.String };
   if (kind === "number") return { name: "seconds", type: CustomCommandParamType.Float };
   if (kind === "int") return { name: "volume", type: CustomCommandParamType.Integer };
   if (kind === "video" && videoEnum) return { name: videoEnum, type: CustomCommandParamType.Enum };
@@ -563,15 +576,15 @@ system.beforeEvents.startup.subscribe((event) => {
       registry.registerEnum(videoEnum, IMAGE_VIDEOS.map((v) => v.id));
     }
     for (const [action, description, kind] of COMMANDS) {
-      const parameter = parameterFor(kind, videoEnum);
       registry.registerCommand({
         name: `${NAMESPACE}:${action}`, description, permissionLevel: CommandPermissionLevel.GameDirectors,
         cheatsRequired: false,
-        optionalParameters: parameter ? [parameter] : [],
-      }, (origin, value) => {
+        optionalParameters: parametersFor(kind, videoEnum),
+      }, (origin, ...values) => {
         // コマンドの処理の中ではワールドを変えられないので、次の tick で行う
         const player = origin.sourceEntity?.typeId === "minecraft:player" ? origin.sourceEntity : undefined;
-        system.run(() => runAction(action, value === undefined ? "" : String(value), player));
+        const text = values.filter((v) => v !== undefined).map(String).join(" ");
+        system.run(() => runAction(action, text, player));
         return { status: CustomCommandStatus.Success };
       });
     }
