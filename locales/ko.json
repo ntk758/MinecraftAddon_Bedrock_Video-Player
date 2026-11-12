@@ -424,5 +424,18 @@
   "imgaddon.selected_tag": "§a[선택됨]",
   "imgaddon.remote.title": "동영상 플레이어 리모컨 (이미지 모드)",
   "imgaddon.remote.paused": "§e일시정지",
-  "imgaddon.remote.setup_here": "내 앞에 스크린 설치"
+  "imgaddon.remote.setup_here": "내 앞에 스크린 설치",
+  "image.priority_label": "우선:",
+  "image.priority.quality": "화질 (fps 낮춤)",
+  "image.priority.smooth": "부드러움 (화면 축소)",
+  "image.priority.length": "길이 (끝까지 넣기)",
+  "image.tier_label": "대상:",
+  "image.tier.2": "휴대폰·콘솔도 (Tier 2, 225 MB)",
+  "image.tier.5": "PC 전용 (Tier 5, 800 MB)",
+  "build.image_plan": "이미지 모드: \"{priority}\" 우선으로 Tier {tier}에 맞추기 위해 {width}×{height}, {fps} fps로 했습니다 ({length})",
+  "build.image_plan_full": "길이 그대로",
+  "build.image_plan_cut": "{seconds}초로 잘랐습니다",
+  "image.combine": "블록 모드와 이미지 모드를 한 파일로 묶기 (가져오면 둘 다 설치됩니다)",
+  "build.image_combined": "이미지 모드도 {output}에 넣었습니다 (한 파일로 둘 다 설치)",
+  "build.image_combine_failed": "이미지 모드를 같은 파일에 넣지 못해 별도 파일로 남겼습니다 ({output}): {error}"
 }

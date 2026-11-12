@@ -424,5 +424,18 @@
   "imgaddon.selected_tag": "§a[selecionado]",
   "imgaddon.remote.title": "Controle do player (modo imagem)",
   "imgaddon.remote.paused": "§ePausado",
-  "imgaddon.remote.setup_here": "Colocar a tela na minha frente"
+  "imgaddon.remote.setup_here": "Colocar a tela na minha frente",
+  "image.priority_label": "Prioridade:",
+  "image.priority.quality": "Qualidade de imagem (reduz o fps)",
+  "image.priority.smooth": "Fluidez (imagem menor)",
+  "image.priority.length": "Duração (vídeo inteiro)",
+  "image.tier_label": "Para:",
+  "image.tier.2": "Celulares e consoles também (Tier 2, 225 MB)",
+  "image.tier.5": "Somente PC (Tier 5, 800 MB)",
+  "build.image_plan": "Modo imagem: para caber no Tier {tier} com prioridade \"{priority}\", usou {width}×{height}, {fps} fps ({length})",
+  "build.image_plan_full": "duração completa",
+  "build.image_plan_cut": "cortado para {seconds} s",
+  "image.combine": "Colocar o modo blocos e o modo imagem em um só arquivo (os dois são instalados)",
+  "build.image_combined": "O modo imagem também está em {output} (um arquivo instala os dois)",
+  "build.image_combine_failed": "Não foi possível juntar o modo imagem no mesmo arquivo; ficou separado ({output}): {error}"
 }

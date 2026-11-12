@@ -424,5 +424,18 @@
   "imgaddon.selected_tag": "§a[選択中]",
   "imgaddon.remote.title": "動画プレイヤー リモコン (画像モード)",
   "imgaddon.remote.paused": "§e一時停止中",
-  "imgaddon.remote.setup_here": "スクリーンを目の前に置く"
+  "imgaddon.remote.setup_here": "スクリーンを目の前に置く",
+  "image.priority_label": "優先:",
+  "image.priority.quality": "画質 (fps を下げる)",
+  "image.priority.smooth": "なめらかさ (コマを小さく)",
+  "image.priority.length": "長さ (最後まで入れる)",
+  "image.tier_label": "対象:",
+  "image.tier.2": "スマートフォン・ゲーム機でも (Tier 2、225 MB)",
+  "image.tier.5": "PC だけ (Tier 5、800 MB)",
+  "build.image_plan": "画像モード: 「{priority}」を優先して Tier {tier} に収めるため、{width}×{height}・{fps} fps にしました ({length})",
+  "build.image_plan_full": "長さはそのまま",
+  "build.image_plan_cut": "{seconds} 秒までに切りました",
+  "image.combine": "ブロックモードと画像モードを 1 つのファイルにまとめる (読み込むと両方入ります)",
+  "build.image_combined": "画像モードも {output} に入れました (1 つのファイルで両方入ります)",
+  "build.image_combine_failed": "画像モードを同じファイルにまとめられなかったので、別のファイルのままです ({output}): {error}"
 }

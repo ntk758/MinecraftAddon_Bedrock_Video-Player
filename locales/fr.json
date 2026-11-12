@@ -424,5 +424,18 @@
   "imgaddon.selected_tag": "§a[sélectionnée]",
   "imgaddon.remote.title": "Télécommande du lecteur (mode image)",
   "imgaddon.remote.paused": "§eEn pause",
-  "imgaddon.remote.setup_here": "Placer l'écran devant moi"
+  "imgaddon.remote.setup_here": "Placer l'écran devant moi",
+  "image.priority_label": "Priorité :",
+  "image.priority.quality": "Qualité d'image (baisse les fps)",
+  "image.priority.smooth": "Fluidité (image plus petite)",
+  "image.priority.length": "Durée (toute la vidéo)",
+  "image.tier_label": "Pour :",
+  "image.tier.2": "Aussi téléphones et consoles (Tier 2, 225 Mo)",
+  "image.tier.5": "PC uniquement (Tier 5, 800 Mo)",
+  "build.image_plan": "Mode image : pour tenir dans le Tier {tier} avec la priorité « {priority} », {width}×{height}, {fps} fps ({length})",
+  "build.image_plan_full": "durée complète",
+  "build.image_plan_cut": "coupé à {seconds} s",
+  "image.combine": "Mettre le mode blocs et le mode image dans un seul fichier (les deux sont installés)",
+  "build.image_combined": "Le mode image est aussi dans {output} (un fichier installe les deux)",
+  "build.image_combine_failed": "Impossible de mettre le mode image dans le même fichier ; il reste séparé ({output}) : {error}"
 }

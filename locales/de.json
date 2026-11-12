@@ -424,5 +424,18 @@
   "imgaddon.selected_tag": "§a[ausgewählt]",
   "imgaddon.remote.title": "Fernbedienung (Bildmodus)",
   "imgaddon.remote.paused": "§ePausiert",
-  "imgaddon.remote.setup_here": "Bildschirm vor mir aufstellen"
+  "imgaddon.remote.setup_here": "Bildschirm vor mir aufstellen",
+  "image.priority_label": "Priorität:",
+  "image.priority.quality": "Bildqualität (weniger fps)",
+  "image.priority.smooth": "Flüssigkeit (kleineres Bild)",
+  "image.priority.length": "Länge (ganzes Video)",
+  "image.tier_label": "Für:",
+  "image.tier.2": "Auch Handys und Konsolen (Tier 2, 225 MB)",
+  "image.tier.5": "Nur PC (Tier 5, 800 MB)",
+  "build.image_plan": "Bildmodus: Für Tier {tier} mit Priorität „{priority}“ wurden {width}×{height}, {fps} fps verwendet ({length})",
+  "build.image_plan_full": "volle Länge",
+  "build.image_plan_cut": "auf {seconds} s gekürzt",
+  "image.combine": "Block- und Bildmodus in eine Datei packen (beim Import werden beide installiert)",
+  "build.image_combined": "Der Bildmodus ist auch in {output} (eine Datei installiert beide)",
+  "build.image_combine_failed": "Der Bildmodus konnte nicht in dieselbe Datei; er bleibt getrennt ({output}): {error}"
 }

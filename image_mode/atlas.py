@@ -63,6 +63,21 @@ def _trim_args(start: float | None, end: float | None) -> list[str]:
     return args
 
 
+def probe_duration(path, ffmpeg: str = "ffmpeg") -> float | None:
+    """動画の長さ (秒)。ffmpeg -i の Duration の行から読む (ffprobe が無い環境でも動くように)。読めなければ None。"""
+    import re
+    try:
+        result = subprocess.run([ffmpeg, "-hide_banner", "-i", str(path)], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=60, **_subprocess_kwargs())
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", result.stderr)
+    if not match:
+        return None
+    hours, minutes, secs = match.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(secs)
+
+
 def read_frames(path, width: int, height: int, fps: float, start: float | None = None, end: float | None = None,
                 fit: str = "pad", ffmpeg: str = "ffmpeg") -> Iterator[np.ndarray]:
     """動画を width × height・fps に直して、H×W×3 (uint8) のコマを 1 枚ずつ返す。start / end は秒。"""

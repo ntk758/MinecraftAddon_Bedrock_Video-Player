@@ -424,5 +424,18 @@
   "imgaddon.selected_tag": "§a[выбрано]",
   "imgaddon.remote.title": "Пульт видеоплеера (режим изображений)",
   "imgaddon.remote.paused": "§eПауза",
-  "imgaddon.remote.setup_here": "Поставить экран передо мной"
+  "imgaddon.remote.setup_here": "Поставить экран передо мной",
+  "image.priority_label": "Приоритет:",
+  "image.priority.quality": "Качество (меньше fps)",
+  "image.priority.smooth": "Плавность (меньше картинка)",
+  "image.priority.length": "Длина (всё видео)",
+  "image.tier_label": "Для:",
+  "image.tier.2": "Также телефоны и консоли (Tier 2, 225 МБ)",
+  "image.tier.5": "Только ПК (Tier 5, 800 МБ)",
+  "build.image_plan": "Режим изображений: чтобы уложиться в Tier {tier} с приоритетом «{priority}», выбрано {width}×{height}, {fps} fps ({length})",
+  "build.image_plan_full": "полная длина",
+  "build.image_plan_cut": "обрезано до {seconds} с",
+  "image.combine": "Объединить режим блоков и режим изображений в один файл (установятся оба)",
+  "build.image_combined": "Режим изображений тоже добавлен в {output} (один файл устанавливает оба)",
+  "build.image_combine_failed": "Не удалось объединить режим изображений в один файл; он остался отдельно ({output}): {error}"
 }

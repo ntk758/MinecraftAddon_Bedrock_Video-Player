@@ -340,9 +340,15 @@ VOX_SUFFIX = ".vox"
 IMAGE_MODE_SUFFIX = "_image"
 IMAGE_NAMESPACE_SUFFIX = "_img"
 # 画像モードの fps。テクスチャがアドオンの予算を超えたら、順に下げて作り直す
-IMAGE_MODE_FPS_STEPS = (30, 15, 10)
+# 画像モードで予算を超えるとき何を守るか (image_mode/budget.py)。既定は画質 (画像モードならではの高画質を活かす)
+IMAGE_PRIORITIES = ("quality", "smooth", "length")
+DEFAULT_IMAGE_PRIORITY = "quality"
+# 収める予算の Tier: 2 = 多くのスマートフォン・PS4・Xbox One でも、5 = PC だけ
+IMAGE_TIERS = ("2", "5")
+DEFAULT_IMAGE_TIER = "2"
+IMAGE_MODE_FPS = 30
 # 画像モードの 1 コマの横の画素数 (convert_image_mode.py の既定と同じ)。縦は画面の縦横比から
-IMAGE_MODE_WIDTH = 256
+IMAGE_MODE_WIDTH = 512
 
 
 def image_mode_size(width: int, height: int) -> tuple[int, int]:
@@ -560,6 +566,12 @@ class PackBuilderApp(tk.Tk):
         self.palette_ai_var = tk.BooleanVar(value=False)
         # 画像モード (テクスチャ再生方式、convert_image_mode.py) のアドオンも隣に作る。ブロックモードのアドオンとは別ファイル
         self.image_mode_var = tk.BooleanVar(value=False)
+        self.image_priority_key = DEFAULT_IMAGE_PRIORITY
+        self.image_tier_key = DEFAULT_IMAGE_TIER
+        self.image_priority_var = tk.StringVar()
+        # 画像モードのアドオンを、ブロックモードのアドオンと同じ 1 つのファイルにまとめる (中のパックは別々)
+        self.image_combine_var = tk.BooleanVar(value=False)
+        self.image_tier_var = tk.StringVar()
         # MMD のモデル (.pmx のパス) → 踊り (.vmd のパス)
         self.mmd_motions: dict[str, str] = {}
         # だまし絵の後ろの壁に流す背景の映像 (空なら壁は単色)
@@ -590,6 +602,13 @@ class PackBuilderApp(tk.Tk):
     # --- 言語 ---
     def _preset_labels(self) -> dict[str, str]:
         return {self.tr(f"preset.{key}"): key for key in QUALITY_PRESETS}
+
+    def _on_image_option_selected(self) -> None:
+        """画像モードの優先と Tier の表示名から、言語に関係ないキーを覚える (言語を変えても選んだものが残る)。"""
+        priorities = option_labels(self.tr, "image.priority", IMAGE_PRIORITIES)
+        tiers = option_labels(self.tr, "image.tier", IMAGE_TIERS)
+        self.image_priority_key = priorities.get(self.image_priority_var.get(), self.image_priority_key)
+        self.image_tier_key = tiers.get(self.image_tier_var.get(), self.image_tier_key)
 
     def _selected_values(self) -> tuple[str, str, str, str]:
         """現在の言語の表示名から (パレット, ディザ, デバイス, 表示モード) の値を得る。"""
@@ -624,6 +643,8 @@ class PackBuilderApp(tk.Tk):
         self._last_mode = mode
         self.addon_lang_var.set(self.tr(f"addon_lang.{getattr(self, '_addon_lang_choice', 'all')}"))
         self.quality_var.set(self.tr(f"preset.{self.preset_key}"))
+        self.image_priority_var.set(self.tr(f"image.priority.{self.image_priority_key}"))
+        self.image_tier_var.set(self.tr(f"image.tier.{self.image_tier_key}"))
         self.language_var.set(dict(available_languages())[self.tr.language])
 
     def change_language(self, language: str) -> None:
@@ -827,6 +848,21 @@ class PackBuilderApp(tk.Tk):
             row=9, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         ttk.Checkbutton(settings, text=tr("settings.image_mode"), variable=self.image_mode_var).grid(
             row=10, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
+        # 画像モードで予算を超えるとき、何を守るか (画質・なめらかさ・長さ) と、どの端末の予算に収めるか
+        image_options = ttk.Frame(settings)
+        image_options.grid(row=11, column=0, columnspan=8, padx=28, pady=(0, 6), sticky="w")
+        ttk.Label(image_options, text=tr("image.priority_label")).grid(row=0, column=0, padx=(0, 6))
+        priority_box = ttk.Combobox(image_options, textvariable=self.image_priority_var, state="readonly", width=26,
+                                    values=tuple(tr(f"image.priority.{key}") for key in IMAGE_PRIORITIES))
+        priority_box.grid(row=0, column=1)
+        priority_box.bind("<<ComboboxSelected>>", lambda _event: self._on_image_option_selected())
+        ttk.Label(image_options, text=tr("image.tier_label")).grid(row=0, column=2, padx=(12, 6))
+        tier_box = ttk.Combobox(image_options, textvariable=self.image_tier_var, state="readonly", width=30,
+                                values=tuple(tr(f"image.tier.{key}") for key in IMAGE_TIERS))
+        tier_box.grid(row=0, column=3)
+        tier_box.bind("<<ComboboxSelected>>", lambda _event: self._on_image_option_selected())
+        ttk.Checkbutton(image_options, text=tr("image.combine"), variable=self.image_combine_var).grid(
+            row=1, column=0, columnspan=4, pady=(4, 0), sticky="w")
         # 再生負荷の目安 (幅・高さ・fps・表示モード・奥行きを変えるたびに更新)
         self.load_label = ttk.Label(settings, wraplength=720)
         self.load_label.grid(row=7, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
@@ -1471,7 +1507,10 @@ class PackBuilderApp(tk.Tk):
 
             if image_mode:
                 # 別ファイルなので、失敗してもブロックモードのアドオンはそのまま
-                self._build_image_pack(video_entries, output, pack_name, namespace, width, height, duration, ffmpeg)
+                image_output = self._build_image_pack(video_entries, output, pack_name, namespace, width, height,
+                                                      duration, ffmpeg)
+                if image_output and self.image_combine_var.get():
+                    self._combine_image_pack(output, image_output)
             video_names = ", ".join(e["id"] for e in video_index_entries)
             self.messages.put((
                 "success",
@@ -1480,11 +1519,26 @@ class PackBuilderApp(tk.Tk):
         except Exception as error:
             self.messages.put(("error", str(error)))
 
+    def _combine_image_pack(self, output: Path, image_output: Path) -> None:
+        """画像モードのアドオンをブロックモードのファイルに入れ、別のファイルは消す。失敗しても別ファイルのまま残す。"""
+        import convert_image_mode as image_mode
+        try:
+            image_mode.combine_addons(output, image_output)
+            image_output.unlink()
+            report = image_output.with_suffix(".report.json")
+            if report.exists():
+                report.unlink()
+        except Exception as failure:  # noqa: BLE001
+            self.messages.put(self.tr("build.image_combine_failed", output=image_output, error=str(failure)))
+            return
+        self.messages.put(self.tr("build.image_combined", output=output))
+
     def _build_image_pack(self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
                           width: int, height: int, duration: float | None, ffmpeg: str) -> Path | None:
         """画像モードのアドオン (convert_image_mode.py) を、ブロックモードの出力の隣に作る。
 
-        .vox と MMD は元の映像のコマが無いので使わない。テクスチャが予算を超えるときは fps を下げて作り直す。
+        .vox と MMD は元の映像のコマが無いので使わない。テクスチャが予算 (選んだ Tier) を超えるときは、選んだ優先
+        (画質・なめらかさ・長さ) に合わせて、fps・コマの大きさ・長さを image_mode/budget.py が決める。
         作れなかったときはログに理由を出して None を返す (ブロックモードのアドオンはもうできている)。
         """
         import convert_image_mode as image_mode
@@ -1501,32 +1555,33 @@ class PackBuilderApp(tk.Tk):
             return None
         tex_width, tex_height = image_mode_size(width, height)
         image_namespace = f"{namespace}{IMAGE_NAMESPACE_SUFFIX}"
-        error = None
-        for image_fps in IMAGE_MODE_FPS_STEPS:
-            self.messages.put(self.tr("build.image_start", output=image_output, width=tex_width, height=tex_height,
-                                      fps=image_fps))
-            args = image_mode.parse_args([
-                *[str(path) for path, _ in sources], "--ids", *[video_id for _, video_id in sources],
-                "--titles", *[path.stem for path, _ in sources], "-o", str(image_output),
-                "--width", str(tex_width), "--height", str(tex_height), "--fps", str(image_fps),
-                "--namespace", image_namespace, "--pack-name", f"{pack_name} (Image)", "--ffmpeg", ffmpeg,
-                *(["--end", str(duration)] if duration else []),
-            ])
-            try:
-                report = image_mode.build(args, log=lambda _text: None)
-            except image_mode.ConvertError as failure:
-                error = failure
-                if "予算" in str(failure):
-                    continue  # テクスチャが予算を超えた。fps を下げて作り直す
-                break
-            except Exception as failure:  # noqa: BLE001 (別のアドオンなので、どんな失敗でもブロックモードを止めない)
-                error = failure
-                break
-            self.messages.put(self.tr("build.image_done", output=image_output, ns=image_namespace,
-                                      mib=f"{report['size_bytes'] / 1024 / 1024:.1f}"))
-            return image_output
-        self.messages.put(self.tr("build.image_failed", output=image_output, error=str(error)))
-        return None
+        priority, tier = self.image_priority_key, self.image_tier_key
+        self.messages.put(self.tr("build.image_start", output=image_output, width=tex_width, height=tex_height,
+                                  fps=IMAGE_MODE_FPS))
+        args = image_mode.parse_args([
+            *[str(path) for path, _ in sources], "--ids", *[video_id for _, video_id in sources],
+            "--titles", *[path.stem for path, _ in sources], "-o", str(image_output),
+            "--width", str(tex_width), "--height", str(tex_height), "--fps", str(IMAGE_MODE_FPS),
+            "--namespace", image_namespace, "--pack-name", f"{pack_name} (Image)", "--ffmpeg", ffmpeg,
+            "--priority", priority, "--target-tier", tier,
+            *(["--end", str(duration)] if duration else []),
+        ])
+        try:
+            report = image_mode.build(args, log=lambda _text: None)
+        except Exception as failure:  # noqa: BLE001 (別のアドオンなので、どんな失敗でもブロックモードを止めない)
+            self.messages.put(self.tr("build.image_failed", output=image_output, error=str(failure)))
+            return None
+        plan = report.get("plan") or {}
+        if plan.get("changed"):
+            cut = [f"{seconds:.0f}" for seconds in plan["seconds"]] if "length" in plan["changed"] else []
+            self.messages.put(self.tr(
+                "build.image_plan", priority=self.tr(f"image.priority.{priority}"), tier=tier,
+                width=plan["width"], height=plan["height"], fps=plan["fps"],
+                length=self.tr("build.image_plan_cut", seconds=", ".join(cut)) if cut else self.tr("build.image_plan_full")))
+        self.messages.put(self.tr("build.image_done", output=image_output, ns=image_namespace,
+                                  mib=f"{report['size_bytes'] / 1024 / 1024:.1f}"))
+        return image_output
+
 
     def _drain_messages(self) -> None:
         try:
