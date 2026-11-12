@@ -2340,7 +2340,8 @@ function showRemoteControlGUI(player) {
       tr("remote.status", statusText),
       tr("remote.selected", titleText),
       tr("remote.position", currentSec, totalSec, currentFrame),
-      tr("remote.volume", `${Math.round(masterVolume * 100)}%`),
+      // フォームの本文は % をもう一度読むので、% は %% と書く (1 つだと消えた: 実機 2026-11-13。チャットでは 1 つで出る)
+      tr("remote.volume", `${Math.round(masterVolume * 100)}%%`),
     ))
     .button(tr(running ? "remote.pause" : "remote.play"), "textures/items/emerald")
     .button(tr("remote.stop"), "textures/blocks/redstone_block")
