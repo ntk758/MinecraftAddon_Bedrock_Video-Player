@@ -140,6 +140,8 @@ function currentCostModel() {
   return costModelCache;
 }
 const activePlayers = new Map(); // key: "x,y,z"
+// setup を呼んだ回数。前の setup の片付けが遅れて終わったとき、古い位置に常時読み込みを付けないように使う
+let setupCount = 0;
 
 // 一覧・リモコンの「次の動画」に出す動画。だまし絵の背景の映像 (hidden) は、人物の動画と一緒に再生するので出さない
 const LISTED_VIDEOS = VIDEO_LIST.filter((v) => !v.hidden);
@@ -1660,10 +1662,15 @@ class VideoPlayer {
    * 動画の範囲を残して前の動画の分だけ消す)。toAir なら平面も空気に戻す (setup で別の場所に置き直したとき。
    * ふだんの停止は、画面が消えたと分かるよう平面をパレットの先頭のブロックで塗る)。
    */
-  stopAndClear(keepBox = null, announce = true, toAir = false) {
+  stopAndClear(keepBox = null, announce = true, toAir = false, onDone = null) {
+    // onDone: 片付けが終わったら (片付ける物が無ければすぐ) 呼ぶ。途中で止められたら呼ばない
+    const done = () => {
+      if (onDone) onDone();
+    };
     // 切り替えのときは、前の動画が一度も描かれていなければ片付ける物が無い (setup の直後に別の動画を選んだときなど)
     if (keepBox && !(this.board && this.board.some((level) => level >= 0))) {
       this.stopPlayback();
+      done();
       return;
     }
     this.stopPlayback();
@@ -1673,7 +1680,10 @@ class VideoPlayer {
     this.invalidateBoard();
     this.viewDrawn = false;
     this.viewRedrawPending = false;
-    if (!this.videoData) return;
+    if (!this.videoData) {
+      done();
+      return;
+    }
 
     this.initPaletteCache();
     // 平面はパレットの先頭のブロックで塗りつぶし、立体は空気にする
@@ -1681,7 +1691,10 @@ class VideoPlayer {
     const clearPermutation = volume || toAir
       ? this.airPermutation
       : this.videoData.adaptive_palette ? this.paletteCache?.[0]?.[0] : this.paletteCache?.[0];
-    if (!clearPermutation) return;
+    if (!clearPermutation) {
+      done();
+      return;
+    }
 
     // 大きなスクリーンを 1 tick で塗るとウォッチドッグに止められるため runJob で分割する
     const self = this;
@@ -1717,6 +1730,7 @@ class VideoPlayer {
       }
       self.currentJobId = null;
       if (announce) notify("clear_done");
+      done();
     })());
   }
 
@@ -2161,16 +2175,25 @@ function setup(player, options = "") {
   // 前のスクリーンの再生と片付けの仕事を止め、前の画面のうち新しい画面の外にあるマスを空気に戻す (以前は止めるだけで、
   //   床に置いた画面を壁に置き直すと床の画面がそのまま残った: 実機 2026-11-13)。新しい画面の範囲は触らないので、
   //   片付けが新しい画面を上書きすることはない。一度も描いていなければ何もしない
+  // 常時読み込みの区画は、前の画面を片付け終わってから新しい画面に付け替える (先に外すと、遠くにある前の画面の
+  //   チャンクが読み込まれなくなり、片付けのブロックを置けない: 実機 2026-11-13)。
+  //   常時読み込みが一部しか登録できなくても、プレイヤーが近くにいれば再生できるので設置は続ける
+  const setupToken = ++setupCount;
+  const dimension = player.dimension;
+  let pendingClears = 1;
+  const clearFinished = () => {
+    if (--pendingClears > 0 || setupToken !== setupCount) return;
+    const ticking = ensureTickingArea(dimension, anchor, videoData);
+    if (ticking.added < ticking.needed) notify("tickingarea_partial", ticking.added, ticking.needed);
+  };
   const newBox = worldBoxOf(videoData, anchor);
   for (const old of activePlayers.values()) {
     old.cancelJob();
-    old.stopAndClear(newBox, false, true);
+    pendingClears++;
+    old.stopAndClear(newBox, false, true, clearFinished);
   }
   activePlayers.clear();
-
-  // 常時読み込みが一部しか登録できなくても、プレイヤーが近くにいれば再生できるので設置は続ける
-  const ticking = ensureTickingArea(player.dimension, anchor, videoData);
-  if (ticking.added < ticking.needed) notify("tickingarea_partial", ticking.added, ticking.needed);
+  clearFinished();
   
   const keyStr = getAnchorKeyStr(anchor);
   const vp = new VideoPlayer(anchor, player.dimension, globalSelectedVideoId);

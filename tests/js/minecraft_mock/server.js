@@ -9,6 +9,8 @@ export const stats = { setBlockCalls: 0, fillCalls: 0, blocksPlaced: 0, commandF
 // fillBlocks: false にすると fillBlocks が無い環境をまねる
 // failZ: 数値にすると z がその値以上のマスへの設置が失敗する (読み込まれていないチャンクをまねる)
 // unloadedZ: 数値にすると z がその値以上のマスは読み込まれていない (getBlock が undefined を返し、設置も失敗する)
+// tickingOnly: true にすると、常時読み込みの区画の中とプレイヤーから 64 ブロック以内だけが読み込まれている (区画を外すと、
+//   遠くのチャンクには置けなくなる実機をまねる)
 // costs: { setBlock, fillCall, fillBlock, listCall, listBlock } (マイクロ秒) を入れると、その時間だけ待って実機の費用をまねる
 const playerSpawnHandlers = [];
 /** プレイヤーがワールドに入った (initialSpawn) ときのように、playerSpawn を送る。 */
@@ -28,7 +30,18 @@ function spin(micros) {
 // fillBlocks の呼び出しのうち、座標リスト (ListBlockVolume) を使ったもの
 stats.listFillCalls = 0;
 
+function outsideTicking(location) {
+  if (!options.tickingOnly) return false;
+  if (Math.max(Math.abs(location.x - player.location.x), Math.abs(location.z - player.location.z)) <= 64) return false;
+  for (const { from, to } of tickingRects.values()) {
+    if (location.x >= Math.min(from.x, to.x) && location.x <= Math.max(from.x, to.x) &&
+        location.z >= Math.min(from.z, to.z) && location.z <= Math.max(from.z, to.z)) return false;
+  }
+  return true;
+}
+
 function checkLoaded(location) {
+  if (outsideTicking(location)) throw new Error("LocationInUnloadedChunkError");
   if (options.failZ !== undefined && location.z >= options.failZ) throw new Error("UnloadedChunksError");
   if (options.unloadedZ !== undefined && location.z >= options.unloadedZ) throw new Error("UnloadedChunksError");
 }
@@ -136,6 +149,7 @@ export const player = {
 // テストでは options.tickingChunks で変えられる)。1 辺 255 チャンクまで
 options.tickingChunks = 1000;
 const tickingAreas = new Map(); // 名前 -> チャンク数
+const tickingRects = new Map(); // 名前 -> { from, to } (tickingOnly の判定に使う)
 function chunkCountOf({ from, to }) {
   const width = Math.abs(Math.floor(to.x / 16) - Math.floor(from.x / 16)) + 1;
   const depth = Math.abs(Math.floor(to.z / 16) - Math.floor(from.z / 16)) + 1;
@@ -154,6 +168,7 @@ const tickingAreaManager = {
     if (!this.hasCapacity(areaOptions)) throw new Error("TickingAreaError: OverChunkLimit");
     const { from, to } = areaOptions;
     tickingAreas.set(identifier, chunkCountOf(areaOptions).count);
+    tickingRects.set(identifier, { from: { ...from }, to: { ...to } });
     commands.push(`tickingarea add ${from.x} ${from.y} ${from.z} ${to.x} ${to.y} ${to.z} ${identifier}`);
     return Promise.resolve();
   },
@@ -164,6 +179,7 @@ const tickingAreaManager = {
   removeTickingArea(identifier) {
     const name = typeof identifier === "string" ? identifier : identifier.identifier;
     if (!tickingAreas.delete(name)) throw new Error("TickingAreaError: UnknownIdentifier");
+    tickingRects.delete(name);
     commands.push(`tickingarea remove ${name}`);
   },
   removeAllTickingAreas() {
@@ -173,6 +189,7 @@ const tickingAreaManager = {
 /** ワールドを開き直したときのように、TickingAreaManager の区画を消す (テスト用)。 */
 export function forgetTicking() {
   tickingAreas.clear();
+  tickingRects.clear();
 }
 
 export const world = {

@@ -127,11 +127,11 @@ def test_legacy_addon_plays_like_the_latest_one(scene, tmp_path):
 def test_legacy_sliders_and_setup_again(scene, tmp_path):
     steps = [{"event": "badapple:setup"}, {"ui": [{"selection": 4}, {"formValues": [50]}]},
              {"event": "badapple:start"}, {"tick": 5}, {"ui": [{"selection": 5}, {"formValues": [1]}]}, {"tick": 5},
-             {"x": 200, "z": 300}, {"event": "badapple:setup"}]
+             {"x": 200, "z": 300}, {"event": "badapple:setup"}, {"tick": 20}]
     out = drive(tmp_path / "addon", {"demo": scene[0]}, steps, prepare=legacy_prepare)
     assert out["errors"] == []
     assert any("volume_set" in m for m in out["messages"])
-    # 2 回目の setup は、前に登録した区画を外してから登録し直す
+    # 2 回目の setup は、前の画面を片付けた後で、前に登録した区画を外してから登録し直す
     adds = [c for c in out["commands"] if c.startswith("tickingarea add")]
     removes = [c for c in out["commands"] if c.startswith("tickingarea remove")]
     assert len(adds) >= 2 and any(adds[0].split()[-1] in r for r in removes)

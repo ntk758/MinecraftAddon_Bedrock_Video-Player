@@ -89,6 +89,21 @@ def test_setup_again_stops_the_old_screen(clips, tmp_path):
     assert all("air" in after.get(pos, "minecraft:air") for pos in drawn), {after.get(pos) for pos in drawn}
 
 
+def test_setup_again_far_away_clears_the_old_screen(clips, tmp_path):
+    """前の画面から遠く (読み込みの外) で setup し直しても、前の画面は空気に戻る。常時読み込みの区画を先に新しい画面へ
+    付け替えると、前の画面のチャンクが読み込まれなくなって片付けられなかった (実機 2026-11-13)。"""
+    steps = [{"tickingOnly": True}, {"event": "badapple:setup"}, {"event": "badapple:start"}, {"tick": 20},
+             {"world": "before"}, {"x": 500, "z": 500}, {"event": "badapple:setup"}, {"tick": 60}, {"world": "after"}]
+    out = drive(tmp_path / "w", {"a": clips["a"]}, steps)
+    assert out["errors"] == []
+    before, after = ({tuple(b[:3]): b[3] for b in w["blocks"] if b[0] < 100} for w in out["worlds"])
+    drawn = [pos for pos, block in before.items() if "air" not in block]
+    assert drawn, "前の画面が描かれていない"
+    assert all("air" in after.get(pos, "minecraft:air") for pos in drawn), {after.get(pos) for pos in drawn}
+    # 片付けの後で、常時読み込みは新しい画面に付け替わっている
+    assert any(c.startswith("tickingarea add 5") for c in out["commands"]), out["commands"][-3:]
+
+
 def test_switching_video_clears_the_old_cells(clips, tmp_path):
     """大きい動画の後に小さい動画を再生すると、大きい動画だけにあったマスは片付く (以前は残って、停止でも消えなかった)。"""
     steps = [{"event": "badapple:setup"}, {"event": "badapple:play", "message": "big"}, {"until": "bvp.playback_finished"},
