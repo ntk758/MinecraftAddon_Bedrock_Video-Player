@@ -1,6 +1,6 @@
 {
   "_language_name": "Français",
-  "app.title": "Block Video Player - Créateur de packs",
+  "app.title": "Block & Image Video Player - Créateur de packs",
   "language.label": "🌐 Langue (Language)",
   "videos.frame": "Vidéos (plusieurs vidéos par add-on)",
   "videos.col_id": "ID de la vidéo",
@@ -150,7 +150,7 @@
   "addon.setup_too_tall": "§cCette vidéo fait %1 blocs de haut, mais le monde ici n'en fait que %2 : elle serait coupée. Elle n'a pas été placée. Réduisez-la dans le convertisseur, ou lancez §f/%3setup§c sans wall pour la poser au sol.",
   "addon.setup_view_floor": "§7L'écran est posé au sol à vos pieds. Regardez-le d'en haut, ou lancez §f/%1setup wall§7 pour le dresser devant vous.",
   "addon.setup_view_volume": "§7Reculez de quelques blocs pour voir la figure entière.",
-  "addon.welcome": "§eBlock Video Player est prêt. Sur un terrain plat et dégagé, tournez-vous vers l'endroit voulu et lancez §f/%1setup wall§e puis §f/%1start§e. Les blocs de cette zone sont remplacés. Ouvrez la télécommande avec §f/%1remote§e ou une boussole.",
+  "addon.welcome": "§eBlock & Image Video Player est prêt. Sur un terrain plat et dégagé, tournez-vous vers l'endroit voulu et lancez §f/%1setup wall§e puis §f/%1start§e. Les blocs de cette zone sont remplacés. Ouvrez la télécommande avec §f/%1remote§e ou une boussole.",
   "addon.no_anchor": "§cAucun écran n'est encore placé. Exécutez d'abord /%1setup",
   "addon.starting": "§aLa lecture commencera à la fin du chargement",
   "addon.resumed": "§aLecture reprise",

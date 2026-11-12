@@ -1,6 +1,6 @@
 {
   "_language_name": "English",
-  "app.title": "Block Video Player Pack Builder",
+  "app.title": "Block & Image Video Player Pack Builder",
   "language.label": "🌐 Language",
   "videos.frame": "Videos (multiple videos per add-on)",
   "videos.col_id": "Video ID",
@@ -150,7 +150,7 @@
   "addon.setup_too_tall": "§cThis video is %1 blocks tall, but the world here is only %2 blocks high, so it would be cut off. It was not placed. Make it smaller in the converter, or run §f/%3setup§c without wall to lay it flat.",
   "addon.setup_view_floor": "§7The screen lies flat at your feet. Look down at it from above, or run §f/%1setup wall§7 to stand it up in front of you.",
   "addon.setup_view_volume": "§7Step back a few blocks to see the whole figure.",
-  "addon.welcome": "§eBlock Video Player is ready. Stand on flat open ground, face where you want the screen and run §f/%1setup wall§e, then §f/%1start§e. Blocks in that area are replaced. Open the remote with §f/%1remote§e or a compass.",
+  "addon.welcome": "§eBlock & Image Video Player is ready. Stand on flat open ground, face where you want the screen and run §f/%1setup wall§e, then §f/%1start§e. Blocks in that area are replaced. Open the remote with §f/%1remote§e or a compass.",
   "addon.no_anchor": "§cNo screen has been placed yet. Run /%1setup first",
   "addon.starting": "§aPlayback will start once loading finishes",
   "addon.resumed": "§aPlayback resumed",

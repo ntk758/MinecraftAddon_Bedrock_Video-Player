@@ -307,3 +307,9 @@ def test_default_output_is_next_to_the_exe(monkeypatch, tmp_path):
     assert gui.default_output_path() == exe.parent / "VideoPlayer.mcaddon"
     monkeypatch.setattr(gui.sys, "frozen", False)
     assert gui.default_output_path().parent == gui.APP_DIR
+
+
+def test_renamed_default_pack_name_keeps_the_old_uuid():
+    # 製品名を変えても、既定のパック名で作り直したパックは前と同じパック (別のパックとして 2 つ入らない)
+    assert stable_pack_uuid("badapple", "Block & Image Video Player", "bp") == stable_pack_uuid("badapple", "Block Video Player", "bp")
+    assert stable_pack_uuid("badapple", "My Pack", "bp") != stable_pack_uuid("badapple", "Block Video Player", "bp")

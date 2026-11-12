@@ -1,4 +1,4 @@
-// Block Video Player Web Converter (main thread)
+// Block & Image Video Player Web Converter (main thread)
 // 動画のコマ (<video> + canvas) と音声 (WebAudio → WAV) をブラウザで取り出し、変換とアドオンの組み立ては
 // worker.js の Pyodide (ブラウザの中の Python) で、Windows 版と同じ convert.py / pack_builder.py を動かして行う。
 "use strict";
@@ -162,7 +162,7 @@ function settings() {
     anamorphic: $("anamorphic").checked, pairFlat: $("pairFlat").checked, imageMode: $("imageMode").checked,
     palette: $("palette").value, dither: $("dither").value,
     keyframe: Math.max(0, Math.round(Number($("keyframe").value) || 0)), perceptual: $("perceptual").checked,
-    packName: $("packName").value.trim() || "Block Video Player",
+    packName: $("packName").value.trim() || "Block & Image Video Player",
     namespace: ($("namespace").value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "") || "badapple"),
     // 出力先の Minecraft (legacy_target.py の TARGETS)。legacy は Script API 1.x で、チートを有効にして /scriptevent で操作する
     target: $("target").value === "legacy" ? "legacy" : "latest",

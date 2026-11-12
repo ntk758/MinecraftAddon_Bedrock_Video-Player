@@ -1,6 +1,6 @@
-# Block Video Player
+# Block & Image Video Player
 
-**Watch videos made of real blocks in Minecraft Bedrock, with synced sound.** Flat screens, walk-around 3D holograms, and a trompe-l'oeil dancer that is repainted for your eye as you move. **No cheats and no experimental toggles needed.** Converting your own video is free and runs in your browser.
+**Watch videos in Minecraft Bedrock — made of real blocks, or as smooth 30 fps textures (new image mode), with synced sound.** Flat screens, walk-around 3D holograms, and a trompe-l'oeil dancer that is repainted for your eye as you move. **No cheats and no experimental toggles needed.** Converting your own video is free and runs in your browser.
 
 This download is the **showcase with 5 demo clips** (an original animated short, three 3D holograms and a dancing trompe-l'oeil figure). To play **your own** video, convert it first with the free web converter or Windows app (see below) — it is not an in-game video player for files on your device.
 

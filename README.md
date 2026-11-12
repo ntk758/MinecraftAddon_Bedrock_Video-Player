@@ -1,4 +1,7 @@
-# Minecraft Bedrock Video Player
+# Block & Image Video Player (Minecraft Bedrock)
+
+**動画を、本物のブロックでも、なめらかな 30 fps の映像でも。** 1 つのツールで、ブロックで描く「ブロックモード」と、テクスチャで映す「画像モード」の両方のアドオンを作れます (1 つのファイルにまとめることもできます)。
+**Videos in Minecraft Bedrock — as real blocks, or as smooth 30 fps textures.** One tool builds both kinds of add-on (optionally in one file).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
@@ -37,8 +40,8 @@
 **▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.35.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.35.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.35.0-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 
-> **試作: 画像モード (30 fps のテクスチャ再生)** — `convert_image_mode.py` で、コマを PNG のアトラスにしたアドオンを作れます。方式 A (マテリアルを変えない) と方式 C (USE_UV_ANIM の自作マテリアル。**将来の Minecraft の更新で壊れるリスクがあります**) を切り替えて比べられます。実機では未確認です。詳しくは [docs/IMAGE_MODE.md](docs/IMAGE_MODE.md)。
-> **Experimental image mode (30 fps texture playback)**: `convert_image_mode.py`. Method C uses a custom material and **may break with a future Minecraft update**.
+> **画像モード (30 fps のテクスチャ再生、新しい方式)** — Windows 版・ブラウザ版の「画像モードのアドオンも作る」か `convert_image_mode.py` で作れます。ブロックモードと同じ操作 (コマンド・時計のリモコン・音量・シーク・10 言語) に対応し、長い動画では画質・なめらかさ・長さのどれを優先するかを選べます。
+> **Image mode (30 fps texture playback, new)**: same controls as block mode (commands, remote on a clock, volume, seek, 10 languages); for long videos choose whether to keep picture quality, smoothness or length.
 
 [日本語](#日本語-japanese) | [English](#english) | [変更履歴 / Changelog](CHANGELOG.md)
 

@@ -1,6 +1,6 @@
 {
   "_language_name": "繁體中文",
-  "app.title": "Block Video Player 資源包產生器",
+  "app.title": "Block & Image Video Player 資源包產生器",
   "language.label": "🌐 語言 (Language)",
   "videos.frame": "影片清單（一個附加包可收錄多部影片）",
   "videos.col_id": "影片 ID",
@@ -150,7 +150,7 @@
   "addon.setup_too_tall": "§c這個影片高 %1 格，但這裡的世界只有 %2 格高，頂部會被截斷，因此沒有放置。請在轉換時縮小，或不加 wall 執行 §f/%3setup§c 平放在地上。",
   "addon.setup_view_floor": "§7螢幕平放在腳下。請從上方俯視，或執行 §f/%1setup wall§7 將它立在面前。",
   "addon.setup_view_volume": "§7後退幾格就能看到整體。",
-  "addon.welcome": "§eBlock Video Player 已就緒。站在平坦開闊的地方，面向要放螢幕的方向，執行 §f/%1setup wall§e，接著執行 §f/%1start§e。該範圍內的方塊會被取代。用 §f/%1remote§e 或指南針開啟遙控器。",
+  "addon.welcome": "§eBlock & Image Video Player 已就緒。站在平坦開闊的地方，面向要放螢幕的方向，執行 §f/%1setup wall§e，接著執行 §f/%1start§e。該範圍內的方塊會被取代。用 §f/%1remote§e 或指南針開啟遙控器。",
   "addon.no_anchor": "§c尚未放置螢幕。請先執行 /%1setup",
   "addon.starting": "§a載入完成後開始播放",
   "addon.resumed": "§a已繼續播放",

@@ -1,6 +1,6 @@
 {
   "_language_name": "日本語",
-  "app.title": "Block Video Player パックビルダー",
+  "app.title": "Block & Image Video Player パックビルダー",
   "language.label": "🌐 言語 (Language)",
   "videos.frame": "動画リスト（複数搭載対応）",
   "videos.col_id": "動画ID",
@@ -150,7 +150,7 @@
   "addon.setup_too_tall": "§cこの動画の高さは %1 ブロックですが、ここの世界の高さは %2 ブロックしかないので、上が切れます。置きませんでした。変換で小さくするか、wall を付けずに §f/%3setup§c で床に置いてください。",
   "addon.setup_view_floor": "§7画面は足元に床として置かれています。上から見下ろすか、§f/%1setup wall§7 で目の前に立ててください。",
   "addon.setup_view_volume": "§7数ブロック下がると全体が見えます。",
-  "addon.welcome": "§eBlock Video Player を使えます。平らで開けた場所で、画面を置きたい方を向いて §f/%1setup wall§e、続けて §f/%1start§e を実行します。その範囲のブロックは置き換わります。リモコンは §f/%1remote§e かコンパスで開きます。",
+  "addon.welcome": "§eBlock & Image Video Player を使えます。平らで開けた場所で、画面を置きたい方を向いて §f/%1setup wall§e、続けて §f/%1start§e を実行します。その範囲のブロックは置き換わります。リモコンは §f/%1remote§e かコンパスで開きます。",
   "addon.no_anchor": "§c原点が見つかりません。先に /%1setup を実行してください",
   "addon.starting": "§a読み込み完了後に再生します",
   "addon.resumed": "§a再生を再開しました",

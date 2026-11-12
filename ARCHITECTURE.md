@@ -1,6 +1,6 @@
 # System Architecture & Technical Specifications
 
-本ドキュメントでは、**Block Video Player** のシステム構成、パイプライン設計、データ符号化仕様、および Minecraft Bedrock Edition 側の再生ロジックを解説します。
+本ドキュメントでは、**Block & Image Video Player** のシステム構成、パイプライン設計、データ符号化仕様、および Minecraft Bedrock Edition 側の再生ロジックを解説します。
 
 ---
 

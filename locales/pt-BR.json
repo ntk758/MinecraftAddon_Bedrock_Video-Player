@@ -1,6 +1,6 @@
 {
   "_language_name": "Português (Brasil)",
-  "app.title": "Block Video Player - Criador de pacotes",
+  "app.title": "Block & Image Video Player - Criador de pacotes",
   "language.label": "🌐 Idioma (Language)",
   "videos.frame": "Vídeos (vários vídeos por complemento)",
   "videos.col_id": "ID do vídeo",
@@ -150,7 +150,7 @@
   "addon.setup_too_tall": "§cEste vídeo tem %1 blocos de altura, mas aqui o mundo tem só %2 de altura e ele seria cortado. Não foi colocado. Diminua-o no conversor ou execute §f/%3setup§c sem wall para colocá-lo no chão.",
   "addon.setup_view_floor": "§7A tela está no chão aos seus pés. Olhe de cima ou execute §f/%1setup wall§7 para colocá-la em pé à sua frente.",
   "addon.setup_view_volume": "§7Afaste-se alguns blocos para ver a figura inteira.",
-  "addon.welcome": "§eO Block Video Player está pronto. Em um terreno plano e aberto, olhe para onde quer a tela e execute §f/%1setup wall§e e depois §f/%1start§e. Os blocos dessa área são substituídos. Abra o controle com §f/%1remote§e ou uma bússola.",
+  "addon.welcome": "§eO Block & Image Video Player está pronto. Em um terreno plano e aberto, olhe para onde quer a tela e execute §f/%1setup wall§e e depois §f/%1start§e. Os blocos dessa área são substituídos. Abra o controle com §f/%1remote§e ou uma bússola.",
   "addon.no_anchor": "§cAinda não há tela. Execute primeiro /%1setup",
   "addon.starting": "§aA reprodução começará quando o carregamento terminar",
   "addon.resumed": "§aReprodução retomada",

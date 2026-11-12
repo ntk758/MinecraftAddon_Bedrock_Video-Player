@@ -1,4 +1,4 @@
-// Block Video Player Web Converter: MMD のモデル (.pmx) と踊り (.vmd) を立体にする
+// Block & Image Video Player Web Converter: MMD のモデル (.pmx) と踊り (.vmd) を立体にする
 // モデルのフォルダ (.pmx とテクスチャ) と踊りを選ぶと、動画の一覧に「MMD の立体」として加える。変換は worker.js が
 // Windows 版と同じ mvcodec/mmd.py (Pyodide) で .vox の立体アニメにし、あとは .vox と同じに扱う。
 "use strict";

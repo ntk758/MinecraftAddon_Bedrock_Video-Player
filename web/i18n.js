@@ -1,4 +1,4 @@
-// Block Video Player Web Converter: 画面の多言語対応
+// Block & Image Video Player Web Converter: 画面の多言語対応
 // 翻訳は Windows 版の GUI と同じ locales/<言語コード>.json (サイトでは app/locales/) を読む。キーは en.json が基準で、
 // ブラウザ版だけの文は web.* に置く。翻訳が無いキーは英語、英語にも無ければキーそのものを出す。
 "use strict";

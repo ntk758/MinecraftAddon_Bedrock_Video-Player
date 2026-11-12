@@ -1,4 +1,4 @@
-// Block Video Player Web Converter: できあがりのプレビュー
+// Block & Image Video Player Web Converter: できあがりのプレビュー
 // 変換したデータを、再生しながらゲームと同じ codec.js で 1 コマずつ復元して描き (web/block_preview.js)、元の動画と
 // 並べて再生する。絵を先に全部作らないので、長い動画でも全部のコマを元の fps のまま見られる。元の動画があれば、
 // その再生位置 (音声付き・シーク可) に合わせてブロックの絵を描く。.vox のように元の動画が無ければ、自分の時計で再生する。

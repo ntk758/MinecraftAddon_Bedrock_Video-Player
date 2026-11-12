@@ -1,4 +1,4 @@
-// Block Video Player Web Converter: カメラで撮って、そのまま動画の一覧に加える
+// Block & Image Video Player Web Converter: カメラで撮って、そのまま動画の一覧に加える
 // getUserMedia でカメラ (とマイク) を開き、MediaRecorder で最大 MAX_SECONDS 秒録画する。録画はブラウザの中だけに置き、
 // ファイルを選んだときと同じく app.js の addFiles に渡す。マイクを使えないときは映像だけを録る。
 "use strict";

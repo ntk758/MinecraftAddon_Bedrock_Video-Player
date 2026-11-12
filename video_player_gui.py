@@ -539,7 +539,7 @@ class PackBuilderApp(tk.Tk):
         self.building = False
 
         self.output_var = tk.StringVar(value=str(default_output_path()))
-        self.pack_name_var = tk.StringVar(value="Block Video Player")
+        self.pack_name_var = tk.StringVar(value="Block & Image Video Player")
         self.namespace_var = tk.StringVar(value="badapple")
         self.width_var = tk.IntVar(value=64)
         self.height_var = tk.IntVar(value=64)

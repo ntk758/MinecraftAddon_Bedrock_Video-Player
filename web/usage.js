@@ -1,4 +1,4 @@
-// Block Video Player Web Converter: 簡易的な利用数の計測
+// Block & Image Video Player Web Converter: 簡易的な利用数の計測
 // GoatCounter (https://www.goatcounter.com/) の計測用の画像 (GET /count) を読むだけで数える。外部のスクリプトは
 // 読み込まず、Cookie も使わない。送るのは、ページを開いたこと・アドオンを作り始めた / 作り終えた / 失敗したことと、
 // 表示モードの種類・画面の言語だけ。ファイル名・動画・設定の数値は送らない。

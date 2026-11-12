@@ -1,5 +1,5 @@
 /**
- * Block Video Player - Bedrock Script API 再生スクリプト
+ * Block & Image Video Player - Bedrock Script API 再生スクリプト
  * (v3: Object-Oriented Multi-Screen & Adaptive Palette Support)
  */
 

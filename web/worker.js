@@ -1,4 +1,4 @@
-// Block Video Player Web Converter (worker)
+// Block & Image Video Player Web Converter (worker)
 // Pyodide (ブラウザの中の Python) に、Windows 版と同じ convert.py / mvcodec / pack_builder.py を読み込み、
 // 変換とアドオンの組み立てを行う。重い処理なので画面とは別のスレッド (Web Worker) で動かす。
 "use strict";

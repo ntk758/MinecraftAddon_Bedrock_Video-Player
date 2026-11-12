@@ -29,8 +29,14 @@ MANIFEST_VERSION_MAX = 65535
 AUDIO_CHUNK_SECONDS = 10
 
 
+# 製品名を "Block Video Player" から変えた (v6.36.0)。既定のパック名のまま作り直した人のパックが別のパックに
+# ならないよう、新しい既定の名前は前の名前と同じ UUID にする
+RENAMED_PACK_NAMES = {"Block & Image Video Player": "Block Video Player"}
+
+
 def stable_pack_uuid(namespace: str, pack_name: str, role: str) -> str:
     """同じパック名・接頭辞なら毎回同じ UUID にする (再ビルドしても別パック扱いにならない)。"""
+    pack_name = RENAMED_PACK_NAMES.get(pack_name, pack_name)
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"block-video-player/{namespace}/{pack_name}/{role}"))
 
 

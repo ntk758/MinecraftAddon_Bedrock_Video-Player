@@ -9,7 +9,7 @@ APP_DIR = Path(__file__).resolve().parent
 
 def build_standalone_exe():
     print("==================================================")
-    print("  Block Video Player スタンドアロン EXE ビルド")
+    print("  Block & Image Video Player スタンドアロン EXE ビルド")
     print("==================================================")
 
     # PyInstaller チェック
