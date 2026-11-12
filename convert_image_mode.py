@@ -19,6 +19,7 @@ import numpy as np
 from PIL import Image
 
 from image_mode import atlas
+from gui_i18n import LOCALES, addon_lang_files
 from image_mode.rp import rp_files
 from pack_builder import build_manifest_version
 from pack_metadata import version_text
@@ -32,24 +33,11 @@ MIN_ENGINE_VERSION = [1, 26, 10]
 ID_PATTERN = re.compile(r"^[a-z0-9_]+$")
 NAMESPACE_PATTERN = re.compile(r"^[a-z0-9_]+$")
 
-# ゲーム内のメッセージ (RP/texts/*.lang)。スクリプトは rawtext の translate で "bvpimg.<名前>" を使う。
-# %1 〜 は translate の with の引数。名前空間 (--namespace) を変えてもキーは bvpimg. のまま
-LANG_KEYS = {
-    "setup_done": {"en_US": "Screen set up: %1 (method %2)", "ja_JP": "スクリーンを置きました: %1 (方式 %2)"},
-    "not_setup": {"en_US": "No screen is set up yet. Run the setup command first.",
-                  "ja_JP": "スクリーンがまだありません。先に setup を実行してください。"},
-    "playing": {"en_US": "Playing: %1", "ja_JP": "再生します: %1"},
-    "paused": {"en_US": "Paused", "ja_JP": "一時停止しました"},
-    "resumed": {"en_US": "Resumed", "ja_JP": "再開しました"},
-    "stopped": {"en_US": "Stopped", "ja_JP": "停止しました"},
-    "method_set": {"en_US": "Method changed to %1", "ja_JP": "方式を %1 に変えました"},
-    "list_item": {"en_US": "%1: %2 (%3 frames, %4 fps)", "ja_JP": "%1: %2 (%3 コマ, %4 fps)"},
-    "video_not_found": {"en_US": "Video not found: %1", "ja_JP": "動画が見つかりません: %1"},
-    "seek_done": {"en_US": "Moved to %1 s", "ja_JP": "%1 秒へ移動しました"},
-    "reload_resumed": {"en_US": "Restored the screen after reloading the world: %1",
-                       "ja_JP": "ワールドを開き直したので、スクリーンを元に戻しました: %1"},
-}
-LANG_CODES = ("en_US", "ja_JP")
+# ゲーム内のメッセージ (RP/texts/*.lang) は locales/*.json の "imgaddon.*" (10 言語)。スクリプトは rawtext の translate で
+# "bvpimg.<名前>" を使う。%1 〜 は translate の with の引数。名前空間 (--namespace) を変えてもキーは bvpimg. のまま
+IMAGE_KEY_PREFIX = "imgaddon."
+IMAGE_LANG_PREFIX = "bvpimg."
+
 
 
 class ConvertError(Exception):
@@ -62,13 +50,14 @@ def pack_uuid(namespace: str, pack_name: str, role: str) -> str:
 
 
 def lang_files() -> dict[str, str]:
-    """RP/texts/ に置くファイル (en_US.lang・ja_JP.lang・languages.json)。"""
-    files = {}
-    for code in LANG_CODES:
-        lines = [f"bvpimg.{key}={texts[code]}" for key, texts in LANG_KEYS.items()]
-        files[f"texts/{code}.lang"] = "\n".join(lines) + "\n"
-    files["texts/languages.json"] = json.dumps(list(LANG_CODES), indent=2) + "\n"
-    return files
+    """RP/texts/ に置くファイル (10 言語の .lang と languages.json。ブロックモードと同じ言語の対応)。"""
+    return addon_lang_files(key_prefix=IMAGE_KEY_PREFIX, lang_prefix=IMAGE_LANG_PREFIX)
+
+
+def lang_keys(language: str) -> dict[str, str]:
+    """1 言語のメッセージ ({"bvpimg.<名前>": 文})。レポートとテスト用。"""
+    return {IMAGE_LANG_PREFIX + key[len(IMAGE_KEY_PREFIX):]: text
+            for key, text in LOCALES[language].items() if key.startswith(IMAGE_KEY_PREFIX)}
 
 
 def screen_blocks(width: int, height: int, screen_width: float) -> list:
@@ -292,7 +281,7 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
         "memory": {**memory_summary, "per_video": [{"id": v["id"], **v["memory"], "handles": v["sheets"]}
                                                     for v in videos]},
         "warnings": memory["warnings"],
-        "lang_keys": {f"bvpimg.{key}": texts for key, texts in LANG_KEYS.items()},
+        "lang_keys": {"en": lang_keys("en"), "ja": lang_keys("ja")},
         "files": sorted(files),
     }
     return files, report
@@ -426,8 +415,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="マスの間の画素数。端の画素を繰り返して埋め、にじみを防ぐ (既定 1)")
     parser.add_argument("--screen-width", type=_positive_float, default=16,
                         help="スクリーンの幅 (ブロック数、既定 16)。高さは縦横比から決まる")
-    parser.add_argument("--method", default="both", choices=["a", "c", "both"],
-                        help="a=アトラス+ボーンの切り替え (安全)、c=uv_anim の自作マテリアル (軽いが将来壊れうる)、both=両方 (既定)")
+    parser.add_argument("--method", default="a", choices=["a", "c", "both"],
+                        help="a=アトラス+ボーンの切り替え (安全)、c=uv_anim の自作マテリアル (軽いが将来壊れうる)、both=両方 (既定は a。実機の確認で a に決めた)")
     parser.add_argument("--namespace", type=_namespace, default=DEFAULT_NAMESPACE,
                         help=f"名前空間 (小文字の英数字と _。既定 {DEFAULT_NAMESPACE})")
     parser.add_argument("--pack-name", default=None, help="パック名 (既定は最初の動画の表示名)")

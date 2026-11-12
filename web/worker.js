@@ -149,7 +149,7 @@ for _job in img_jobs:
     _sounds = [(int(i), str(ext), data.to_bytes()) for i, ext, data in _job.sounds]
     _sources.append({"id": str(_job.id), "title": str(_job.title), "fps": float(_s["fps"]), "frames": _frames(_job),
                      "audio": (lambda seconds, _sounds=_sounds: _sounds)})
-_files, _report = cim.build_files(_sources, width=int(_first.shape[1]), height=int(_first.shape[0]), methods=["a", "c"],
+_files, _report = cim.build_files(_sources, width=int(_first.shape[1]), height=int(_first.shape[0]), methods=["a"],
                                   namespace=str(_s["namespace"]), pack_name=str(_s["packName"]) + " (Image)",
                                   audio_chunk_seconds=10, log=lambda _text: None)
 cim.zip_bytes(_files)

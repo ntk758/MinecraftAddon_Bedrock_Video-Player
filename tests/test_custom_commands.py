@@ -39,7 +39,9 @@ def test_commands_are_registered_without_cheats(scene, tmp_path):
     # 動画 ID は候補に出る (一覧に出さない動画は除く)
     assert out["customEnums"] == {"badapple:video": ["demo"]}
     assert commands["badapple:play"]["optionalParameters"] == [{"name": "badapple:video", "type": "Enum"}]
-    assert commands["badapple:setup"]["optionalParameters"] == [{"name": "options", "type": "String"}]
+    # setup face align のように 4 語まで並べられる (String の引数は 1 語だけなので 4 個)
+    assert commands["badapple:setup"]["optionalParameters"] == [
+        {"name": "options", "type": "String"}] + [{"name": f"option{i}", "type": "String"} for i in (2, 3, 4)]
 
 
 def test_commands_set_up_and_play_like_scriptevent(scene, tmp_path):

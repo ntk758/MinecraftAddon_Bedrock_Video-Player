@@ -15,11 +15,12 @@ Windows 版の画面とブラウザ版では、「画像モードのアドオン
 | 音声 | ffmpeg で 4 秒ごと | ブロックモードと同じ 10 秒ごとの OGG |
 | 対応する Minecraft | 1.26.10 以降 | 1.26.10 以降 (古い版向けを選んでいるときは作らない) |
 
-ゲーム内: `/bvpimg:setup [動画ID]` → `/bvpimg:start`。方式は `/bvpimg:method a|c` で切り替えます。`pause`・`resume`・`stop`・`seek <秒>`・`method <a|c>`・`list` (`/scriptevent bvpimg:<操作>` でも可)。
+ゲーム内: `/bvpimg:setup [動画ID]` → `/bvpimg:start`。ほかに `play <動画ID>`・`pause`・`resume`・`stop`・`seek <秒>`・`volume <0〜100>`・`stats`・`list` (`/scriptevent bvpimg:<操作>` でも可)。
+`setup` には `face` (向きを東西南北にそろえる)・`wall` (見ているブロックの横の面に貼る)・`align` (ブロックの格子にそろえる) を付けられます。メッセージは 10 言語です。
 
 ## 方式 A と方式 C
 
-`--method both` (既定) で両方のエンティティを入れ、`/bvpimg:method a|c` で同じ場所・同じ再生位置のまま切り替えて見比べられます。テクスチャは共有します。
+既定は方式 A だけです (2026-11-12 の実機の確認で A に決めました)。`--method both` で両方のエンティティを入れると、`/bvpimg:method a|c` で同じ場所・同じ再生位置のまま切り替えて見比べられます。テクスチャは共有します。
 
 - **方式 A** (既定): アトラス + textures 配列 + 1 マス 1 ボーン + part_visibility。マテリアルを変えず、文書にある機能だけを使います。マスの数だけボーンがあり、その負荷は未確認です。
 - **方式 C**: `USE_UV_ANIM` を足した自作マテリアル (`bvp_uv_anim:entity_alphatest`) + uv_anim。ボーンは 1 本です。

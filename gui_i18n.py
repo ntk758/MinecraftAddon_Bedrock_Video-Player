@@ -135,33 +135,35 @@ MINECRAFT_LOCALES = {
 }
 
 
-def _lang_file_content(language: str) -> str:
+def _lang_file_content(language: str, key_prefix: str = ADDON_KEY_PREFIX, lang_prefix: str = LANG_KEY_PREFIX) -> str:
     lines = [
-        f"{LANG_KEY_PREFIX}{key[len(ADDON_KEY_PREFIX):]}={text}"
+        f"{lang_prefix}{key[len(key_prefix):]}={text}"
         for key, text in LOCALES[language].items()
-        if key.startswith(ADDON_KEY_PREFIX)
+        if key.startswith(key_prefix)
     ]
     return "\n".join(lines) + "\n"
 
 
-def addon_lang_files(only_language: str | None = None) -> dict[str, str]:
+def addon_lang_files(only_language: str | None = None, key_prefix: str = ADDON_KEY_PREFIX,
+                     lang_prefix: str = LANG_KEY_PREFIX) -> dict[str, str]:
     """{"texts/en_US.lang": 内容, ..., "texts/languages.json": 内容} を返す。
 
     Minecraft は翻訳の無い言語では en_US を使うため、en_US は必ず含める。
     only_language を指定すると、その言語の文章を en_US.lang 1 つだけに入れる。どのゲーム言語のプレイヤーにも
     en_US が使われるので、全員がその言語で表示され、パックも少し小さくなる。
+    key_prefix と lang_prefix を変えると、別の組の文 (画像モードの imgaddon.* → bvpimg.* など) を作る。
     """
     if only_language is not None:
         language = only_language if only_language in LOCALES else FALLBACK_LANGUAGE
         return {
-            "texts/en_US.lang": _lang_file_content(language),
+            "texts/en_US.lang": _lang_file_content(language, key_prefix, lang_prefix),
             "texts/languages.json": json.dumps(["en_US"], indent=2) + "\n",
         }
     files = {}
     for language, mc_codes in MINECRAFT_LOCALES.items():
         if language not in LOCALES:
             continue
-        content = _lang_file_content(language)
+        content = _lang_file_content(language, key_prefix, lang_prefix)
         for code in mc_codes:
             files[f"texts/{code}.lang"] = content
     codes = sorted(path[len("texts/"):-len(".lang")] for path in files)

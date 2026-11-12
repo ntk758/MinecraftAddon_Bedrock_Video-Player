@@ -2585,14 +2585,18 @@ function registerCustomCommands(registry) {
   for (const [action, description, argument] of CUSTOM_COMMANDS) {
     const optionalParameters = [];
     if (argument === "video" && videoIds.length > 0) optionalParameters.push({ name: videoEnum, type: CustomCommandParamType.Enum });
-    if (argument === "text") optionalParameters.push({ name: "options", type: CustomCommandParamType.String });
+    // String の引数は 1 語だけなので、setup face align のように並べられるよう 4 個まで受ける (1 個だと 2 語目が構文エラー)
+    if (argument === "text") {
+      for (let i = 0; i < 4; i++) optionalParameters.push({ name: i === 0 ? "options" : `option${i + 1}`, type: CustomCommandParamType.String });
+    }
     registry.registerCommand({
       name: `${EVENT_NAMESPACE}:${action}`, description, permissionLevel: CommandPermissionLevel.GameDirectors,
       cheatsRequired: false, optionalParameters,
-    }, (origin, value) => {
+    }, (origin, ...values) => {
       // コマンドの処理の中ではワールドを変えられない (読み取り専用) ので、次の tick で行う
       const player = origin.sourceEntity?.typeId === "minecraft:player" ? origin.sourceEntity : undefined;
-      system.run(() => runAction(action, value === undefined ? "" : String(value), player));
+      const text = values.filter((v) => v !== undefined).map(String).join(" ");
+      system.run(() => runAction(action, text, player));
       return { status: CustomCommandStatus.Success };
     });
   }
