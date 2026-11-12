@@ -1,4 +1,4 @@
-// だまし絵を main.js でモックの Minecraft の上で最後まで再生し、1 tick ごとの時間とゲーム内の統計を測る
+// だまし絵・平面・立体を main.js でモックの Minecraft の上で最後まで再生し、1 tick ごとの時間とゲーム内の統計を測る
 // (benchmark/stage_bench.py から、main.js・codec.js・videos.js・frames_*.js とモックを置いたフォルダで実行する)。
 // 使い方: node --jitless stage_play.mjs '<JSON>'
 //   path: 目の動かし方。"still" = 舞台の正面の決まった位置、"walk" = 1 tick に 0.2 ブロックずつ舞台の中を往復
@@ -54,10 +54,12 @@ const api = { setBlocks: 0, fillCalls: 0, fillBlocks: 0, listCalls: 0, listBlock
 
 await import("./main.js");
 const { VIDEOS, VIDEO_LIST } = await import("./videos.js");
-const { stageGeometry } = await import("./codec.js");
+const { stageGeometry, isAnamorphic } = await import("./codec.js");
 const listed = VIDEO_LIST.find((entry) => !entry.hidden);
 const video = VIDEOS[listed.id];
-const geom = stageGeometry(video);
+// 平面・立体には舞台が無いので、目は動かさない (見ている人の位置で絵が変わらない)
+const anamorphic = isAnamorphic(video);
+const geom = anamorphic ? stageGeometry(video) : { stageWidth: 0, wallHeight: 0, floorRows: 0, gap: 0, cells: 0, originX: 0 };
 if (args.frames) {
   // 再生を途中で切る (背景の映像も同じ時間で切る)
   video.frame_count = Math.min(video.frame_count, args.frames);
@@ -71,19 +73,20 @@ fireScriptEvent(`${ns}:setup`);
 const anchor = getAnchor(`${ns}:anchor`);
 // 舞台の内側の座標の目の位置 → プレイヤーの足元 (main.js の viewerEye の逆)
 function placeEye(eye) {
+  if (!anamorphic) return;
   player.location.x = anchor.x + geom.originX + eye.x;
   player.location.y = anchor.y + eye.y - EYE_HEIGHT;
   player.location.z = anchor.z + eye.z;
 }
 
-const H = video.height;
+const H = video.height ?? 0;
 const base = { x: geom.stageWidth / 2, y: 1 + 0.75 * H, z: 1 + geom.floorRows + 0.2 * H };
-const centre = { x: geom.stageWidth / 2, z: 1 + geom.gap + video.depth / 2 };
+const centre = { x: geom.stageWidth / 2, z: 1 + geom.gap + (video.depth ?? 0) / 2 };
 // 人物の中心を回る円弧の上を、一定の速さで往復する (三角波)
 const radius = Math.min(base.z - centre.z, geom.stageWidth / 2 - 1);
 const half = Math.asin(Math.min(0.95, (geom.stageWidth / 2 - 2) / radius)) * radius;
 function eyeAt(t) {
-  if (pathKind !== "walk") return base;
+  if (pathKind !== "walk" || !anamorphic) return base;
   const period = (4 * half) / WALK_SPEED;
   const u = (((t % period) + period) % period) / period;
   const s = u < 0.25 ? 4 * u * half : u < 0.75 ? (2 - 4 * u) * half : (4 * u - 4) * half;
@@ -94,13 +97,17 @@ function eyeAt(t) {
 placeEye(eyeAt(0));
 fireScriptEvent(`${ns}:start`);
 const tickMs = [];
+const tickBlocks = [];
+const placedBlocks = () => api.setBlocks + api.fillBlocks + api.listBlocks;
 let seen = 0;
 let finished = false;
 while (!finished && tickMs.length < MAX_TICKS) {
   placeEye(eyeAt(tickMs.length));
   const started = performance.now();
+  const blocksBefore = placedBlocks();
   tick();
   tickMs.push(performance.now() - started);
+  tickBlocks.push(placedBlocks() - blocksBefore);
   for (; seen < messages.length; seen++) {
     if (JSON.stringify(messages[seen]).includes("bvp.playback_finished")) finished = true;
   }
@@ -152,7 +159,8 @@ const modeledApiMs = (api.fillCalls * COSTS.fillCall + api.fillBlocks * COSTS.fi
 const all = tickSummary(tickMs);
 process.stdout.write(JSON.stringify({
   path: pathKind,
-  video: { id: listed.id, width: video.width, height: video.height, depth: video.depth, fps: video.fps, frameCount: video.frame_count },
+  video: { id: listed.id, width: video.width, height: video.height, depth: video.depth ?? 1, fps: video.fps, frameCount: video.frame_count,
+           layout: video.layout ?? "screen", gops: video.adaptive_palette ? video.level_blocks.length : 1 },
   geom: { stageWidth: geom.stageWidth, wallHeight: geom.wallHeight, floorRows: geom.floorRows, cells: geom.cells },
   finished,
   ticks: tickMs.length,
@@ -161,6 +169,7 @@ process.stdout.write(JSON.stringify({
   modeledApiMs,
   jsMs: all.sum - modeledApiMs,
   api,
+  tickBlocks: tickSummary(tickBlocks),
   stats: { frames, seconds, fps, targetFps, tps, driftSeconds: drift },
   load: { lateFrames: late, maxLateTicks: maxLate, avgFrameMs, maxFrameMs },
   settleTicks,
