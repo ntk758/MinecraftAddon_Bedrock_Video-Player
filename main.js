@@ -1657,9 +1657,10 @@ class VideoPlayer {
 
   /**
    * 止めて、スクリーンを片付ける。keepBox (ワールドの箱) を渡すと、その中のマスは触らない (動画を切り替えたとき、新しい
-   * 動画の範囲を残して前の動画の分だけ消す)。
+   * 動画の範囲を残して前の動画の分だけ消す)。toAir なら平面も空気に戻す (setup で別の場所に置き直したとき。
+   * ふだんの停止は、画面が消えたと分かるよう平面をパレットの先頭のブロックで塗る)。
    */
-  stopAndClear(keepBox = null, announce = true) {
+  stopAndClear(keepBox = null, announce = true, toAir = false) {
     // 切り替えのときは、前の動画が一度も描かれていなければ片付ける物が無い (setup の直後に別の動画を選んだときなど)
     if (keepBox && !(this.board && this.board.some((level) => level >= 0))) {
       this.stopPlayback();
@@ -1677,7 +1678,7 @@ class VideoPlayer {
     this.initPaletteCache();
     // 平面はパレットの先頭のブロックで塗りつぶし、立体は空気にする
     const volume = isVolume(this.videoData);
-    const clearPermutation = volume
+    const clearPermutation = volume || toAir
       ? this.airPermutation
       : this.videoData.adaptive_palette ? this.paletteCache?.[0]?.[0] : this.paletteCache?.[0];
     if (!clearPermutation) return;
@@ -1691,7 +1692,7 @@ class VideoPlayer {
       // 立体は空気、固定パレットの平面はパレット 0 番。自動パレットの平面は GOP ごとに番号の意味が違うので不明のまま。
       // 置けなかったマスは不明 (-1) のままにして、次の再生で必ず置き直す
       // だまし絵の舞台は空気にして片付ける (盤面の値は壁・床・人物の色なので、不明にする)
-      const clearedLevel = isAnamorphic(self.videoData) ? -1
+      const clearedLevel = isAnamorphic(self.videoData) || (toAir && !volume) ? -1
         : volume ? self.videoData.air_level : self.videoData.adaptive_palette ? -1 : 0;
       let operations = 0;
       const stage = isAnamorphic(self.videoData) ? stageOf(self.videoData) : null;
@@ -2157,8 +2158,14 @@ function setup(player, options = "") {
   const { anchor, shifted } = placement;
   if (shifted) notify("setup_shifted", anchor.y);
   world.setDynamicProperty(ORIGIN_KEY, origin);
-  // 前のスクリーンの再生と片付けの仕事を止める (以前は前の動画が裏で動き続け、片付けが新しい画面を上書きしていた)
-  for (const old of activePlayers.values()) old.stopPlayback();
+  // 前のスクリーンの再生と片付けの仕事を止め、前の画面のうち新しい画面の外にあるマスを空気に戻す (以前は止めるだけで、
+  //   床に置いた画面を壁に置き直すと床の画面がそのまま残った: 実機 2026-11-13)。新しい画面の範囲は触らないので、
+  //   片付けが新しい画面を上書きすることはない。一度も描いていなければ何もしない
+  const newBox = worldBoxOf(videoData, anchor);
+  for (const old of activePlayers.values()) {
+    old.cancelJob();
+    old.stopAndClear(newBox, false, true);
+  }
   activePlayers.clear();
 
   // 常時読み込みが一部しか登録できなくても、プレイヤーが近くにいれば再生できるので設置は続ける

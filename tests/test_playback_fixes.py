@@ -76,13 +76,17 @@ def clips(tmp_path_factory):
 
 
 def test_setup_again_stops_the_old_screen(clips, tmp_path):
-    """再生中に別の場所で setup し直すと、前のスクリーンの再生が止まる (以前は裏で置き続けていた)。"""
+    """再生中に別の場所で setup し直すと、前のスクリーンの再生が止まり、前の画面は空気に戻る
+    (以前は裏で置き続けていた。その後は止まるだけで、前の画面が残っていた: 実機 2026-11-13)。"""
     steps = [{"event": "badapple:setup"}, {"event": "badapple:start"}, {"tick": 20}, {"world": "before"},
              {"x": 500, "z": 500}, {"event": "badapple:setup"}, {"tick": 60}, {"world": "after"}]
     out = drive(tmp_path / "w", {"a": clips["a"]}, steps)
     assert out["errors"] == []
     before, after = ({tuple(b[:3]): b[3] for b in w["blocks"] if b[0] < 100} for w in out["worlds"])
-    assert before == after
+    drawn = [pos for pos, block in before.items() if "air" not in block]
+    assert drawn, "前の画面が描かれていない"
+    # 前の画面に描いたマスは、すべて空気に戻る (動画の色が残らない)
+    assert all("air" in after.get(pos, "minecraft:air") for pos in drawn), {after.get(pos) for pos in drawn}
 
 
 def test_switching_video_clears_the_old_cells(clips, tmp_path):
