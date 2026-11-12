@@ -50,6 +50,9 @@ function voxArgs(s, voxPath, out, lang) {
 const STAGE_MAX_SIDE = 80;
 // 立体版と平面版をセットで入れるときの、平面版の動画 ID の末尾 (pack_builder.FLAT_PAIR_SUFFIX と同じ)
 const FLAT_PAIR_SUFFIX = "_flat";
+// 画像モードのアドオンのコマンドの接頭辞の末尾 (video_player_gui.py の IMAGE_NAMESPACE_SUFFIX と同じ。ブロックモードと
+// 同じ接頭辞だと、ゲームに登録するコマンドの名前がぶつかる)
+const IMAGE_NAMESPACE_SUFFIX = "_img";
 
 function figureSize(s) {
   if (!s.anamorphic || s.mode === "screen") return [s.width, s.height];
@@ -109,6 +112,55 @@ from mvcodec.mmd import mmd_to_vox
 mmd_to_vox(**dict(mmd_args), progress=mmd_progress)
 `);
   return voxPath;
+}
+
+// 画像モード (convert_image_mode.py の build_files) のアドオンを、ブロックモードと同じコマ (PPM) と音声から作る。
+// ブラウザには ffmpeg が無いので、コマは Pillow で読む。.vox と MMD は元の映像のコマが無いので使わない。
+// 画像モードは Minecraft 1.26.10 以降だけ (古い版向けを選んでいるときは作らない)。作れなければ null
+function buildImageAddon(pyodide, s, jobs) {
+  if (s.target === "legacy") {
+    say("web.image_failed", { error: "Minecraft 1.26.10+" });
+    return null;
+  }
+  const usable = [];
+  for (const job of jobs) {
+    if (job.vox || job.mmd || !job.frames.length) say("web.image_skipped", { id: job.id });
+    else usable.push({ id: job.id, title: job.title, frames: job.frames, sounds: job.sounds });
+  }
+  if (!usable.length) return null;
+  try {
+    pyodide.globals.set("img_jobs", usable);
+    pyodide.globals.set("img_settings", pyodide.toPy({ fps: s.fps, packName: s.packName,
+                                                      namespace: s.namespace + IMAGE_NAMESPACE_SUFFIX }));
+    const proxy = pyodide.runPython(`
+import io
+import numpy as np
+from PIL import Image
+import convert_image_mode as cim
+
+def _frames(job):
+    for ppm in job.frames:
+        yield np.asarray(Image.open(io.BytesIO(ppm.to_bytes())).convert("RGB"))
+
+_s = img_settings.to_py() if hasattr(img_settings, "to_py") else dict(img_settings)
+_first = np.asarray(Image.open(io.BytesIO(img_jobs[0].frames[0].to_bytes())))
+_sources = []
+for _job in img_jobs:
+    _sounds = [(int(i), str(ext), data.to_bytes()) for i, ext, data in _job.sounds]
+    _sources.append({"id": str(_job.id), "title": str(_job.title), "fps": float(_s["fps"]), "frames": _frames(_job),
+                     "audio": (lambda seconds, _sounds=_sounds: _sounds)})
+_files, _report = cim.build_files(_sources, width=int(_first.shape[1]), height=int(_first.shape[0]), methods=["a", "c"],
+                                  namespace=str(_s["namespace"]), pack_name=str(_s["packName"]) + " (Image)",
+                                  audio_chunk_seconds=10, log=lambda _text: None)
+cim.zip_bytes(_files)
+`);
+    const bytes = proxy.toJs();
+    proxy.destroy();
+    return bytes;
+  } catch (e) {
+    say("web.image_failed", { error: String(e && e.message ? e.message : e) });
+    return null;
+  }
 }
 
 self.onmessage = async (event) => {
@@ -225,7 +277,10 @@ if build_target != "latest":
     if (addonProxy.destroy) addonProxy.destroy();
     previewProxy.destroy();
     result.destroy();
-    post("done", { addon, previews }, [addon.buffer]);
+    // 画像モードのアドオンは別ファイルなので、失敗してもブロックモードのアドオンはそのまま出す
+    const imageAddon = s.imageMode ? buildImageAddon(pyodide, s, jobs) : null;
+    const transfer = imageAddon ? [addon.buffer, imageAddon.buffer] : [addon.buffer];
+    post("done", { addon, previews, imageAddon }, transfer);
   } catch (e) {
     post("error", { text: String(e && e.message ? e.message : e) });
   }

@@ -6,6 +6,15 @@
 python convert_image_mode.py video.mp4 -o video_image.mcaddon --width 256 --height 144 --fps 30 --start 0 --end 20 --method both
 ```
 
+Windows 版の画面とブラウザ版では、「画像モードのアドオンも作る」にチェックを入れると、ブロックモードのアドオンの隣に別のファイル (`<名前>_image.mcaddon`) を作ります。コマンドの接頭辞はブロックモードの接頭辞に `_img` を付けたもの (例: `/badapple_img:setup` → `/badapple_img:start`) で、2 つのアドオンを同時に入れてもぶつかりません。.vox と MMD は元の映像のコマが無いので使いません。作れなかったときはログに理由を出し、ブロックモードのアドオンはそのまま残ります。
+
+| | Windows 版 | ブラウザ版 |
+|---|---|---|
+| 1 コマの大きさ | 横 256 画素、縦は画面の縦横比から | ブロックモードと同じコマ (幅 × 高さの画素) |
+| fps | 30。テクスチャが予算を超えたら 15 → 10 に下げて作り直す | ブロックモードと同じ fps |
+| 音声 | ffmpeg で 4 秒ごと | ブロックモードと同じ 10 秒ごとの OGG |
+| 対応する Minecraft | 1.26.10 以降 | 1.26.10 以降 (古い版向けを選んでいるときは作らない) |
+
 ゲーム内: `/bvpimg:setup [動画ID]` → `/bvpimg:start`。方式は `/bvpimg:method a|c` で切り替えます。`pause`・`resume`・`stop`・`seek <秒>`・`method <a|c>`・`list` (`/scriptevent bvpimg:<操作>` でも可)。
 
 ## 方式 A と方式 C

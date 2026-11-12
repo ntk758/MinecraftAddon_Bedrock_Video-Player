@@ -23,6 +23,9 @@ ROOT = Path(__file__).resolve().parent.parent
 APP_FILES = [
     "convert.py", "gui_i18n.py", "pack_builder.py", "pack_metadata.py", "legacy_target.py", "main.js", "codec.js", "manifest.json",
     *[str(p.relative_to(ROOT)).replace("\\", "/") for p in sorted((ROOT / "mvcodec").glob("*.py"))],
+    # 画像モード (別のアドオン)。image_main.js は出来たアドオンの中身に入る
+    "convert_image_mode.py", "image_mode/image_main.js",
+    *[str(p.relative_to(ROOT)).replace("\\", "/") for p in sorted((ROOT / "image_mode").glob("*.py"))],
     *[str(p.relative_to(ROOT)).replace("\\", "/") for p in sorted((ROOT / "locales").glob("*.json"))],
 ]
 

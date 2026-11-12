@@ -39,6 +39,9 @@ def build_standalone_exe():
         "--add-data", f"{APP_DIR / 'main.js'}{os.pathsep}.",
         "--add-data", f"{APP_DIR / 'codec.js'}{os.pathsep}.",
         "--add-data", f"{APP_DIR / 'manifest.json'}{os.pathsep}.",
+        # 画像モード (convert_image_mode.py、GUI が import する) のスクリプト。IMAGE_MAIN_SCRIPT の場所に置く
+        "--hidden-import", "convert_image_mode",
+        "--add-data", f"{APP_DIR / 'image_mode' / 'image_main.js'}{os.pathsep}image_mode",
         # GUI の翻訳ファイル
         "--add-data", f"{APP_DIR / 'locales'}{os.pathsep}locales",
         str(main_gui)

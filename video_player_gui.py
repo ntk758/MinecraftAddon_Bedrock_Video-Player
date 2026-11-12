@@ -335,6 +335,20 @@ MAX_DEPTH = 64
 DEFAULT_MODE = "screen"
 DEFAULT_DEPTH = 16
 VOX_SUFFIX = ".vox"
+# 画像モードのアドオン (convert_image_mode.py) のファイル名・コマンドの接頭辞の末尾。ブロックモードのアドオンと
+# 別のファイル・別のコマンドにする (同じ接頭辞だとコマンドの名前がぶつかる)。ブラウザ版 (web/app.js) と同じ
+IMAGE_MODE_SUFFIX = "_image"
+IMAGE_NAMESPACE_SUFFIX = "_img"
+# 画像モードの fps。テクスチャがアドオンの予算を超えたら、順に下げて作り直す
+IMAGE_MODE_FPS_STEPS = (30, 15, 10)
+# 画像モードの 1 コマの横の画素数 (convert_image_mode.py の既定と同じ)。縦は画面の縦横比から
+IMAGE_MODE_WIDTH = 256
+
+
+def image_mode_size(width: int, height: int) -> tuple[int, int]:
+    """画像モードの 1 コマの画素数。横は IMAGE_MODE_WIDTH、縦はブロックの画面と同じ縦横比 (偶数、2 以上)。"""
+    tex_height = max(2, round(IMAGE_MODE_WIDTH * height / max(1, width) / 2) * 2)
+    return IMAGE_MODE_WIDTH, min(tex_height, IMAGE_MODE_WIDTH * 4)
 # MMD のモデル。追加するときに踊り (.vmd) も選び、作るときに立体のアニメ (.vox) にする
 PMX_SUFFIX = ".pmx"
 # MMD の人物の高さ (ブロック) の上限。高すぎると重い (実機で高さ 56 は 10 fps、96 は重すぎた)
@@ -544,6 +558,8 @@ class PackBuilderApp(tk.Tk):
         self.pair_flat_var = tk.BooleanVar(value=False)
         # 自動パレットで、AI で切り抜いた人物の色を重く数える (mvcodec/person.py の切り抜き + convert.py --palette-weight-mask)
         self.palette_ai_var = tk.BooleanVar(value=False)
+        # 画像モード (テクスチャ再生方式、convert_image_mode.py) のアドオンも隣に作る。ブロックモードのアドオンとは別ファイル
+        self.image_mode_var = tk.BooleanVar(value=False)
         # MMD のモデル (.pmx のパス) → 踊り (.vmd のパス)
         self.mmd_motions: dict[str, str] = {}
         # だまし絵の後ろの壁に流す背景の映像 (空なら壁は単色)
@@ -809,6 +825,8 @@ class PackBuilderApp(tk.Tk):
             row=8, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         ttk.Checkbutton(settings, text=tr("settings.palette_ai"), variable=self.palette_ai_var).grid(
             row=9, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
+        ttk.Checkbutton(settings, text=tr("settings.image_mode"), variable=self.image_mode_var).grid(
+            row=10, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         # 再生負荷の目安 (幅・高さ・fps・表示モード・奥行きを変えるたびに更新)
         self.load_label = ttk.Label(settings, wraplength=720)
         self.load_label.grid(row=7, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
@@ -1116,7 +1134,8 @@ class PackBuilderApp(tk.Tk):
             target=self._build_pack,
             args=(video_entries, output, pack_name, namespace, width, height, fps, duration, palette, dither_method,
                   device, mode, depth, self._addon_language(), self.anamorphic_var.get(),
-                  self.stage_background_var.get().strip() or None, self.mmd_extreme_var.get(), self.pair_flat_var.get()),
+                  self.stage_background_var.get().strip() or None, self.mmd_extreme_var.get(), self.pair_flat_var.get(),
+                  self.image_mode_var.get()),
             daemon=True,
         ).start()
 
@@ -1320,7 +1339,7 @@ class PackBuilderApp(tk.Tk):
         width: int, height: int, fps: float, duration: float | None, palette: str, dither_method: str,
         device: str, mode: str = DEFAULT_MODE, depth: int = DEFAULT_DEPTH, addon_language: str | None = None,
         anamorphic: bool = False, stage_background: str | None = None, mmd_extreme: bool = False,
-        pair_flat: bool = False,
+        pair_flat: bool = False, image_mode: bool = False,
     ) -> None:
         try:
             ffmpeg = get_ffmpeg_path()
@@ -1450,6 +1469,9 @@ class PackBuilderApp(tk.Tk):
                 video_index_entries = build_addon(output, videos, pack_name, namespace, addon_language)
                 self.building_previews = self._write_previews(output, videos)
 
+            if image_mode:
+                # 別ファイルなので、失敗してもブロックモードのアドオンはそのまま
+                self._build_image_pack(video_entries, output, pack_name, namespace, width, height, duration, ffmpeg)
             video_names = ", ".join(e["id"] for e in video_index_entries)
             self.messages.put((
                 "success",
@@ -1457,6 +1479,54 @@ class PackBuilderApp(tk.Tk):
             ))
         except Exception as error:
             self.messages.put(("error", str(error)))
+
+    def _build_image_pack(self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
+                          width: int, height: int, duration: float | None, ffmpeg: str) -> Path | None:
+        """画像モードのアドオン (convert_image_mode.py) を、ブロックモードの出力の隣に作る。
+
+        .vox と MMD は元の映像のコマが無いので使わない。テクスチャが予算を超えるときは fps を下げて作り直す。
+        作れなかったときはログに理由を出して None を返す (ブロックモードのアドオンはもうできている)。
+        """
+        import convert_image_mode as image_mode
+        image_output = output.with_name(f"{output.stem}{IMAGE_MODE_SUFFIX}.mcaddon")
+        sources = []
+        for entry in video_entries:
+            path = Path(entry["file_path"])
+            if path.suffix.lower() in (VOX_SUFFIX, PMX_SUFFIX):
+                self.messages.put(self.tr("build.image_skipped", id=entry["video_id"]))
+            else:
+                sources.append((path, str(entry["video_id"])))
+        if not sources:
+            self.messages.put(self.tr("build.image_none"))
+            return None
+        tex_width, tex_height = image_mode_size(width, height)
+        image_namespace = f"{namespace}{IMAGE_NAMESPACE_SUFFIX}"
+        error = None
+        for image_fps in IMAGE_MODE_FPS_STEPS:
+            self.messages.put(self.tr("build.image_start", output=image_output, width=tex_width, height=tex_height,
+                                      fps=image_fps))
+            args = image_mode.parse_args([
+                *[str(path) for path, _ in sources], "--ids", *[video_id for _, video_id in sources],
+                "--titles", *[path.stem for path, _ in sources], "-o", str(image_output),
+                "--width", str(tex_width), "--height", str(tex_height), "--fps", str(image_fps),
+                "--namespace", image_namespace, "--pack-name", f"{pack_name} (Image)", "--ffmpeg", ffmpeg,
+                *(["--end", str(duration)] if duration else []),
+            ])
+            try:
+                report = image_mode.build(args, log=lambda _text: None)
+            except image_mode.ConvertError as failure:
+                error = failure
+                if "予算" in str(failure):
+                    continue  # テクスチャが予算を超えた。fps を下げて作り直す
+                break
+            except Exception as failure:  # noqa: BLE001 (別のアドオンなので、どんな失敗でもブロックモードを止めない)
+                error = failure
+                break
+            self.messages.put(self.tr("build.image_done", output=image_output, ns=image_namespace,
+                                      mib=f"{report['size_bytes'] / 1024 / 1024:.1f}"))
+            return image_output
+        self.messages.put(self.tr("build.image_failed", output=image_output, error=str(error)))
+        return None
 
     def _drain_messages(self) -> None:
         try:

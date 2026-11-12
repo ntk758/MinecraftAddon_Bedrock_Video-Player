@@ -83,6 +83,7 @@
       <label><span data-i18n="settings.depth">Depth (blocks)</span> <input type="number" id="depth" value="16" min="2" max="64"></label>
       <label class="check"><input type="checkbox" id="anamorphic"> <span data-i18n="web.anamorphic">Trompe-l'oeil (3D and .vox only)</span></label>
       <label class="check"><input type="checkbox" id="pairFlat"> <span data-i18n="settings.pair_flat">With a 3D mode, also add the normal flat video</span></label>
+      <label class="check"><input type="checkbox" id="imageMode"> <span data-i18n="web.image_mode">Also build the image-mode add-on (experimental, separate file; you get 2 downloads)</span></label>
       <label><span data-i18n="web.stage_background">Trompe-l'oeil background video (optional)</span>
         <input type="file" id="stageBackground" accept="video/*"></label>
       <label><span data-i18n="settings.palette">Palette</span>
@@ -124,6 +125,8 @@
     <h2 data-i18n="web.section_build">3. Build</h2>
     <button type="button" id="build" disabled data-i18n="build.button">Create .mcaddon</button>
     <a id="download" class="download" hidden data-i18n="web.download">Download</a>
+    <!-- 画像モードのアドオンは別ファイルなので、別のダウンロードのリンク (web/app.js の finish) -->
+    <a id="imageDownload" class="download" hidden data-i18n="web.image_download">Download the image-mode add-on</a>
     <progress id="progress" max="1" value="0"></progress>
     <pre id="log"></pre>
   </section>

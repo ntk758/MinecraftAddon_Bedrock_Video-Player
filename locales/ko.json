@@ -365,5 +365,17 @@
   "dialog.image_files": "이미지 (정지된 블록 아트)",
   "web.audio_wav_fallback": "OGG 인코더를 불러오지 못해 소리를 WAV(더 큼)로 저장합니다: {error}",
   "settings.pair_flat": "입체 모드일 때 일반 평면 동영상도 함께 넣기 (소리는 공통, 평면판은 <동영상 ID>_flat)",
-  "build.pair_flat": "  평면(2D)판도 변환하는 중: {id}"
+  "build.pair_flat": "  평면(2D)판도 변환하는 중: {id}",
+  "settings.image_mode": "텍스처 이미지 방식 애드온도 같은 폴더에 만들기 (별도 파일; 게임에서는 텍스처에 영상을 비추는 다른 재생 방식)",
+  "build.image_start": "이미지 방식 애드온을 만드는 중: {output} ({width}×{height} 픽셀, {fps} fps)",
+  "build.image_skipped": "  이미지 방식에서는 사용할 수 없습니다 (.vox·MMD): {id}",
+  "build.image_none": "이미지 방식으로 만들 수 있는 영상이 없습니다 (.vox·MMD는 원본 프레임이 없음)",
+  "build.image_done": "이미지 방식 애드온: {output} ({mib} MiB). 게임에서는 /{ns}:setup → /{ns}:start (실제 Minecraft에서는 아직 확인하지 않음)",
+  "build.image_failed": "이미지 방식 애드온을 만들 수 없습니다 ({output}): {error}",
+  "web.image_mode": "텍스처 이미지 방식 애드온도 만들기 (별도 파일; 다운로드가 2개입니다)",
+  "web.image_skipped": "  이미지 방식에서는 사용할 수 없습니다 (.vox·MMD): {id}",
+  "web.image_failed": "이미지 방식 애드온을 만들 수 없습니다: {error}",
+  "web.image_done": "이미지 방식 애드온: {size} KB",
+  "web.image_download": "이미지 방식 애드온 다운로드",
+  "web.image_howto": "이미지 방식 애드온은 별도 파일입니다. 게임에서는 /{ns}:setup → /{ns}:start"
 }

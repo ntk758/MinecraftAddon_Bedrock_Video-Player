@@ -178,60 +178,56 @@ def image_videos_js(videos: list[dict], namespace: str) -> str:
     return "\n".join(lines)
 
 
-def build(args: argparse.Namespace, log=print) -> dict:
-    """引数どおりにアドオンを作り、レポート (dict) を返す。予算超過などで作れないときは ConvertError。"""
-    inputs = [Path(p) for p in args.inputs]
-    for path in inputs:
-        if not path.is_file():
-            raise ConvertError(f"入力動画が見つかりません: {path}")
+def build_files(sources: list[dict], *, width: int, height: int, methods: list[str], namespace: str,
+                pack_name: str, max_sheet: int = 2048, gutter: int = 1, max_cells: int = atlas.MAX_CELLS,
+                screen_width: float = 16, audio_chunk_seconds: float = 4, allow_over_budget: bool = False,
+                log=print) -> tuple[dict, dict]:
+    """コマから、アドオンのファイル (zip の中のパス → bytes) とレポートを作る。ffmpeg を使わない (ブラウザ版も使う)。
+
+    sources の 1 つは {"id", "title", "fps", "frames": コマ (高さ×幅×3 の uint8) を出す iterable,
+    "audio": (最長の秒数) → [(番号, 拡張子, bytes)] を返す関数 (無ければ音声なし)}。
+    予算超過などで作れないときは ConvertError。
+    """
     used: set[str] = set()
-    ids = []
-    for index, path in enumerate(inputs):
-        video_id = args.ids[index] if args.ids else default_id(path, used)
-        if not ID_PATTERN.match(video_id):
-            raise ConvertError(f"動画 ID は小文字の英数字と _ だけにしてください: {video_id}")
-        if video_id in used:
-            raise ConvertError(f"動画 ID が重なっています: {video_id}")
-        used.add(video_id)
-        ids.append(video_id)
-    titles = args.titles or [p.stem for p in inputs]
-    methods = ["a", "c"] if args.method == "both" else [args.method]
-    namespace = args.namespace
-    pack_name = args.pack_name or titles[0]
-    ffmpeg = args.ffmpeg
+    for source in sources:
+        if not ID_PATTERN.match(source["id"]):
+            raise ConvertError(f"動画 ID は小文字の英数字と _ だけにしてください: {source['id']}")
+        if source["id"] in used:
+            raise ConvertError(f"動画 ID が重なっています: {source['id']}")
+        used.add(source["id"])
 
     # 1. コマ → シート
     videos: list[dict] = []
     sheets_of: dict[str, list[Image.Image]] = {}
     icon: bytes | None = None
-    for path, video_id, title in zip(inputs, ids, titles):
-        log(f"[{video_id}] コマを取り出してシートに並べます: {path.name}")
+    for source in sources:
+        video_id, title, fps = source["id"], source["title"], source["fps"]
+        log(f"[{video_id}] コマをシートに並べます: {title}")
         first_frame: list[np.ndarray] = []
 
-        def frames():
-            for frame in atlas.read_frames(path, args.width, args.height, args.fps, args.start, args.end,
-                                           args.fit, ffmpeg):
+        def frames(source=source, first_frame=first_frame):
+            for frame in source["frames"]:
                 if not first_frame:
-                    first_frame.append(frame.copy())
+                    first_frame.append(np.array(frame, copy=True))
                 yield frame
 
         try:
-            sheets, layout = atlas.pack_sheets(frames(), args.width, args.height, args.max_sheet, args.gutter, args.max_cells)
+            sheets, layout = atlas.pack_sheets(frames(), width, height, max_sheet, gutter, max_cells)
         except ValueError as error:
             raise ConvertError(f"[{video_id}] {error}") from None
-        if icon is None:
+        if icon is None and first_frame:
             icon = pack_icon(first_frame[0])
         sheets_of[video_id] = sheets
         texels = layout["sheet_width"] * layout["sheet_height"] * layout["sheets"]
         videos.append({
-            "id": video_id, "title": title, "fps": args.fps if args.fps != int(args.fps) else int(args.fps),
-            "frame_count": layout["frame_count"], "width": args.width, "height": args.height,
+            "id": video_id, "title": title, "fps": fps if fps != int(fps) else int(fps),
+            "frame_count": layout["frame_count"], "width": width, "height": height,
             "sheet_width": layout["sheet_width"], "sheet_height": layout["sheet_height"],
             "cols": layout["cols"], "rows": layout["rows"], "cells_per_sheet": layout["cells_per_sheet"],
-            "sheets": layout["sheets"], "gutter": args.gutter,
-            "screen_blocks": screen_blocks(args.width, args.height, args.screen_width),
+            "sheets": layout["sheets"], "gutter": gutter,
+            "screen_blocks": screen_blocks(width, height, screen_width),
             "texture_paths": [f"textures/bvp_image/{video_id}/sheet_{n}" for n in range(layout["sheets"])],
-            "audio_chunks": 0, "audio_chunk_seconds": args.audio_chunk_seconds, "methods": methods,
+            "audio_chunks": 0, "audio_chunk_seconds": audio_chunk_seconds, "methods": methods,
             "memory": {"texels": texels, "bytes": texels * 4},
         })
         log(f"[{video_id}] {layout['frame_count']} コマ -> シート {layout['sheets']} 枚 "
@@ -240,7 +236,7 @@ def build(args: argparse.Namespace, log=print) -> dict:
     # 2. メモリの見積もり (全動画の合計。予算は 1 つのアドオンに対する値)
     layouts = [{"sheet_width": v["sheet_width"], "sheet_height": v["sheet_height"], "sheets": v["sheets"]}
                for v in videos]
-    memory = atlas.memory_report(layouts, allow_over_budget=args.allow_over_budget)
+    memory = atlas.memory_report(layouts, allow_over_budget=allow_over_budget)
     log(memory["table"])
     if memory["errors"]:
         raise ConvertError("テクスチャが予算を超えるので作りません (--allow-over-budget で作れます)。"
@@ -253,23 +249,19 @@ def build(args: argparse.Namespace, log=print) -> dict:
         files[path] = content.encode("utf-8") if isinstance(content, str) else bytes(content)
 
     sound_definitions = {}
-    with tempfile.TemporaryDirectory(prefix="bvp-image-") as temp:
-        for video in videos:
-            video_id = video["id"]
-            path = inputs[ids.index(video_id)]
-            chunks = atlas.extract_audio_chunks(path, Path(temp) / video_id, args.audio_chunk_seconds,
-                                                args.start, args.end, ffmpeg,
-                                                max_seconds=video["frame_count"] / video["fps"])
-            video["audio_chunks"] = len(chunks)
-            log(f"[{video_id}] 音声 {len(chunks)} チャンク" + ("" if chunks else " (音声なし)"))
-            for index, ext, data in chunks:
-                put(f"RP/sounds/bvp_image/{video_id}/chunk_{index}.{ext}", data)
-                # パスは拡張子なしで書く
-                sound_definitions[f"{namespace}.img.{video_id}.chunk_{index}"] = {
-                    "category": "ui",
-                    "sounds": [{"name": f"sounds/bvp_image/{video_id}/chunk_{index}", "stream": True,
-                                "load_on_low_memory": True}],
-                }
+    for source, video in zip(sources, videos):
+        video_id = video["id"]
+        chunks = source["audio"](video["frame_count"] / video["fps"]) if source.get("audio") else []
+        video["audio_chunks"] = len(chunks)
+        log(f"[{video_id}] 音声 {len(chunks)} チャンク" + ("" if chunks else " (音声なし)"))
+        for index, ext, data in chunks:
+            put(f"RP/sounds/bvp_image/{video_id}/chunk_{index}.{ext}", data)
+            # パスは拡張子なしで書く
+            sound_definitions[f"{namespace}.img.{video_id}.chunk_{index}"] = {
+                "category": "ui",
+                "sounds": [{"name": f"sounds/bvp_image/{video_id}/chunk_{index}", "stream": True,
+                            "load_on_low_memory": True}],
+            }
 
     # 4. パックを組む
     for video in videos:
@@ -294,22 +286,69 @@ def build(args: argparse.Namespace, log=print) -> dict:
         put("RP/pack_icon.png", icon)
         put("BP/pack_icon.png", icon)
 
-    output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted(files):
-            archive.writestr(path, files[path])
-
     memory_summary = {k: v for k, v in memory.items() if k != "table"}
     report = {
-        "namespace": namespace, "pack_name": pack_name, "output": str(output), "size_bytes": output.stat().st_size,
-        "methods": methods, "videos": videos,
+        "namespace": namespace, "pack_name": pack_name, "methods": methods, "videos": videos,
         "memory": {**memory_summary, "per_video": [{"id": v["id"], **v["memory"], "handles": v["sheets"]}
                                                     for v in videos]},
         "warnings": memory["warnings"],
         "lang_keys": {f"bvpimg.{key}": texts for key, texts in LANG_KEYS.items()},
         "files": sorted(files),
     }
+    return files, report
+
+
+def zip_bytes(files: dict) -> bytes:
+    """build_files のファイルを .mcaddon (zip) の bytes にする。"""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(files):
+            archive.writestr(path, files[path])
+    return buffer.getvalue()
+
+
+def build(args: argparse.Namespace, log=print) -> dict:
+    """引数どおりにアドオンを作り、レポート (dict) を返す。予算超過などで作れないときは ConvertError。"""
+    inputs = [Path(p) for p in args.inputs]
+    for path in inputs:
+        if not path.is_file():
+            raise ConvertError(f"入力動画が見つかりません: {path}")
+    used: set[str] = set()
+    ids = []
+    for index, path in enumerate(inputs):
+        video_id = args.ids[index] if args.ids else default_id(path, used)
+        if not ID_PATTERN.match(video_id):
+            raise ConvertError(f"動画 ID は小文字の英数字と _ だけにしてください: {video_id}")
+        if video_id in used:
+            raise ConvertError(f"動画 ID が重なっています: {video_id}")
+        used.add(video_id)
+        ids.append(video_id)
+    titles = args.titles or [p.stem for p in inputs]
+    methods = ["a", "c"] if args.method == "both" else [args.method]
+    pack_name = args.pack_name or titles[0]
+    ffmpeg = args.ffmpeg
+
+    with tempfile.TemporaryDirectory(prefix="bvp-image-") as temp:
+        sources = [{
+            "id": video_id, "title": title, "fps": args.fps,
+            "frames": atlas.read_frames(path, args.width, args.height, args.fps, args.start, args.end,
+                                        args.fit, ffmpeg),
+            "audio": (lambda seconds, path=path, video_id=video_id: atlas.extract_audio_chunks(
+                path, Path(temp) / video_id, args.audio_chunk_seconds, args.start, args.end, ffmpeg,
+                max_seconds=seconds)),
+        } for path, video_id, title in zip(inputs, ids, titles)]
+        files, report = build_files(
+            sources, width=args.width, height=args.height, methods=methods, namespace=args.namespace,
+            pack_name=pack_name, max_sheet=args.max_sheet, gutter=args.gutter, max_cells=args.max_cells,
+            screen_width=args.screen_width, audio_chunk_seconds=args.audio_chunk_seconds,
+            allow_over_budget=args.allow_over_budget, log=log)
+
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(zip_bytes(files))
+    report = {"namespace": report["namespace"], "pack_name": report["pack_name"], "output": str(output),
+              "size_bytes": output.stat().st_size,
+              **{key: value for key, value in report.items() if key not in ("namespace", "pack_name")}}
     report_path = Path(args.report) if args.report else output.with_suffix(".report.json")
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

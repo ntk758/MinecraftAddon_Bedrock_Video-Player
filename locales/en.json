@@ -365,5 +365,17 @@
   "dialog.image_files": "Pictures (still block art)",
   "web.audio_wav_fallback": "The OGG encoder could not be loaded, so the sound is stored as WAV (larger): {error}",
   "settings.pair_flat": "With a 3D mode, also add the normal flat video (same sound; the 2D version is listed as <ID>_flat)",
-  "build.pair_flat": "  Also converting the flat (2D) version: {id}"
+  "build.pair_flat": "  Also converting the flat (2D) version: {id}",
+  "settings.image_mode": "Also build the image-mode add-on (experimental, separate file): plays the video as textures at up to 30 fps",
+  "build.image_start": "Building the image-mode add-on: {output} ({width}×{height} px, {fps} fps)",
+  "build.image_skipped": "  Not usable in image mode (.vox / MMD): {id}",
+  "build.image_none": "No videos can be used in image mode (.vox and MMD have no source frames)",
+  "build.image_done": "Image-mode add-on: {output} ({mib} MiB). In-game: /{ns}:setup, then /{ns}:start (not yet tested in real Minecraft)",
+  "build.image_failed": "Could not build the image-mode add-on ({output}): {error}",
+  "web.image_mode": "Also build the image-mode add-on (experimental, separate file; you get 2 downloads)",
+  "web.image_skipped": "  Not usable in image mode (.vox / MMD): {id}",
+  "web.image_failed": "Could not build the image-mode add-on: {error}",
+  "web.image_done": "Image-mode add-on: {size} KB",
+  "web.image_download": "Download the image-mode add-on",
+  "web.image_howto": "The image-mode add-on is a separate file. In-game: /{ns}:setup, then /{ns}:start"
 }

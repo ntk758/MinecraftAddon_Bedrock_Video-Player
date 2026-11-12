@@ -80,6 +80,16 @@ assert convert.main(["--input-vox", "/work/shell.vox", "--mode", "vox", "--view"
 text = open("/work/shell.js", encoding="utf-8").read()
 *_, (shell_volume, _rgb) = iter_decoded_frames(json.loads(text[text.index("{"):text.rindex("}") + 1]))
 counts["shell"] = int((shell_volume != 127).sum())
+# 画像モード (web/worker.js の buildImageAddon と同じ: ffmpeg を使わず、コマと音声のチャンクから作る)
+import convert_image_mode
+_frames = [np.full((36, 64, 3), n * 20, np.uint8) for n in range(12)]
+_files, _report = convert_image_mode.build_files(
+    [{"id": "clip", "title": "clip", "fps": 10, "frames": iter(_frames), "audio": lambda seconds: [(0, "ogg", b"OggS")]}],
+    width=64, height=36, methods=["a", "c"], namespace="smoke_img", pack_name="Smoke (Image)", audio_chunk_seconds=10,
+    log=lambda _text: None)
+_image = zipfile.ZipFile(io.BytesIO(convert_image_mode.zip_bytes(_files)))
+assert "BP/scripts/image_main.js" in _image.namelist() and "RP/sounds/bvp_image/clip/chunk_0.ogg" in _image.namelist()
+counts["image"] = _report["videos"][0]["frame_count"]
 json.dumps(counts)
 `);
 const counts = JSON.parse(result);
@@ -87,6 +97,8 @@ console.log(JSON.stringify(counts));
 if (counts.screen !== 20 || counts.relief !== 20 || counts.vox !== 5) process.exit(1);
 // 7×7×7 の殻の中の閉じた空洞 (5×5×5) が埋まって、詰まった立方体 (343 マス) になる
 if (counts.shell !== 343) process.exit(1);
+// 画像モードのアドオンに 12 コマ全部が入る
+if (counts.image !== 12) process.exit(1);
 // 最後の進み具合は「全部済んだ」(各変換の最後に必ず呼ばれる)
 console.log("progress calls", progress.length);
 if (progress.length === 0 || progress.some(([done, total]) => done > total)) process.exit(1);
