@@ -728,11 +728,32 @@ class VideoPlayer {
   }
 
   /**
-   * パレット番号の意味が変わるとき (自動パレットで GOP が切り替わるとき) に呼ぶ。平面は全マスを置き直す。
-   * 立体は空気のマスは空気のままとみなし、ブロックのあるマスだけ置き直す (空気で全体を塗り直さずに済む)。
+   * 古い GOP のパレット番号 → 新しい GOP で同じブロックの番号 (無ければ -1)。GOP の組ごとに作り置く。
+   * 盤面の番号を付け替えれば、ブロックが本当に変わるマスだけを置き直せる (同じブロックは置かない)。
+   */
+  levelRemap(fromGop, toGop) {
+    const key = `${fromGop}>${toGop}`;
+    this.levelRemaps ??= new Map();
+    let remap = this.levelRemaps.get(key);
+    if (remap) return remap;
+    const blockKey = (spec) => `${BLOCK_ID_ALIASES[spec.block] ?? spec.block}|${JSON.stringify(spec.states ?? {})}`;
+    const target = new Map();
+    this.videoData.level_blocks[toGop].forEach((spec, level) => {
+      const k = blockKey(spec);
+      if (!target.has(k)) target.set(k, level);
+    });
+    remap = Int32Array.from(this.videoData.level_blocks[fromGop], (spec) => target.get(blockKey(spec)) ?? -1);
+    this.levelRemaps.set(key, remap);
+    return remap;
+  }
+
+  /**
+   * パレット番号の意味が変わるとき (自動パレットで GOP が切り替わるとき) に呼ぶ。
+   * 平面と立体は、盤面の番号を新しい GOP の同じブロックの番号に付け替え、同じブロックが無いマスだけ置き直す
+   * (立体の空気は空気のまま)。fromGop が分からないときは平面は全マスを置き直す。
    * それ以外のキーフレームでは、表示中の盤面と比べて本当に変わったマスだけを置く。
    */
-  invalidateForPaletteChange() {
+  invalidateForPaletteChange(fromGop = -1, toGop = -1) {
     if (!this.board) return;
     if (isAnamorphic(this.videoData)) {
       // だまし絵の壁と床は GOP が変わっても同じブロックなので、人物が写っているマスだけ置き直す
@@ -743,13 +764,17 @@ class VideoPlayer {
       this.stageRows = { lo: 0, hi: Infinity, left: 0, right: Infinity };
       return;
     }
-    if (!isVolume(this.videoData)) {
+    const levels = this.videoData.level_blocks;
+    const remap = fromGop >= 0 && toGop >= 0 && levels[fromGop] && levels[toGop] ? this.levelRemap(fromGop, toGop) : null;
+    const air = isVolume(this.videoData) ? this.videoData.air_level : null;
+    if (!remap && air === null) {
       this.board.fill(-1);
       return;
     }
-    const air = this.videoData.air_level;
     for (let p = 0; p < this.board.length; p++) {
-      if (this.board[p] !== air) this.board[p] = -1;
+      const level = this.board[p];
+      if (level === air) continue;
+      this.board[p] = remap && level >= 0 && level < remap.length ? remap[level] : -1;
     }
   }
 
@@ -1175,7 +1200,9 @@ class VideoPlayer {
         if (backgroundSynced?.changed) this.extendStageRows(0, stageOf(this.videoData).wallHeight, 0, stageOf(this.videoData).stageWidth);
       }
       // 自動パレットで GOP が変わると同じ番号でも別のブロックになるので、表示中の盤面を「不明」にする
-      if (this.videoData.adaptive_palette && entry.gopId !== this.boardGopId) this.invalidateForPaletteChange();
+      if (this.videoData.adaptive_palette && entry.gopId !== this.boardGopId) {
+        this.invalidateForPaletteChange(this.boardGopId ?? -1, entry.gopId);
+      }
       this.boardGopId = entry.gopId;
       if (backgroundSynced && this.background.videoData.adaptive_palette && this.background.currentGopId !== this.backgroundGopId) {
         this.invalidateStageImage();
