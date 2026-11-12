@@ -424,5 +424,18 @@
   "imgaddon.selected_tag": "§a[已选择]",
   "imgaddon.remote.title": "视频播放器遥控器（图像模式）",
   "imgaddon.remote.paused": "§e已暂停",
-  "imgaddon.remote.setup_here": "把屏幕放在我面前"
+  "imgaddon.remote.setup_here": "把屏幕放在我面前",
+  "image.priority_label": "优先：",
+  "image.priority.quality": "画质（降低 fps）",
+  "image.priority.smooth": "流畅度（缩小画面）",
+  "image.priority.length": "长度（保留完整视频）",
+  "image.tier_label": "适用：",
+  "image.tier.2": "手机和游戏机也可（Tier 2，225 MB）",
+  "image.tier.5": "仅限 PC（Tier 5，800 MB）",
+  "build.image_plan": "图像模式：以“{priority}”优先并装入 Tier {tier}，改为 {width}×{height}、{fps} fps（{length}）",
+  "build.image_plan_full": "长度不变",
+  "build.image_plan_cut": "截短为 {seconds} 秒",
+  "image.combine": "把方块模式和图像模式放进一个文件（导入后两者都会安装）",
+  "build.image_combined": "图像模式也已放入 {output}（一个文件即可安装两者）",
+  "build.image_combine_failed": "无法把图像模式放进同一个文件，仍为单独文件（{output}）：{error}"
 }

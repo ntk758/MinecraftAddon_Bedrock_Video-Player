@@ -19,8 +19,8 @@ from gui_i18n import Translator
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg が必要")
 
 
-def fake_app():
-    return SimpleNamespace(messages=queue.Queue(), tr=Translator("en"))
+def fake_app(priority="quality", tier="2"):
+    return SimpleNamespace(messages=queue.Queue(), tr=Translator("en"), image_priority_key=priority, image_tier_key=tier)
 
 
 def drain(app):
@@ -38,10 +38,11 @@ def make_video(path, duration=2):
 
 
 def test_image_mode_size_follows_the_screen_aspect_ratio():
-    assert gui.image_mode_size(128, 72) == (256, 144)
-    assert gui.image_mode_size(64, 64) == (256, 256)
+    # 画質を活かすため横 512 から始める (予算を超えれば優先に合わせて image_mode/budget.py が下げる)
+    assert gui.image_mode_size(128, 72) == (512, 288)
+    assert gui.image_mode_size(64, 64) == (512, 512)
     # 縦に極端に長くても、横の 4 倍まで
-    assert gui.image_mode_size(8, 200) == (256, 1024)
+    assert gui.image_mode_size(8, 200) == (512, 2048)
 
 
 @needs_ffmpeg
@@ -64,8 +65,21 @@ def test_builds_a_separate_image_addon_next_to_the_block_addon(tmp_path):
     assert any(name.startswith("RP/sounds/bvp_image/clip/") for name in names)
     assert manifest["header"]["name"].startswith("My Pack (Image)")
     assert "movie_img" in videos_js
-    # 30 fps・2 秒 = 60 コマ、256×144
-    assert '"frame_count": 60' in videos_js and '"width": 256' in videos_js
+    # 30 fps・2 秒 = 60 コマ、512×288 (2 秒なら Tier 2 に入るので何も変えない)
+    assert '"frame_count": 60' in videos_js and '"width": 512' in videos_js
+    assert not any("to fit Tier" in m for m in messages)
+
+
+@needs_ffmpeg
+def test_smooth_priority_shrinks_the_picture_to_fit(tmp_path):
+    # 2 秒の 512×288・30 fps は約 34 MiB。Tier 1 (150 MB) には入るので、選んだ優先と Tier がそのまま渡るかを、
+    # 収まらない長さの代わりに --end を使わずに確かめる: 予算の計算に渡る値だけを見る
+    video = make_video(tmp_path / "clip.mp4")
+    app = fake_app(priority="smooth", tier="5")
+    result = gui.PackBuilderApp._build_image_pack(app, [{"file_path": str(video), "video_id": "clip"}],
+                                                  tmp_path / "P.mcaddon", "P", "movie", 128, 72, None, "ffmpeg")
+    report = json.loads(result.with_suffix(".report.json").read_text(encoding="utf-8"))
+    assert report["plan"]["priority"] == "smooth" and report["plan"]["target_tier"] == 5
 
 
 @needs_ffmpeg
@@ -84,3 +98,28 @@ def test_only_vox_and_mmd_means_nothing_to_build(tmp_path):
     assert gui.PackBuilderApp._build_image_pack(app, entries, tmp_path / "out.mcaddon", "P", "movie", 128, 72, None,
                                                 "ffmpeg") is None
     assert any("No videos can be used in image mode" in m for m in drain(app))
+
+
+@needs_ffmpeg
+def test_combine_puts_both_addons_in_one_file(tmp_path):
+    import convert_image_mode
+    video = make_video(tmp_path / "clip.mp4")
+    output = tmp_path / "Both.mcaddon"
+    # ブロックモードのアドオンの代わり (BP/ と RP/ を持つ zip)
+    with zipfile.ZipFile(output, "w") as block:
+        block.writestr("BP/manifest.json", "{}")
+        block.writestr("RP/manifest.json", "{}")
+    app = fake_app()
+    app.image_combine_var = SimpleNamespace(get=lambda: True)
+    image = gui.PackBuilderApp._build_image_pack(app, [{"file_path": str(video), "video_id": "clip"}], output, "P",
+                                                 "movie", 128, 72, None, "ffmpeg")
+    gui.PackBuilderApp._combine_image_pack(app, output, image)
+    assert not image.exists()
+    with zipfile.ZipFile(output) as archive:
+        names = set(archive.namelist())
+    assert {"BP/manifest.json", "RP/manifest.json", "BP_image/manifest.json", "RP_image/manifest.json",
+            "BP_image/scripts/image_main.js"} <= names
+    assert any("Image mode is included" in m for m in drain(app))
+    # 名前が重なるときはまとめない
+    with pytest.raises(convert_image_mode.ConvertError):
+        convert_image_mode.combine_addons(output, output)

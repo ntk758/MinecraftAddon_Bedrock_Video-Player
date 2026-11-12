@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from image_mode import atlas
+from image_mode import atlas, budget
 from gui_i18n import LOCALES, addon_lang_files
 from image_mode.rp import rp_files
 from pack_builder import build_manifest_version
@@ -288,6 +288,34 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
     return files, report
 
 
+COMBINED_FOLDERS = {"BP/": "BP_image/", "RP/": "RP_image/"}
+
+
+def combine_addons(block_addon: Path, image_addon: Path, output: Path | None = None) -> Path:
+    """ブロックモードと画像モードの .mcaddon を 1 つのファイルにまとめる (中は 4 つのパック。画像モードは BP_image/・RP_image/)。
+
+    パックは別々のまま (UUID・スクリプト・コマンドの接頭辞も別) なので、読み込むとどちらも入り、どちらのコマンドも使える。
+    output を省くと block_addon を上書きする。画像モードのファイルは消さない (呼び出し側が決める)。
+    """
+    output = Path(output) if output else Path(block_addon)
+    files: dict[str, bytes] = {}
+    with zipfile.ZipFile(block_addon) as block:
+        for name in block.namelist():
+            if not name.endswith("/"):
+                files[name] = block.read(name)
+    with zipfile.ZipFile(image_addon) as image:
+        for name in image.namelist():
+            if name.endswith("/"):
+                continue
+            prefix = next((p for p in COMBINED_FOLDERS if name.startswith(p)), None)
+            target = COMBINED_FOLDERS[prefix] + name[len(prefix):] if prefix else f"image/{name}"
+            if target in files:
+                raise ConvertError(f"まとめるファイルの名前が重なりました: {target}")
+            files[target] = image.read(name)
+    output.write_bytes(zip_bytes(files))
+    return output
+
+
 def zip_bytes(files: dict) -> bytes:
     """build_files のファイルを .mcaddon (zip) の bytes にする。"""
     buffer = io.BytesIO()
@@ -295,6 +323,38 @@ def zip_bytes(files: dict) -> bytes:
         for path in sorted(files):
             archive.writestr(path, files[path])
     return buffer.getvalue()
+
+
+PRIORITY_LABELS = {"quality": "画質", "smooth": "なめらかさ", "length": "長さ"}
+CHANGED_LABELS = {"fps": "fps", "size": "コマの大きさ", "length": "長さ"}
+
+
+def apply_priority(args: argparse.Namespace, inputs: list[Path], log=print) -> list:
+    """--priority: 予算 (--target-tier) に収まるよう args の大きさ・fps を直し、動画ごとの終わり (秒) を返す。"""
+    start = args.start or 0.0
+    durations = []
+    for path in inputs:
+        total = atlas.probe_duration(path, args.ffmpeg)
+        if total is None:
+            raise ConvertError(f"動画の長さを読めませんでした: {path}")
+        end = min(total, args.end) if args.end is not None else total
+        durations.append(max(0.0, end - start))
+    result = budget.plan(durations, args.width, args.height, args.fps, args.priority, args.target_tier,
+                         max_sheet=args.max_sheet, gutter=args.gutter, max_cells=args.max_cells)
+    if not result["fits"]:
+        raise ConvertError(f"Tier {args.target_tier} の予算にどうしても収まりません (1 コマも入りません)")
+    if result["changed"]:
+        what = "・".join(CHANGED_LABELS[item] for item in result["changed"])
+        log(f"{PRIORITY_LABELS[args.priority]}を優先して、Tier {args.target_tier} の予算 "
+            f"({budget.TIER_BUDGETS_MB[args.target_tier]} MB) に収まるよう {what} を変えました: "
+            f"{args.width}x{args.height} {args.fps:g} fps → {result['width']}x{result['height']} {result['fps']} fps")
+        for path, before, after in zip(inputs, durations, result["seconds"]):
+            if after < before - 1e-6:
+                log(f"  {path.name}: {before:.1f} 秒 → {after:.1f} 秒 (後ろを切りました)")
+    args.width, args.height, args.fps = result["width"], result["height"], float(result["fps"])
+    args.plan = result
+    return [start + seconds if seconds < duration - 1e-6 else args.end
+            for seconds, duration in zip(result["seconds"], durations)]
 
 
 def build(args: argparse.Namespace, log=print) -> dict:
@@ -314,6 +374,9 @@ def build(args: argparse.Namespace, log=print) -> dict:
         used.add(video_id)
         ids.append(video_id)
     titles = args.titles or [p.stem for p in inputs]
+    ends = [args.end] * len(inputs)
+    if args.priority != "none":
+        ends = apply_priority(args, inputs, log)
     methods = ["a", "c"] if args.method == "both" else [args.method]
     pack_name = args.pack_name or titles[0]
     ffmpeg = args.ffmpeg
@@ -321,12 +384,12 @@ def build(args: argparse.Namespace, log=print) -> dict:
     with tempfile.TemporaryDirectory(prefix="bvp-image-") as temp:
         sources = [{
             "id": video_id, "title": title, "fps": args.fps,
-            "frames": atlas.read_frames(path, args.width, args.height, args.fps, args.start, args.end,
+            "frames": atlas.read_frames(path, args.width, args.height, args.fps, args.start, end,
                                         args.fit, ffmpeg),
-            "audio": (lambda seconds, path=path, video_id=video_id: atlas.extract_audio_chunks(
-                path, Path(temp) / video_id, args.audio_chunk_seconds, args.start, args.end, ffmpeg,
+            "audio": (lambda seconds, path=path, video_id=video_id, end=end: atlas.extract_audio_chunks(
+                path, Path(temp) / video_id, args.audio_chunk_seconds, args.start, end, ffmpeg,
                 max_seconds=seconds)),
-        } for path, video_id, title in zip(inputs, ids, titles)]
+        } for path, video_id, title, end in zip(inputs, ids, titles, ends)]
         files, report = build_files(
             sources, width=args.width, height=args.height, methods=methods, namespace=args.namespace,
             pack_name=pack_name, max_sheet=args.max_sheet, gutter=args.gutter, max_cells=args.max_cells,
@@ -338,6 +401,7 @@ def build(args: argparse.Namespace, log=print) -> dict:
     output.write_bytes(zip_bytes(files))
     report = {"namespace": report["namespace"], "pack_name": report["pack_name"], "output": str(output),
               "size_bytes": output.stat().st_size,
+              "plan": getattr(args, "plan", None),
               **{key: value for key, value in report.items() if key not in ("namespace", "pack_name")}}
     report_path = Path(args.report) if args.report else output.with_suffix(".report.json")
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -422,6 +486,12 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help=f"名前空間 (小文字の英数字と _。既定 {DEFAULT_NAMESPACE})")
     parser.add_argument("--pack-name", default=None, help="パック名 (既定は最初の動画の表示名)")
     parser.add_argument("--audio-chunk-seconds", type=_positive_float, default=4, help="音声を区切る秒数 (既定 4)")
+    parser.add_argument("--priority", default="none", choices=["none", *budget.PRIORITIES],
+                        help="テクスチャが予算 (--target-tier) を超えるとき何を守るか: quality=画質 (fps を下げる)、"
+                             "smooth=なめらかさ (コマを小さくする)、length=長さ (両方を少しずつ下げる)。"
+                             "それでも入らなければ後ろを切る。none (既定) は何も変えない")
+    parser.add_argument("--target-tier", type=int, default=2, choices=sorted(budget.TIER_BUDGETS_MB),
+                        help="--priority で収める予算の Tier (既定 2: 多くのスマートフォン・PS4・Xbox One。PC だけなら 5)")
     parser.add_argument("--allow-over-budget", action="store_true",
                         help="テクスチャが Tier 5 の予算 (800 MB) を超えても作る")
     parser.add_argument("--report", default=None, help="レポートの JSON のパス (既定は出力の隣)")

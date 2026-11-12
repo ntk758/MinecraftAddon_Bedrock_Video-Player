@@ -424,5 +424,18 @@
   "imgaddon.selected_tag": "§a[selected]",
   "imgaddon.remote.title": "Video Player Remote (Image mode)",
   "imgaddon.remote.paused": "§ePaused",
-  "imgaddon.remote.setup_here": "Place the screen in front of me"
+  "imgaddon.remote.setup_here": "Place the screen in front of me",
+  "image.priority_label": "Priority:",
+  "image.priority.quality": "Picture quality (lower fps)",
+  "image.priority.smooth": "Smoothness (smaller picture)",
+  "image.priority.length": "Length (keep the whole video)",
+  "image.tier_label": "Fit for:",
+  "image.tier.2": "Phones and consoles too (Tier 2, 225 MB)",
+  "image.tier.5": "PC only (Tier 5, 800 MB)",
+  "build.image_plan": "Image mode: to fit Tier {tier} with priority \"{priority}\", used {width}×{height}, {fps} fps, {length}",
+  "build.image_plan_full": "whole length",
+  "build.image_plan_cut": "cut to {seconds} s",
+  "image.combine": "Put both add-ons in one file (block mode and image mode, installed together)",
+  "build.image_combined": "Image mode is included in {output} (both modes are installed from one file)",
+  "build.image_combine_failed": "Could not put image mode into the same file, so it stays separate ({output}): {error}"
 }
