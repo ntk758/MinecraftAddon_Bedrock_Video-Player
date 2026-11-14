@@ -183,3 +183,20 @@ def test_flat_mask_ignores_small_plain_patches():
     flat = flat_mask(img)
     assert not flat[5:12, 5:12].any()
     assert flat[15:35, 25:55].all()
+
+
+# --- 自動パレット ---
+
+def test_auto_palette_adds_low_pattern_blocks_for_plain_areas():
+    from mvcodec.auto_palette import _flat_blocks_for_color, generate_auto_palette
+
+    dirt = (139, 84, 39)  # 平均の色は作業台 (模様が強い) が一番近い
+    picks = [AUTO_PALETTE_CANDIDATES[i]["block"] for i in _flat_blocks_for_color(dirt, AUTO_PALETTE_CANDIDATES,
+                                                                                 FLAT_AREA_SETTINGS["smooth"])]
+    assert "minecraft:crafting_table" not in picks
+    assert palette_tex([block(name.split(":")[1]) for name in picks])[0] < 2
+    frames = [solid(dirt), solid(SKY)]
+    off = generate_auto_palette(frames, AUTO_PALETTE_CANDIDATES, max_colors=8, sample_stride=1)
+    assert generate_auto_palette(frames, AUTO_PALETTE_CANDIDATES, max_colors=8, sample_stride=1, flat_areas="off") == off
+    smooth = generate_auto_palette(frames, AUTO_PALETTE_CANDIDATES, max_colors=8, sample_stride=1, flat_areas="smooth")
+    assert min(palette_tex(smooth)) < 1 and smooth != off

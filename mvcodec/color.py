@@ -415,9 +415,12 @@ def knoll_dither_indices(rgb, palette_rgb, noise01, edge_mask=None, steps=KNOLL_
 # 見た目の悪さを J = 平均の色の誤差² + β × 粒の分散 (粒 = 混ぜたブロックの色の散らばり + テクスチャのばらつき²) で測り、
 # 平らな面では β を大きく (粒が隠れる所が無い)、それ以外では小さくする。照合の距離には α × テクスチャのばらつき² を足す。
 # radius は、パターンディザで混ぜてよい相手の、一番近いブロックからの距離 (OkLab × 100) の上限 (明暗の差が大きい粒を作らない)
+# smooth は平らな面のムラを優先し、balance は色の正確さを優先する。β_flat を 1 (混ぜない) にすると、近いブロックの無い色
+# (テスト映像の空・紺の背景) がくすむので、平らな面でも混ぜた方が J が小さい色は混ぜる。値はテスト映像・アニメ風・
+# グラデーション・パンで測った (docs/research/flat_areas.md の「色のくすみを直す」)
 FLAT_AREA_SETTINGS = {
-    "smooth": {"alpha_flat": 1.0, "beta_flat": 1.0, "alpha_detail": 0.25, "beta_detail": 0.1, "radius": 12.0},
-    "balance": {"alpha_flat": 1.0, "beta_flat": 0.5, "alpha_detail": 0.25, "beta_detail": 0.1, "radius": 12.0},
+    "smooth": {"alpha_flat": 1.0, "beta_flat": 0.5, "alpha_detail": 0.25, "beta_detail": 0.1, "radius": 12.0},
+    "balance": {"alpha_flat": 0.5, "beta_flat": 0.25, "alpha_detail": 0.25, "beta_detail": 0.1, "radius": 12.0},
 }
 FLAT_AREA_CHOICES = ("off", "smooth", "balance")
 # 混ぜてよい相手の距離の上限は max(radius, FLAT_MIX_ERROR_FACTOR × 一番近いブロックまでの距離)。色の近いブロックが無い色

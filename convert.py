@@ -318,7 +318,8 @@ def analyze_gops(frames, palette_for_gop=None, weight_masks=None, palette_weight
     return boundaries, palettes
 
 
-def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MAX_COLORS, candidates=None):
+def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MAX_COLORS, candidates=None,
+                              flat_areas="off"):
     from mvcodec.auto_palette import generate_auto_palette
 
     candidates = AUTO_PALETTE_CANDIDATES if candidates is None else candidates
@@ -336,6 +337,7 @@ def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MA
             cache[thumb_hash] = generate_auto_palette(
                 samples, candidates, max_colors=max_colors, device=gpu.torch_device if gpu else None, sample_stride=1,
                 warn=lambda error: print(_tr("convert.palette_cpu_retry", error=error)), color_space=color_space,
+                **({"flat_areas": flat_areas} if flat_areas != "off" else {}),
             )
         return cache[thumb_hash]
 
@@ -607,8 +609,8 @@ def parse_args(argv=None):
                         help="Blue Noise / Ordered のディザ模様を映像の全体の動き (パン) に合わせてずらす。"
                              "パンのデータは大きく減るが、模様が毎フレーム動くので置き直すブロックは増える (既定は無効)")
     parser.add_argument("--flat-areas", default="off", choices=FLAT_AREA_CHOICES,
-                        help="色が一定の面 (空・壁など) の塗り方。smooth は模様の少ないブロック 1 種類で塗り、ほかは混ぜる相手を"
-                             "近い色に限る。balance は平らな面でも近い色とは混ぜる。off は今までと同じ。Blue Noise と"
+                        help="色が一定の面 (空・壁など) の塗り方。smooth はムラを優先して模様の少ないブロックで塗り (近いブロックの"
+                             "無い色だけ混ぜる)、balance は色の正確さを優先する。off は今までと同じ。Blue Noise と"
                              "ディザなしで効き、CPU で減色する (docs/research/flat_areas.md)")
     parser.add_argument("--perceptual", action=argparse.BooleanOptionalAction, default=True,
                         help="エッジ部のみディザをかける知覚的処理 (--no-perceptual で無効)")
@@ -941,8 +943,11 @@ def main(argv=None):
     # --- Pass 1: GOP 分割 (+ 自動パレット) ---
     is_adaptive_palette = args.palette == "auto"
     # 立体は横から見るので、原木などは側面 (樹皮) の色で選ぶ
+    # --flat-areas は、自動パレットにも平らな面を塗るブロックを入れる (効くディザのときだけ)
+    palette_flat_areas = args.flat_areas if args.dither_method in FLAT_AREA_DITHERS else "off"
     palette_builder = (make_auto_palette_builder(gpu, args.palette_space, args.palette_colors,
-                                                 side_palette(AUTO_PALETTE_CANDIDATES) if volume else None)
+                                                 side_palette(AUTO_PALETTE_CANDIDATES) if volume else None,
+                                                 palette_flat_areas)
                        if is_adaptive_palette else None)
     print(_tr("convert.analyzing"))
     weight_masks = None
