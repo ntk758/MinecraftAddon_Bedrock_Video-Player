@@ -22,8 +22,12 @@ from PIL import Image, ImageOps
 from mvcodec.color import (
     AUTO_PALETTE_CANDIDATES,
     CHROMA_WEIGHT,
+    FLAT_AREA_CHOICES,
+    FLAT_AREA_DITHERS,
     PALETTES,
     create_palette_image,
+    flat_mask,
+    palette_tex,
     process_single_frame_img,
     rgb_to_oklab_torch,
     side_palette,
@@ -314,7 +318,8 @@ def analyze_gops(frames, palette_for_gop=None, weight_masks=None, palette_weight
     return boundaries, palettes
 
 
-def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MAX_COLORS, candidates=None):
+def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MAX_COLORS, candidates=None,
+                              flat_areas="off"):
     from mvcodec.auto_palette import generate_auto_palette
 
     candidates = AUTO_PALETTE_CANDIDATES if candidates is None else candidates
@@ -332,6 +337,7 @@ def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MA
             cache[thumb_hash] = generate_auto_palette(
                 samples, candidates, max_colors=max_colors, device=gpu.torch_device if gpu else None, sample_stride=1,
                 warn=lambda error: print(_tr("convert.palette_cpu_retry", error=error)), color_space=color_space,
+                **({"flat_areas": flat_areas} if flat_areas != "off" else {}),
             )
         return cache[thumb_hash]
 
@@ -431,45 +437,62 @@ def quantize_frames_gpu(frames, gop_palettes_rgb, gop_boundaries, width, height,
             empty_cache(gpu)
 
 
-def keep_previous_blocks(indices, previous, source_rgb, palette_rgb, threshold):
+def keep_previous_blocks(indices, previous, source_rgb, palette_rgb, threshold, fresh=None):
     """条件付き更新: 前のフレームのパレット番号の色が、新しく選んだ色より (RGB の距離で) threshold 以内しか
-    悪くならない画素は、前の番号のままにする。誤差は今のフレームの元の色と比べるので、ずれが積み重なることはない。"""
+    悪くならない画素は、前の番号のままにする。誤差は今のフレームの元の色と比べるので、ずれが積み重なることはない。
+    fresh (H, W) が True の画素は前の番号を使わない (--flat-areas の平らな面: 色が同じなら毎回同じブロックになるので
+    静止した面は変わらず、前のフレームの模様の強いブロックや混ぜた粒が残るのを防ぐ)。"""
     if previous is None or threshold <= 0 or previous.shape != indices.shape:
         return indices
     source = np.asarray(source_rgb, dtype=np.float32).reshape(*indices.shape, 3)
     palette = np.asarray(palette_rgb, dtype=np.float32)
     new_error = ((palette[indices] - source) ** 2).sum(-1)
     old_error = ((palette[previous] - source) ** 2).sum(-1)
-    return np.where(old_error <= new_error + threshold * threshold, previous, indices)
+    keep = old_error <= new_error + threshold * threshold
+    if fresh is not None:
+        keep &= ~np.asarray(fresh, bool)
+    return np.where(keep, previous, indices)
 
 
 def quantize_frames_cpu(frames, gop_palettes, gop_boundaries, width, height,
                         dither_method, apply_perceptual, threads, dither_follow_motion=False,
-                        temporal_hysteresis=0.0):
+                        temporal_hysteresis=0.0, flat_areas="off", flat_masks=None):
     """CPU スレッドプールで減色し、フレームごとに (H, W) のパレット番号を返す。
 
     temporal_hysteresis > 0 なら、前のフレームから色がほとんど変わらない画素は前の番号のままにする
     (keep_previous_blocks)。GOP が変わる (パレットが変わる) ときは前のフレームを使わない。
+    flat_areas は色が一定の面の塗り方 (--flat-areas。mvcodec/color.py の FLAT_AREA_SETTINGS)。flat_masks (dict) を渡すと、
+    フレームの番号ごとの平らな面 (flat_mask) を入れる (ブロックモードの最適化で、平らな面を減色の結果のままにするため)。
     """
     # GOP 間で同じパレットオブジェクトは Pillow パレット画像も共有する
     prepared = {}
     for pal in gop_palettes:
         if id(pal) not in prepared:
             rgb = np.array([item["rgb"] for item in pal], dtype=np.float64)
-            prepared[id(pal)] = (create_palette_image(pal), rgb, len(pal))
+            prepared[id(pal)] = (create_palette_image(pal), rgb, len(pal), palette_tex(pal))
 
     def task(job):
         img_arr, pal, offset = job
-        pal_img, pal_rgb, num_colors = prepared[id(pal)]
+        pal_img, pal_rgb, num_colors, pal_tex = prepared[id(pal)]
         img = Image.fromarray(img_arr)
-        return process_single_frame_img(img, pal_img, width, height, num_colors,
-                                        dither_method, apply_perceptual, pal_rgb, offset)
+        if flat_areas == "off":
+            # 引数を足す前と同じ呼び出し (--flat-areas off は v6.36.0 と同じ出力)
+            return process_single_frame_img(img, pal_img, width, height, num_colors,
+                                            dither_method, apply_perceptual, pal_rgb, offset), None
+        if img.size != (width, height):
+            img = img.resize((width, height), Image.Resampling.LANCZOS)
+        flat = flat_mask(np.asarray(img))
+        return process_single_frame_img(img, pal_img, width, height, num_colors, dither_method, apply_perceptual,
+                                        pal_rgb, offset, pal_tex=pal_tex, flat_areas=flat_areas, flat=flat), flat
 
     state = {"previous": None, "palette": None}
 
     def finish(batch, results):
         """スレッドで減色した結果に、順番どおり条件付き更新をかける。"""
-        for (img_arr, pal, offset), indices in zip(batch, results):
+        for (img_arr, pal, offset), (indices, flat) in zip(batch, results):
+            if flat_masks is not None and flat is not None:
+                flat_masks[state.setdefault("frame", 0)] = flat
+            state["frame"] = state.get("frame", 0) + 1
             if pal is not state["palette"]:
                 state["previous"], state["palette"] = None, pal
             last = state.get("offset", (0, 0))
@@ -480,7 +503,7 @@ def quantize_frames_cpu(frames, gop_palettes, gop_boundaries, width, height,
                 state["previous"] = np.roll(state["previous"], shift=(-dy, -dx), axis=(0, 1))
             if temporal_hysteresis > 0 and np.asarray(img_arr).shape[:2] == indices.shape:
                 indices = keep_previous_blocks(indices, state["previous"], img_arr, prepared[id(pal)][1],
-                                               temporal_hysteresis)
+                                               temporal_hysteresis, flat)
             state["previous"] = indices
             yield indices
 
@@ -585,6 +608,10 @@ def parse_args(argv=None):
     parser.add_argument("--dither-follow-motion", action=argparse.BooleanOptionalAction, default=False,
                         help="Blue Noise / Ordered のディザ模様を映像の全体の動き (パン) に合わせてずらす。"
                              "パンのデータは大きく減るが、模様が毎フレーム動くので置き直すブロックは増える (既定は無効)")
+    parser.add_argument("--flat-areas", default="off", choices=FLAT_AREA_CHOICES,
+                        help="色が一定の面 (空・壁など) の塗り方。smooth はムラを優先して模様の少ないブロックで塗り (近いブロックの"
+                             "無い色だけ混ぜる)、balance は色の正確さを優先する。off は今までと同じ。Blue Noise と"
+                             "ディザなしで効き、CPU で減色する (docs/research/flat_areas.md)")
     parser.add_argument("--perceptual", action=argparse.BooleanOptionalAction, default=True,
                         help="エッジ部のみディザをかける知覚的処理 (--no-perceptual で無効)")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 4)
@@ -916,8 +943,11 @@ def main(argv=None):
     # --- Pass 1: GOP 分割 (+ 自動パレット) ---
     is_adaptive_palette = args.palette == "auto"
     # 立体は横から見るので、原木などは側面 (樹皮) の色で選ぶ
+    # --flat-areas は、自動パレットにも平らな面を塗るブロックを入れる (効くディザのときだけ)
+    palette_flat_areas = args.flat_areas if args.dither_method in FLAT_AREA_DITHERS else "off"
     palette_builder = (make_auto_palette_builder(gpu, args.palette_space, args.palette_colors,
-                                                 side_palette(AUTO_PALETTE_CANDIDATES) if volume else None)
+                                                 side_palette(AUTO_PALETTE_CANDIDATES) if volume else None,
+                                                 palette_flat_areas)
                        if is_adaptive_palette else None)
     print(_tr("convert.analyzing"))
     weight_masks = None
@@ -973,7 +1003,11 @@ def main(argv=None):
 
     dither_method = args.dither_method
     pass2_frames = tee_originals(frame_source())
-    if gpu is not None and dither_method in GPU_DITHER_METHODS:
+    # --flat-areas は CPU の減色だけにある (GPU 版はまだ無い)。効くディザのときは GPU があっても CPU で減色する
+    flat_areas = args.flat_areas if dither_method in FLAT_AREA_DITHERS else "off"
+    # 平らな面は、平面スクリーンのブロックモードの最適化 (下の block_rdo) に渡す。使わないときはためない
+    flat_masks = {} if flat_areas != "off" and block_rdo is not None and not volume else None
+    if gpu is not None and dither_method in GPU_DITHER_METHODS and flat_areas == "off":
         quantized = quantize_frames_gpu(pass2_frames, gop_palettes_rgb, gop_boundaries, width, height,
                                         dither_method, apply_perceptual=args.perceptual, gpu=gpu,
                                         dither_follow_motion=args.dither_follow_motion,
@@ -981,7 +1015,7 @@ def main(argv=None):
     else:
         quantized = quantize_frames_cpu(pass2_frames, gop_palettes, gop_boundaries, width, height,
                                         dither_method, args.perceptual, args.threads, args.dither_follow_motion,
-                                        args.temporal_hysteresis)
+                                        args.temporal_hysteresis, flat_areas, flat_masks)
 
     # 奥行き (relief) か立体にする範囲 (extrude / inflate) の動画。どちらも明るさを使う
     depth_frames = None
@@ -1026,7 +1060,8 @@ def main(argv=None):
             previous_gop = gop_id
         if block_rdo is not None and not volume:
             screen = block_rdo(screen, source_frames.pop(i), gop_palettes_rgb[gop_id],
-                               None if reference is None else reference.reshape(height, width))
+                               None if reference is None else reference.reshape(height, width),
+                               fresh=flat_masks.pop(i, None) if flat_masks is not None else None)
         if original is not None:
             ssim_pairs.append((original, screen.reshape(-1).copy(), gop_id))
         if args.demo_gif:

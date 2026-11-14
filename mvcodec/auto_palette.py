@@ -26,7 +26,7 @@ REFINE_MIN_GAIN = 0.002
 
 
 def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, sample_stride=10, seed=0, warn=None,
-                          color_space="rgb"):
+                          color_space="rgb", flat_areas="off"):
     """
     動画のフレーム群から代表色を抽出し、all_blocksの中から最適なMinecraftブロックを選出する。
     device は torch のデバイス (CUDA / ROCm / DirectML)。None なら CPU で計算する。
@@ -34,6 +34,9 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, 
     warn は GPU で失敗して CPU でやり直すときに例外を渡して呼ぶ関数 (表示言語は呼び出し側で決める)。
     同じ入力からは常に同じパレットを返すよう乱数シードを固定している。
     color_space は K-Means と「代表色に一番近いブロック」を求める色空間 ("oklab" か "rgb")。
+    flat_areas ("smooth" / "balance"。mvcodec/color.py の FLAT_AREA_SETTINGS) を渡すと、代表色ごとに、平らな面を塗るための
+    模様の少ないブロックと、それと混ぜて代表色に合わせる色の近い相手を先に入れる (_flat_blocks_for_color)。
+    "off" は今までと同じ結果。
     """
     rng = np.random.default_rng(seed)
     sampled_pixels = []
@@ -52,6 +55,9 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, 
         return all_blocks[:max_colors] # フォールバック
         
     pixels = np.concatenate(sampled_pixels, axis=0).astype(np.float32)
+    from mvcodec.color import FLAT_AREA_SETTINGS
+
+    flat = FLAT_AREA_SETTINGS.get(flat_areas)
     
     try:
         import torch  # noqa: F401
@@ -59,13 +65,13 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, 
         # PyTorch が無いとき (ブラウザ版の Pyodide など) は、同じ K-Means を numpy で計算する。以前は「一番近いブロックを
         # 数えて多い順」に選んでいて、実写 16 本でぼかした色差が PyTorch の K-Means より平均 +5% (最大 +16%) 悪かった
         def select(count):
-            return _kmeans_select_numpy(pixels, all_blocks, count, seed, color_space)
+            return _kmeans_select_numpy(pixels, all_blocks, count, seed, color_space, flat)
     else:
         state = {"device": device}
 
         def select(count):
             try:
-                return _kmeans_select(pixels, all_blocks, count, state["device"], seed, color_space)
+                return _kmeans_select(pixels, all_blocks, count, state["device"], seed, color_space, flat)
             except Exception as error:
                 if state["device"] is None:
                     raise
@@ -75,9 +81,12 @@ def generate_auto_palette(frames_iter, all_blocks, max_colors=110, device=None, 
                 else:
                     print(f"[MVCodec] Warning: the auto palette could not be computed on the GPU; retrying on the CPU: {error}")
                 state["device"] = None
-                return _kmeans_select(pixels, all_blocks, count, None, seed, color_space)
+                return _kmeans_select(pixels, all_blocks, count, None, seed, color_space, flat)
 
     blocks = select(max_colors) if max_colors != "auto" else _select_color_count(pixels, select)
+    if flat is not None:
+        # refine_palette は平均の色の誤差だけで入れ替えるので、模様の少ないブロックを外してしまう
+        return blocks
     return refine_palette(pixels, blocks, all_blocks)
 
 
@@ -128,7 +137,7 @@ def _to_space(rgb, color_space):
     raise ValueError(f"未対応の色空間: {color_space}")
 
 
-def _kmeans_select(pixels, all_blocks, max_colors, device, seed, color_space="rgb"):
+def _kmeans_select(pixels, all_blocks, max_colors, device, seed, color_space="rgb", flat=None):
     """簡易 K-Means で代表色を求め、それぞれに最も近いブロックを選ぶ (どちらも color_space で計算する)。"""
     import torch
     from mvcodec.device import squared_distances
@@ -151,10 +160,11 @@ def _kmeans_select(pixels, all_blocks, max_colors, device, seed, color_space="rg
             break
         centroids = new_centroids
 
-    return _blocks_from_clusters(centroids.cpu().numpy(), labels.cpu().numpy(), all_blocks, max_colors, color_space)
+    return _blocks_from_clusters(centroids.cpu().numpy(), labels.cpu().numpy(), all_blocks, max_colors, color_space,
+                                 flat)
 
 
-def _kmeans_select_numpy(pixels, all_blocks, max_colors, seed, color_space="rgb"):
+def _kmeans_select_numpy(pixels, all_blocks, max_colors, seed, color_space="rgb", flat=None):
     """_kmeans_select と同じ K-Means を numpy だけで計算する (PyTorch の無いブラウザ版の Pyodide 用)。"""
     X = _to_space_numpy(np.asarray(pixels, np.float32), color_space)
     num_clusters = min(max_colors, len(all_blocks), X.shape[0])
@@ -171,13 +181,14 @@ def _kmeans_select_numpy(pixels, all_blocks, max_colors, seed, color_space="rgb"
         if np.allclose(centroids, new_centroids, atol=1e-2):
             break
         centroids = new_centroids
-    return _blocks_from_clusters(centroids, labels, all_blocks, max_colors, color_space)
+    return _blocks_from_clusters(centroids, labels, all_blocks, max_colors, color_space, flat)
 
 
-def _blocks_from_clusters(centroids, labels, all_blocks, max_colors, color_space):
+def _blocks_from_clusters(centroids, labels, all_blocks, max_colors, color_space, flat=None):
     """K-Means の結果 (color_space の代表色と、各画素のクラスタ番号) からパレットのブロックを選ぶ:
     大きいクラスタの代表色から順に、その色を表すブロック (1 つか、混ぜる 2 つ) を入れ、次に各代表色に一番近い
-    ブロック、足りなければ候補の順に埋める。"""
+    ブロック、足りなければ候補の順に埋める。flat (FLAT_AREA_SETTINGS の値) があれば、最初に大きいクラスタの代表色から順に
+    _flat_blocks_for_color のブロックを入れる。"""
     # 代表色に一番近いブロックは、K-Means の色空間によらず、減色 (パターンディザ) と同じ測り方 (OkLab、色合いの差を
     # CHROMA_WEIGHT 倍) で選ぶ。RGB の距離だと、暗い舞台の灰色の床 (32, 32, 31) に中立なブラックストーンより茶色の
     # 黒のテラコッタが近く、床が錆びた色の粒になっていた (実写 16 本でぼかした色差 −1.0%、ジャンル 24 本は ±0)
@@ -191,6 +202,12 @@ def _blocks_from_clusters(centroids, labels, all_blocks, max_colors, color_space
     selected_blocks = []
     sizes = np.bincount(labels, minlength=len(centroids))
     centroid_rgb = _centroids_to_rgb(centroids, color_space)
+    if flat is not None:
+        for k in np.argsort(-sizes, kind="stable"):
+            for idx in _flat_blocks_for_color(centroid_rgb[k], all_blocks, flat):
+                block = all_blocks[idx]
+                if block not in selected_blocks and len(selected_blocks) < max_colors:
+                    selected_blocks.append(block)
     for k in np.argsort(-sizes, kind="stable"):
         for idx in _blocks_for_color(centroid_rgb[k], all_blocks, MIX_THRESHOLD):
             block = all_blocks[idx]
@@ -245,6 +262,51 @@ def _blocks_for_color(rgb, all_blocks, threshold):
     if mix_dist.min() >= dist[nearest]:
         return [nearest]
     return [int(near[i]), int(near[j])]
+
+
+def _flat_blocks_for_color(rgb, all_blocks, settings):
+    """--flat-areas: 色 rgb の平らな面を塗るためのブロックの番号。減色 (mvcodec/color.py の _knoll_group) と同じ物差しで選ぶ:
+    1 つ目は「色の距離² (色合いを CHROMA_WEIGHT 倍) + alpha_flat × テクスチャのばらつき²」が一番小さいブロック。
+    それが MIX_THRESHOLD より遠く、settings["beta_flat"] < 1 なら、混ぜてよい距離 (max(radius, FLAT_MIX_ERROR_FACTOR × 距離))
+    の中から、1/8 ずつの割合で混ぜたときの J (平均の色の誤差² + beta_flat × 粒の分散) が一番小さくなる相手も入れる。"""
+    from mvcodec.block_rdo import rgb_to_oklab
+    from mvcodec.color import CHROMA_WEIGHT, FLAT_MIX_ERROR_FACTOR, palette_tex
+
+    scale = np.array([1.0, CHROMA_WEIGHT, CHROMA_WEIGHT], np.float32)
+    block_rgb = np.array([b["rgb"] for b in all_blocks], dtype=np.float32)
+    lab = rgb_to_oklab(block_rgb).astype(np.float64)
+    tex = palette_tex(all_blocks).astype(np.float64)
+    target = rgb_to_oklab(np.asarray(rgb, np.float32)[None])[0].astype(np.float64)
+    first = int(((((lab - target) * scale) ** 2).sum(1) + settings["alpha_flat"] * tex ** 2).argmin())
+    error = np.sqrt(((lab[first] - target) ** 2).sum())
+    beta = settings["beta_flat"]
+    if error <= MIX_THRESHOLD or beta >= 1.0:
+        return [first]
+    limit = max(settings["radius"], FLAT_MIX_ERROR_FACTOR * error)
+    partners = np.nonzero((np.sqrt(((lab - lab[first]) ** 2).sum(1)) <= limit) & (np.arange(len(lab)) != first))[0]
+    if len(partners) == 0:
+        return [first]
+    lin = _srgb_to_linear_np(block_rgb.astype(np.float64))
+    t = (np.arange(1, MIX_STEPS) / MIX_STEPS)[:, None, None]  # (steps, 1, 1): 相手の割合
+    mix_lin = lin[first][None, None] * (1 - t) + lin[partners][None] * t  # (steps, P, 3)
+    mix_lab = _linear_to_lab100(mix_lin)
+    grain = ((1 - t[..., 0]) * (((lab[first] - mix_lab) ** 2).sum(-1) + tex[first] ** 2)
+             + t[..., 0] * (((lab[partners][None] - mix_lab) ** 2).sum(-1) + tex[partners][None] ** 2))
+    cost = ((mix_lab - target) ** 2).sum(-1) + beta * grain
+    if cost.min() >= error ** 2 + beta * tex[first] ** 2:
+        return [first]
+    return [first, int(partners[np.unravel_index(int(cost.argmin()), cost.shape)[1]])]
+
+
+def _srgb_to_linear_np(rgb):
+    c = np.asarray(rgb, dtype=np.float64) / 255.0
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def _linear_to_lab100(lin):
+    from mvcodec.block_rdo import _M1, _M2
+
+    return np.cbrt(np.maximum(lin, 0) @ _M1.T) @ (_M2.T * 100.0)
 
 
 def _mix_error(goal_lin, goal_lab, weights, pal_rgb):

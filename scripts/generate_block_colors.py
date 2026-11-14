@@ -22,6 +22,9 @@
 - アドオンの対応する一番古い版 (min_engine_version 1.21.80) に無いブロックは使わない (置けないと土になる)
 - 上面も側面も色がほとんど同じブロック (OkLab の距離 × 100 が DEDUPE_DISTANCE 未満、色合いだけの距離も
   DEDUPE_CHROMA_DISTANCE 未満) は、先に書いた方だけ残す
+- テクスチャのばらつき (tex: 上面、tex_side: 側面) は、テクスチャの各画素の色が平均の色からどれだけ離れているか (OkLab の
+  距離 × 100 の二乗平均の平方根)。コンクリートは 0.3、羊毛は 3〜5、作業台は 16 ほど。模様の強いブロックを 1 色の面に
+  並べるとムラに見えるので、減色で「模様の少ないブロック」を選ぶのに使う (mvcodec/color.py の --flat-areas)
 - ステンドグラス (group "glass") は半透明なので、不透明な画素ほど重く (アルファで重みを付けて) 平均し、平均のアルファも書く。
   「全ブロック」や自動パレットには入れず、ホログラム用の「ステンドグラス」パレットだけで使う (mvcodec/color.py)。
   不透明なブロックと色が近くても別のものとして残す
@@ -183,6 +186,17 @@ def oklab(rgb):
     return m2 @ np.cbrt(m1 @ lin)
 
 
+def texture_spread(img, mean_rgb):
+    """テクスチャ (N, 4 の RGBA) の各画素の色が、平均の色 mean_rgb からどれだけ離れているか (OkLab の距離 × 100 の
+    二乗平均の平方根、小数 1 桁)。1 色のテクスチャは 0。半透明の画素は mean_color と同じくアルファで重みを付ける。"""
+    alpha = img[:, 3] / 255.0
+    weights = alpha if alpha.sum() > 0 else np.ones_like(alpha)
+    lab = np.array([oklab(pixel) for pixel in np.unique(img[:, :3], axis=0)]) * 100
+    _, inverse = np.unique(img[:, :3], axis=0, return_inverse=True)
+    distance = ((lab[inverse.reshape(-1)] - oklab(mean_rgb) * 100) ** 2).sum(axis=1)
+    return round(float(np.sqrt((distance * weights).sum() / weights.sum())), 1)
+
+
 def block_names(samples, ref=None):
     path = "metadata/vanilladata_modules/mojang-blocks.json"
     if ref is None:
@@ -264,6 +278,7 @@ def main(argv=None):
             skipped.append(f"{block} ({twin['block']} とほぼ同じ色)")
             continue
         rows.append({"group": group, "block": block_id, "rgb": rgb, "side": side_rgb, "lab": lab, "side_lab": side_lab,
+                     "tex": texture_spread(up, rgb), "tex_side": texture_spread(side, side_rgb),
                      "alpha": alpha if translucent else None})
 
     lines = [
@@ -272,6 +287,7 @@ def main(argv=None):
         f"出典: Mojang/bedrock-samples {version} のテクスチャの上面 (rgb) と側面 (side) を線形の明るさで平均した sRGB。",
         f"1.21.80 ({MIN_VERSION_TAG}) にもあるブロックだけ。{len(rows)} 色 (うち半透明 "
         f"{sum(r['group'] in TRANSLUCENT_GROUPS for r in rows)} 色。alpha は平均の不透明度)。",
+        "tex / tex_side は上面 / 側面のテクスチャのばらつき (各画素の色の、平均の色からの OkLab の距離 × 100 の二乗平均の平方根)。",
         '"""',
         "",
         "BLOCK_COLORS = [",
@@ -279,7 +295,7 @@ def main(argv=None):
     for row in rows:
         alpha = f', "alpha": {row["alpha"]}' if row["alpha"] is not None else ""
         lines.append(f'    {{"group": "{row["group"]}", "block": "{row["block"]}", "rgb": {tuple(row["rgb"])}, '
-                     f'"side": {tuple(row["side"])}{alpha}}},')
+                     f'"side": {tuple(row["side"])}, "tex": {row["tex"]}, "tex_side": {row["tex_side"]}{alpha}}},')
     lines += ["]", ""]
     Path(args.output).write_text("\n".join(lines), encoding="utf-8")
     print(f"{len(rows)} colors -> {args.output}")

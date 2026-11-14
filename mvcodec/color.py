@@ -86,7 +86,8 @@ ALL_BLOCKS = CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE
 
 def _palette_item(item):
     return {"name": item["block"].split(":", 1)[1], "block": item["block"], "rgb": tuple(item["rgb"]),
-            "side": tuple(item.get("side", item["rgb"])), "group": item["group"]}
+            "side": tuple(item.get("side", item["rgb"])), "group": item["group"],
+            "tex": item.get("tex", 0.0), "tex_side": item.get("tex_side", item.get("tex", 0.0))}
 
 
 # 1 つのパレットに入れられる色の数 (パレット番号は 7bit、立体は 1 つを空気に使う)
@@ -111,8 +112,10 @@ def _most_distinct(items, count):
 
 
 def side_palette(palette):
-    """立体用: 各ブロックの色を側面の色にしたパレット (立体は横から見るので、原木などは樹皮の色で選ぶ)。"""
-    return [dict(item, rgb=tuple(item.get("side", item["rgb"]))) for item in palette]
+    """立体用: 各ブロックの色を側面の色にしたパレット (立体は横から見るので、原木などは樹皮の色で選ぶ)。
+    テクスチャのばらつき (tex) も側面のものにする。"""
+    return [dict(item, rgb=tuple(item.get("side", item["rgb"])),
+                 tex=item.get("tex_side", BLOCK_TEX_SIDE.get(item["block"], 0.0))) for item in palette]
 
 
 # 重力で落ちず・時間で変化せず・まわりに作用しない不透明な立方体のブロックすべて (上面も側面も色がほぼ同じものは 1 つに絞り済み)。
@@ -140,6 +143,16 @@ AUTO_PALETTE_CANDIDATES = [item for item in OPAQUE_BLOCKS if item["group"] != "l
 BLOCK_RGB = {item["block"]: tuple(item["rgb"]) for item in ALL_BLOCKS + WOOL_PALETTE + OPAQUE_BLOCKS + GLASS_PALETTE}
 # ブロックID -> 側面の RGB (立体のプレビュー用。原木などは上面と違う)
 BLOCK_SIDE_RGB = {**BLOCK_RGB, **{item["block"]: tuple(item.get("side", item["rgb"])) for item in BLOCK_COLORS}}
+# ブロックID -> テクスチャのばらつき (上面 / 側面。OkLab × 100。mvcodec/block_colors.py)。表に無いブロックは 0
+BLOCK_TEX = {item["block"]: float(item.get("tex", 0.0)) for item in BLOCK_COLORS}
+BLOCK_TEX_SIDE = {item["block"]: float(item.get("tex_side", item.get("tex", 0.0))) for item in BLOCK_COLORS}
+
+
+def palette_tex(palette):
+    """パレットの各ブロックのテクスチャのばらつき (K,)。項目に tex があればそれ (立体は side_palette で側面の値)、
+    無ければ (手書きの CONCRETE_PALETTE など) ブロック ID で引く。"""
+    return np.array([float(item["tex"]) if "tex" in item else BLOCK_TEX.get(item["block"], 0.0) for item in palette],
+                    dtype=np.float32)
 
 def create_palette_image(palette):
     pal_img = Image.new("P", (1, 1))
@@ -252,13 +265,26 @@ def apply_custom_dither(img, palette_rgb, dither_method):
     return out_indices
 
 def process_single_frame_img(img, pal_img, width, height, num_colors, dither_method, apply_perceptual=True, palette_rgb=None,
-                             dither_offset=(0, 0)):
+                             dither_offset=(0, 0), pal_tex=None, flat_areas="off", flat=None):
     """1 フレームをパレット番号 (H, W) にする。dither_offset は Blue Noise / Ordered の模様をずらす量
-    (mvcodec/dither_motion.py: 映像の全体の動きに合わせて模様を動かし、パンでのちらつきとデータ量を抑える)。"""
+    (mvcodec/dither_motion.py: 映像の全体の動きに合わせて模様を動かし、パンでのちらつきとデータ量を抑える)。
+    flat_areas ("smooth" / "balance") と pal_tex (palette_tex) を渡すと、Blue Noise とディザなしで、色が一定の面を
+    模様の少ないブロックで塗る (FLAT_AREA_SETTINGS)。"off" と、ほかのディザでは今までと同じ結果。
+    flat は、求め済みの flat_mask (大きさを width × height にしたフレームのもの。None ならここで求める)。"""
     from mvcodec.dither_motion import dither_pattern
 
     if img.size != (width, height):
         img = img.resize((width, height), Image.Resampling.LANCZOS)
+    settings = FLAT_AREA_SETTINGS.get(flat_areas)
+    if settings is not None and palette_rgb is not None and dither_method in FLAT_AREA_DITHERS:
+        rgb = np.asarray(img)
+        flat = flat_mask(rgb) if flat is None else flat
+        tex = np.zeros(len(palette_rgb), np.float32) if pal_tex is None else np.asarray(pal_tex, np.float32)
+        if dither_method == "none":
+            return nearest_oklab_indices(rgb, palette_rgb, tex, flat, settings) % num_colors
+        noise = dither_pattern("blue_noise", width, height, dither_offset) + 0.5
+        mask = get_edge_mask_cpu(img)[..., 0] if apply_perceptual else None
+        return knoll_dither_indices(rgb, palette_rgb, noise, mask, pal_tex=tex, flat=flat, settings=settings) % num_colors
         
     if dither_method == 'blue_noise' and palette_rgb is not None:
         noise = dither_pattern("blue_noise", width, height, dither_offset) + 0.5
@@ -311,8 +337,10 @@ KNOLL_STEPS = 8
 KNOLL_GAIN = 0.5
 
 
-def nearest_oklab_indices(rgb, palette_rgb):
-    """各画素に一番近いパレットの色の番号 (OkLab、色合いの差を CHROMA_WEIGHT 倍に重く見る)。"""
+def nearest_oklab_indices(rgb, palette_rgb, pal_tex=None, flat=None, settings=None):
+    """各画素に一番近いパレットの色の番号 (OkLab、色合いの差を CHROMA_WEIGHT 倍に重く見る)。
+    settings (FLAT_AREA_SETTINGS の値) を渡すと、距離に「α × テクスチャのばらつき²」を足す (模様の強いブロックを避ける)。
+    α は flat (平らな面、flat_mask) の画素で settings["alpha_flat"]、それ以外で settings["alpha_detail"]。"""
     from mvcodec.block_rdo import rgb_to_oklab
 
     scale = np.array([1.0, CHROMA_WEIGHT, CHROMA_WEIGHT], np.float32)
@@ -320,6 +348,11 @@ def nearest_oklab_indices(rgb, palette_rgb):
     pal = rgb_to_oklab(np.clip(np.asarray(palette_rgb), 0, 255).astype(np.uint8)) * scale
     # |x - p|^2 = |x|^2 - 2 x.p + |p|^2 (|x|^2 は比較に要らない)
     d = (pal ** 2).sum(1)[None] - 2.0 * lab @ pal.T
+    if settings is not None and pal_tex is not None:
+        alpha = np.full(len(lab), settings["alpha_detail"], np.float32)
+        if flat is not None:
+            alpha[np.asarray(flat, bool).reshape(-1)] = settings["alpha_flat"]
+        d = d + alpha[:, None] * (np.asarray(pal_tex, np.float32) ** 2)[None]
     return d.argmin(1).astype(np.int32).reshape(np.asarray(rgb).shape[:2])
 
 def _srgb_to_linear_np(rgb):
@@ -333,14 +366,18 @@ def _linear_to_oklab_np(lin):
     return np.cbrt(np.maximum(lin, 0) @ _M1.T.astype(np.float32)) @ (_M2.T * 100.0).astype(np.float32)
 
 
-def knoll_dither_indices(rgb, palette_rgb, noise01, edge_mask=None, steps=KNOLL_STEPS, error_gain=KNOLL_GAIN):
+def knoll_dither_indices(rgb, palette_rgb, noise01, edge_mask=None, steps=KNOLL_STEPS, error_gain=KNOLL_GAIN,
+                         pal_tex=None, flat=None, settings=None):
     """パターンディザ (Knoll): 各画素で、誤差を足しながら一番近い色を steps 回選んで候補を作り、明るさの順に並べて、
     ノイズ (0〜1) で 1 つを選ぶ。候補の平均 (線形の明るさ) が元の色に近づくので、明るさだけでなく色合いも、2 色に限らず
     混ざる (肌の桃色が白と暖色のブロックの混ざりになる)。元の色にちょうど合うブロックがある所では粒が出ず、暗い所で
     明るさの揺らぎが大きすぎることもない (以前の Blue Noise は明るさに一定の揺らぎを足していた)。
-    edge_mask (輪郭で小さい) が 0.5 未満の画素は 1 つ目の候補 (一番近い色) にする。"""
+    edge_mask (輪郭で小さい) が 0.5 未満の画素は 1 つ目の候補 (一番近い色) にする。
+    settings (FLAT_AREA_SETTINGS の値) と pal_tex (palette_tex) を渡すと _knoll_flat_areas で減色する。"""
     from mvcodec.block_rdo import rgb_to_oklab
 
+    if settings is not None:
+        return _knoll_flat_areas(rgb, palette_rgb, noise01, edge_mask, steps, error_gain, pal_tex, flat, settings)
     shape = np.asarray(rgb).shape[:2]
     scale = np.array([1.0, CHROMA_WEIGHT, CHROMA_WEIGHT], np.float32)
     pixels = np.asarray(rgb, dtype=np.uint8).reshape(-1, 3)
@@ -372,6 +409,178 @@ def knoll_dither_indices(rgb, palette_rgb, noise01, edge_mask=None, steps=KNOLL_
     if edge_mask is not None:
         out = np.where(np.asarray(edge_mask, dtype=np.float32).reshape(-1) < 0.5, first, out)
     return out.astype(np.int32).reshape(shape)
+
+
+# --flat-areas: 色が一定の面 (元の映像で 1 色の空や壁) を、模様の少ないブロック 1 種類で塗る (docs/research/flat_areas.md)。
+# 見た目の悪さを J = 平均の色の誤差² + β × 粒の分散 (粒 = 混ぜたブロックの色の散らばり + テクスチャのばらつき²) で測り、
+# 平らな面では β を大きく (粒が隠れる所が無い)、それ以外では小さくする。照合の距離には α × テクスチャのばらつき² を足す。
+# radius は、パターンディザで混ぜてよい相手の、一番近いブロックからの距離 (OkLab × 100) の上限 (明暗の差が大きい粒を作らない)
+# smooth は平らな面のムラを優先し、balance は色の正確さを優先する。β_flat を 1 (混ぜない) にすると、近いブロックの無い色
+# (テスト映像の空・紺の背景) がくすむので、平らな面でも混ぜた方が J が小さい色は混ぜる。値はテスト映像・アニメ風・
+# グラデーション・パンで測った (docs/research/flat_areas.md の「色のくすみを直す」)
+FLAT_AREA_SETTINGS = {
+    "smooth": {"alpha_flat": 1.0, "beta_flat": 0.5, "alpha_detail": 0.25, "beta_detail": 0.1, "radius": 12.0},
+    "balance": {"alpha_flat": 0.5, "beta_flat": 0.25, "alpha_detail": 0.25, "beta_detail": 0.1, "radius": 12.0},
+}
+FLAT_AREA_CHOICES = ("off", "smooth", "balance")
+# 混ぜてよい相手の距離の上限は max(radius, FLAT_MIX_ERROR_FACTOR × 一番近いブロックまでの距離)。色の近いブロックが無い色
+# (コンクリート 16 色のグラデーションなど) では、遠いブロックどうしを混ぜないと色の段になるので、元の色から遠いほど広げる
+FLAT_MIX_ERROR_FACTOR = 3.0
+# --flat-areas が効くディザ。ほかのディザ (Ordered・誤差拡散) では "off" と同じ
+FLAT_AREA_DITHERS = ("blue_noise", "none")
+# flat_mask: 局所的に平らとみなす窓と標準偏差 (OkLab × 100)、平らな画素をたどる歩数と、たどった範囲の色の幅の上限、
+# 面のふちへ広げるときの隣の画素との色の差の上限
+FLAT_WINDOW = 7
+FLAT_STD = 0.5
+FLAT_REACH = 32
+FLAT_RANGE = 1.0
+FLAT_GROW = 0.7
+# この大きさの正方形がまるごと平らな所に入らない、小さな平らな面は使わない (なめらかな模様が動く映像で、小さな面がコマごとに
+# 出たり消えたりして、置き直すブロックとデータが増えていた。パンの合成映像でデータ +16% → +1%)
+FLAT_MIN_SIZE = 9
+_CHROMA_SCALE = np.array([1.0, CHROMA_WEIGHT, CHROMA_WEIGHT], np.float32)
+
+
+def _box_mean(img, window):
+    """(H, W, C) の window × window の平均 (端は端の画素を繰り返す)。積分画像で計算する。"""
+    pad = window // 2
+    padded = np.pad(img, ((pad, pad), (pad, pad), (0, 0)), mode="edge").astype(np.float64)
+    integral = np.zeros((padded.shape[0] + 1, padded.shape[1] + 1, padded.shape[2]), np.float64)
+    integral[1:, 1:] = padded.cumsum(0).cumsum(1)
+    h, w = img.shape[:2]
+    total = (integral[window:window + h, window:window + w] - integral[:h, window:window + w]
+             - integral[window:window + h, :w] + integral[:h, :w])
+    return total / (window * window)
+
+
+def _neighbour_views(axis, step):
+    """上下左右の隣へ 1 つずらすときの、(受け取る側, 渡す側) のスライス。"""
+    dst = [slice(None), slice(None)]
+    src = [slice(None), slice(None)]
+    dst[axis] = slice(1, None) if step == 1 else slice(0, -1)
+    src[axis] = slice(0, -1) if step == 1 else slice(1, None)
+    return tuple(dst), tuple(src)
+
+
+def flat_mask(rgb, window=FLAT_WINDOW, threshold=FLAT_STD, reach=FLAT_REACH, max_range=FLAT_RANGE, grow=FLAT_GROW,
+              min_size=FLAT_MIN_SIZE):
+    """元のフレーム (H, W, 3) で「色が一定の面」にある画素 (True) を返す。3 段で決める:
+    1. まわり window × window の色 (OkLab × 100) の標準偏差が threshold 未満 (局所的に平ら)
+    2. 1 の画素を上下左右に reach 歩までたどって届く範囲の色の幅 (最大 − 最小) が max_range 未満
+       (空のゆるいグラデーションは局所的には平らでも、たどると色が変わるので外れる。外さないと単色の帯になる)
+    3. 面のふち (窓の半分の幅) は 1 で平らにならないので、平らな画素の隣で色の差が grow 未満の画素へ広げる
+       (広げないと、面のまわりに別のブロックの輪ができる)
+    4. min_size × min_size の正方形がまるごと平らな所に入る画素だけ残す (小さな面を除く)"""
+    from mvcodec.block_rdo import rgb_to_oklab
+
+    rgb = np.asarray(rgb, dtype=np.uint8)
+    lab = rgb_to_oklab(rgb.reshape(-1, 3)).reshape(*rgb.shape[:2], 3).astype(np.float64)  # OkLab × 100
+    variance = (_box_mean(lab * lab, window) - _box_mean(lab, window) ** 2).sum(-1)
+    flat = np.sqrt(np.maximum(variance, 0.0)) < threshold
+    if not flat.any():
+        return flat
+    if reach > 0:
+        # 最大と最小をまとめて伝える: (色, −色) の最大を隣から受け取る。平らでない画素は cap (−∞) で打ち消して、
+        # 平らな画素どうしだけでつながるようにする
+        cap = np.where(flat, np.float32(np.inf), np.float32(-np.inf))[..., None]
+        extreme = np.minimum(np.concatenate([lab, -lab], axis=-1).astype(np.float32), cap)
+        for i in range(reach):
+            spread_to = extreme.copy()
+            for axis in (0, 1):
+                for step in (1, -1):
+                    dst, src = _neighbour_views(axis, step)
+                    np.maximum(spread_to[dst], extreme[src], out=spread_to[dst])
+            np.minimum(spread_to, cap, out=spread_to)
+            if i % 8 == 7 and np.array_equal(spread_to, extreme):
+                break
+            extreme = spread_to
+        hi, neg_lo = extreme[..., :3], extreme[..., 3:]
+        with np.errstate(invalid="ignore"):
+            flat &= np.sqrt(((hi + neg_lo) ** 2).sum(-1)) < max_range
+    # 角まで届くよう、上下左右に (窓の半分の幅) × 2 歩まで広げる
+    # 隣どうしの色の差は変わらないので、上下左右それぞれ 1 回だけ求める
+    links = []
+    for axis in (0, 1):
+        for step in (1, -1):
+            dst, src = _neighbour_views(axis, step)
+            links.append((dst, src, ((lab[dst] - lab[src]) ** 2).sum(-1) < grow * grow))
+    for _ in range(2 * (window // 2) + 1):
+        grown = flat.copy()
+        for dst, src, close in links:
+            grown[dst] |= flat[src] & close
+        if np.array_equal(grown, flat):
+            break
+        flat = grown
+    if min_size > 1 and flat.any():
+        pad = min_size // 2
+        inside = np.lib.stride_tricks.sliding_window_view(np.pad(flat, pad), (min_size, min_size)).all(axis=(-1, -2))
+        flat &= np.lib.stride_tricks.sliding_window_view(np.pad(inside, pad), (min_size, min_size)).any(axis=(-1, -2))
+    return flat
+
+
+def _knoll_group(src, noise, inverse, pal_lin, pal_lab, pal_tex, pair, alpha, beta, radius, steps, error_gain):
+    """_knoll_flat_areas の 1 組 (同じ α, β の画素): 色ごとの候補を作り、(画素ごとの番号, 一番近いブロック) を返す。
+    src は違う色 (U, 3) の uint8、inverse は画素から色への番号、noise は画素ごとのノイズ (0〜1)。"""
+    pal_w = pal_lab * _CHROMA_SCALE
+    pal_sq = (pal_w ** 2).sum(1)
+    pen = alpha * pal_tex ** 2
+    goal = _srgb_to_linear_np(src)
+    goal_lab = _linear_to_oklab_np(goal)
+    first = (pal_sq[None] - 2.0 * (goal_lab * _CHROMA_SCALE) @ pal_w.T + pen[None]).argmin(1)
+    one = first[inverse]
+    if beta >= 1.0:  # 混ぜない (単色)
+        return one, one
+    limit = np.maximum(radius, FLAT_MIX_ERROR_FACTOR * np.sqrt(((pal_lab[first] - goal_lab) ** 2).sum(1)))
+    blocked = pair[first] > limit[:, None]  # (U, K): 混ぜてはいけない相手
+    err = np.zeros_like(goal)
+    cands = np.empty((steps, len(src)), np.int32)
+    for i in range(steps):
+        lab = _linear_to_oklab_np(np.clip(goal + err * error_gain, 0, 1)) * _CHROMA_SCALE
+        d = pal_sq[None] - 2.0 * lab @ pal_w.T + pen[None]
+        d[blocked] = np.inf
+        c = d.argmin(1)
+        cands[i] = c
+        err += goal - pal_lin[c]
+    mix_lab = _linear_to_oklab_np(pal_lin[cands].mean(0))
+    j_mix = ((mix_lab - goal_lab) ** 2).sum(1) + beta * (
+        ((pal_lab[cands] - mix_lab[None]) ** 2).sum(-1) + pal_tex[cands] ** 2).mean(0)
+    j_one = ((pal_lab[first] - goal_lab) ** 2).sum(1) + beta * pal_tex[first] ** 2
+    order = np.argsort(pal_lab[:, 0][cands], axis=0, kind="stable")
+    cands = np.take_along_axis(cands, order, 0)
+    pick = np.clip((noise * steps).astype(np.int32), 0, steps - 1)
+    return np.where((j_mix < j_one)[inverse], cands[pick, inverse], one), one
+
+
+def _knoll_flat_areas(rgb, palette_rgb, noise01, edge_mask, steps, error_gain, pal_tex, flat, settings):
+    """--flat-areas のパターンディザ。knoll_dither_indices に次の 3 つを足したもの:
+    1. 照合の距離に α × テクスチャのばらつき² を足す (模様の強いブロックを避ける)
+    2. 混ぜる候補を、一番近いブロックから OkLab × 100 で max(radius, FLAT_MIX_ERROR_FACTOR × 一番近いブロックまでの距離)
+       以内のブロックに限る (近い色で表せるのに、明暗の差が大きい粒を作らない)
+    3. 混ぜた結果の J (平均の色の誤差² + β × 粒の分散) が単色より小さい色だけ混ぜる (β ≥ 1 なら混ぜない)
+    平らな面 (flat) とそれ以外で (α, β) を変える。色ごとの計算は knoll_dither_indices と同じく違う色の数だけ。"""
+    shape = np.asarray(rgb).shape[:2]
+    pixels = np.asarray(rgb, dtype=np.uint8).reshape(-1, 3)
+    noise = np.asarray(noise01, dtype=np.float32).reshape(-1)
+    is_flat = np.zeros(len(pixels), bool) if flat is None else np.asarray(flat, bool).reshape(-1)
+    pal_lin = _srgb_to_linear_np(np.clip(np.asarray(palette_rgb, dtype=np.float32), 0, 255))
+    pal_lab = _linear_to_oklab_np(pal_lin)
+    tex = np.zeros(len(pal_lin), np.float32) if pal_tex is None else np.asarray(pal_tex, np.float32)
+    pair = np.sqrt(((pal_lab[:, None] - pal_lab[None]) ** 2).sum(-1))
+    out = np.empty(len(pixels), np.int32)
+    one = np.empty(len(pixels), np.int32)
+    for selected, alpha, beta in ((is_flat, settings["alpha_flat"], settings["beta_flat"]),
+                                  (~is_flat, settings["alpha_detail"], settings["beta_detail"])):
+        if not selected.any():
+            continue
+        part = pixels[selected]
+        key = (part[:, 0].astype(np.int32) << 16) | (part[:, 1].astype(np.int32) << 8) | part[:, 2]
+        unique_keys, inverse = np.unique(key, return_inverse=True)
+        src = np.stack([(unique_keys >> 16) & 0xFF, (unique_keys >> 8) & 0xFF, unique_keys & 0xFF], 1).astype(np.uint8)
+        out[selected], one[selected] = _knoll_group(src, noise[selected], inverse.reshape(-1), pal_lin, pal_lab, tex,
+                                                    pair, alpha, beta, settings["radius"], steps, error_gain)
+    if edge_mask is not None:
+        out = np.where(np.asarray(edge_mask, dtype=np.float32).reshape(-1) < 0.5, one, out)
+    return out.reshape(shape)
 
 
 def rgb_to_oklab_torch(rgb_tensor):
