@@ -141,13 +141,16 @@ class BlockRDO:
             self._pal_lab = rgb_to_oklab(np.asarray(palette_rgb, dtype=np.float32)) * _LAB_SCALE
         return self._pal_lab
 
-    def __call__(self, indices, source_rgb, palette_rgb, reference=None, place_weight=None):
+    def __call__(self, indices, source_rgb, palette_rgb, reference=None, place_weight=None, fresh=None):
         """indices (H, W) のパレット番号を、ブロックごとに選んだ候補に置き替えて返す。
 
         source_rgb は減色前の (H, W, 3)、reference はアドオンが今表示している盤面 (同じパレットの番号、未設置は -1)。
         GOP の先頭などで前の盤面が使えないときは None (skip を使わない)。
         place_weight (H, W) は 2.5D の立体の色の平面用: 各マスの色を変えると置き直すブロックの数 (列の厚み)。
         0 のマスは空の列なので、色の誤差にも数えない (見えない)。
+        fresh (H, W) が True のマス (--flat-areas の平らな面) は減色の結果 (indices) のままにする: 表示中のままにする
+        条件付き更新をかけず、そのマスを含むブロックでは減色の結果と違う候補を使わない (色の誤差は平均の色で測るので、
+        前のフレームの模様の強いブロックや混ぜた粒が「同じくらい良い」と見なされて残るのを防ぐ)。
         """
         target = np.asarray(indices, dtype=np.int32)
         if self.strength <= 0:
@@ -161,8 +164,9 @@ class BlockRDO:
         if reference is not None:
             reference = np.asarray(reference, dtype=np.int32).reshape(h, w)
 
+        fresh = None if fresh is None else np.asarray(fresh, bool).reshape(h, w)
         if reference is not None and self.hysteresis > 0:
-            target = self._keep_reference(target, reference, source_rgb, palette_rgb)
+            target = self._keep_reference(target, reference, source_rgb, palette_rgb, fresh)
         candidates = {"exact": target}
         # データはエンコーダと同じく動き補償した予測との差で見積もる (置く費用は表示中の盤面との差)
         predicted = reference
@@ -219,6 +223,9 @@ class BlockRDO:
             for name in FLAT_MODES:
                 if name in candidates:
                     usable[names.index(name)] &= ~gradient
+        if fresh is not None and fresh.any():
+            for k, name in enumerate(names[1:], 1):
+                usable[k] &= _block_sum((fresh & (candidates[name] != target)).astype(np.int32), b) == 0
         # 未設置 (-1) のマスを含む skip / motion は使えない (前の盤面に描かれていない)
         for name in ("skip", "motion"):
             if name in candidates:
@@ -249,14 +256,17 @@ class BlockRDO:
         self.added_errors.append(added)
         return choice
 
-    def _keep_reference(self, target, reference, source_rgb, palette_rgb):
+    def _keep_reference(self, target, reference, source_rgb, palette_rgb, fresh=None):
         palette = np.asarray(palette_rgb, dtype=np.float32)
         source = np.asarray(source_rgb, dtype=np.float32).reshape(*target.shape, 3)
         valid = reference >= 0
         ref = np.where(valid, reference, 0)
         new_error = ((palette[target] - source) ** 2).sum(-1)
         old_error = ((palette[ref] - source) ** 2).sum(-1)
-        return np.where(valid & (old_error <= new_error + self.hysteresis ** 2), ref, target).astype(np.int32)
+        keep = valid & (old_error <= new_error + self.hysteresis ** 2)
+        if fresh is not None:
+            keep &= ~fresh
+        return np.where(keep, ref, target).astype(np.int32)
 
     def _distortion(self, recon, pal_lab, src_lab, src_blur):
         lab = pal_lab[recon]

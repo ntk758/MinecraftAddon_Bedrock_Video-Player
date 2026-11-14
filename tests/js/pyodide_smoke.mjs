@@ -90,11 +90,17 @@ _files, _report = convert_image_mode.build_files(
 _image = zipfile.ZipFile(io.BytesIO(convert_image_mode.zip_bytes(_files)))
 assert "BP/scripts/image_main.js" in _image.namelist() and "RP/sounds/bvp_image/clip/chunk_0.ogg" in _image.namelist()
 counts["image"] = _report["videos"][0]["frame_count"]
+# 色が一定の面の塗り方 (--flat-areas smooth): 平らな面の判定と減色が 32bit の Pyodide でも最後まで動く
+assert convert.main(["--frames-dir", "/work/frames", "--output", "/work/flat.js", "--width", "64", "--height", "36",
+                     "--fps", "10", "--palette", "auto", "--dither-method", "blue_noise", "--device", "cpu", "--threads", "1",
+                     "--flat-areas", "smooth"]) == 0
+_text = open("/work/flat.js", encoding="utf-8").read()
+counts["flat"] = sum(1 for _ in iter_decoded_frames(json.loads(_text[_text.index("{"):_text.rindex("}") + 1])))
 json.dumps(counts)
 `);
 const counts = JSON.parse(result);
 console.log(JSON.stringify(counts));
-if (counts.screen !== 20 || counts.relief !== 20 || counts.vox !== 5) process.exit(1);
+if (counts.screen !== 20 || counts.relief !== 20 || counts.vox !== 5 || counts.flat !== 20) process.exit(1);
 // 7×7×7 の殻の中の閉じた空洞 (5×5×5) が埋まって、詰まった立方体 (343 マス) になる
 if (counts.shell !== 343) process.exit(1);
 // 画像モードのアドオンに 12 コマ全部が入る
