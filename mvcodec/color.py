@@ -86,7 +86,8 @@ ALL_BLOCKS = CONCRETE_PALETTE + TERRACOTTA_PALETTE + FROGLIGHT_PALETTE
 
 def _palette_item(item):
     return {"name": item["block"].split(":", 1)[1], "block": item["block"], "rgb": tuple(item["rgb"]),
-            "side": tuple(item.get("side", item["rgb"])), "group": item["group"]}
+            "side": tuple(item.get("side", item["rgb"])), "group": item["group"],
+            "tex": item.get("tex", 0.0), "tex_side": item.get("tex_side", item.get("tex", 0.0))}
 
 
 # 1 つのパレットに入れられる色の数 (パレット番号は 7bit、立体は 1 つを空気に使う)
@@ -111,8 +112,10 @@ def _most_distinct(items, count):
 
 
 def side_palette(palette):
-    """立体用: 各ブロックの色を側面の色にしたパレット (立体は横から見るので、原木などは樹皮の色で選ぶ)。"""
-    return [dict(item, rgb=tuple(item.get("side", item["rgb"]))) for item in palette]
+    """立体用: 各ブロックの色を側面の色にしたパレット (立体は横から見るので、原木などは樹皮の色で選ぶ)。
+    テクスチャのばらつき (tex) も側面のものにする。"""
+    return [dict(item, rgb=tuple(item.get("side", item["rgb"])),
+                 tex=item.get("tex_side", BLOCK_TEX_SIDE.get(item["block"], 0.0))) for item in palette]
 
 
 # 重力で落ちず・時間で変化せず・まわりに作用しない不透明な立方体のブロックすべて (上面も側面も色がほぼ同じものは 1 つに絞り済み)。
@@ -140,6 +143,16 @@ AUTO_PALETTE_CANDIDATES = [item for item in OPAQUE_BLOCKS if item["group"] != "l
 BLOCK_RGB = {item["block"]: tuple(item["rgb"]) for item in ALL_BLOCKS + WOOL_PALETTE + OPAQUE_BLOCKS + GLASS_PALETTE}
 # ブロックID -> 側面の RGB (立体のプレビュー用。原木などは上面と違う)
 BLOCK_SIDE_RGB = {**BLOCK_RGB, **{item["block"]: tuple(item.get("side", item["rgb"])) for item in BLOCK_COLORS}}
+# ブロックID -> テクスチャのばらつき (上面 / 側面。OkLab × 100。mvcodec/block_colors.py)。表に無いブロックは 0
+BLOCK_TEX = {item["block"]: float(item.get("tex", 0.0)) for item in BLOCK_COLORS}
+BLOCK_TEX_SIDE = {item["block"]: float(item.get("tex_side", item.get("tex", 0.0))) for item in BLOCK_COLORS}
+
+
+def palette_tex(palette):
+    """パレットの各ブロックのテクスチャのばらつき (K,)。項目に tex があればそれ (立体は side_palette で側面の値)、
+    無ければ (手書きの CONCRETE_PALETTE など) ブロック ID で引く。"""
+    return np.array([float(item["tex"]) if "tex" in item else BLOCK_TEX.get(item["block"], 0.0) for item in palette],
+                    dtype=np.float32)
 
 def create_palette_image(palette):
     pal_img = Image.new("P", (1, 1))
