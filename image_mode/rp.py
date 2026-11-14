@@ -20,6 +20,10 @@ import math
 DEFAULT_FPS = 30
 DEFAULT_GUTTER = 1
 DEFAULT_SCREEN_BLOCKS_WIDTH = 16
+# 明るさ: "world" は周りの光と面の向きの陰を受ける (v6.36.0 まで。夜はほぼ見えない)、"bright" は受けない
+# (render controller の ignore_lighting。実機で昼・夜とも元の明るさになるのを確かめた: quality-plan/testpack/results)。
+# 動画のメタデータに lighting が無いときは、今までのアドオンと同じ "world"
+LIGHTING_MODES = ("bright", "world")
 
 # 方式 c が使う自作マテリアルの名前。client_entity の materials から参照する
 UV_ANIM_MATERIAL = "bvp_uv_anim"
@@ -127,6 +131,8 @@ def render_controller_json(video: dict, method: str, namespace: str) -> dict:
         "materials": [{"*": "Material.default"}],
         "textures": ["Array.sheets[v.sheet]"],
     }
+    if video.get("lighting", "world") == "bright":
+        controller["ignore_lighting"] = True
     if method == "a":
         # 1 要素 1 キー。先に全部隠してから、今のマスのボーンだけ出す (後ろの要素が勝つ)。
         # 状態 0 (停止) のときは条件が偽になり全部隠れる

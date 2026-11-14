@@ -123,3 +123,29 @@ def test_combine_puts_both_addons_in_one_file(tmp_path):
     # 名前が重なるときはまとめない
     with pytest.raises(convert_image_mode.ConvertError):
         convert_image_mode.combine_addons(output, output)
+
+
+@needs_ffmpeg
+def test_lighting_snap_and_png_options_reach_the_image_addon(tmp_path):
+    """画面の明るさ・シートに多く詰める・PNG の最適化が convert_image_mode.py に渡る。"""
+    import tkinter as tk
+
+    video = make_video(tmp_path / "clip.mp4")
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("Tk が使えない")
+    try:
+        app = fake_app()
+        app.image_lighting_key = "world"
+        app.image_snap_var = tk.BooleanVar(master=root, value=False)
+        app.image_png_optimize_var = tk.BooleanVar(master=root, value=True)
+        result = gui.PackBuilderApp._build_image_pack(app, [{"file_path": str(video), "video_id": "clip"}],
+                                                      tmp_path / "P.mcaddon", "P", "movie", 128, 72, None, "ffmpeg")
+    finally:
+        root.destroy()
+    report = json.loads(result.with_suffix(".report.json").read_text(encoding="utf-8"))
+    assert report["videos"][0]["lighting"] == "world"
+    with zipfile.ZipFile(result) as archive:
+        controller = archive.read("RP/render_controllers/screen_clip_a.render_controllers.json")
+    assert b"ignore_lighting" not in controller

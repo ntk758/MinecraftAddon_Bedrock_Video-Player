@@ -84,6 +84,13 @@
       <label class="check"><input type="checkbox" id="anamorphic"> <span data-i18n="web.anamorphic">Trompe-l'oeil (3D and .vox only)</span></label>
       <label class="check"><input type="checkbox" id="pairFlat"> <span data-i18n="settings.pair_flat">With a 3D mode, also add the normal flat video</span></label>
       <label class="check"><input type="checkbox" id="imageMode"> <span data-i18n="web.image_mode">Also build the image-mode add-on (experimental, separate file; you get 2 downloads)</span></label>
+      <label><span data-i18n="image.lighting_label">Brightness:</span>
+        <select id="imageLighting">
+          <option value="bright" data-i18n="image.lighting.bright">Always bright (recommended)</option>
+          <option value="world" data-i18n="image.lighting.world">Follow world light (dark at night)</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="imagePngOptimize"> <span data-i18n="image.png_optimize">Optimize PNG (smaller pack, slower)</span></label>
       <label><span data-i18n="web.stage_background">Trompe-l'oeil background video (optional)</span>
         <input type="file" id="stageBackground" accept="video/*"></label>
       <label><span data-i18n="settings.palette">Palette</span>
