@@ -40,6 +40,31 @@ def video_bytes(seconds: float, width: int, height: int, fps: float, max_sheet: 
     return texels * 4
 
 
+# snap_size: 1 枚のマスがこの割合以上増えるときだけ縮める (小さなコマは max_cells が先に効き、縮めても数 % しか増えない)
+SNAP_MIN_GAIN = 1.1
+
+
+def snap_size(width: int, height: int, max_sheet: int = 2048, gutter: int = 1,
+              max_cells: int = MAX_CELLS) -> tuple[int, int]:
+    """ガターのせいでシートに 1 列少なくしか入らない大きさなら、縦横比を保って少し縮め、その列を入れる
+    (512×288 → 510×286 で 1 枚 21 → 28 マス、シートの枚数が 3/4 に)。縮めてもマスが 1 割以上増えないなら (max_cells が先に効くなど)
+    そのまま返す。"""
+    if gutter <= 0 or width < 2 or height < 2:
+        return width, height
+    cols_now = (max_sheet + gutter) // (width + gutter)
+    cols_ideal = max_sheet // width
+    if cols_ideal <= cols_now:
+        return width, height
+    new_w = max(2, int((max_sheet + gutter) / cols_ideal - gutter) // 2 * 2)
+    new_h = even(height * new_w / width)
+    try:
+        before = math.prod(grid_size(width, height, max_sheet, gutter, max_cells))
+        after = math.prod(grid_size(new_w, new_h, max_sheet, gutter, max_cells))
+    except ValueError:
+        return width, height
+    return (new_w, new_h) if after >= before * SNAP_MIN_GAIN else (width, height)
+
+
 def total_bytes(durations: list[float], width: int, height: int, fps: float, **layout) -> int:
     return sum(video_bytes(seconds, width, height, fps, **layout) for seconds in durations)
 
@@ -54,8 +79,8 @@ def scaled(width: int, height: int, factor: float) -> tuple[int, int]:
 
 
 def plan(durations: list[float], width: int, height: int, fps: float, priority: str, target_tier: int = 2,
-         max_sheet: int = 2048, gutter: int = 1, max_cells: int = MAX_CELLS) -> dict:
-    """予算 (Tier target_tier) に収まる設定。戻り値:
+         max_sheet: int = 2048, gutter: int = 1, max_cells: int = MAX_CELLS, snap: bool = False) -> dict:
+    """予算 (Tier target_tier) に収まる設定。snap なら、最初と大きさを下げるたびに snap_size を通す。戻り値:
 
     {"width", "height", "fps", "seconds": [動画ごとの長さ], "bytes", "budget_bytes", "changed": [変えたもの], "fits"}
     changed は "fps"・"size"・"length" のうち変えたもの。どうしても入らない (1 コマも入らない) ときは fits が False。
@@ -68,6 +93,8 @@ def plan(durations: list[float], width: int, height: int, fps: float, priority: 
     budget = TIER_BUDGETS_MB[target_tier] * MIB
     seconds = [max(0.0, float(s)) for s in durations]
     w, h, f = int(width), int(height), float(fps)
+    if snap:
+        w, h = snap_size(w, h, max_sheet, gutter, max_cells)
     changed: list[str] = []
 
     def fits(w=None, h=None, f=None, s=None) -> bool:
@@ -85,6 +112,8 @@ def plan(durations: list[float], width: int, height: int, fps: float, priority: 
         nw, nh = scaled(w, h, SCALE_STEP)
         if nw < MIN_WIDTH:
             nw, nh = MIN_WIDTH, even(h * MIN_WIDTH / w)
+        if snap:
+            nw, nh = snap_size(nw, nh, max_sheet, gutter, max_cells)
         return (nw, nh) if nw < w else None
 
     if not fits(w, h, f):

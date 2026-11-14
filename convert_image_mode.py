@@ -20,7 +20,7 @@ from PIL import Image
 
 from image_mode import atlas, budget
 from gui_i18n import LOCALES, addon_lang_files
-from image_mode.rp import rp_files
+from image_mode.rp import LIGHTING_MODES, rp_files
 from pack_builder import build_manifest_version
 from pack_metadata import version_text
 
@@ -126,9 +126,13 @@ def pack_icon(frame: np.ndarray, size: int = 256) -> bytes:
     return out.getvalue()
 
 
-def png_bytes(image: Image.Image) -> bytes:
+def png_bytes(image: Image.Image, optimize: bool = False) -> bytes:
+    """シートの PNG。optimize なら Pillow の最適化 (compress_level 9) で 4% ほど小さくなるが、5 倍ほど遅い。"""
     out = io.BytesIO()
-    image.save(out, format="PNG")
+    if optimize:
+        image.save(out, format="PNG", optimize=True, compress_level=9)
+    else:
+        image.save(out, format="PNG")
     return out.getvalue()
 
 
@@ -171,13 +175,16 @@ def image_videos_js(videos: list[dict], namespace: str) -> str:
 def build_files(sources: list[dict], *, width: int, height: int, methods: list[str], namespace: str,
                 pack_name: str, max_sheet: int = 2048, gutter: int = 1, max_cells: int = atlas.MAX_CELLS,
                 screen_width: float = 16, audio_chunk_seconds: float = 4, allow_over_budget: bool = False,
-                log=print) -> tuple[dict, dict]:
+                log=print, lighting: str = "bright", png_optimize: bool = False) -> tuple[dict, dict]:
     """コマから、アドオンのファイル (zip の中のパス → bytes) とレポートを作る。ffmpeg を使わない (ブラウザ版も使う)。
 
     sources の 1 つは {"id", "title", "fps", "frames": コマ (高さ×幅×3 の uint8) を出す iterable,
     "audio": (最長の秒数) → [(番号, 拡張子, bytes)] を返す関数 (無ければ音声なし)}。
     予算超過などで作れないときは ConvertError。
+    lighting は rp.LIGHTING_MODES ("bright" は周りの光で暗くならない)。png_optimize はシートの PNG の最適化。
     """
+    if lighting not in LIGHTING_MODES:
+        raise ConvertError(f"lighting は {', '.join(LIGHTING_MODES)} のどれか: {lighting}")
     used: set[str] = set()
     for source in sources:
         if not ID_PATTERN.match(source["id"]):
@@ -218,6 +225,7 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
             "screen_blocks": screen_blocks(width, height, screen_width),
             "texture_paths": [f"textures/bvp_image/{video_id}/sheet_{n}" for n in range(layout["sheets"])],
             "audio_chunks": 0, "audio_chunk_seconds": audio_chunk_seconds, "methods": methods,
+            "lighting": lighting,
             "memory": {"texels": texels, "bytes": texels * 4},
         })
         log(f"[{video_id}] {layout['frame_count']} コマ -> シート {layout['sheets']} 枚 "
@@ -256,7 +264,7 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
     # 4. パックを組む
     for video in videos:
         for number, sheet in enumerate(sheets_of[video["id"]]):
-            put(f"RP/textures/bvp_image/{video['id']}/sheet_{number}.png", png_bytes(sheet))
+            put(f"RP/textures/bvp_image/{video['id']}/sheet_{number}.png", png_bytes(sheet, png_optimize))
         for method in methods:
             put(f"BP/entities/screen_{video['id']}_{method}.json",
                 json.dumps(entity_json(video, method, namespace), ensure_ascii=False, indent=2) + "\n")
@@ -340,7 +348,7 @@ def apply_priority(args: argparse.Namespace, inputs: list[Path], log=print) -> l
         end = min(total, args.end) if args.end is not None else total
         durations.append(max(0.0, end - start))
     result = budget.plan(durations, args.width, args.height, args.fps, args.priority, args.target_tier,
-                         max_sheet=args.max_sheet, gutter=args.gutter, max_cells=args.max_cells)
+                         max_sheet=args.max_sheet, gutter=args.gutter, max_cells=args.max_cells, snap=args.snap)
     if not result["fits"]:
         raise ConvertError(f"Tier {args.target_tier} の予算にどうしても収まりません (1 コマも入りません)")
     if result["changed"]:
@@ -377,6 +385,12 @@ def build(args: argparse.Namespace, log=print) -> dict:
     ends = [args.end] * len(inputs)
     if args.priority != "none":
         ends = apply_priority(args, inputs, log)
+    elif args.snap:
+        snapped = budget.snap_size(args.width, args.height, args.max_sheet, args.gutter, args.max_cells)
+        if snapped != (args.width, args.height):
+            log(f"1 コマを {args.width}x{args.height} → {snapped[0]}x{snapped[1]} にして、シート 1 枚に入るコマを増やします "
+                "(--snap)")
+            args.width, args.height = snapped
     methods = ["a", "c"] if args.method == "both" else [args.method]
     pack_name = args.pack_name or titles[0]
     ffmpeg = args.ffmpeg
@@ -394,7 +408,7 @@ def build(args: argparse.Namespace, log=print) -> dict:
             sources, width=args.width, height=args.height, methods=methods, namespace=args.namespace,
             pack_name=pack_name, max_sheet=args.max_sheet, gutter=args.gutter, max_cells=args.max_cells,
             screen_width=args.screen_width, audio_chunk_seconds=args.audio_chunk_seconds,
-            allow_over_budget=args.allow_over_budget, log=log)
+            allow_over_budget=args.allow_over_budget, log=log, lighting=args.lighting, png_optimize=args.png_optimize)
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -495,6 +509,15 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--allow-over-budget", action="store_true",
                         help="テクスチャが Tier 5 の予算 (800 MB) を超えても作る")
     parser.add_argument("--report", default=None, help="レポートの JSON のパス (既定は出力の隣)")
+    parser.add_argument("--lighting", default="bright", choices=LIGHTING_MODES,
+                        help="明るさ。bright は周りの光で暗くならない (既定。夜や暗い部屋でも元の明るさ)、"
+                             "world は v6.36.0 までと同じく周りの光と陰を受ける")
+    parser.add_argument("--snap", action=argparse.BooleanOptionalAction, default=False,
+                        help="ガターのせいでシートに 1 列少なくしか入らない大きさなら、少し縮めて入れる "
+                             "(512×288 → 510×286 でシートの枚数が 3/4、テクスチャ −5%%)。既定は切る: 1920×1080 を割り切れない "
+                             "大きさになり、輪郭のはっきりした映像では PSNR が下がる (テスト映像で −1.6 dB)")
+    parser.add_argument("--png-optimize", action="store_true",
+                        help="シートの PNG を最適化して 4%% ほど小さくする (変換が 5 倍ほど遅くなる)")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
     args = parser.parse_args(argv)
     if args.ids is not None and len(args.ids) != len(args.inputs):
