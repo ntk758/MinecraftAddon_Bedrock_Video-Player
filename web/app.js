@@ -160,6 +160,7 @@ function settings() {
     width: Number($("width").value), height: Number($("height").value), fps: Number($("fps").value),
     duration: $("duration").value.trim() === "" ? 0 : Number($("duration").value), mode: $("mode").value, depth: Number($("depth").value),
     anamorphic: $("anamorphic").checked, pairFlat: $("pairFlat").checked, imageMode: $("imageMode").checked,
+    imageLighting: $("imageLighting").value, imagePngOptimize: $("imagePngOptimize").checked,
     palette: $("palette").value, dither: $("dither").value,
     keyframe: Math.max(0, Math.round(Number($("keyframe").value) || 0)), perceptual: $("perceptual").checked,
     packName: $("packName").value.trim() || "Block & Image Video Player",

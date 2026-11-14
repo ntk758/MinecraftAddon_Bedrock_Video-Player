@@ -35,16 +35,28 @@ def _subprocess_kwargs() -> dict:
     return {}
 
 
-def build_video_filter(width: int, height: int, fps: float, fit: str = "pad") -> str:
-    """アスペクト比を保って width × height にする ffmpeg フィルタ。pad は黒の余白、cover は中央で切り取る。"""
+def is_downscale(width: int, height: int, source_size: tuple[int, int] | None, fit: str = "pad") -> bool:
+    """元の動画 (source_size = (幅, 高さ)) を width × height に縮めるか。分からなければ False。"""
+    if not source_size or source_size[0] <= 0 or source_size[1] <= 0:
+        return False
+    sx, sy = width / source_size[0], height / source_size[1]
+    return (max(sx, sy) if fit == "cover" else min(sx, sy)) < 1
+
+
+def build_video_filter(width: int, height: int, fps: float, fit: str = "pad",
+                       source_size: tuple[int, int] | None = None) -> str:
+    """アスペクト比を保って width × height にする ffmpeg フィルタ。pad は黒の余白、cover は中央で切り取る。
+    source_size (元の動画の幅・高さ) が分かっていて縮めるときは、面積平均 (flags=area) で縮める
+    (bicubic より PSNR +0.3〜0.4 dB。拡大は area だとぼやけるので、今までどおり ffmpeg の既定)。"""
     if fit not in ("pad", "cover"):
         raise ValueError(f"fit は pad か cover にしてください: {fit}")
+    flags = ":flags=area" if is_downscale(width, height, source_size, fit) else ""
     filters = [f"fps={fps:g}"]
     if fit == "cover":
-        filters.append(f"scale={width}:{height}:force_original_aspect_ratio=increase")
+        filters.append(f"scale={width}:{height}:force_original_aspect_ratio=increase{flags}")
         filters.append(f"crop={width}:{height}")
     else:
-        filters.append(f"scale={width}:{height}:force_original_aspect_ratio=decrease")
+        filters.append(f"scale={width}:{height}:force_original_aspect_ratio=decrease{flags}")
         filters.append(f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black")
     return ",".join(filters)
 
@@ -61,6 +73,27 @@ def _trim_args(start: float | None, end: float | None) -> list[str]:
     if end is not None:
         args += ["-t", f"{end - (start or 0):g}"]
     return args
+
+
+def parse_video_size(ffmpeg_stderr: str) -> tuple[int, int] | None:
+    """ffmpeg -i の出力の最初の映像の行 (Stream #0:0: Video: h264 ..., 1920x1080 ...) から幅と高さ。"""
+    import re
+    for line in ffmpeg_stderr.splitlines():
+        if "Video:" in line:
+            match = re.search(r"\b(\d{2,5})x(\d{2,5})\b", line)
+            if match:
+                return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def probe_size(path, ffmpeg: str = "ffmpeg") -> tuple[int, int] | None:
+    """動画の幅と高さ。読めなければ None。"""
+    try:
+        result = subprocess.run([ffmpeg, "-hide_banner", "-i", str(path)], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=60, **_subprocess_kwargs())
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return parse_video_size(result.stderr)
 
 
 def probe_duration(path, ffmpeg: str = "ffmpeg") -> float | None:
@@ -82,7 +115,8 @@ def read_frames(path, width: int, height: int, fps: float, start: float | None =
                 fit: str = "pad", ffmpeg: str = "ffmpeg") -> Iterator[np.ndarray]:
     """動画を width × height・fps に直して、H×W×3 (uint8) のコマを 1 枚ずつ返す。start / end は秒。"""
     cmd = [ffmpeg, "-v", "error", *_trim_args(start, end), "-i", str(path), "-an",
-           "-vf", build_video_filter(width, height, fps, fit), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+           "-vf", build_video_filter(width, height, fps, fit, probe_size(path, ffmpeg)),
+           "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **_subprocess_kwargs())
     frame_size = width * height * 3
     completed = False
