@@ -160,6 +160,7 @@ function settings() {
     width: Number($("width").value), height: Number($("height").value), fps: Number($("fps").value),
     duration: $("duration").value.trim() === "" ? 0 : Number($("duration").value), mode: $("mode").value, depth: Number($("depth").value),
     anamorphic: $("anamorphic").checked, pairFlat: $("pairFlat").checked, imageMode: $("imageMode").checked,
+    imageLighting: $("imageLighting").value, imagePngOptimize: $("imagePngOptimize").checked,
     palette: $("palette").value, dither: $("dither").value,
     keyframe: Math.max(0, Math.round(Number($("keyframe").value) || 0)), perceptual: $("perceptual").checked,
     packName: $("packName").value.trim() || "Block & Image Video Player",
@@ -187,9 +188,6 @@ function drawLetterboxed(ctx, source, srcW, srcH, w, h) {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
   const scale = Math.min(w / srcW, h / srcH);
-  // 縮めるときは高品質の補間 (Windows 版の ffmpeg の flags=area に近い)。拡大は既定のまま
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = scale < 1 ? "high" : "low";
   const dw = Math.round(srcW * scale), dh = Math.round(srcH * scale);
   ctx.drawImage(source, Math.floor((w - dw) / 2), Math.floor((h - dh) / 2), dw, dh);
 }

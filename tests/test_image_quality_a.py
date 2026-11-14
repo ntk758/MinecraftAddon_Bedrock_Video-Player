@@ -1,6 +1,7 @@
 """画像モードの画質の改善 (暗くしない設定・縮小の area・シートの詰め方・PNG の最適化) のテスト。"""
 import io
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -64,9 +65,9 @@ def test_build_files_is_bright_by_default_and_world_on_request():
 
 def test_cli_lighting_and_snap_options():
     args = cim.parse_args(["a.mp4"])
-    assert args.lighting == "bright" and not args.snap and not args.png_optimize
-    args = cim.parse_args(["a.mp4", "--lighting", "world", "--snap", "--png-optimize"])
-    assert args.lighting == "world" and args.snap and args.png_optimize
+    assert args.lighting == "bright" and args.snap and not args.png_optimize
+    args = cim.parse_args(["a.mp4", "--lighting", "world", "--no-snap", "--png-optimize"])
+    assert args.lighting == "world" and not args.snap and args.png_optimize
 
 
 # --- 縮小のフィルタ ---
@@ -89,25 +90,24 @@ def test_parse_video_size_reads_the_first_video_stream():
 
 # --- シートの詰め方 ---
 
-@pytest.mark.parametrize("size, snapped, cells", [((512, 288), (510, 286), 28), ((256, 144), (254, 142), 112)])
-def test_snap_size_fits_one_more_column(size, snapped, cells):
-    assert budget.snap_size(*size) == snapped
-    cols, rows = atlas.grid_size(*snapped, 2048, 1)
-    assert cols * rows == cells
-    assert cols * (snapped[0] + 1) - 1 <= 2048
+def test_snap_size_picks_a_size_that_divides_the_source():
+    assert budget.snap_size(512, 288, source_size=(1920, 1080)) == (480, 270)
+    cols, rows = atlas.grid_size(480, 270, 2048, 1)
+    assert cols * rows == 28 > 21 == math.prod(atlas.grid_size(512, 288, 2048, 1))
+    assert budget.snap_size(1280, 720, source_size=(3840, 2160)) == (1280, 720)  # もう割り切れる・増えない
 
 
-@pytest.mark.parametrize("size", [(384, 216), (448, 252), (320, 180), (128, 72)])
-def test_snap_size_keeps_sizes_that_gain_nothing(size):
-    assert budget.snap_size(*size) == size
-    assert budget.snap_size(512, 288, gutter=0) == (512, 288)
+@pytest.mark.parametrize("size, source", [((512, 288), None), ((512, 288), (1280, 720)), ((512, 384), (1920, 1080)),
+                                          ((256, 144), (1920, 1080)), ((448, 252), (1920, 1080))])
+def test_snap_size_keeps_the_size_when_nothing_good_divides(size, source):
+    """元の大きさが分からない・縦横比が違う・1 割より大きく縮めないと増えないときは、頼んだ大きさのまま。"""
+    assert budget.snap_size(*size, source_size=source) == size
 
 
-def test_plan_snaps_when_asked_and_not_by_default():
-    assert budget.plan([5], 512, 288, 24, "quality")["width"] == 512
-    assert budget.plan([5], 512, 288, 24, "quality", snap=True)["width"] == 510
-    # 同じ長さなら、詰めた方がメモリが少ない
-    assert budget.video_bytes(15, 510, 286, 24) < budget.video_bytes(15, 512, 288, 24)
+def test_plan_snaps_only_when_asked():
+    assert budget.plan([5], 512, 288, 24, "quality", source_size=(1920, 1080))["width"] == 512
+    assert budget.plan([5], 512, 288, 24, "quality", snap=True, source_size=(1920, 1080))["width"] == 480
+    assert budget.video_bytes(15, 480, 270, 24) < budget.video_bytes(15, 512, 288, 24) * 0.9
 
 
 # --- PNG ---
@@ -117,3 +117,10 @@ def test_png_optimize_gives_the_same_pixels():
     plain, small = cim.png_bytes(img), cim.png_bytes(img, optimize=True)
     assert np.array_equal(np.asarray(Image.open(io.BytesIO(plain))), np.asarray(Image.open(io.BytesIO(small))))
     assert len(small) <= len(plain)
+
+
+def test_web_block_mode_frames_keep_the_old_canvas_scaling():
+    """ブラウザ版はブロックモードと画像モードで同じコマを使う。縮小の補間を変えるとブロックモードの出力まで変わるので、
+    v6.36.0 と同じ (canvas の既定の補間) にしておく。画像モードの高品質の縮小は、画像モード専用のコマを取り出すとき (PR C) に入れる。"""
+    app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    assert "imageSmoothingQuality" not in app and "imageSmoothingEnabled" not in app

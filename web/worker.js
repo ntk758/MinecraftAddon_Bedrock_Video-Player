@@ -131,7 +131,9 @@ function buildImageAddon(pyodide, s, jobs) {
   try {
     pyodide.globals.set("img_jobs", usable);
     pyodide.globals.set("img_settings", pyodide.toPy({ fps: s.fps, packName: s.packName,
-                                                      namespace: s.namespace + IMAGE_NAMESPACE_SUFFIX }));
+                                                      namespace: s.namespace + IMAGE_NAMESPACE_SUFFIX,
+                                                      lighting: s.imageLighting || "bright",
+                                                      pngOptimize: !!s.imagePngOptimize }));
     const proxy = pyodide.runPython(`
 import io
 import numpy as np
@@ -151,7 +153,8 @@ for _job in img_jobs:
                      "audio": (lambda seconds, _sounds=_sounds: _sounds)})
 _files, _report = cim.build_files(_sources, width=int(_first.shape[1]), height=int(_first.shape[0]), methods=["a"],
                                   namespace=str(_s["namespace"]), pack_name=str(_s["packName"]) + " (Image)",
-                                  audio_chunk_seconds=10, log=lambda _text: None)
+                                  audio_chunk_seconds=10, log=lambda _text: None, lighting=str(_s["lighting"]),
+                                  png_optimize=bool(_s["pngOptimize"]))
 cim.zip_bytes(_files)
 `);
     const bytes = proxy.toJs();

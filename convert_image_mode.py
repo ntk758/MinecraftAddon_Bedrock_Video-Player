@@ -347,8 +347,10 @@ def apply_priority(args: argparse.Namespace, inputs: list[Path], log=print) -> l
             raise ConvertError(f"動画の長さを読めませんでした: {path}")
         end = min(total, args.end) if args.end is not None else total
         durations.append(max(0.0, end - start))
+    source_size = atlas.probe_size(inputs[0], args.ffmpeg) if args.snap else None
     result = budget.plan(durations, args.width, args.height, args.fps, args.priority, args.target_tier,
-                         max_sheet=args.max_sheet, gutter=args.gutter, max_cells=args.max_cells, snap=args.snap)
+                         max_sheet=args.max_sheet, gutter=args.gutter, max_cells=args.max_cells, snap=args.snap,
+                         source_size=source_size)
     if not result["fits"]:
         raise ConvertError(f"Tier {args.target_tier} の予算にどうしても収まりません (1 コマも入りません)")
     if result["changed"]:
@@ -386,10 +388,11 @@ def build(args: argparse.Namespace, log=print) -> dict:
     if args.priority != "none":
         ends = apply_priority(args, inputs, log)
     elif args.snap:
-        snapped = budget.snap_size(args.width, args.height, args.max_sheet, args.gutter, args.max_cells)
+        snapped = budget.snap_size(args.width, args.height, args.max_sheet, args.gutter, args.max_cells,
+                                   atlas.probe_size(inputs[0], args.ffmpeg))
         if snapped != (args.width, args.height):
             log(f"1 コマを {args.width}x{args.height} → {snapped[0]}x{snapped[1]} にして、シート 1 枚に入るコマを増やします "
-                "(--snap)")
+                "(--no-snap で今の大きさのまま)")
             args.width, args.height = snapped
     methods = ["a", "c"] if args.method == "both" else [args.method]
     pack_name = args.pack_name or titles[0]
@@ -512,10 +515,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--lighting", default="bright", choices=LIGHTING_MODES,
                         help="明るさ。bright は周りの光で暗くならない (既定。夜や暗い部屋でも元の明るさ)、"
                              "world は v6.36.0 までと同じく周りの光と陰を受ける")
-    parser.add_argument("--snap", action=argparse.BooleanOptionalAction, default=False,
-                        help="ガターのせいでシートに 1 列少なくしか入らない大きさなら、少し縮めて入れる "
-                             "(512×288 → 510×286 でシートの枚数が 3/4、テクスチャ −5%%)。既定は切る: 1920×1080 を割り切れない "
-                             "大きさになり、輪郭のはっきりした映像では PSNR が下がる (テスト映像で −1.6 dB)")
+    parser.add_argument("--snap", action=argparse.BooleanOptionalAction, default=True,
+                        help="シート 1 枚に入るコマを増やすため、頼んだ大きさの 9 割以上で元の動画をちょうど割り切れる大きさにする "
+                             "(1920×1080 で 512×288 → 480×270、テクスチャ −15%%。画質は同等: docs/IMAGE_MODE.md)。"
+                             "--no-snap で頼んだ大きさのまま")
     parser.add_argument("--png-optimize", action="store_true",
                         help="シートの PNG を最適化して 4%% ほど小さくする (変換が 5 倍ほど遅くなる)")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")

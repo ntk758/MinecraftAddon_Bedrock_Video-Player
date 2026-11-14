@@ -345,6 +345,9 @@ IMAGE_PRIORITIES = ("quality", "smooth", "length")
 DEFAULT_IMAGE_PRIORITY = "quality"
 # 収める予算の Tier: 2 = 多くのスマートフォン・PS4・Xbox One でも、5 = PC だけ
 IMAGE_TIERS = ("2", "5")
+# 画像モードの明るさ (convert_image_mode.py --lighting)。bright は周りの光で暗くならない
+IMAGE_LIGHTINGS = ("bright", "world")
+DEFAULT_IMAGE_LIGHTING = "bright"
 DEFAULT_IMAGE_TIER = "2"
 IMAGE_MODE_FPS = 30
 # 画像モードの 1 コマの横の画素数 (convert_image_mode.py の既定と同じ)。縦は画面の縦横比から
@@ -572,6 +575,11 @@ class PackBuilderApp(tk.Tk):
         # 画像モードのアドオンを、ブロックモードのアドオンと同じ 1 つのファイルにまとめる (中のパックは別々)
         self.image_combine_var = tk.BooleanVar(value=False)
         self.image_tier_var = tk.StringVar()
+        # 画像モードの明るさ・シートに多く詰める (--snap)・PNG の最適化 (convert_image_mode.py)
+        self.image_lighting_key = DEFAULT_IMAGE_LIGHTING
+        self.image_lighting_var = tk.StringVar()
+        self.image_snap_var = tk.BooleanVar(value=True)
+        self.image_png_optimize_var = tk.BooleanVar(value=False)
         # MMD のモデル (.pmx のパス) → 踊り (.vmd のパス)
         self.mmd_motions: dict[str, str] = {}
         # だまし絵の後ろの壁に流す背景の映像 (空なら壁は単色)
@@ -609,6 +617,8 @@ class PackBuilderApp(tk.Tk):
         tiers = option_labels(self.tr, "image.tier", IMAGE_TIERS)
         self.image_priority_key = priorities.get(self.image_priority_var.get(), self.image_priority_key)
         self.image_tier_key = tiers.get(self.image_tier_var.get(), self.image_tier_key)
+        lightings = option_labels(self.tr, "image.lighting", IMAGE_LIGHTINGS)
+        self.image_lighting_key = lightings.get(self.image_lighting_var.get(), self.image_lighting_key)
 
     def _selected_values(self) -> tuple[str, str, str, str]:
         """現在の言語の表示名から (パレット, ディザ, デバイス, 表示モード) の値を得る。"""
@@ -645,6 +655,7 @@ class PackBuilderApp(tk.Tk):
         self.quality_var.set(self.tr(f"preset.{self.preset_key}"))
         self.image_priority_var.set(self.tr(f"image.priority.{self.image_priority_key}"))
         self.image_tier_var.set(self.tr(f"image.tier.{self.image_tier_key}"))
+        self.image_lighting_var.set(self.tr(f"image.lighting.{self.image_lighting_key}"))
         self.language_var.set(dict(available_languages())[self.tr.language])
 
     def change_language(self, language: str) -> None:
@@ -863,6 +874,15 @@ class PackBuilderApp(tk.Tk):
         tier_box.bind("<<ComboboxSelected>>", lambda _event: self._on_image_option_selected())
         ttk.Checkbutton(image_options, text=tr("image.combine"), variable=self.image_combine_var).grid(
             row=1, column=0, columnspan=4, pady=(4, 0), sticky="w")
+        ttk.Label(image_options, text=tr("image.lighting_label")).grid(row=2, column=0, padx=(0, 6), pady=(4, 0))
+        lighting_box = ttk.Combobox(image_options, textvariable=self.image_lighting_var, state="readonly", width=26,
+                                    values=tuple(tr(f"image.lighting.{key}") for key in IMAGE_LIGHTINGS))
+        lighting_box.grid(row=2, column=1, pady=(4, 0), sticky="w")
+        lighting_box.bind("<<ComboboxSelected>>", lambda _event: self._on_image_option_selected())
+        ttk.Checkbutton(image_options, text=tr("image.snap"), variable=self.image_snap_var).grid(
+            row=3, column=0, columnspan=4, pady=(4, 0), sticky="w")
+        ttk.Checkbutton(image_options, text=tr("image.png_optimize"), variable=self.image_png_optimize_var).grid(
+            row=4, column=0, columnspan=4, pady=(4, 0), sticky="w")
         # 再生負荷の目安 (幅・高さ・fps・表示モード・奥行きを変えるたびに更新)
         self.load_label = ttk.Label(settings, wraplength=720)
         self.load_label.grid(row=7, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
@@ -1556,6 +1576,11 @@ class PackBuilderApp(tk.Tk):
         tex_width, tex_height = image_mode_size(width, height)
         image_namespace = f"{namespace}{IMAGE_NAMESPACE_SUFFIX}"
         priority, tier = self.image_priority_key, self.image_tier_key
+        # 明るさ・--snap・PNG の最適化 (画面に無い古い呼び出し元では既定)
+        lighting = getattr(self, "image_lighting_key", DEFAULT_IMAGE_LIGHTING)
+        snap_var, optimize_var = getattr(self, "image_snap_var", None), getattr(self, "image_png_optimize_var", None)
+        snap = snap_var.get() if snap_var is not None else True
+        png_optimize = optimize_var.get() if optimize_var is not None else False
         self.messages.put(self.tr("build.image_start", output=image_output, width=tex_width, height=tex_height,
                                   fps=IMAGE_MODE_FPS))
         args = image_mode.parse_args([
@@ -1563,7 +1588,8 @@ class PackBuilderApp(tk.Tk):
             "--titles", *[path.stem for path, _ in sources], "-o", str(image_output),
             "--width", str(tex_width), "--height", str(tex_height), "--fps", str(IMAGE_MODE_FPS),
             "--namespace", image_namespace, "--pack-name", f"{pack_name} (Image)", "--ffmpeg", ffmpeg,
-            "--priority", priority, "--target-tier", tier,
+            "--priority", priority, "--target-tier", tier, "--lighting", lighting,
+            "--snap" if snap else "--no-snap", *(["--png-optimize"] if png_optimize else []),
             *(["--end", str(duration)] if duration else []),
         ])
         try:
