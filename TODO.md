@@ -177,7 +177,8 @@
 - **必要なテスト:** 実機 (手作業)。
 
 ### P0-5 リリースごとの実機チェックを両モードで 10 分に
-- **現在の状態:** 一部あり。
+- **現在の状態:** チェックリストは作った・実施は次の版から (2026-11-15)。[docs/TESTING.md の 2 章](docs/TESTING.md) を、ブロック (B1〜B8)・画像 (I1〜I7)・共通 (C1〜C3、EXE を含む) の 10 分のチェックに書き直し、記録の表に「ブロック / 画像 / 共通 / EXE」の欄を足した。画像モードの時計 (P0-2) とシーク・再開の音 (P0-3) の確認を入れた。以下は着手前の記録。
+- **着手前:** 一部あり。
   - [docs/TESTING.md](docs/TESTING.md) の 2 章に 9 項目がある。
   - v6.36.0〜v6.37.1 は、画像モードを中心に PC (Minecraft v26.63) で確かめた。
   - v6.37.1 のブロックモードと EXE は未確認。
@@ -344,7 +345,8 @@
 - **必要なテスト:** `tests/test_wizard.py` と `tests/test_gui_options.py` の拡張。
 
 ### P1-7 利用状況から次の手を決める
-- **現在の状態:** 計測はある。GoatCounter の `build-start` / `build-done` / `build-error`・種類・言語 (`web/usage.js`)、`scripts/traffic_report.py`。目安 (`build-done` が CurseForge のお試し版の DL の 1%) との比較は、まだ記録していない。
+- **現在の状態:** 表を作り、1 回目を記録した (2026-11-15、[docs/USAGE_REVIEW.md](docs/USAGE_REVIEW.md))。GitHub の DL (公開の数) だけ記入。CurseForge・GoatCounter の数は作者の管理画面でしか見られないので未記入。閲覧数と参照元は、`traffic_report.py` の決まりどおりリポジトリに入れず、手元 (`D:vp_work	raffic_log.md`) に残した。2 回分そろうのは 2026-11-29 ごろ。以下は着手前の記録。
+- **着手前:** 計測はある。GoatCounter の `build-start` / `build-done` / `build-error`・種類・言語 (`web/usage.js`)、`scripts/traffic_report.py`。目安 (`build-done` が CurseForge のお試し版の DL の 1%) との比較は、まだ記録していない。
 - **解決する問題:** どの改善が使う人に効いたかが分からない。
 - **実装する内容:** 2 週間ごとの数字を、表 1 つにまとめる。
   - GitHub の DL
