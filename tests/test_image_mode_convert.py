@@ -152,6 +152,8 @@ def test_entity_properties_match_frame_count(video, tmp_path):
         assert components["minecraft:physics"] == {"has_gravity": False, "has_collision": False}
         assert components["minecraft:pushable"]["is_pushable"] is False
         assert "minecraft:persistent" in components
+        # 体の向きを頭に合わせる (無いと setRotation の後、板が約 1 秒横を向いた)。format_version 1.21.90 から
+        assert components["minecraft:body_rotation_always_follows_head"] == {}
 
 
 def test_both_methods_share_textures(video, tmp_path):

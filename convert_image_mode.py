@@ -110,6 +110,9 @@ def entity_json(video: dict, method: str, namespace: str) -> dict:
                 "minecraft:persistent": {},
                 "minecraft:knockback_resistance": {"value": 1},
                 "minecraft:health": {"value": 1000, "max": 1000},
+                # 体 (板) の向きを頭の向きに常に合わせる。無いと setRotation の後、体が約 1 秒遅れて回り、
+                # 再生の最初が横向きに映った (format_version 1.21.90 から。実機 2026-11-15)
+                "minecraft:body_rotation_always_follows_head": {},
             },
         },
     }

@@ -85,6 +85,8 @@ v.cell = v.frame - v.sheet * <cells_per_sheet>;
   `/<ns>:stop`、`/<ns>:seek <秒>` (小数可。数の引数として登録する: 文字の引数だと数だけで構文エラーになった)、`/<ns>:volume <0〜100>`、
   `/<ns>:stats`、`/<ns>:method <a|c>`、`/<ns>:list`。`/scriptevent <ns>:<操作>` でも同じ。
 - リモコン: 時計 (`minecraft:clock`) を使うか `/<ns>:remote` で開く (@minecraft/server-ui 2.0.0)。ブロックモードはコンパスなので、両方を入れても同時に開かない。
+- スクリーンは `spawnEntity` の `initialRotation` で向きを渡して生む (その後 `setRotation` も呼ぶ)。BP のエンティティには `minecraft:body_rotation_always_follows_head` を付ける。
+  どちらも無いと、頭だけが回って体 (板) は既定の向きのまま約 1 秒残り、0.4 秒ほどかけて回ってくる (`play` で置き直すたびに、再生の最初の約 1.5 秒が横向きに映った: 実機 2026-11-15)。
 - setup の置き方: 何も付けなければプレイヤーの前にこちら向き。`face` は向きを東西南北にそろえる。`wall` は見ているブロックの横の面に
   0.02 浮かせて貼る (下端はそのブロックの下の面)。`align` は位置をブロックの格子にそろえる。
 - 音量は state.volume (0〜100、保存する) を playSound の volume に。途中で入ってきた人には、チャンクが始まって 1 秒以内なら今のチャンクを鳴らす。

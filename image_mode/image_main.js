@@ -176,7 +176,11 @@ function spawnScreen() {
   if (!video || !state.location) return false;
   removeScreen();
   try {
-    const entity = dimensionOf(state.dimension).spawnEntity(entityType(video, state.method), state.location);
+    // 向きは生まれるときに渡す。後から setRotation だけで向けると、頭だけが回って体 (板) は既定の向きのまま約 1 秒残り、
+    // そこから 0.4 秒ほどかけて回ってきた (再生の最初の約 1.5 秒が横向きに映った: 実機 2026-11-15)。
+    // BP のエンティティにも minecraft:body_rotation_always_follows_head を付けてある
+    const entity = dimensionOf(state.dimension).spawnEntity(entityType(video, state.method), state.location,
+                                                           { initialRotation: state.rotation });
     entity.setRotation({ x: 0, y: state.rotation });
     state.entityId = entity.id;
     removeStrayScreens(entity.dimension);

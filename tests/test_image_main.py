@@ -19,7 +19,7 @@ VIDEOS = [{"id": "demo", "title": "demo", "fps": 30, "frame_count": 300, "audio_
            "screen_blocks": [16, 9], "methods": ["a"], "width": 256, "height": 144}]
 
 MOCK = r"""
-export const log = { messages: [], sounds: [], commands: [], spawned: [], volumes: [], placed: [] };
+export const log = { messages: [], sounds: [], commands: [], spawned: [], volumes: [], placed: [], spawnRotations: [] };
 const dynamic = globalThis.__dynamic ?? (globalThis.__dynamic = new Map());
 const entities = globalThis.__entities ?? (globalThis.__entities = new Map());
 globalThis.__time ??= 1000;
@@ -45,7 +45,9 @@ class Entity {
 }
 const dimension = {
   id: "minecraft:overworld",
-  spawnEntity(typeId, location) { const e = new Entity(typeId, location); entities.set(e.id, e); log.spawned.push(typeId); return e; },
+  // options.initialRotation は生まれた時の向き (体も同じ向きで生まれる)。log.spawnRotations に残す
+  spawnEntity(typeId, location, options) { const e = new Entity(typeId, location); entities.set(e.id, e); log.spawned.push(typeId);
+    log.spawnRotations.push(options?.initialRotation ?? null); return e; },
   runCommand(command) { log.commands.push(command); return { successCount: 1 }; },
   getEntities({ families }) { return [...entities.values()].filter((e) => e.loaded && families.includes("bvp_screen")); },
 };
@@ -314,6 +316,18 @@ def test_setup_on_a_wall_faces_out_of_the_block(tmp_path):
     assert placed["location"] == {"x": 11.02, "y": 64, "z": -4.5}
     # 上の面は壁ではない
     assert messages(out, "wall_not_found")
+
+
+def test_screen_is_spawned_already_facing_its_rotation(tmp_path):
+    # setRotation だけだと体 (板) が既定の向きのまま約 1 秒残り、再生の最初が横向きに映った (実機 2026-11-15)。
+    # 置くとき・動画を替えて置き直すとき・方式を替えるとき、どれも生まれた時から向いている
+    hit = {"block": {"location": {"x": 10, "y": 64, "z": -5}}, "face": "East"}
+    out = run(tmp_path, [{"lookAt": hit}, {"cmd": "setup", "arg": "wall"}, {"tick": 2},
+                         {"cmd": "play", "arg": "second"}, {"tick": 2}, {"cmd": "play", "arg": "demo"}, {"tick": 2},
+                         {"cmd": "method", "arg": "c"}, {"tick": 2}])
+    assert len(out["log"]["spawned"]) == 4
+    assert out["log"]["spawnRotations"] == [-90, -90, -90, -90]
+    assert [p["yaw"] for p in out["log"]["placed"]] == [-90, -90, -90, -90]
 
 
 def test_setup_face_and_align_snap_to_the_grid(tmp_path):
