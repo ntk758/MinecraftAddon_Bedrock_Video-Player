@@ -4,7 +4,7 @@ Each GIF puts three panels side by side: the source clip, the clip converted to 
 
 - Block mode: 128×72 blocks, 20 fps, `--flat-areas smooth` (space: `--flat-areas off`). Both settings were converted for every clip, and the gallery uses whichever looked better.
 - Image mode: 256×144, 30 fps, `--snap --png-optimize`.
-- Each GIF starts about 1.6 s into its clip. Image mode is still loading its textures for the first ~1.5 s of a play, so that part is left out of all three panels.
+- Each GIF starts about 1.6 s into its clip. In v6.37.0 the image-mode screen faced sideways for the first ~1.5 s of a play (fixed in v6.37.1), so that part is left out of all three panels.
 
 All source clips come from Wikimedia Commons. They were cut to the segment below, resized to 1280×720 at 30 fps, and then converted (changed).
 
