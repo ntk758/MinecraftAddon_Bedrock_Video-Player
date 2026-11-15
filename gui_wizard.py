@@ -65,6 +65,67 @@ def recommend_settings(source_width, source_height, duration, suggest_size):
     return {"width": width, "height": height, "fps": fps}
 
 
+# モードの勧め: 画像モード (30 fps のなめらかな再生) は、この秒数以下で、予算 (Tier) に長さを切らずに入るときに勧める
+IMAGE_MODE_MAX_SECONDS = 30
+IMAGE_MODE_LONG_SIDE = 512
+IMAGE_MODE_FPS = 30
+# 予算に入れるために fps がこれより下がるなら、なめらかさの利点が小さいのでブロックモードを勧める
+IMAGE_MODE_MIN_FPS = 20
+
+
+def recommend_mode(duration, source_width, source_height, target_tier=2):
+    """向いているモードと理由。決めるのは使う人なので、理由の文 (key と引数) と一緒に返す。
+
+    {"mode": "image" | "block", "key": 理由の文のキー, "args": {...}}
+    - 画像モード: IMAGE_MODE_MAX_SECONDS 以下で、予算に長さを切らずに入る (fps を下げることはある)
+    - ブロックモード (切れる): 画像モードでは予算に入らず、長さが切れる
+    - ブロックモード (長い): IMAGE_MODE_MAX_SECONDS を超える
+    - ブロックモード (fps): 予算に入れると IMAGE_MODE_MIN_FPS より下がる
+    """
+    from image_mode.budget import plan
+
+    if source_width >= source_height:
+        width = IMAGE_MODE_LONG_SIDE
+        height = max(2, round(IMAGE_MODE_LONG_SIDE * source_height / source_width / 2) * 2)
+    else:
+        height = IMAGE_MODE_LONG_SIDE
+        width = max(2, round(IMAGE_MODE_LONG_SIDE * source_width / source_height / 2) * 2)
+    result = plan([duration], width, height, IMAGE_MODE_FPS, "quality", target_tier)
+    if "length" in result["changed"]:
+        return {"mode": "block", "key": "wizard.mode_block_cut",
+                "args": {"seconds": round(duration), "kept": round(result["seconds"][0]), "tier": target_tier}}
+    if duration > IMAGE_MODE_MAX_SECONDS:
+        return {"mode": "block", "key": "wizard.mode_block_long",
+                "args": {"seconds": round(duration), "limit": IMAGE_MODE_MAX_SECONDS}}
+    if result["fps"] < IMAGE_MODE_MIN_FPS:
+        return {"mode": "block", "key": "wizard.mode_block_fps",
+                "args": {"seconds": round(duration), "fps": result["fps"], "tier": target_tier}}
+    return {"mode": "image", "key": "wizard.mode_image",
+            "args": {"seconds": round(duration), "width": result["width"], "height": result["height"],
+                     "fps": result["fps"], "tier": target_tier}}
+
+
+# 失敗の原因の 1 行 (TODO.md の P1-6)。エラーの文と、直前のログの行に出る、言語に依らない文字 (ffmpeg や Python の英語の
+# メッセージ・例外の名前) で見分ける。上から順に調べ、最初に当たったものを使う
+FAILURE_HINTS = (
+    ("hint.ffmpeg", re.compile(r"could not start ffmpeg|\[WinError 2\][^\n]*ffmpeg|No such file or directory: '?[^'\n]*ffmpeg",
+                               re.I)),
+    ("hint.memory", re.compile(r"MemoryError|out of memory|Unable to allocate|bad_alloc|空きの RAM", re.I)),
+    ("hint.video_unreadable", re.compile(r"Invalid data found when processing input|moov atom not found|"
+                                         r"Error opening input|could not read the video|ffmpeg がエラー終了しました", re.I)),
+    ("hint.budget", re.compile(r"\bbudget\b|予算", re.I)),
+)
+
+
+def failure_hint(*texts):
+    """エラーの文とログの行から、原因の 1 行のキー (FAILURE_HINTS) を返す。分からなければ None。"""
+    joined = "\n".join(str(text) for text in texts if text)
+    for key, pattern in FAILURE_HINTS:
+        if pattern.search(joined):
+            return key
+    return None
+
+
 def format_size(size):
     """バイト数を「1.2 MB」のように。"""
     if size >= 1 << 30:
@@ -336,6 +397,12 @@ class SetupWizard:
             "wizard.recommended", src_w=size[0], src_h=size[1], seconds=round(duration),
             width=self.recommended["width"], height=self.recommended["height"], fps=self.recommended["fps"],
             typical=format_size(typical), low=format_size(low), high=format_size(high)))
+        # どちらのモードが向いているか (理由と一緒に出す。決めるのは使う人)
+        try:
+            mode = recommend_mode(duration, size[0], size[1])
+            self.recommend_label.configure(text=self.recommend_label.cget("text") + "\n" + tr(mode["key"], **mode["args"]))
+        except Exception:  # noqa: BLE001 (勧めが出せなくても、ほかの案内は出す)
+            pass
         self.build_button.configure(state="normal")
 
     # --- 3. 作る ---

@@ -83,3 +83,58 @@ def test_every_wizard_text_exists_in_every_language():
         assert not missing, (path.name, missing)
         # 案内の文はコマンドと保存先を差し込める
         assert "{commands}" in data["after.guide"] and "{output}" in data["after.guide"], path.name
+
+
+# --- モードの勧めと、失敗の原因の 1 行 (TODO.md の P1-6) ---
+
+@pytest.mark.parametrize("seconds,width,height,mode,reason", [
+    (5, 1920, 1080, "image", "mode_image"),
+    (10, 1920, 1080, "image", "mode_image"),
+    (15, 1920, 1080, "image", "mode_image"),
+    (10, 1080, 1920, "image", "mode_image"),          # 縦長
+    (20, 1920, 1080, "block", "mode_block_fps"),      # 入れるには 15 fps まで下がる
+    (28, 1920, 1080, "block", "mode_block_fps"),
+    (25, 640, 480, "block", "mode_block_fps"),
+    (45, 1920, 1080, "block", "mode_block_cut"),      # 画像モードでは長さが切れる
+    (120, 1920, 1080, "block", "mode_block_cut"),
+    (600, 1280, 720, "block", "mode_block_cut"),
+])
+def test_ten_typical_videos_get_a_mode_and_a_reason(seconds, width, height, mode, reason):
+    result = wizard.recommend_mode(seconds, width, height)
+    assert (result["mode"], result["key"]) == (mode, f"wizard.{reason}")
+    assert result["args"]["seconds"] == seconds
+
+
+def test_the_reasons_fill_in_every_language():
+    for path in (ROOT / "locales").glob("*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for seconds, size in ((10, (1920, 1080)), (20, (1920, 1080)), (45, (1920, 1080))):
+            result = wizard.recommend_mode(seconds, *size)
+            text = data[result["key"]].format(**result["args"])
+            # 理由の数 (秒数・残る秒数・下がる fps) が文に入る
+            shown = {"mode_image": "seconds", "mode_block_fps": "fps", "mode_block_cut": "kept"}[result["key"].split(".")[1]]
+            assert str(result["args"][shown]) in text and "{" not in text, (path.name, text)
+
+
+@pytest.mark.parametrize("texts,key", [
+    (("could not start ffmpeg: ffmpeg ([WinError 2] The system cannot find the file specified)",), "hint.ffmpeg"),
+    (("The command failed with exit code 1.", "FileNotFoundError: [WinError 2] ... 'ffmpeg'"), "hint.ffmpeg"),
+    (("The command failed with exit code 1.", "numpy._core._exceptions._ArrayMemoryError: Unable to allocate 3.1 GiB"),
+     "hint.memory"),
+    (("MemoryError: 空きの RAM が少なくなりました (512 MB)",), "hint.memory"),
+    (("The command failed with exit code 1.", "RuntimeError: ffmpeg がエラー終了しました (code 1): moov atom not found"),
+     "hint.video_unreadable"),
+    (("clip.mp4: Invalid data found when processing input",), "hint.video_unreadable"),
+    (("does not fit the budget of Tier 2",), "hint.budget"),
+    (("The command failed with exit code 1.", "something else"), None),
+])
+def test_common_failures_get_a_one_line_cause(texts, key):
+    assert wizard.failure_hint(*texts) == key
+
+
+def test_every_hint_exists_in_every_language():
+    keys = [key for key, _ in wizard.FAILURE_HINTS] + ["hint.audio", "wizard.mode_image", "wizard.mode_block_long",
+                                                       "wizard.mode_block_cut", "wizard.mode_block_fps"]
+    for path in (ROOT / "locales").glob("*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert not [key for key in keys if key not in data], path.name

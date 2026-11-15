@@ -135,3 +135,15 @@ def test_duplicate_video_ids_are_refused_when_packing():
              "thumbnail": None, "sounds": []}
     with pytest.raises(ValueError, match="a"):
         pack_builder.build_addon_bytes([video, dict(video)], "P", "ns")
+
+
+def test_a_failed_build_adds_the_likely_cause(app):
+    """作るのに失敗したとき、直前のログから原因を見分けて、ログとエラーの画面に 1 行足す (TODO.md の P1-6)。"""
+    app.building = True
+    app.messages.put("Traceback (most recent call last):")
+    app.messages.put("numpy._core._exceptions._ArrayMemoryError: Unable to allocate 3.1 GiB")
+    app.messages.put(("error", app.tr("build.cmd_failed", code=1)))
+    app._drain_messages()
+    assert app.shown[-1][0] == "showerror"
+    assert app.tr("hint.memory") in app.shown[-1][1]
+    assert app.tr("hint.memory") in app.log.get("1.0", "end")
