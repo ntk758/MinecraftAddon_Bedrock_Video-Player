@@ -1,0 +1,2 @@
+# 配布元のファイルをそのまま入れているもの: 改行を変えない (Windows の core.autocrlf で CRLF になると、SHA-256 が配布元と合わなくなる)
+web/vendor/** -text

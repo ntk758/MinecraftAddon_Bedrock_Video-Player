@@ -35,7 +35,24 @@ body:
     id: pc
     attributes:
       label: 変換に使った PC (変換の問題のとき) / PC used for conversion
-      placeholder: Windows 11, GPU (例 RTX 4060 / RX 9070 XT / なし), EXE or Python 3.12
+      placeholder: Windows 11 / Windows 10, EXE or Python 3.12
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU とドライバの版 (変換の問題のとき) / GPU and driver version
+      description: デバイスマネージャー → ディスプレイ アダプター で確かめられます / See Device Manager → Display adapters
+      placeholder: NVIDIA RTX 4060 (566.36) / Intel Arc A750 / AMD RX 9070 XT (25.10.2) / なし (none)
+  - type: dropdown
+    id: device
+    attributes:
+      label: 変換に使ったデバイス (変換の問題のとき) / Conversion device
+      description: 処理ログの「変換デバイス」の行 / the "conversion device" line in the log
+      options:
+        - 分からない / Not sure
+        - GPU (DirectML)
+        - GPU (CUDA)
+        - GPU (ROCm)
+        - CPU
   - type: textarea
     id: steps
     attributes:

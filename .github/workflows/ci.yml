@@ -49,6 +49,41 @@ jobs:
           echo "## Benchmark (testsrc2, 64x64, 10fps)" >> "$GITHUB_STEP_SUMMARY"
           sed -n '/^| Metric/,$p' bench_report.md >> "$GITHUB_STEP_SUMMARY"
 
+  # Windows (多くの人が変換ツールを使う環境) で、CPU の変換と全部のテストを動かす (TODO.md の P2-5)
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install FFmpeg
+        run: choco install ffmpeg -y --no-progress
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt -r requirements-benchmark.txt
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Convert a test clip on the CPU (block mode and image mode)
+        run: |
+          ffmpeg -v error -y -f lavfi -i "testsrc2=size=320x180:rate=30:duration=5" -f lavfi -i "sine=d=5" -shortest -pix_fmt yuv420p clip.mp4
+          python convert.py --input-video clip.mp4 --output clip.js --device cpu --threads 2
+          python convert_image_mode.py clip.mp4 -o clip_image.mcaddon --width 128 --height 72 --fps 10
+
+      - name: Run tests
+        run: pytest -q
+
   # ブラウザ版 (web/) と同じ Pyodide (32bit の WebAssembly の Python) で、変換とアドオンの組み立てが最後まで動くこと
   web:
     runs-on: ubuntu-latest
