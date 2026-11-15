@@ -78,3 +78,14 @@ def test_web_defaults_are_the_recommended_profile():
     assert selected("preset") == conversion_profiles.DEFAULT_PRESET
     assert selected("palette") == conversion_profiles.PROFILES["recommended"]["palette"]
     assert selected("dither") == conversion_profiles.PROFILES["recommended"]["dither_method"]
+
+
+def test_flat_areas_choice_is_the_same_in_both_apps_and_accepted_by_convert():
+    """「平らな面のムラを減らす」で渡す --flat-areas の値が、Windows 版とブラウザ版で同じで、convert.py が受け付ける (TODO.md の P2-1)。"""
+    from mvcodec.color import FLAT_AREA_CHOICES
+
+    gui = re.search(r'^FLAT_AREAS_CHOICE = "(\w+)"', (ROOT / "video_player_gui.py").read_text(encoding="utf-8"), re.M).group(1)
+    worker = (WEB / "worker.js").read_text(encoding="utf-8")
+    assert re.search(r'const FLAT_AREAS_CHOICE = "(\w+)";', worker).group(1) == gui
+    assert gui in FLAT_AREA_CHOICES and gui != "off"
+    assert 'id="flatAreas"' in HTML and "s.flatAreas" in worker

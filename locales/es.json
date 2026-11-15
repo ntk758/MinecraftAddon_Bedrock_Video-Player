@@ -30,6 +30,7 @@
   "settings.palette": "Paleta",
   "settings.dither": "Tramado (dithering)",
   "settings.perceptual": "Optimización perceptual (bordes más nítidos)",
+  "settings.flat_areas": "Suavizar las manchas en zonas planas (cielo, paredes; los colores pueden verse algo apagados)",
   "settings.palette_ai": "Priorizar los colores de las personas (IA; paleta automática, usa el recorte de personas)",
   "settings.device": "Dispositivo de conversión",
   "preset.light": "Ligero (64×64 / 20fps)",

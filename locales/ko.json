@@ -30,6 +30,7 @@
   "settings.palette": "팔레트",
   "settings.dither": "디더링",
   "settings.perceptual": "지각 최적화 (윤곽을 선명하게)",
+  "settings.flat_areas": "평평한 면 (하늘·벽 등)의 얼룩 줄이기 (색이 조금 탁해질 수 있습니다)",
   "settings.palette_ai": "인물의 색을 우선 (AI. 자동 팔레트일 때 인물 잘라내기 사용)",
   "settings.device": "변환 장치",
   "preset.light": "가벼움 (64×64 / 20fps)",

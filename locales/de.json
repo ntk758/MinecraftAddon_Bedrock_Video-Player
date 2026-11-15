@@ -30,6 +30,7 @@
   "settings.palette": "Palette",
   "settings.dither": "Dithering",
   "settings.perceptual": "Wahrnehmungsoptimierung (schärfere Kanten)",
+  "settings.flat_areas": "Flecken in flachen Flächen glätten (Himmel, Wände; Farben wirken evtl. etwas matter)",
   "settings.palette_ai": "Farben von Personen bevorzugen (KI; automatische Palette, nutzt den Personen-Ausschnitt)",
   "settings.device": "Konvertierungsgerät",
   "preset.light": "Leicht (64×64 / 20fps)",

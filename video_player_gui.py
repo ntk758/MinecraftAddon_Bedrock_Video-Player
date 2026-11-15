@@ -405,6 +405,8 @@ RECENT_LOG_LINES = 60
 # ゲーム内の表示言語: all = 各プレイヤーのゲーム言語 (10 言語) / fixed = この画面の言語に固定 (言語ファイル 1 個)
 ADDON_LANG_VALUES = ("all", "fixed")
 DEFAULT_PRESET = conversion_profiles.DEFAULT_PRESET
+# 画面の「平らな面のムラを減らす」で渡す --flat-areas の値 (benchmark/flat_bench.py の比較。docs/research/flat_areas.md)
+FLAT_AREAS_CHOICE = "smooth"
 # 自動: 全ブロックの候補からシーンごとに最大 64 色を選ぶ (全ブロックとほぼ同じ画質でデータが少ない。docs/research/palette_space.md)
 DEFAULT_PALETTE = conversion_profiles.DEFAULT_PALETTE
 DEFAULT_DITHER = conversion_profiles.DEFAULT_DITHER
@@ -565,6 +567,8 @@ class PackBuilderApp(tk.Tk):
         self.pair_flat_var = tk.BooleanVar(value=False)
         # 自動パレットで、AI で切り抜いた人物の色を重く数える (mvcodec/person.py の切り抜き + convert.py --palette-weight-mask)
         self.palette_ai_var = tk.BooleanVar(value=False)
+        # 平らな面のムラを減らす (convert.py の --flat-areas FLAT_AREAS_CHOICE。既定は切る)
+        self.flat_areas_var = tk.BooleanVar(value=False)
         # 画像モード (テクスチャ再生方式、convert_image_mode.py) のアドオンも隣に作る。ブロックモードのアドオンとは別ファイル
         self.image_mode_var = tk.BooleanVar(value=False)
         self.image_priority_key = DEFAULT_IMAGE_PRIORITY
@@ -853,8 +857,13 @@ class PackBuilderApp(tk.Tk):
         ).grid(row=6, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         ttk.Checkbutton(settings, text=tr("settings.pair_flat"), variable=self.pair_flat_var).grid(
             row=8, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
-        ttk.Checkbutton(settings, text=tr("settings.palette_ai"), variable=self.palette_ai_var).grid(
-            row=9, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
+        # 人物の色を優先 (AI) と、平らな面のムラを減らす (--flat-areas) を同じ行の枠に縦に並べる
+        color_options = ttk.Frame(settings)
+        color_options.grid(row=9, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
+        ttk.Checkbutton(color_options, text=tr("settings.palette_ai"), variable=self.palette_ai_var).grid(
+            row=0, column=0, sticky="w")
+        ttk.Checkbutton(color_options, text=tr("settings.flat_areas"), variable=self.flat_areas_var).grid(
+            row=1, column=0, pady=(4, 0), sticky="w")
         ttk.Checkbutton(settings, text=tr("settings.image_mode"), variable=self.image_mode_var).grid(
             row=10, column=0, columnspan=8, padx=10, pady=(0, 6), sticky="w")
         # 画像モードで予算を超えるとき、何を守るか (画質・なめらかさ・長さ) と、どの端末の予算に収めるか
@@ -1193,6 +1202,11 @@ class PackBuilderApp(tk.Tk):
             daemon=True,
         ).start()
 
+    def _flat_areas_args(self) -> list[str]:
+        """「平らな面のムラを減らす」を選んでいれば convert.py に足す引数 (選んでいなければ何も足さず、今までと同じ出力)。"""
+        variable = getattr(self, "flat_areas_var", None)
+        return ["--flat-areas", FLAT_AREAS_CHOICE] if variable is not None and variable.get() else []
+
     def _mmd_to_vox(self, model: Path, motion: str | None, output: Path, height: int, fps: float,
                     duration: float | None) -> Path:
         """MMD のモデル (.pmx) と踊り (.vmd) から、立体のアニメ (.vox) を作る (mvcodec/mmd.py)。"""
@@ -1373,7 +1387,7 @@ class PackBuilderApp(tk.Tk):
             source, output, ffmpeg, geom["stageWidth"], geom["wallHeight"], fps, palette, dither_method,
             self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration, self.tr.language,
         )
-        self._run([*converter_command(), *argv, "--fit", "cover"])
+        self._run([*converter_command(), *argv, *PackBuilderApp._flat_areas_args(self), "--fit", "cover"])
         return {"id": background_id, "title": source.stem, "frames_js": output.read_text(encoding="utf-8"),
                 "thumbnail": None, "sounds": sounds, "hidden": True}
 
@@ -1482,6 +1496,7 @@ class PackBuilderApp(tk.Tk):
                         self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
                         self.tr.language, mode, depth, video_anamorphic,
                     )
+                    argv += PackBuilderApp._flat_areas_args(self)
                     if background_id:
                         argv += ["--stage-background", background_id]
                     if mask_video:
@@ -1507,7 +1522,7 @@ class PackBuilderApp(tk.Tk):
                             video, flat_data, ffmpeg, width, height, fps, palette, flat_pair_dither(dither_method),
                             self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
                             self.tr.language, "screen", depth, False,
-                        )])
+                        ), *PackBuilderApp._flat_areas_args(self)])
                         # 音声は立体版 (だまし絵なら背景の映像) のものを鳴らし、2 回入れない
                         videos.append({
                             "id": flat_id, "title": PAIR_TITLE_2D.format(title=video.stem),

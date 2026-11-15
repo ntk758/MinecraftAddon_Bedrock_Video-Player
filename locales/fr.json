@@ -30,6 +30,7 @@
   "settings.palette": "Palette",
   "settings.dither": "Tramage (dithering)",
   "settings.perceptual": "Optimisation perceptuelle (contours plus nets)",
+  "settings.flat_areas": "Lisser les taches dans les zones unies (ciel, murs ; les couleurs peuvent paraître un peu ternes)",
   "settings.palette_ai": "Privilégier les couleurs des personnes (IA ; palette auto, utilise le détourage)",
   "settings.device": "Périphérique de conversion",
   "preset.light": "Léger (64×64 / 20fps)",

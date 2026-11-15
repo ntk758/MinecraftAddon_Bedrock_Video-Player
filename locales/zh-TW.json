@@ -30,6 +30,7 @@
   "settings.palette": "調色盤",
   "settings.dither": "混色 (Dithering)",
   "settings.perceptual": "感知最佳化（讓輪廓更清晰）",
+  "settings.flat_areas": "減少平坦區域（天空、牆面等）的斑駁（顏色可能略顯暗淡）",
   "settings.palette_ai": "優先人物的顏色 (AI；自動調色盤時使用人物去背)",
   "settings.device": "轉換裝置",
   "preset.light": "輕量 (64×64 / 20fps)",

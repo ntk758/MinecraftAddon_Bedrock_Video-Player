@@ -30,6 +30,7 @@
   "settings.palette": "调色板",
   "settings.dither": "抖动",
   "settings.perceptual": "感知优化（使轮廓更清晰）",
+  "settings.flat_areas": "减少平坦区域（天空、墙面等）的斑驳（颜色可能略显暗淡）",
   "settings.palette_ai": "优先人物的颜色 (AI；自动调色板时使用人物抠图)",
   "settings.device": "转换设备",
   "preset.light": "轻量 (64×64 / 20fps)",

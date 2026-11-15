@@ -53,6 +53,8 @@ const FLAT_PAIR_SUFFIX = "_flat";
 // 画像モードのアドオンのコマンドの接頭辞の末尾 (video_player_gui.py の IMAGE_NAMESPACE_SUFFIX と同じ。ブロックモードと
 // 同じ接頭辞だと、ゲームに登録するコマンドの名前がぶつかる)
 const IMAGE_NAMESPACE_SUFFIX = "_img";
+// 画面の「平らな面のムラを減らす」で渡す --flat-areas の値 (video_player_gui.py の FLAT_AREAS_CHOICE と同じ)
+const FLAT_AREAS_CHOICE = "smooth";
 
 function figureSize(s) {
   if (!s.anamorphic || s.mode === "screen") return [s.width, s.height];
@@ -65,6 +67,8 @@ function convertArgs(s, framesDir, out, lang) {
   return ["--frames-dir", framesDir, "--output", out, "--width", String(width), "--height", String(height),
           "--fps", String(s.fps), "--palette", s.palette, "--dither-method", s.dither, "--device", "cpu",
           "--keyframe-interval", String(s.keyframe), ...(s.perceptual ? [] : ["--no-perceptual"]),
+          // 平らな面のムラを減らす (Windows 版の FLAT_AREAS_CHOICE と同じ値)
+          ...(s.flatAreas ? ["--flat-areas", FLAT_AREAS_CHOICE] : []),
           "--threads", "1", "--mode", s.mode, "--depth", String(s.depth), "--lang", lang,
           ...viewArgs(s, s.mode !== "screen")];
 }
