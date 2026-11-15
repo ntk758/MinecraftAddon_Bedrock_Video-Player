@@ -394,6 +394,7 @@
   "imgaddon.volume_set": "音量: %1%",
   "imgaddon.volume_usage": "使い方: volume <0〜100>",
   "imgaddon.stats": "%1: %2、%3 / %4 コマ (%5 秒)、%6 fps、%7、音量 %8%、スクリーン %9",
+  "imgaddon.stats_clock": "時計: 再生してから %1 秒を数えていません (ゲームのポーズ中か、250 ms を超える tick の分)",
   "imgaddon.state_playing": "再生中",
   "imgaddon.state_paused": "一時停止中",
   "imgaddon.state_stopped": "停止",

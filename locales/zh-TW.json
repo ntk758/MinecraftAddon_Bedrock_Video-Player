@@ -394,6 +394,7 @@
   "imgaddon.volume_set": "音量：%1%",
   "imgaddon.volume_usage": "用法：volume <0-100>",
   "imgaddon.stats": "%1：%2，第 %3 / %4 格（%5 秒），%6 fps，%7，音量 %8%，螢幕%9",
+  "imgaddon.stats_clock": "時鐘：開始播放後有 %1 秒未計入（遊戲暫停，或超過 250 毫秒的 tick）",
   "imgaddon.state_playing": "播放中",
   "imgaddon.state_paused": "已暫停",
   "imgaddon.state_stopped": "已停止",

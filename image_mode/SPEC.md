@@ -79,7 +79,7 @@ v.cell = v.frame - v.sheet * <cells_per_sheet>;
 
 ## スクリプトとの約束 (image_main.js)
 
-- 時計はスクリプトが再生中に数える tick (`playTicks`、1 秒ごとに保存)。`world.getAbsoluteTime()` は昼夜の時刻なので使わない。再生中は 1 秒ごとに frame と seq (1 ずつ増やして 1024 で 0 に戻す) を書き直す。
+- 時計はスクリプトが再生中に数える実時間 (`playMs`、tick ごとに `Date.now()` の差を足す。1 tick で足すのは 250 ms まで。1 秒ごとに保存し、古い版のために `playTicks` も書く)。v6.37.1 までは tick の数 (`playTicks`) で、TPS が 20 を下回るとサーバーの位置が実時間より遅れた。途中で入った人がいると、そのときにも frame と seq を書き直す。`world.getAbsoluteTime()` は昼夜の時刻なので使わない。再生中は 1 秒ごとに frame と seq (1 ずつ増やして 1024 で 0 に戻す) を書き直す。
 - 状態は world の dynamic property `<ns>:image_state` に JSON で保存し、ワールドを開き直したら続きから戻す。
 - コマンド: `/<ns>:setup [動画ID] [face] [wall] [align] [a|c]`、`/<ns>:start`、`/<ns>:play [動画ID]`、`/<ns>:pause`、`/<ns>:resume`、
   `/<ns>:stop`、`/<ns>:seek <秒>` (小数可。数の引数として登録する: 文字の引数だと数だけで構文エラーになった)、`/<ns>:volume <0〜100>`、

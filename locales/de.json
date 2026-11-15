@@ -394,6 +394,7 @@
   "imgaddon.volume_set": "Lautstärke: %1 %",
   "imgaddon.volume_usage": "Verwendung: volume <0-100>",
   "imgaddon.stats": "%1: %2, Bild %3 / %4 (%5 s), %6 fps, %7, Lautstärke %8 %, Bildschirm %9",
+  "imgaddon.stats_clock": "Uhr: %1 s seit dem Start nicht gezählt (Spiel pausiert oder Ticks länger als 250 ms)",
   "imgaddon.state_playing": "läuft",
   "imgaddon.state_paused": "pausiert",
   "imgaddon.state_stopped": "gestoppt",
