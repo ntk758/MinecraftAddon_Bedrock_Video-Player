@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v6.37.1](https://img.shields.io/badge/Release-v6.37.1-blue.svg)](#-releases)
+[![Release v6.38.0](https://img.shields.io/badge/Release-v6.38.0-blue.svg)](#-releases)
 [![CI](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml/badge.svg)](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
@@ -54,7 +54,7 @@
   <b>How different kinds of footage look</b> (real in-game recordings, Windows 11, v6.37.0): source, block mode (128×72, 20 fps, <code>--flat-areas smooth</code>; <code>off</code> for space) and image mode (256×144, 30 fps). In v6.37.0 the image-mode screen faced sideways for about the first 1.5 s of a play (fixed in v6.37.1), so every clip starts after that point. All footage is CC0, public domain or CC BY from Wikimedia Commons (<a href="docs/images/genres/CREDITS.md">credits and licenses</a>)</sub>
 </p>
 
-**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.37.1.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.37.1.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.37.1-windows-x64.zip` (Python 不要) を使ってください。
+**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.38.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.38.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.38.0-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 
 > **画像モード (30 fps のテクスチャ再生、新しい方式)** — Windows 版・ブラウザ版の「画像モードのアドオンも作る」か `convert_image_mode.py` で作れます。ブロックモードと同じ操作 (コマンド・時計のリモコン・音量・シーク・10 言語) に対応し、長い動画では画質・なめらかさ・長さのどれを優先するかを選べます。
@@ -65,7 +65,7 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
 ## 🚀 クイックスタート / Quick start
 
 **A. サンプルを試す (変換は不要・約 3 分) / Try the sample (no conversion)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.37.1.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.37.1.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.38.0.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.38.0.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
    Download a sample `.mcaddon` from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) and double-click it to import it into Minecraft Bedrock.
 2. 新しいワールドを作り、**ビヘイビアーパックとリソースパックの両方** を有効にします (スーパーフラットがおすすめ)。**チートは不要** です (v6.31.0 以前の版はチートが必要)。
    Create a world with **both** the Behavior Pack and the Resource Pack enabled (a superflat world works best). **Cheats are not needed** (versions up to v6.31.0 need cheats).
@@ -73,8 +73,8 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
    Run `/badapple:setup` then `/badapple:start`. Use a compass to open the remote control (up to v6.31.0: `/scriptevent badapple:setup`).
 
 **B. 自分の動画を変換する (Windows) / Convert your own video (Windows)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.37.1-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
-   Unzip `BlockVideoPlayer-v6.37.1-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.38.0-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
+   Unzip `BlockVideoPlayer-v6.38.0-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
 2. 初めて起動すると **はじめてガイド** が開きます (左上のボタンでいつでも開けます): 環境 (FFmpeg・GPU・メモリ・AI の切り抜き・保存先の空き・Minecraft) を自動で調べ、動画を選ぶと勧める設定とアドオンの大きさの見込みを出し、作り終わると「保存先を開く」「Minecraft に読み込む」と再生のコマンドを案内します。ガイドを使わないときは「動画を追加」→「動画の縦横比に合わせる」→「.mcaddon を作成」。画面の **再生負荷の目安** が「重い」なら幅・高さ・fps を下げます。
    Add a video → *Match video aspect ratio* → *Create .mcaddon*. If the **playback load estimate** says *heavy*, lower the size or fps.
 3. できた `.mcaddon` を A の 2〜3 と同じように使います。うまくいかないときは [既知の問題](docs/KNOWN_ISSUES.md) を見てください。
@@ -110,10 +110,10 @@ Python で動かす方法・GPU の設定は [インストールと使い方](#-
 リリースページでは各ファイルの横に SHA-256 が表示されます (`SHA256SUMS.txt` が付いている版はそのファイルにも)。手元のファイルの値と一致すれば、壊れても書き換えられてもいません。
 Each file on the release page shows its SHA-256; it must match the value you compute:
 ```powershell
-Get-FileHash .\BlockVideoPlayer-v6.37.1-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\BlockVideoPlayer-v6.38.0-windows-x64.zip -Algorithm SHA256
 ```
 ```bash
-sha256sum BlockVideoPlayer-v6.37.1-windows-x64.zip
+sha256sum BlockVideoPlayer-v6.38.0-windows-x64.zip
 ```
 
 ### 🖼 画像モード (試作) / Image mode (experimental)
@@ -137,7 +137,7 @@ sha256sum BlockVideoPlayer-v6.37.1-windows-x64.zip
 | 256×144 | 42 MiB | 127 MiB (Tier 1 内) | 253 MiB (Tier 2 超え) |
 | 512×288 | 169 MiB (Tier 1 超え) | 506 MiB | 1,013 MiB (Tier 5 超え) |
 
-制約: 音は 4 秒ごとのチャンクで、途中からは鳴らせません。そのため、音声のある動画のシークは近いほうのチャンクの頭 (4 秒刻み) へ、一時停止からの再開は止めた所を含むチャンクの頭へそろえ、すぐに音が出るようにしています (次の版から。それまでは次の境目まで無音)。開き直した後は次の境目まで無音です (途中で入ってきた人には、チャンクの頭から 1 秒以内なら鳴らします)。画面は 1 つです。リモコンは**時計**で開きます (ブロックモードはコンパス)。既定は方式 A だけで、方式 C (自作マテリアル、**将来の Minecraft の更新で壊れるリスクあり**) は `--method c|both` のときだけ入ります。PC で 256×144 と 512×288 が映り、なめらかに見えることを確かめました (2026-11-12)。予算を超えたときにスマートフォンなどで何が起きるかは未確認です。
+制約: 音は 4 秒ごとのチャンクで、途中からは鳴らせません。そのため、音声のある動画のシークは近いほうのチャンクの頭 (4 秒刻み) へ、一時停止からの再開は止めた所を含むチャンクの頭へそろえ、すぐに音が出るようにしています (v6.38.0 から。それまでは次の境目まで無音)。開き直した後は次の境目まで無音です (途中で入ってきた人には、チャンクの頭から 1 秒以内なら鳴らします)。画面は 1 つです。リモコンは**時計**で開きます (ブロックモードはコンパス)。既定は方式 A だけで、方式 C (自作マテリアル、**将来の Minecraft の更新で壊れるリスクあり**) は `--method c|both` のときだけ入ります。PC で 256×144 と 512×288 が映り、なめらかに見えることを確かめました (2026-11-12)。予算を超えたときにスマートフォンなどで何が起きるかは未確認です。
 
 ## 日本語 (Japanese)
 
@@ -482,7 +482,7 @@ python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 
 | 主なオプション | 説明 |
 |---|---|
 | `--input-video` / `--frames-dir` | 入力動画、または画像連番フォルダ |
-| `--profile` | 既定値の組。`legacy` (既定: 64×64・20 fps・`full`・ディザなし。以前からの値) / `recommended` (Windows 版とブラウザ版の画面の既定: 128×128・10 fps・`auto`・Blue Noise)。個別に指定した引数が優先されます (次の版から) |
+| `--profile` | 既定値の組。`legacy` (既定: 64×64・20 fps・`full`・ディザなし。以前からの値) / `recommended` (Windows 版とブラウザ版の画面の既定: 128×128・10 fps・`auto`・Blue Noise)。個別に指定した引数が優先されます (v6.38.0 から) |
 | `--width` `--height` `--fps` `--duration` | 解像度・fps (最大 20)・変換する秒数 |
 | `--palette` | `concrete` (16 色) / `expanded` (33 色) / `full` (39 色) / `all` (全ブロックから色の離れた 127 色) / `auto` (214 色からシーンごとに選ぶ。GUI の既定) / `glass` (ステンドグラス 16 色、立体向け)。立体ではブロックの側面の色で選ぶ |
 | `--palette-colors` / `--palette-space` | `--palette auto` で選ぶ色数。既定の `auto` はシーンごとに 24 / 32 / 48 / 64 / 96 / 127 色から、色の誤差が 127 色のときの 1.05 倍以内に収まる一番少ない色数を選ぶ (数を指定するとその数まで。候補は光るブロックを除く 214 色) / 色を選ぶ色空間 `rgb` (既定) か `oklab` ([比較](docs/research/palette_space.md)) |
@@ -641,6 +641,7 @@ This project is licensed under the [MIT License](LICENSE).
 すべての版の変更点は [CHANGELOG.md](CHANGELOG.md) にあります / Full history: [CHANGELOG.md](CHANGELOG.md).
 
 
+- **v6.38.0**: 画像モードの時計を実時間に (TPS が下がっても音と映像がずれない)・シークと再開の直後に音が出る。人物の切り抜きで、音声が映像より短い動画が失敗するのを直した。画像モードに JPEG のシートと同じ絵のコマをまとめる設定 (任意)。画面に勧めるモードとよくある失敗の原因 (実機では未確認)。
 - **v6.37.1**: 画像モードで `play` のたびに、再生の最初の約 1.5 秒画面が横を向いていたのを直した (PC の実機で確認)。
 - **v6.37.0**: 画像モードが夜でも暗くならず、縮め方とシートの詰め方で画質を保ったままパック −33%。ブロックモードに空や壁のムラを減らす --flat-areas (試験的)。
 - **v6.36.0**: 画像モードがブロックモードと同じ操作に (リモコン・音量・`setup wall`・10 言語)。画質・なめらかさ・長さのどれを優先するか選べ、ブロックモードと 1 つのファイルにまとめられる。名前を Block & Image Video Player に (PC の実機で確認)。
