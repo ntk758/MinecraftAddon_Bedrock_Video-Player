@@ -115,6 +115,18 @@ function currentFrame(video = currentVideo()) {
   return clampFrame(video, Math.floor((state.playMs / 1000) * video.fps));
 }
 
+/**
+ * 音声のある動画で、コマを音声のチャンクの頭にそろえる。音声は途中から鳴らせないので、チャンクの頭から再生すれば
+ * すぐに音が出る (そろえないと、次の境目まで最大 audio_chunk_seconds 秒無音)。DECISIONS.md の A17。
+ * how は "nearest" (シーク: 近いほうの頭) か "floor" (再開: 今のチャンクの頭まで戻る)。
+ */
+function alignToChunk(video, frame, how) {
+  if (!video.audio_chunks || !video.audio_chunk_seconds) return frame;
+  const chunkFrames = video.audio_chunk_seconds * video.fps;
+  const chunk = how === "nearest" ? Math.round(frame / chunkFrames) : Math.floor(frame / chunkFrames);
+  return clampFrame(video, Math.min(chunk, video.audio_chunks - 1) * chunkFrames);
+}
+
 function clampFrame(video, frame) {
   return Math.max(0, Math.min(video.frame_count - 1, Math.floor(frame)));
 }
@@ -355,12 +367,14 @@ function pause() {
 function resume() {
   const video = currentVideo();
   if (!video || state.mode !== PAUSED) return;
-  // 止めたコマを今見せていることにして、時計の起点をずらす
+  // 止めたコマを含むチャンクの頭から続ける (音声がすぐ鳴るように。最大 audio_chunk_seconds 秒戻る)
+  state.pausedFrame = alignToChunk(video, state.pausedFrame, "floor");
   state.playMs = (state.pausedFrame / video.fps) * 1000;
   state.mode = PLAYING;
   uncountedMs = 0;
   saveState();
   syncScreen();
+  updateAudio(video);
   notify("resumed");
 }
 
@@ -382,7 +396,8 @@ function seek(args) {
     notify("seek_usage");
     return;
   }
-  const frame = clampFrame(video, seconds * video.fps);
+  // 音声のある動画は、近いほうのチャンクの頭へ (音声がすぐ鳴るように)
+  const frame = alignToChunk(video, clampFrame(video, seconds * video.fps), "nearest");
   stopAudio(video);
   if (state.mode === PLAYING) {
     state.playMs = (frame / video.fps) * 1000;
@@ -393,6 +408,7 @@ function seek(args) {
   uncountedMs = 0;
   saveState();
   syncScreen();
+  if (state.mode === PLAYING) updateAudio(video);
   notify("seek_done", (frame / video.fps).toFixed(1));
 }
 

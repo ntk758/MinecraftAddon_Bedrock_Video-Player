@@ -220,7 +220,8 @@ def test_play_pause_resume_and_seek(tmp_path):
     paused = props(snaps["paused"])
     assert paused["state"] == 2
     # 一時停止の後は止めたコマから進める
-    assert props(snaps["resumed"])["frame"] >= paused["frame"] + 25
+    # 再開は、止めたコマを含む音声のチャンク (4 秒) の頭から (音がすぐ鳴るように)。2 秒で止めたので 0 秒から 21 tick
+    assert paused["frame"] >= 55 and 28 <= props(snaps["resumed"])["frame"] <= 33
     assert props(snaps["seek"])["frame"] == 240
     # seq は書くたびに変わる
     assert len({props(s)["seq"] for s in out["snaps"]}) == len(out["snaps"])
@@ -271,10 +272,10 @@ def test_switching_method_far_away_is_refused_and_no_orphan_is_left(tmp_path):
 
 def test_seq_continues_from_the_screen_after_a_script_reload(tmp_path):
     out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 5}, {"cmd": "pause"}, {"tick": 2},
-                         {"snap": "before"}, {"reload": 0}, {"tick": 2}, {"cmd": "seek", "arg": "5"}, {"tick": 2},
+                         {"snap": "before"}, {"reload": 0}, {"tick": 2}, {"cmd": "seek", "arg": "4"}, {"tick": 2},
                          {"snap": "after"}])
     before, after = (props(x) for x in out["snaps"])
-    assert after["seq"] != before["seq"] and after["frame"] == 150
+    assert after["seq"] != before["seq"] and after["frame"] == 120
 
 
 def messages(out, key):
@@ -285,7 +286,8 @@ def test_seek_without_a_number_explains_the_usage(tmp_path):
     out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "seek", "arg": ""}, {"cmd": "seek", "arg": "7.5"}, {"tick": 1},
                          {"snap": "seek"}])
     assert messages(out, "seek_usage")
-    assert props(out["snaps"][0])["frame"] == 225
+    # 7.5 秒は、音声のチャンクの頭の 8 秒へそろえる
+    assert props(out["snaps"][0])["frame"] == 240
 
 
 def test_play_switches_the_video_in_place_and_starts(tmp_path):
@@ -365,7 +367,8 @@ def test_custom_commands_take_several_words_and_typed_numbers(tmp_path):
     assert defs["bvpimg:seek"] == ["Float"] and defs["bvpimg:volume"] == ["Integer"]
     [placed] = out["log"]["placed"]
     assert placed["yaw"] % 90 == 0 and placed["location"]["x"] % 1 == 0.5
-    assert props(out["snaps"][1])["frame"] == 225
+    # 7.5 秒は、音声のチャンクの頭の 8 秒へそろえる
+    assert props(out["snaps"][1])["frame"] == 240
 
 
 def test_clock_opens_the_remote_and_its_buttons_work(tmp_path):
@@ -383,7 +386,8 @@ def test_clock_opens_the_remote_and_its_buttons_work(tmp_path):
     snaps = {x["label"]: x for x in out["snaps"]}
     assert props(snaps["play"])["state"] == 1
     assert messages(out, "volume_set") and "30" in messages(out, "volume_set")[0]
-    assert 150 <= props(snaps["seek"])["frame"] <= 152
+    # 5 秒は、近いほうの音声のチャンクの頭 (4 秒) へそろえる
+    assert 120 <= props(snaps["seek"])["frame"] <= 122
     assert snaps["library"]["type"] == "bvpimg:screen_second_a"
     forms = snaps["forms"]["forms"]
     remote = forms[0]
@@ -398,3 +402,25 @@ def test_remote_before_setup_offers_to_place_the_screen(tmp_path):
     out = run(tmp_path, [{"answers": [0]}, {"cmd": "remote"}, {"tick": 3}, {"snap": "placed"}, {"forms": True}])
     assert out["snaps"][0]["type"] == "bvpimg:screen_demo_a"
     assert out["snaps"][1]["forms"][0]["buttons"][0] == "bvpimg.remote.setup_here"
+
+
+def test_seek_and_resume_start_the_sound_at_once(tmp_path):
+    """シークと再開は音声のチャンクの頭にそろえるので、0.3 秒以内に音が鳴る (TODO.md の P0-3)。音声の無い動画はそろえない。"""
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 50}, {"cmd": "seek", "arg": "6.9"},
+                         {"tick": 6}, {"snap": "seek"}, {"tick": 20}, {"cmd": "pause"}, {"tick": 10}, {"cmd": "resume"},
+                         {"tick": 6}, {"snap": "resumed"}])
+    sounds = out["log"]["sounds"]
+    seek_at = sounds[1][2]
+    # シークした tick に 8 秒のチャンク (chunk_2) が鳴り、再開した tick に同じチャンクがもう一度鳴る
+    assert [s[1] for s in sounds] == ["bvpimg.img.demo.chunk_0", "bvpimg.img.demo.chunk_2", "bvpimg.img.demo.chunk_2"]
+    snaps = {s["label"]: s for s in out["snaps"]}
+    assert 240 <= props(snaps["seek"])["frame"] <= 250
+    assert 240 <= props(snaps["resumed"])["frame"] <= 250
+    assert sounds[2][2] - seek_at >= 1000
+
+
+def test_seek_without_audio_keeps_the_exact_position(tmp_path):
+    silent = [dict(VIDEOS[0], audio_chunks=0)]
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"cmd": "seek", "arg": "6.9"}, {"tick": 1},
+                         {"snap": "seek"}], videos=silent)
+    assert props(out["snaps"][0])["frame"] == 207
