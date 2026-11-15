@@ -154,7 +154,7 @@ def test_block_cap_zero_restores_the_previous_behaviour():
     source[20, 8:40] = 200
     indices = np.where(source[..., 0] == 200, 1, 0).astype(np.int32)
     reference = np.zeros((64, 128), np.int32)
-    out = BlockRDO(64, block_cap=0)(indices, source, palette, reference)
+    out = BlockRDO(64, block_cap=0, dc_weight=0)(indices, source, palette, reference)
     assert (out == 1).sum() < (indices == 1).sum()  # 文字の画の一部が消える
 
 
@@ -181,9 +181,28 @@ def test_smooth_gradient_is_not_painted_with_solid_blocks():
 def test_flat_area_next_to_an_edge_can_still_be_one_block():
     """輪郭 (差が大きい所) とまったく平らな所は、今までどおり単色で塗れる。"""
     palette = np.array([[0, 0, 0], [250, 250, 250], [240, 240, 240]], np.float32)
-    source = np.full((64, 128, 3), 245, np.uint8)
+    source = np.full((64, 128, 3), 249, np.uint8)
     source[:, 64:] = 0
-    indices = np.where(source[..., 0] == 0, 0, np.indices((64, 128)).sum(0) % 2 + 1).astype(np.int32)
+    # ほとんど 250 で、ところどころ 240 の粒 (平均は元の 249 に近いので、250 の単色で塗っても平均の色はほぼずれない)
+    speck = (np.indices((64, 128)).sum(0) % 9) == 0
+    indices = np.where(source[..., 0] == 0, 0, np.where(speck, 2, 1)).astype(np.int32)
     rdo = BlockRDO(64)
     rdo(indices, source, palette)
     assert rdo.stats["solid_mean"] + rdo.stats["solid_mode"] + rdo.stats["two"] > 0
+
+
+def test_dither_whose_mean_has_no_single_block_is_not_painted_flat():
+    """ちょうど半々に混ぜた 8×8 (元の色 245 に合うブロックが無い) を、平均の色のずれる単色で塗らない。
+    塗ると、隣のディザのある 8×8 との境目が離れて見ると継ぎ目に見える (benchmark/edge_bench.py)。dc_weight=0 (v6.38.0 まで) では塗る。"""
+    palette = np.array([[0, 0, 0], [250, 250, 250], [240, 240, 240]], np.float32)
+    source = np.full((64, 128, 3), 245, np.uint8)
+    source[:, 64:] = 0
+    indices = np.where(source[..., 0] == 0, 0, np.indices((64, 128)).sum(0) % 2 + 1).astype(np.int32)
+    flat = ("solid_mean", "solid_mode", "two")
+    before = BlockRDO(64, dc_weight=0)
+    before(indices, source, palette)
+    assert sum(before.stats[m] for m in flat) > 0
+    now = BlockRDO(64)
+    out = now(indices, source, palette)
+    assert sum(now.stats[m] for m in flat) == 0
+    assert (out[:, :64] == indices[:, :64]).all()

@@ -54,6 +54,11 @@ BLOCK_ERROR_CAP = 5.0
 GRADIENT_MIN = 0.8
 GRADIENT_MAX = 8.0
 FLAT_MODES = ("solid_mean", "solid_mode", "two")
+# 8×8 の平均の色のずれ (元との差の二乗 × 画素数) に掛ける重み。3×3 でぼかした差だけでは、ディザの粒も誤差に数えるので、
+# 平均の色が少しずれた単色・2 色の 8×8 の方が良く見え、隣のディザのある 8×8 との境目が、離れて見ると継ぎ目に見えていた。
+# 実写・合成 12 本 (128×72、Blue Noise) で、平らな 8×8 とディザのある 8×8 の境目で色の差が ΔE 3 以上ずれる線が 49% → 27%、
+# データ +3.3%。2 で 30%・+2.5%、8 で 27%・+4.1% (benchmark/edge_bench.py、docs/research/edge_seams.md)。0 なら v6.38.0 まで
+DC_WEIGHT = 4.0
 
 _M1 = np.array([[0.4122214708, 0.5363325363, 0.0514459929], [0.2119034982, 0.6806995451, 0.1073969566],
                 [0.0883024619, 0.2817188376, 0.6299787005]])
@@ -111,7 +116,9 @@ class BlockRDO:
     """フレームの列に順番にかける (前のフレームを覚えるのは呼び出し側: reference に符号化済みの盤面を渡す)。"""
 
     def __init__(self, strength, block=RDO_BLOCK, modes=MODES, hysteresis=24.0, mv_range=MV_RANGE,
-                 budget=AUTO_BUDGET, block_cap=BLOCK_ERROR_CAP, gradient_min=GRADIENT_MIN):
+                 budget=AUTO_BUDGET, block_cap=BLOCK_ERROR_CAP, gradient_min=GRADIENT_MIN, dc_weight=DC_WEIGHT):
+        # 8×8 の平均の色のずれの重み。0 なら v6.38.0 まで
+        self.dc_weight = float(dc_weight)
         # 1 ブロックで増えてよい色の誤差 (1 画素あたり)。0 なら上限なし (v6.12.0 まで)
         self.block_cap = float(block_cap)
         # グラデーションで単色・2 色の候補を使わない境目。0 なら制限なし (v6.16.0 まで)
@@ -230,21 +237,38 @@ class BlockRDO:
         for name in ("skip", "motion"):
             if name in candidates:
                 usable[names.index(name)] &= _block_sum((candidates[name] < 0).astype(np.int32), b) == 0
-        choice = self._choose(distortion, rate, usable, h * w)
+        base = distortion
+        if self.dc_weight > 0:
+            # 2.5D の空の列 (place_weight が 0) は見えないので、平均にも数えない
+            seen = np.ones((h, w), np.float32) if self._weight is None else (self._weight > 0).astype(np.float32)
+            counts = _block_sum(seen, b)
+            safe = np.maximum(counts, 1)[..., None]
+            src_mean = np.stack([_block_sum(src_lab[..., c] * seen, b) for c in range(3)], -1) / safe
+            dc = np.empty_like(distortion)
+            for k, name in enumerate(names):
+                lab = pal_lab[np.maximum(candidates[name], 0)]
+                mean = np.stack([_block_sum(lab[..., c] * seen, b) for c in range(3)], -1) / safe
+                dc[k] = self.dc_weight * counts * ((mean - src_mean) ** 2).sum(-1)
+            distortion = base + dc
+            if self.block_cap > 0:
+                usable[1:] &= (distortion[1:] - distortion[0]) <= self.block_cap * b * b
+        choice = self._choose(distortion, rate, usable, h * w, base)
         for k, name in enumerate(names):
             self.stats[name] += int((choice == k).sum())
         stacked = np.stack([candidates[name] for name in names])
         return np.take_along_axis(stacked, _expand(choice, (h, w), b)[None], 0)[0]
 
-    def _choose(self, distortion, rate, usable, pixels):
+    def _choose(self, distortion, rate, usable, pixels, base=None):
         """ブロックごとに選ぶ候補の番号 (0 は exact)。auto なら、増える色の誤差が予算以内の一番強い強さで選ぶ。"""
 
         def choose(strength):
             costs = np.where(usable, distortion + strength * rate, np.inf)
             return costs.argmin(0)
 
+        measured = distortion if base is None else base
+
         def added_error(choice):
-            return float((np.take_along_axis(distortion, choice[None], 0)[0] - distortion[0]).sum() / pixels)
+            return float((np.take_along_axis(measured, choice[None], 0)[0] - measured[0]).sum() / pixels)
 
         strengths = AUTO_STRENGTHS if self.auto else (self.strength,)
         for strength in strengths:
