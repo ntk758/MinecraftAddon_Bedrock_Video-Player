@@ -145,7 +145,8 @@ export const FRAME_DATA = {
 ## 4. Minecraft 側 (`main.js`) 描画最適化設計
 
 1. **`VideoPlayer` クラスによるオブジェクト指向化**:
-   - `VideoPlayer` クラスをインスタンス化することで、座標や状態を個別にカプセル化し、同一ワールド内で複数のスクリーンを独立して同時再生可能なマルチスクリーンアーキテクチャを実現。
+   - `VideoPlayer` クラスをインスタンス化することで、座標や状態を個別にカプセル化する (スクリーンの位置をキーにした `activePlayers` で管理)。
+   - ただし今の `setup` は、前の画面を片付けてから新しい画面を 1 つ作る。同時に動くのは、だまし絵の人物と背景の映像の組み合わせだけで、別々の場所の複数のスクリーンを同時に再生する機能は無い (TODO.md の P3-1)。
 2. **`BlockPermutation` の一括事前キャッシュ (`initPaletteCache`)**:
    - C++ バインディングである `BlockPermutation.resolve(blockId, states)` を毎フレーム呼び出すと非常に重いため、起動時に配列へ 1 回だけキャッシュ。
 3. **tick 予算付きの描画 (`MAX_BLOCKS_PER_TICK` / `TICK_TIME_BUDGET_MS`)**:

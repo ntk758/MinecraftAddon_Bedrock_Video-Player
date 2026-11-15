@@ -1,118 +1,113 @@
 # Project Status — Block & Image Video Player for Minecraft Bedrock Edition
 
-## 1. プロジェクト概要
-本プロジェクトは、動画ファイル（MP4 / MKV / AVI / WEBM 等）を Minecraft Bedrock Edition（統合版）の Behavior Pack（.mcpack）へ超高速かつ最小容量で変換し、ゲーム内のブロック盤面上でスムーズに動動画再生するアドオン＆変換ツール群です。
+今の実装と、確かめた範囲をまとめたものです。2026-11-15 に、v6.37.1 (`3234c68`) のコードと照らし合わせて書き直しました。
 
-- **最新バージョン**: `v6.37.1` (画像モードで再生の最初に画面が横を向くのを直した。Minecraft 1.26.10 以降)
-- **変換GUI環境**: Python 3.12+ (PyTorch: CUDA / ROCm / DirectML, Pillow, NumPy, Tkinter, FFmpeg) または **独立スタンドアロン EXE (`BlockVideoPlayer.exe`)**
+- 版ごとの変更は [CHANGELOG.md](CHANGELOG.md)、今後の計画は [TODO.md](TODO.md) にあります。
+- 端末ごとの状況は [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)、既知の問題は [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) にあります。
 
----
+## 1. 概要
 
-## 2. 現在の達成状況と到達点
+動画を Minecraft 統合版のアドオン (`.mcaddon`、ビヘイビアーパックとリソースパック) に変換して、ゲーム内で再生するツールとアドオンです。
 
-### 🧊 Phase 8.3: 2.5D パラメトリック立体 (v6.4.0)
-- `relief` / `extrude` / `inflate` を色の平面と値の平面 (表面の段 / 中央にそろえた厚み) の 2 枚の 2D 映像として送り (`layout: "heightfield"`)、アドオンが変わった列だけ立体に組み立て直す。`--volume-encoding auto|planes|voxels` (既定 auto = 送れるなら planes)。
-- 置くブロック・呼び出しは同じで、データは deflate 後 −54〜85% (64×48×16 の合成映像)。
+- **最新バージョン**: `v6.37.1` (版の唯一の管理場所は `pack_metadata.py` の `PACK_VERSION`)
+- **アドオン**:
+  - `@minecraft/server` 2.6.0 / `@minecraft/server-ui` 2.0.0 (安定版の API だけ)
+  - `min_engine_version` 1.26.10
+  - ブラウザ版だけは、1.21.80〜1.26.0 向けに Script API 1.x のアドオンも作れる (`legacy_target.py`。実機では未確認)
+- **変換ツール**: 3 種類
+  - Windows の EXE (Python 不要、FFmpeg は別に必要)
+  - Python 3.12+ の GUI・CLI (PyTorch があれば CUDA / ROCm / DirectML)
+  - ブラウザ版 (Pyodide。同じ `convert.py`・`mvcodec` を動かす。CPU だけ)
 
-### ⚙️ Phase 8.1: 描画方式の自動選択 (v6.1.0)
-- 実機の bench で、`fillBlocks` は 1 回 約 15 µs + 1 ブロック 約 0.55 µs、`setBlockPermutation` は 1 ブロック約 2.3 µs と判明。最適な置き方はフレームの内容で変わる。
-- 描画方式 `auto` (既定) が、フレームごとに箱 / 座標リスト / 1 個ずつ の時間を見積もって一番速い方式を選ぶ。`bench` は 1 回の費用と 1 ブロックの費用を分けて求め、ワールドに保存する。
-- GUI で立体の表示モードを選ぶと、ディザを自動で「なし」にする (Blue Noise の粒が立体の表面のノイズになるため)。
-- 立体の変換を約 4 倍高速化 (タイル辞書・ランの抽出・3D 動き探索をまとめて計算。出力は同じ) し、変換中の進み具合と残り時間をログに表示。
+状態の記号: ✅ 実機で確認 (端末と Minecraft の版つき) / 🧪 自動テストだけ / ⚠️ 未検証 / ❌ 未実装。
 
-### 🧊 Phase 7.x: 次世代予測圧縮と 3D ホログラム (v6.0.0)
-- **予測圧縮 (`varint_rle_v5`)**: 動き補償 (平面 8×8 + 全体探索 / 立体 8×8×8 ブリック)、暗黙のタイル辞書、ラン位置の間隔符号化を、フレームごとに一番小さいものを選んで使う。v5.4.0 比でデータ 47〜88% 減 (合成映像 128×72、ディザなし)。
-- **3D ホログラム**: `relief` (元の明るさ + ヒステリシス) / `extrude` / `inflate` / MagicaVoxel `.vox` (シーングラフ・アニメーション、向きの修正)。GUI の表示モードと 10 言語の表示に対応。
-- **まとめ置き描画**: `rect` (箱、立体は奥行きにも伸ばす) / `list` (`ListBlockVolume`) / `block` を `/scriptevent <接頭辞>:render` で切替。`bench` で実機の費用を計測。呼び出しは v5.4.0 の 1/1.7〜1/7 (`rect`)、1 フレーム 2〜33 回 (`list`)。
-- **再生の改善**: キーフレームでも変わったブロックだけを置く (論理盤面と表示盤面の分離)、置けなかったマスは次のフレームで置き直す、256×144 以上でも常時読み込みを分割登録して設置できる、立体を建築限界内に収める。
-- **ツール**: `scripts/preview_volume.py` (変換結果の等角投影 GIF)、`benchmark/codec_bench.py` (別の版とデータ量・呼び出し数を比較)。詳細は `docs/research/phase7x.md`。
+## 2. 再生 (アドオン)
 
-### 🌐 ゲーム内表示の多言語対応 (v5.4.0)
-- **プレイヤーごとの言語**: チャット・リモコン画面を Bedrock の翻訳キー (`texts/*.lang`) で表示。各プレイヤーのゲーム言語で表示され、未対応の言語は英語。
-- **変換器のログ**も GUI で選んだ言語 (`--lang`) で表示。
-- **結合テスト**: `main.js` を Minecraft API のモックで動かし、再生・表示の翻訳漏れを検査。
+### ブロックモード (`main.js`・`codec.js`)
 
-### 🌐 GUI 多言語対応 (v5.3.0)
-- **10 言語**: 日本語・English・简体中文・繁體中文・한국어・Español・Português (Brasil)・Français・Deutsch・Русский。翻訳は `locales/*.json`。
-- **言語切替**: GUI 右上の選択欄で即時切替 (入力内容・動画リスト・ログを保持)。初回は OS の表示言語、以後は保存した言語。
+| 機能 | 状態 | メモ |
+|---|---|---|
+| 平面のスクリーン (床置き・`setup wall`・`setup face`・`setup align`) | ✅ | Windows 11。v6.36.0 で床から壁への置き直しを確認 |
+| 立体 (relief / extrude / inflate / MagicaVoxel `.vox`)・2.5D | ✅ | Windows 11 (v6.0.0・v6.18.0 の録画) |
+| 視点に合わせただまし絵・背景の映像・MMD | ✅ | Windows 11 (利用者、v6.20〜v6.27)。正しく見えるのは 1 人だけ |
+| 音声 (10 秒のチャンク、プレイヤーごとに `playSound`) | ✅ | Windows 11。途中で入った人には、チャンクの頭から 1 秒以内なら鳴らす |
+| 一時停止・再開・シーク・動画の切り替え・停止とクリア | ✅ 🧪 | モックで毎回確認。実機は v6.5.0・v6.32.1 の修正時 |
+| リモコン (コンパス、`ActionFormData` / `ModalFormData`) | ✅ | 音量・シーク・動画リスト・目の前に置く |
+| チート無しの独自のコマンド (`/<接頭辞>:setup` など) | ✅ | 2026-11-01 に利用者が確認。`/scriptevent` も使える |
+| 常時読み込み (TickingAreaManager、このパックの枠) | ✅ | ワールドを開き直したら、再生の前に登録し直す |
+| 描画方式の自動選択 (`fillBlocks` の箱・`ListBlockVolume`・1 個ずつ) と `bench`・`stats` | ✅ | 1 tick の上限は 4000 ブロック・30 ms (`MAX_BLOCKS_PER_TICK`・`TICK_TIME_BUDGET_MS`) |
+| ゲーム内の表示の 10 言語 | ✅ 🧪 | プレイヤーごとのゲームの言語で表示 |
+| 複数のスクリーンの同時再生 | ❌ | `setup` は前の画面を片付けて 1 つにする (`activePlayers.clear()`)。例外は、だまし絵の背景の映像だけ |
+| 複数人 | 🧪 ⚠️ | ブロックは全員に同じに見える。音は人ごと。実機の複数人は未検証 |
+| 長時間の再生 (メモリ・TPS) | ⚠️ | 未計測 |
 
-### 🟥 AMD GPU 対応 (v5.2.0)
-- **GPU バックエンドの抽象化 (`mvcodec/device.py`)**: CUDA / ROCm / DirectML を自動検出 (`--device auto`)。DirectML では内蔵 GPU より単体 GPU を優先。
-- **DirectML 互換の距離計算**: `torch.cdist` を行列積ベースの二乗距離に置き換え。
-- **GPU 自己テストと CPU フォールバック**: 未対応演算などで GPU 処理が動かない場合は変換前に検出して CPU へ切り替え。
-- **GUI の変換デバイス選択** と、GUI からの変換が引数エラーで失敗していた不具合の修正。
+### 画像モード (`image_mode/image_main.js`)
 
-### 🛠 品質改善 (v5.1.0)
-- **GOP 先頭の強制キーフレーム化**: 自動パレットのシーン切替で色が崩れる問題を解消。シークも直近キーフレームから正しく復元。
-- **2 パス・ストリーミング変換**: 動画全体をメモリに載せずに変換 (長尺・高解像度でもメモリ一定)。
-- **fps を動画データに格納**: 再生速度・音声同期・シーク時間を各動画の fps から決定。
-- **再生まわりの不具合修正**: シーク後の再開、動画切替、大画面の盤面クリア (runJob で分割) など。
-- **テストと CI**: Python デコーダと `codec.js` の往復テスト、Ubuntu 上での pytest・ベンチマーク実行。
+| 機能 | 状態 | メモ |
+|---|---|---|
+| アトラスのテクスチャを板状のエンティティに表示 (方式 A)、30 fps | ✅ | Windows 11 / Minecraft v26.63 (v6.36.0〜v6.37.1) |
+| 夜でも暗くしない (`--lighting bright`、既定) | ✅ | v6.37.0 |
+| 再生の最初から正面を向く | ✅ | v6.37.1 で修正 |
+| 音声 (4 秒のチャンク) | ✅ | 一時停止・シーク・開き直しの後は、次の境目まで最大 4 秒無音 (仕様) |
+| リモコン (時計)・`play`・`volume`・`stats`・`setup face/wall/align`・10 言語 | ✅ | v6.36.0 |
+| ブロックモードと 1 つのファイルにまとめる | ✅ | v6.36.0 |
+| 再生位置の数え方 | 🧪 ⚠️ | サーバーの tick の数で数える。TPS が下がったときの映像と音声のずれは未検証 (TODO P0-2) |
+| 方式 C (自作マテリアル、`--method c`) | 🧪 | 既定では入れない。将来の更新で壊れるリスクがある |
+| 予算 (Tier 2 = 225 MB / Tier 5 = 800 MB) を超えたときのスマートフォンの動き | ⚠️ | PC では 872 MB でも読み込めた |
+| 画面は 1 つ | ❌ | 状態はワールドで 1 つ |
 
-### 🔬 Phase 7: Research Edition 完成 (v5.0.0 新機能)
-- **オブジェクト指向JSエンジン (VideoPlayer)**: `VideoPlayer` クラスの導入により、1つのワールド内で複数のスクリーン（マルチスクリーン）同時再生が可能に。
-- **局所的SSIMベースの知覚的RDO**: エッジやディテールを保持しつつ、人間の視覚特性（SSIM）に合わせたレート歪み最適化を実現。
-- **シーン適応型パレット & シーンGOP**: `0.5*SAD + 0.3*Hist + 0.2*Edge` の式に基づく動的GOPリサイズと、パレットハッシュを用いたシーンごとの適応型パレット切り替え。
-- **統合ベンチマークフレームワーク**: `benchmark/` 傘下に SSIM, PSNR, LPIPS, $\Delta E_{2000}$ を測定するモジュラー設計のフレームワークを構築 (`run.py --deep` 対応)。
+## 3. 変換
 
-### ⚡ 高画質軽量化バッチ上限 ＆ 音楽再生補修 (v2.4.0 新機能)
-- **128×128高画質での重さ解消 (MAX_BLOCKS_PER_TICK = 800)**: 1tick内でのブロック設置上限数を設定し、描画スパイク（ラグ）を解消。
-- **playSound() 大域オーディオ再生**: BGM音量オフにも影響されない音響再生システム。44.1kHzステレオOGG切り出しによる確実な音声同期。
+| 機能 | 状態 | メモ |
+|---|---|---|
+| 予測圧縮 (`varint_rle_v6`、動き補償・タイル辞書・区間符号) | 🧪 | Python の参照デコーダと `codec.js` の往復テスト |
+| 自動パレット | 🧪 | 光るブロックを除く 214 色の候補から、シーンごとに 24〜127 色。全ブロックは 220 色 |
+| パターンディザ (Blue Noise)・条件付き更新・8×8 の最適化 | 🧪 | GUI とブラウザ版の既定は、自動パレット + Blue Noise。CLI の既定は 39 色・ディザなし (`convert.py` の引数の既定) |
+| 平らな面のムラを減らす `--flat-areas smooth\|balance` | 🧪 ✅ | v6.37.0。CLI だけで既定は `off`。PC の実機で空と草が一様に見えることを確認。近いブロックの無い色はくすむ |
+| GPU の減色 (CUDA / ROCm / DirectML) と CPU への切り替え | ✅ | AMD (DirectML) と CPU だけ確認。NVIDIA・Intel は未検証 |
+| 画像モードの変換 (`convert_image_mode.py`) | ✅ | 予算に合わせた優先 (`--priority`)、area 縮小、`--snap`、`--png-optimize`。ブラウザ版はブロックモードのコマの大きさのまま |
+| 立体の入力 (relief など・`.vox`・MMD・AI の人物の切り抜き・深度動画) | ✅ 🧪 | KNOWN_ISSUES に限界を記載。音声が映像より短い動画での切り抜きの不具合は未修正 |
+| はじめてガイド・できあがりのプレビュー | ✅ | Windows 版 |
+| ブラウザ版 (10 言語、カメラ、MMD、OGG の音声) | ✅ 🧪 | Chromium と Node の Pyodide で CI。iPhone の音声の不具合は v6.29.1 で修正 |
+| 利用数の計測 | ✅ | ブラウザ版だけ、GoatCounter で回数と言語 (個人は特定しない) |
 
-### 🎞️ キーフレーム (I/P Frame, GOP=30) シーク復元 (v2.3.0 新機能)
-- **画面崩れゼロの超高速 14ms シーク追従**: 30フレームごとに完全なキーフレーム (Iフレーム) を自動挿入し、目標フレームへのジャンプ時に画面の乱れなく一瞬で正確な場面を復元。
-- **データサイズ最適化**: キーフレームを挿入しても容量増加は微増に抑えられ、1時間あたり 48MB 級の超高度圧縮を維持。
+## 4. 端末
 
-### 📦 完全独立スタンドアロン EXE ビルド (v2.2.0 新機能)
-- **非開発者環境対応 (`build_standalone.py`)**: PyInstaller により、Python・Node.js 未インストール環境でも動作する単体実行ファイル `dist/BlockVideoPlayer.exe` を全自動ビルド可能。
-- **ポータブル FFmpeg 自動検出**: PATH 未設定環境でも、アプリと同階層に置かれた `ffmpeg.exe` を自動検出して優先利用。
-- **既存開発ファイル保持**: `convert.py`, `video_player_gui.py`, `main.js` 等のソースコードは 100% 維持。
+| 環境 | 状態 |
+|---|---|
+| Windows 11 (統合版) | ✅ 作者の PC / Minecraft v26.63 (v6.36.0〜v6.37.1) |
+| Windows 10・Android・iOS・BDS・Realms・Xbox・PlayStation・Switch | ⚠️ 未検証 (安定版の API だけなので動く想定) |
+| 変換ツール: Windows 11 (EXE・Python 3.12、AMD DirectML・CPU) | ✅ |
+| 変換ツール: Linux (CLI) | 🧪 CI |
+| 変換ツール: macOS・NVIDIA・Intel・Windows 10 | ⚠️ |
 
-### ⚡ GPU アクセラレーション (v2.1.0 新機能)
-- **PyTorch テンソル一括減色 (CUDA / ROCm / DirectML)**: GPU 上で全ピクセルの色距離計算・パレット量子化を並列実行。未搭載時・非対応時は CPU スレッドプールへ自動フォールバック。
-- **FFmpeg GPU HWAccel デコード**: `-hwaccel auto` による動画フレーム抽出のハードウェア加速。
+## 5. 主な課題
 
-### 🎵 音声同期 ＆ リモコンGUI (v1.9.0 新機能)
-- **10秒分割 OGG 音声同期システム**: FFmpeg で音声を10秒単位 `.ogg` に自動切り出し、`player.playMusic()` で再生・シーク位置追従。
-- **リモコンアイテム (コンパス) GUI**: 右クリックで `ActionFormData` UI を呼び出し。▶再生、⏸一時停止、⏭次、⏮前、🔊音量調整、⏩シーク時間をゲーム内で直感操作。
+優先度と完了条件は [TODO.md](TODO.md) にあります。
 
-### 🚀 圧倒的な圧縮率と長尺保存
-- **1時間動画あたり 48.24 MB (0.047 GB)** のデータ容量達成（初期バージョン v1.3.4 比 **97.2% 削減**）。
-- 1GB (1024MB) のパック制限容量内に **約 21.2 時間分（長編映画 約 10 本分）**、1分ショート動画なら **約 1,280 本** を丸ごと格納可能。
+1. ドキュメントの版と数字が手作業で、ずれやすい (P0-1)。
+2. 画像モードの再生位置が tick の数で、TPS が下がったときの同期が未検証 (P0-2)。シークの後の無音もある (P0-3)。
+3. 実機の確認が Windows の 1 台だけで、版によって確かめた範囲がまちまち (P0-5・P1-1〜P1-3)。
+4. 長時間の再生のメモリが未計測 (P0-6)。
 
-### ⚡ 爆速スルーブットと軽量描画
-- **変換速度**: **1,000 〜 4,200 fps**（Pillow Quantize + `ThreadPoolExecutor` 全コアマルチスレッド並列処理）。
-- **マイクラ側描画負荷**: 1tick (50ms) あたりわずか **0.48 ms**（負荷率 1% 以下）。`BlockPermutation` 一括キャッシュと単一座標オブジェクト使い回しによりメモリGCスパイクを撲滅。
-
-### 🎨 高精細な色再現性と表現力
-- **39色マイクラブロックパレット**: 16色 Concrete + 17色 Terracotta + 6種 自発光ブロック（`sea_lantern`, `glowstone`, `shroomlight`, 3種 `froglight`）。自動パレットはこの中から動画ごとに選択。
-- **CIELAB 色空間最適化**: 人間視覚モデル上での色距離 $\Delta E$ 再計算。
-- **全5種類ディザリング**: `Floyd-Steinberg`, `Atkinson`, `Burkes`, `Sierra-Lite`, `Ordered (4x4 Bayer Matrix)` を自由選択。
-
-### 🎬 マルチ動画（多タイトル）＆ 遅延ロード
-- 1つの `.mcpack` に複数動画を搭載し、GUI及びゲーム内コマンド `/scriptevent <ns>:list` と `{ns}:play <動画ID>` で選択・即時再生可能。
-- **遅延ロード (Lazy Load)** により、ワールド起動時の読み込み時間 **0.05 秒（即時起動）**。
-
----
-
-## 3. リポジトリの主要ファイル構成
+## 6. 主なファイル
 
 ```
 .
-├── convert.py                 # コア変換 CLI (2パス・ストリーミング, GPU/CPU)
-├── mvcodec/                   # パレット・減色・RLE/VarInt エンコーダ・Python デコーダ
-├── video_player_gui.py        # 複数動画対応 GUI アプリケーション (Tkinter / Treeview)
-├── main.js                    # Bedrock Script API 再生スクリプト (VideoPlayer クラス)
-├── codec.js                   # Minecraft 非依存のデコーダ (main.js と Node テストで共有)
-├── manifest.json              # Behavior Pack マニフェストのテンプレート
-├── pack_metadata.py           # リリースバージョン・更新履歴の一元管理
-├── build_standalone.py        # スタンドアロン EXE ビルド (PyInstaller)
-├── benchmark/                 # 画質・容量ベンチマーク
-├── tests/                     # pytest + Node 往復テスト
-├── .github/workflows/ci.yml   # CI (テスト + 参考ベンチマーク)
-├── PROJECT_STATUS.md          # [本書] 現在のプロジェクト進捗
-├── ARCHITECTURE.md            # アーキテクチャ・データ構造・描画仕様
-├── DECISIONS.md               # 採否判断マトリクスと技術的根拠
-├── TODO.md                    # 今後の開発課題・アイデア
-└── BENCHMARK.md               # 性能測定・ベンチマーク詳細結果
+├── convert.py               ブロックモードの変換 CLI (2 パス・ストリーミング、GPU / CPU)
+├── convert_image_mode.py    画像モードの変換 CLI
+├── mvcodec/                 パレット・減色・符号化・Python の参照デコーダ・AI の切り抜き
+├── image_mode/              画像モード (アトラス・予算・リソースパック・image_main.js・SPEC.md)
+├── main.js / codec.js       ブロックモードの再生スクリプトと、Minecraft に依存しないデコーダ
+├── manifest.json            ビヘイビアーパックのマニフェストのひな形
+├── pack_builder.py          .mcaddon の組み立て
+├── pack_metadata.py         版と更新履歴の唯一の管理場所
+├── video_player_gui.py      Windows 版の GUI (gui_wizard.py ははじめてガイド)
+├── web/                     ブラウザ版 (Pyodide)
+├── legacy_target.py         Script API 1.x 向けの書き換え (ブラウザ版)
+├── build_standalone.py      EXE のビルド (PyInstaller)
+├── benchmark/               画質・容量・速さの計測
+├── tests/                   pytest と Node のモック (tests/js/minecraft_mock)
+├── docs/                    対応環境・既知の問題・テスト・リリース・研究の記録
+└── .github/workflows/       CI・リリース・GitHub Pages・週 1 回の実映像の計測
 ```
