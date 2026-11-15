@@ -129,6 +129,24 @@ def pack_icon(frame: np.ndarray, size: int = 256) -> bytes:
     return out.getvalue()
 
 
+# シートの形式: png (既定、劣化なし) / jpeg (実写で小さくなる。v6.37.0 で PC の実機に映ることを確かめた)。
+# テクスチャのパスは拡張子なしで書くので、ゲームはどちらの形式でも読む。メモリ (GPU) に置く量は形式で変わらない
+SHEET_FORMATS = ("png", "jpeg")
+SHEET_EXTENSIONS = {"png": "png", "jpeg": "jpg"}
+# 品質 92: 実写 2 本 (Tears of Steel、512×288・24 fps・8 秒) で、PNG より PSNR −0.84 / −0.66 dB、パック −74% / −72%
+DEFAULT_JPEG_QUALITY = 92
+
+
+def sheet_bytes(image: Image.Image, sheet_format: str = "png", png_optimize: bool = False,
+                jpeg_quality: int = DEFAULT_JPEG_QUALITY) -> bytes:
+    """シートの画像のバイト列。jpeg は 4:4:4 (色を間引かない。マスの縁で隣のマスの色が混ざりにくい)。"""
+    if sheet_format == "png":
+        return png_bytes(image, png_optimize)
+    out = io.BytesIO()
+    image.convert("RGB").save(out, format="JPEG", quality=jpeg_quality, subsampling=0, optimize=True)
+    return out.getvalue()
+
+
 def png_bytes(image: Image.Image, optimize: bool = False) -> bytes:
     """シートの PNG。optimize なら Pillow の最適化 (compress_level 9) で 4% ほど小さくなるが、5 倍ほど遅い。"""
     out = io.BytesIO()
@@ -178,13 +196,15 @@ def image_videos_js(videos: list[dict], namespace: str) -> str:
 def build_files(sources: list[dict], *, width: int, height: int, methods: list[str], namespace: str,
                 pack_name: str, max_sheet: int = 2048, gutter: int = 1, max_cells: int = atlas.MAX_CELLS,
                 screen_width: float = 16, audio_chunk_seconds: float = 4, allow_over_budget: bool = False,
-                log=print, lighting: str = "bright", png_optimize: bool = False) -> tuple[dict, dict]:
+                log=print, lighting: str = "bright", png_optimize: bool = False, sheet_format: str = "png",
+                jpeg_quality: int = DEFAULT_JPEG_QUALITY) -> tuple[dict, dict]:
     """コマから、アドオンのファイル (zip の中のパス → bytes) とレポートを作る。ffmpeg を使わない (ブラウザ版も使う)。
 
     sources の 1 つは {"id", "title", "fps", "frames": コマ (高さ×幅×3 の uint8) を出す iterable,
     "audio": (最長の秒数) → [(番号, 拡張子, bytes)] を返す関数 (無ければ音声なし)}。
     予算超過などで作れないときは ConvertError。
     lighting は rp.LIGHTING_MODES ("bright" は周りの光で暗くならない)。png_optimize はシートの PNG の最適化。
+    sheet_format はシートの形式 (SHEET_FORMATS)、jpeg_quality は jpeg の品質 (1〜95)。
     """
     if lighting not in LIGHTING_MODES:
         raise ConvertError(f"lighting は {', '.join(LIGHTING_MODES)} のどれか: {lighting}")
@@ -267,7 +287,8 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
     # 4. パックを組む
     for video in videos:
         for number, sheet in enumerate(sheets_of[video["id"]]):
-            put(f"RP/textures/bvp_image/{video['id']}/sheet_{number}.png", png_bytes(sheet, png_optimize))
+            put(f"RP/textures/bvp_image/{video['id']}/sheet_{number}.{SHEET_EXTENSIONS[sheet_format]}",
+                sheet_bytes(sheet, sheet_format, png_optimize, jpeg_quality))
         for method in methods:
             put(f"BP/entities/screen_{video['id']}_{method}.json",
                 json.dumps(entity_json(video, method, namespace), ensure_ascii=False, indent=2) + "\n")
@@ -293,6 +314,7 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
         "memory": {**memory_summary, "per_video": [{"id": v["id"], **v["memory"], "handles": v["sheets"]}
                                                     for v in videos]},
         "warnings": memory["warnings"],
+        "sheet_format": sheet_format, **({"jpeg_quality": jpeg_quality} if sheet_format == "jpeg" else {}),
         "lang_keys": {"en": lang_keys("en"), "ja": lang_keys("ja")},
         "files": sorted(files),
     }
@@ -414,7 +436,8 @@ def build(args: argparse.Namespace, log=print) -> dict:
             sources, width=args.width, height=args.height, methods=methods, namespace=args.namespace,
             pack_name=pack_name, max_sheet=args.max_sheet, gutter=args.gutter, max_cells=args.max_cells,
             screen_width=args.screen_width, audio_chunk_seconds=args.audio_chunk_seconds,
-            allow_over_budget=args.allow_over_budget, log=log, lighting=args.lighting, png_optimize=args.png_optimize)
+            allow_over_budget=args.allow_over_budget, log=log, lighting=args.lighting, png_optimize=args.png_optimize,
+            sheet_format=getattr(args, "sheet_format", "png"), jpeg_quality=getattr(args, "jpeg_quality", DEFAULT_JPEG_QUALITY))
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -524,8 +547,15 @@ def parse_args(argv=None) -> argparse.Namespace:
                              "--no-snap で頼んだ大きさのまま")
     parser.add_argument("--png-optimize", action="store_true",
                         help="シートの PNG を最適化して 4%% ほど小さくする (変換が 5 倍ほど遅くなる)")
+    parser.add_argument("--sheet-format", default="png", choices=SHEET_FORMATS,
+                        help="シートの形式。png (既定、劣化なし) / jpeg (実写でパックが小さくなる。アニメや文字は縁がにじみやすい。"
+                             "スマートフォンで読めるかは未確認)")
+    parser.add_argument("--jpeg-quality", type=int, default=DEFAULT_JPEG_QUALITY,
+                        help=f"--sheet-format jpeg の品質 (1〜95、既定 {DEFAULT_JPEG_QUALITY})")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
     args = parser.parse_args(argv)
+    if not 1 <= args.jpeg_quality <= 95:
+        parser.error("--jpeg-quality は 1〜95 にしてください")
     if args.ids is not None and len(args.ids) != len(args.inputs):
         parser.error("--ids の数が動画の数と違います")
     if args.titles is not None and len(args.titles) != len(args.inputs):
