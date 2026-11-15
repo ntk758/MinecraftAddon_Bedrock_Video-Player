@@ -127,6 +127,57 @@ GUI は人物の切り抜きを別のプロセスで行い、処理ログには�
 ローカルの `benchmark/person_bench.py` は、この統計を行に入れ、マスクの動画から数えた空のフレームの数・場面の切り替わりの数と合っているかを
 `stats_check` に出す。
 
+### 2.3 人物の切り抜き: 音声と映像の長さが違う動画 (実際の AI のモデル)
+
+`tests/test_person_audio_length.py` は、**偽の切り抜き** (常に空のマスクを返す関数) で、背景の動画の書き出し (ffmpeg) だけを確かめる。
+次の手順は、**実際の AI のモデル** (写真向けの DeepLabV3 と、アニメ向けの anime-seg) で、切り抜きから書き出しまでを通して確かめるもの。
+結果は、下の表の「結果」の欄に書く。行っていない行は「未実施」のままにして、完了扱いにしない。
+
+**試験用の動画の作り方** (人物が映っている自作の動画 `person.mp4` を 1 本用意する。第三者の動画は使わない):
+
+```
+ffmpeg -i person.mp4 -t 8 -an base.mp4
+ffmpeg -i base.mp4 -f lavfi -i "sine=f=440:d=2" -map 0:v -map 1:a -c:v copy -c:a aac short_audio.mp4
+ffmpeg -i base.mp4 -f lavfi -i "sine=f=440:d=20" -map 0:v -map 1:a -c:v copy -c:a aac long_audio.mp4
+ffmpeg -i person.mp4 -t 0.6 -c:v libx264 -c:a aac sub_second.mp4
+ffmpeg -i person.mp4 -t 30 -c:v libx264 -c:a aac normal.mp4
+```
+
+- `long_audio.mp4` は、映像 8 秒・音声 20 秒 (コンテナの長さは 20 秒になる)。
+- 音声なしは `base.mp4` を使う。
+
+**実行** (Python の環境。EXE では `--run-person-split` で同じ引数):
+
+```
+python scripts/make_person_videos.py <入力> mask.mp4 background.mp4 --fps 10 --model photo --stats .
+python scripts/make_person_videos.py <入力> mask.mp4 background.mp4 --fps 10 --model anime --stats .
+ffprobe -v error -count_frames -show_entries stream=codec_type,duration,nb_read_frames -of csv=p=0 mask.mp4 background.mp4
+```
+
+**見るもの:**
+- 終了コードが 0 で、`input error` の行が出ない。
+- 人物の範囲と背景の動画のフレーム数が同じで、元の映像の長さ × 10 fps に等しい。
+- 背景の動画の音声の長さが、映像の長さ ± 0.05 秒 (音声なしの入力では、音声のストリームが無い)。
+- 作業フォルダに `*.video-only.mp4`・`*.muxing.mp4` が残っていない。
+- 切り抜きの品質: 1 秒・中ほど・最後のコマで、人物の範囲が直す前の版 (v6.37.1) と同じ。同じ入力・同じモデルで比べる。音声の長さの修正は、切り抜きの計算を変えていない。
+- GUI で同じ動画をだまし絵にすると、後ろの壁の映像が最後まで流れ、音声が途中で切れない。
+
+| 入力 | 写真向け (photo) | アニメ向け (anime) | GUI のだまし絵 | 日付・環境 |
+|---|---|---|---|---|
+| 音声が映像より短い (`short_audio.mp4`) | 成功 | 成功 | パックは成功・ゲーム内は未実施 | 下 |
+| 音声が映像より長い (`long_audio.mp4`) | 成功 | 成功 | パックは成功・ゲーム内は未実施 | 下 |
+| 音声なし (`base.mp4`) | 成功 | 成功 | パックは成功・ゲーム内は未実施 | 下 |
+| 1 秒未満 (`sub_second.mp4`) | 成功 | 成功 | パックは成功・ゲーム内は未実施 | 下 |
+| 通常の長さ (`normal.mp4`、30 秒) | 成功 | 成功 | パックは成功・ゲーム内は未実施 | 下 |
+
+**記録 (2026-11-15、Windows 11・CPU (torch 2.4.1+cpu、onnxruntime 1.24.4)・ffmpeg 9.0.1、v6.37.1 + 未リリースの修正 (worktree `docs/roadmap-2026-11`)):**
+- **入力:** 自作の動画ではなく、手元にある自由に使える試験用の映像 (Xiph の Kristen & Sara と、Tears of Steel (CC BY) の 2 場面) を 1280×720・10 fps・34 秒につなぎ、正弦波の音声を付けて `person.mp4` とした。5 本は上の手順どおりに作った。
+- **写真向け・アニメ向け:** `scripts/make_person_videos.py` で 10 本。どれも終了コード 0。人物の範囲と背景のフレーム数は 80・80・80・6・300 (元の映像の長さ × 10 fps)。背景の音声は 8.0・8.0・なし・0.6・30.0 秒。最後までデコードしてエラー無し。一時ファイルは残らない。
+- **EXE:** worktree から作った EXE の `--run-person-split` でも、同じ 10 本が同じ結果 (表の外の追加の確認)。
+- **GUI のだまし絵:** 同じ EXE の画面で、5 本を「人物を切り抜いて立体に (AI)」+ だまし絵にしてパックを作った (写真向け)。どの動画も 1 回で成功し、軽い段階でのやり直しは無い。パックの中の背景の映像 (`<ID>_bg`) は、フレーム数が 80・80・80・6・300、音声が 8.0・8.0・なし・0.6・30.0 秒 (直す前は、音声が短い動画で背景が 2 秒で切れる)。**Minecraft での再生は行っていない。**
+- **直す前の版との比べ:** 同じ入力で v6.37.1 を動かすと、音声が短い動画は写真向け・アニメ向けとも終了コード 1 で、背景の動画が 2 秒 (20 フレーム) で切れた。ほかの 4 本は成功。
+- **切り抜きの品質:** 両方の版が成功した入力で、人物の範囲の動画をフレームごとに比べた。写真向けはまったく同じ (差 0)。アニメ向けは平均 0.24/255 の差があるが、直した版を 2 回動かしても同じ大きさの差が出る (アニメ向けは実行ごとに少し変わる) ので、修正による差ではない。目で見た比べは行っていない。
+
 ## 3. 端末ごとの対応状況
 
 [COMPATIBILITY.md](COMPATIBILITY.md) を参照してください。

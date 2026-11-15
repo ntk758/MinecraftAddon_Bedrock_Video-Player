@@ -98,7 +98,7 @@ Python で動かす方法・GPU の設定は [インストールと使い方](#-
 
 | | 状態 / Status |
 |---|---|
-| Minecraft 統合版 Windows 11 | ✅ 作者の PC 1 台で確認 (アドオン v6.0.0、Minecraft の版は未記録) / tested on one PC |
+| Minecraft 統合版 Windows 11 | ✅ 作者の PC 1 台で確認 (アドオン v6.36.0〜v6.37.1、Minecraft v26.63) / tested on one PC (add-on v6.36.0–v6.37.1, Minecraft v26.63) |
 | Windows 10・Android・iOS・Xbox・PlayStation・Switch・BDS・Realms | ⚠️ 未確認 (安定版 API だけなので動く想定。必要な版は 1.26.10 以降) / not tested yet (stable APIs only; needs 1.26.10+) |
 | 変換ツール: Windows 11 EXE / Python 3.12 | ✅ 作者の PC で確認 (CPU・AMD DirectML) / tested on one PC (CPU, AMD DirectML) |
 | 変換ツール: Linux (CLI) | 🧪 CI で毎回テスト / tested in CI |
@@ -233,7 +233,7 @@ python video_player_gui.py
    | 幅 / 高さ | スクリーンのブロック数 (最大 512) |
    | FPS | スライダーで 1〜20 fps を選びます (Minecraft は 1 秒 20 tick なので 20 が上限。20・10・5・4・2・1 のように 20 を割り切れる値だと一定の間隔で表示されます) |
    | キーフレーム間隔 | 何フレームごとに全画面を描き直すか (シークの速さに影響)。0 ならシーンの先頭のみ |
-   | パレット | 自動 (おすすめ・既定: 190 色の候補からシーンごとに最大 127 色) / 全ブロック 127 色 (光るブロックを含む 196 色から、色が互いに離れたもの) / 39 色 / 拡張 33 色 / 基本 16 色 / ステンドグラス 16 色 (立体向け)。色を増やすと画質は上がり、データと置き替えるブロックは増えます |
+   | パレット | 自動 (おすすめ・既定: 214 色の候補からシーンごとに最大 127 色) / 全ブロック 127 色 (光るブロックを含む 220 色から、色が互いに離れたもの) / 39 色 / 拡張 33 色 / 基本 16 色 / ステンドグラス 16 色 (立体向け)。色を増やすと画質は上がり、データと置き替えるブロックは増えます |
    | ディザリング | なし / Blue Noise / Ordered (GPU 対応)、Floyd-Steinberg / Atkinson / Burkes / Sierra Lite (CPU のみ) |
    | 知覚最適化 | 輪郭部分だけにディザをかけて、平坦部のちらつきを抑えます |
    | 変換デバイス | 自動 / NVIDIA CUDA・AMD ROCm / DirectML / CPU のみ |
@@ -369,7 +369,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - 🎵 **Synchronized audio** (10-second OGG chunks switched by playback position)
 - 🎮 **In-game remote control** (use a compass: play/pause, seek, volume, switch videos)
 - 📚 **Multiple videos per add-on**
-- 👑 **198 real block colors** (concrete, terracotta, wool, wood, logs, stone, bricks, ores, minerals, light blocks… — every opaque full block that doesn't fall, change over time or affect its surroundings) with a per-scene automatic palette of 24–127 colors (default, light blocks excluded). Colors are measured from the official textures; 3D holograms pick blocks by their side color (bark for logs)
+- 👑 **221 real block colors** (concrete, terracotta, wool, wood, logs, stone, bricks, ores, minerals, light blocks… — every opaque full block that doesn't fall, change over time or affect its surroundings) with a per-scene automatic palette of 24–127 colors (default, light blocks excluded). Colors are measured from the official textures; 3D holograms pick blocks by their side color (bark for logs)
 - 🗜 **Predictive compression (Phase 7.x)**: on top of sending only changed blocks, each frame picks the smallest of **motion compensation** (8×8 blocks on screens, 8×8×8 bricks in 3D), a **tile dictionary** (patterns seen before are reused by number) and gap-coded run positions — **47–88% less data** than v5.4.0 without dithering (roughly 43–67% with Blue Noise; [benchmarks](#-ベンチマーク-phase-7x)); per-scene keyframes for fast seeking
 - 🧊 **3D hologram playback**: turn a video into a volume (brightness-as-depth **relief**, **extruded** or rounded **inflated** silhouettes) or play MagicaVoxel (`.vox`) animations directly. Relief / extrude / inflate are sent as two 2D planes (colour + height/thickness) and rebuilt in-game, cutting 3D data by 54–85%
 - 🪄 **View-dependent trompe-l'oeil**: instead of placing a 3D figure, draw it on a floor and walls exactly as the viewer's eye would see it, redrawn as they walk around — the figure looks solid from wherever they stand (correct for one viewer)
@@ -483,8 +483,8 @@ python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 
 |---|---|
 | `--input-video` / `--frames-dir` | 入力動画、または画像連番フォルダ |
 | `--width` `--height` `--fps` `--duration` | 解像度・fps (最大 20)・変換する秒数 |
-| `--palette` | `concrete` (16 色) / `expanded` (33 色) / `full` (39 色) / `all` (全ブロックから色の離れた 127 色) / `auto` (190 色からシーンごとに選ぶ。GUI の既定) / `glass` (ステンドグラス 16 色、立体向け)。立体ではブロックの側面の色で選ぶ |
-| `--palette-colors` / `--palette-space` | `--palette auto` で選ぶ色数。既定の `auto` はシーンごとに 24 / 32 / 48 / 64 / 96 / 127 色から、色の誤差が 127 色のときの 1.05 倍以内に収まる一番少ない色数を選ぶ (数を指定するとその数まで。候補は光るブロックを除く 190 色) / 色を選ぶ色空間 `rgb` (既定) か `oklab` ([比較](docs/research/palette_space.md)) |
+| `--palette` | `concrete` (16 色) / `expanded` (33 色) / `full` (39 色) / `all` (全ブロックから色の離れた 127 色) / `auto` (214 色からシーンごとに選ぶ。GUI の既定) / `glass` (ステンドグラス 16 色、立体向け)。立体ではブロックの側面の色で選ぶ |
+| `--palette-colors` / `--palette-space` | `--palette auto` で選ぶ色数。既定の `auto` はシーンごとに 24 / 32 / 48 / 64 / 96 / 127 色から、色の誤差が 127 色のときの 1.05 倍以内に収まる一番少ない色数を選ぶ (数を指定するとその数まで。候補は光るブロックを除く 214 色) / 色を選ぶ色空間 `rgb` (既定) か `oklab` ([比較](docs/research/palette_space.md)) |
 | `--dither-method` | `none` / `blue_noise` / `ordered` / `floyd` / `atkinson` / `burkes` / `sierra` |
 | `--device` | `auto` / `cuda` / `rocm` / `directml` / `cpu` |
 | `--keyframe-interval` | キーフレーム間隔 (0 でシーン先頭のみ) |
@@ -585,13 +585,16 @@ A. 解像度を下げる (軽量・標準プリセット) か、fps を下げて
 A. パック名とコマンド接頭辞が同じなら同じパック (同じ UUID) として作られ、バージョンはビルドごとに上がります。名前か接頭辞を変えると別のパックとして扱われます。
 
 ## 🗺 ロードマップ (Roadmap)
+ここは v6.9 までの到達点の一覧です。今後の計画と優先度は [TODO.md](TODO.md)、今の実装と確かめた範囲は [PROJECT_STATUS.md](PROJECT_STATUS.md) にあります。
+This list covers milestones up to v6.9. For the current plan see [TODO.md](TODO.md); for what is implemented and tested see [PROJECT_STATUS.md](PROJECT_STATUS.md).
+
 - [x] MP4対応 (Video format support)
 - [x] GUI実装 (GUI Builder)
 - [x] 音声同期再生 (Audio Sync)
 - [x] GPU対応 (NVIDIA CUDA / AMD ROCm・DirectML / Intel DirectML)
 - [x] マルチ動画パック対応 (Multi-video support)
 - [x] **Phase 7: Research Edition**
-  - オブジェクト指向JSエンジン (VideoPlayer クラスによるマルチスクリーン再生)
+  - オブジェクト指向JSエンジン (VideoPlayer クラス。今の版では `setup` で前の画面を片付けるので、同時に再生できるスクリーンは 1 つ)
   - 局所的SSIMベースの知覚的RDO (エッジ・ディテール保存)
   - シーン適応型パレット & シーンGOP (0.5*SAD + 0.3*Hist + 0.2*Edge)
   - 統合ベンチマーク (SSIM, PSNR, LPIPS, ΔE2000)
