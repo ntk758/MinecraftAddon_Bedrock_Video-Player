@@ -334,6 +334,7 @@
   "web.frames": "{count} コマ",
   "web.audio_aac": "音声を動画から取り出してデコードしています",
   "web.no_audio": "音声なし ({error})",
+  "web.no_audio_track": "音声なし (この動画には音声が無いか、ブラウザで読めない形式です)",
   "web.background": "背景の映像: {name}",
   "web.loading_python": "Python を読み込み中…",
   "web.ready": "準備完了",

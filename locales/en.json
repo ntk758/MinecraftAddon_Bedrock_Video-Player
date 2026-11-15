@@ -334,6 +334,7 @@
   "web.frames": "{count} frames",
   "web.audio_aac": "Decoding the AAC track taken out of the video",
   "web.no_audio": "No audio ({error})",
+  "web.no_audio_track": "No audio (the video has no audio track, or the browser cannot read it)",
   "web.background": "Background video: {name}",
   "web.loading_python": "Loading Python…",
   "web.ready": "Ready",

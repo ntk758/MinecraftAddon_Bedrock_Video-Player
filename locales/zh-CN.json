@@ -334,6 +334,7 @@
   "web.frames": "{count} 帧",
   "web.audio_aac": "正在从视频中取出 AAC 音轨并解码",
   "web.no_audio": "无音频（{error}）",
+  "web.no_audio_track": "无音频（此视频没有音轨，或浏览器无法读取）",
   "web.background": "背景视频：{name}",
   "web.loading_python": "正在加载 Python…",
   "web.ready": "准备就绪",

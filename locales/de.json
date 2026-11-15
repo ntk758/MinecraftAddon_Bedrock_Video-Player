@@ -334,6 +334,7 @@
   "web.frames": "{count} Frames",
   "web.audio_aac": "Die aus dem Video entnommene AAC-Tonspur wird dekodiert",
   "web.no_audio": "Kein Ton ({error})",
+  "web.no_audio_track": "Kein Ton (das Video hat keine Tonspur oder der Browser kann sie nicht lesen)",
   "web.background": "Hintergrundvideo: {name}",
   "web.loading_python": "Python wird geladen…",
   "web.ready": "Bereit",

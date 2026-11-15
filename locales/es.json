@@ -334,6 +334,7 @@
   "web.frames": "{count} fotogramas",
   "web.audio_aac": "Decodificando la pista AAC extraída del vídeo",
   "web.no_audio": "Sin audio ({error})",
+  "web.no_audio_track": "Sin audio (el vídeo no tiene pista de audio o el navegador no puede leerla)",
   "web.background": "Vídeo de fondo: {name}",
   "web.loading_python": "Cargando Python…",
   "web.ready": "Listo",

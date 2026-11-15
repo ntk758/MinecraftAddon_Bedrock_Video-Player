@@ -334,6 +334,7 @@
   "web.frames": "{count} 프레임",
   "web.audio_aac": "동영상에서 AAC 오디오 트랙을 꺼내 디코딩하는 중",
   "web.no_audio": "소리 없음 ({error})",
+  "web.no_audio_track": "오디오 없음 (동영상에 오디오가 없거나 브라우저가 읽을 수 없는 형식입니다)",
   "web.background": "배경 영상: {name}",
   "web.loading_python": "Python 불러오는 중…",
   "web.ready": "준비 완료",

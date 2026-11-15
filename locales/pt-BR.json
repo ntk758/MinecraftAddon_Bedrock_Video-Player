@@ -334,6 +334,7 @@
   "web.frames": "{count} quadros",
   "web.audio_aac": "Decodificando a faixa AAC extraída do vídeo",
   "web.no_audio": "Sem áudio ({error})",
+  "web.no_audio_track": "Sem áudio (o vídeo não tem faixa de áudio ou o navegador não consegue lê-la)",
   "web.background": "Vídeo de fundo: {name}",
   "web.loading_python": "Carregando o Python…",
   "web.ready": "Pronto",
