@@ -29,7 +29,7 @@ The project is now called **Block & Image Video Player**: besides videos made of
 - Video IDs don't appear as suggestions after `/badapple:play` (seems to be a Minecraft limitation). Use `/badapple:list` to see them.
 
 ### For your own videos (free converter)
-- **Image mode (new):** the Windows app can also make an add-on that plays the video as a texture on a thin panel: smooth up to 30 fps and up to 512×288 pixels, with the same remote (a **clock**), volume, `setup wall` / `face` / `align`, seek and 10 languages. Long videos don't fit in the game's texture memory, so you choose what to keep: picture quality (lower fps), smoothness (smaller picture) or length. You can put block mode and image mode in one `.mcaddon`. Tested on PC only so far.
+- **Image mode (new):** the Windows app can also make an add-on that plays the video as a texture on a thin panel: smooth up to 30 fps and up to 512×288 pixels, with the same remote (a **clock**), volume, `setup wall` / `face` / `align`, seek and 10 languages. Long videos don't fit in the game's texture memory, so you choose what to keep: picture quality (lower fps), smoothness (smaller picture) or length. You can put block mode and image mode in one `.mcaddon`. Tested in game on PC (Windows 11).
 - The [web converter](https://ntk758.github.io/MinecraftAddon_Bedrock_Video-Player/) can make add-ons for **older Minecraft (1.21.80 to 1.26.0)**: pick it under *Minecraft version*. Those add-ons need cheats on and use `/scriptevent` commands.
 - Smaller add-ons from the Windows app: the sound is now stored at the same quality as the web converter's.
 
