@@ -297,7 +297,7 @@ def test_over_budget_is_an_error_unless_allowed(video, tmp_path, monkeypatch, ca
 
 @pytest.mark.parametrize("extra", [
     ["--fps", 0], ["--fps", 61], ["--namespace", "minecraft"], ["--namespace", "Bad-NS"], ["--gutter", -1],
-    ["--ids", "BAD"], ["--start", 2, "--end", 1],
+    ["--ids", "BAD"], ["--start", 2, "--end", 1], ["--sheet-format", "webp"], ["--jpeg-quality", 0], ["--jpeg-quality", 96],
 ])
 def test_invalid_arguments(video, tmp_path, extra):
     with pytest.raises(SystemExit) as raised:
@@ -324,3 +324,45 @@ def test_default_id_from_file_name(tmp_path):
     used.add("my_clip_1")
     assert convert_image_mode.default_id(Path("my_clip_1.mov"), used) == "my_clip_1_2"
     assert convert_image_mode.default_id(Path("動画.mp4"), set()) == "video"
+
+
+def test_jpeg_sheets(video, tmp_path):
+    """--sheet-format jpeg: シートは .jpg (テクスチャのパスは拡張子なしのまま)、レポートに形式と品質。ほかのファイルは PNG と同じ
+    (TODO.md の P2-4)。"""
+    from PIL import Image
+
+    common = ("--fps", 10, "--width", 64, "--height", 36)
+    code, png_out = run(tmp_path / "png", *common, inputs=[video])
+    assert code == 0
+    code, jpg_out = run(tmp_path / "jpg", *common, "--sheet-format", "jpeg", inputs=[video])
+    assert code == 0
+    png_archive, png_names = load(png_out)
+    jpg_archive, jpg_names = load(jpg_out)
+    assert "RP/textures/bvp_image/clip/sheet_0.jpg" in jpg_names and not any(n.endswith("sheet_0.png") for n in jpg_names)
+    assert {n.replace(".jpg", ".png") for n in jpg_names} == png_names
+    sheet = Image.open(jpg_archive.open("RP/textures/bvp_image/clip/sheet_0.jpg"))
+    assert sheet.format == "JPEG"
+    [info] = videos_of(jpg_archive)
+    assert sheet.size == (info["sheet_width"], info["sheet_height"])
+    # 描画の定義は形式によらず同じ (拡張子なしのパス)
+    for name in png_names:
+        if name.endswith((".json", ".js", ".lang")) and "sound" not in name:
+            assert jpg_archive.read(name) == png_archive.read(name), name
+    report = json.loads(Path(jpg_out).with_suffix(".report.json").read_text(encoding="utf-8"))
+    assert report["sheet_format"] == "jpeg" and report["jpeg_quality"] == convert_image_mode.DEFAULT_JPEG_QUALITY
+    png_report = json.loads(Path(png_out).with_suffix(".report.json").read_text(encoding="utf-8"))
+    assert png_report["sheet_format"] == "png" and "jpeg_quality" not in png_report
+
+
+def test_jpeg_sheets_keep_the_colors_close(tmp_path):
+    """jpeg のシートは、PNG のシートと色がほぼ同じ (4:4:4 なのでマスの縁でも大きくずれない)。"""
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    rng = np.random.default_rng(0)
+    image = Image.fromarray(np.kron(rng.integers(0, 256, (16, 16, 3), dtype=np.uint8), np.ones((8, 8, 1), np.uint8)))
+    decoded = np.asarray(Image.open(io.BytesIO(convert_image_mode.sheet_bytes(image, "jpeg"))), np.float64)
+    mse = ((decoded - np.asarray(image, np.float64)) ** 2).mean()
+    assert 10 * np.log10(255 ** 2 / mse) >= 30
