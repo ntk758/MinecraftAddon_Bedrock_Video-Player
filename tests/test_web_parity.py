@@ -31,7 +31,9 @@ def gui_constant(name):
 
 
 def test_quality_presets_match_the_windows_app():
-    presets = gui_constant("QUALITY_PRESETS")
+    # Windows 版の画面と convert.py の --profile は conversion_profiles.py の表を使う。ブラウザ版の JS の表がそれと同じ
+    import conversion_profiles
+    presets = conversion_profiles.QUALITY_PRESETS
     block = re.search(r"const QUALITY_PRESETS = (\{.*?\});", APP, re.S).group(1)
     web = json.loads(re.sub(r",\s*\}", "}", re.sub(r"(\w+):", r'"\1":', block)))
     assert web == {key: list(value) for key, value in presets.items()}
@@ -61,3 +63,18 @@ def test_mmd_height_limits_match_the_windows_app():
     assert {k: int(v) for k, v in limits.items()} == {
         "normal": gui["MMD_MAX_HEIGHT"], "stage": gui["MMD_STAGE_MAX_HEIGHT"],
         "extreme": gui["MMD_EXTREME_MAX_HEIGHT"], "extremeStage": gui["MMD_EXTREME_STAGE_MAX_HEIGHT"]}
+
+
+def test_web_defaults_are_the_recommended_profile():
+    """ブラウザ版の画面の既定 (プリセット・パレット・ディザ) が、convert.py --profile recommended と同じ。"""
+    import conversion_profiles
+
+    def selected(select_id):
+        block = re.search(rf'<select id="{select_id}">(.*?)</select>', HTML, re.S).group(1)
+        # selected の付いた選択肢。無ければ最初の選択肢 (ブラウザの既定)
+        chosen = re.search(r'<option value="([^"]*)"[^>]*selected', block)
+        return chosen.group(1) if chosen else re.search(r'<option value="([^"]*)"', block).group(1)
+
+    assert selected("preset") == conversion_profiles.DEFAULT_PRESET
+    assert selected("palette") == conversion_profiles.PROFILES["recommended"]["palette"]
+    assert selected("dither") == conversion_profiles.PROFILES["recommended"]["dither_method"]

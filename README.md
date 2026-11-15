@@ -482,6 +482,7 @@ python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 
 | 主なオプション | 説明 |
 |---|---|
 | `--input-video` / `--frames-dir` | 入力動画、または画像連番フォルダ |
+| `--profile` | 既定値の組。`legacy` (既定: 64×64・20 fps・`full`・ディザなし。以前からの値) / `recommended` (Windows 版とブラウザ版の画面の既定: 128×128・10 fps・`auto`・Blue Noise)。個別に指定した引数が優先されます (次の版から) |
 | `--width` `--height` `--fps` `--duration` | 解像度・fps (最大 20)・変換する秒数 |
 | `--palette` | `concrete` (16 色) / `expanded` (33 色) / `full` (39 色) / `all` (全ブロックから色の離れた 127 色) / `auto` (214 色からシーンごとに選ぶ。GUI の既定) / `glass` (ステンドグラス 16 色、立体向け)。立体ではブロックの側面の色で選ぶ |
 | `--palette-colors` / `--palette-space` | `--palette auto` で選ぶ色数。既定の `auto` はシーンごとに 24 / 32 / 48 / 64 / 96 / 127 色から、色の誤差が 127 色のときの 1.05 倍以内に収まる一番少ない色数を選ぶ (数を指定するとその数まで。候補は光るブロックを除く 214 色) / 色を選ぶ色空間 `rgb` (既定) か `oklab` ([比較](docs/research/palette_space.md)) |

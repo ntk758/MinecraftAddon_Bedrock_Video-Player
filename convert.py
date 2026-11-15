@@ -32,6 +32,7 @@ from mvcodec.color import (
     rgb_to_oklab_torch,
     side_palette,
 )
+from conversion_profiles import DEFAULT_PROFILE, PROFILES
 from gui_i18n import LOCALES, Translator, detect_system_language
 from mvcodec.device import DEVICE_CHOICES, detect_gpu, empty_cache, squared_distances
 from mvcodec.dither_motion import DitherAligner
@@ -68,8 +69,8 @@ from mvcodec.volume import (
 )
 from mvcodec.evaluate import calculate_ssim_global
 
-WIDTH = 64
-HEIGHT = 64
+WIDTH = PROFILES["legacy"]["width"]
+HEIGHT = PROFILES["legacy"]["height"]
 OUTPUT_DIR = "BP/scripts"
 OUTPUT_FILE = f"{OUTPUT_DIR}/frames_data.js"
 FORMAT_NAME = "varint_rle_v5"
@@ -641,6 +642,13 @@ def parse_args(argv=None):
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
     parser.add_argument("--lang", default=None, choices=sorted(LOCALES), help="ログの表示言語 (既定は OS の言語)")
     parser.add_argument("--demo-gif", default=None, help="指定されたパスにデモ用GIFを出力する")
+    parser.add_argument("--profile", default=DEFAULT_PROFILE, choices=sorted(PROFILES),
+                        help="既定値の組。legacy: 今までの convert.py の既定 (64×64・20 fps・39 色・ディザなし。既定) / "
+                             "recommended: Windows 版とブラウザ版の画面の既定 (128×128・10 fps・自動パレット・Blue Noise)。"
+                             "個別に指定した引数 (--width など) が優先される")
+    # プロファイルの値を既定値にしてから読み直す (個別の引数が優先される)
+    known, _ = parser.parse_known_args(argv)
+    parser.set_defaults(**PROFILES[known.profile])
     args = parser.parse_args(argv)
 
     if args.width < 1 or args.height < 1:

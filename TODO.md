@@ -420,7 +420,11 @@
 - **必要なテスト:** 実機 (報告)。
 
 ### P2-6 GUI・ブラウザ版・CLI の設定を 1 か所で定義する
-- **現在の状態:** 未着手。既定値が違う ([roadmap_review_2026-11.md の 4 章](docs/research/roadmap_review_2026-11.md))。
+- **現在の状態:** 実装済み (2026-11-15)。`conversion_profiles.py` に画質のプリセット・画面の既定・`PROFILES` (`legacy` / `recommended`) を置いた。Windows 版の画面はここから読み、`convert.py --profile` を足した (既定は `legacy`)。ブラウザ版は JS の表のままで、`tests/test_web_parity.py` がこの表と画面の既定に一致することを確かめる (Pyodide 用に `scripts/build_web.py` へ足した)。
+  - `tests/test_conversion_profiles.py`: 引数なしと `legacy` が同じ、画面の既定の引数と `recommended` の解釈と出力 (`--threads 1`) がバイト単位で同じ、個別の引数が優先される。
+  - v6.37.1 の `convert.py` と、引数なしの出力がバイト単位で同じことを手元で確かめた。
+  - 以下は着手前の記録。
+- **着手前:** 未着手。既定値が違う ([roadmap_review_2026-11.md の 4 章](docs/research/roadmap_review_2026-11.md))。
   - CLI の既定: 64 × 64・20 fps・39 色・ディザなし (初期の値のまま)。
   - GUI とブラウザ版の既定: 128 × 128・10 fps・自動パレット・Blue Noise。
   - プリセットは、Python と JS に 2 回書いてある (`tests/test_web_parity.py` が一致を確かめる)。

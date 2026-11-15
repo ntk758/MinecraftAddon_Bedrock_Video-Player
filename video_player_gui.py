@@ -17,6 +17,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import conversion_profiles
 from gui_i18n import (
     LOCALES, Translator, available_languages, initial_language, load_settings, save_settings,
 )
@@ -394,22 +395,16 @@ def mmd_stage_max_fps(height: int) -> int:
 # 目標に 3 fps)。80 × 45 なら背景は 160 × 68
 STAGE_MAX_SIDE = 80
 # 画質プリセット: キー -> (幅, 高さ, fps)
-QUALITY_PRESETS: dict[str, tuple[int, int, int]] = {
-    "light": (64, 64, 20),
-    "standard": (96, 96, 10),
-    "high": (128, 128, 10),
-    "detail": (128, 128, 5),
-    "ultra": (256, 256, 5),
-    "extreme": (512, 512, 2),
-}
+# 画質のプリセット (幅, 高さ, fps) と既定は conversion_profiles.py (ブラウザ版・convert.py の --profile と共通)
+QUALITY_PRESETS: dict[str, tuple[int, int, int]] = dict(conversion_profiles.QUALITY_PRESETS)
 # fps スライダーの範囲 (Minecraft は 1 秒 20 tick なので 20 fps が上限)
 MIN_FPS, MAX_FPS = 1, 20
 # ゲーム内の表示言語: all = 各プレイヤーのゲーム言語 (10 言語) / fixed = この画面の言語に固定 (言語ファイル 1 個)
 ADDON_LANG_VALUES = ("all", "fixed")
-DEFAULT_PRESET = "high"
+DEFAULT_PRESET = conversion_profiles.DEFAULT_PRESET
 # 自動: 全ブロックの候補からシーンごとに最大 64 色を選ぶ (全ブロックとほぼ同じ画質でデータが少ない。docs/research/palette_space.md)
-DEFAULT_PALETTE = "auto"
-DEFAULT_DITHER = "blue_noise"
+DEFAULT_PALETTE = conversion_profiles.DEFAULT_PALETTE
+DEFAULT_DITHER = conversion_profiles.DEFAULT_DITHER
 # 立体の表示モードで使うディザ。立体は形 (奥行き) が主役で、ディザの粒は表面の白い点々のノイズになるので使わない
 VOLUME_DITHER = "none"
 
