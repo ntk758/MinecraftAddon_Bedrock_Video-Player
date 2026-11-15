@@ -83,6 +83,20 @@ def test_audio_chunks(video, silent_video, tmp_path):
     assert atlas.extract_audio_chunks(silent_video, tmp_path / "c") == []
 
 
+def test_audio_chunks_never_start_after_the_end(video, tmp_path):
+    """映像の終わりより後に始まるチャンクは入れない。長さがチャンクのちょうど倍数だと、数 ms だけのチャンクが 1 つ増える
+    ことがあり (ffmpeg 9.0.1、AAC の音声)、数えると終わり近くへのシークが最後のコマへ飛ぶ。"""
+    # 1 秒ごと・2 秒まで: ffmpeg がその後ろに何を書いても、0 秒と 1 秒のチャンクだけ
+    chunks = atlas.extract_audio_chunks(video, tmp_path / "a", chunk_seconds=1, max_seconds=2)
+    assert [c[0] for c in chunks] == [0, 1]
+    # 切れ端のファイルも残さない
+    extra = tmp_path / "b"
+    extra.mkdir()
+    chunks = atlas.extract_audio_chunks(video, extra, chunk_seconds=1, max_seconds=2.04)
+    assert [c[0] for c in chunks] == [0, 1]
+    assert sorted(f.name for f in extra.glob("chunk_*.ogg")) == ["chunk_0.ogg", "chunk_1.ogg"]
+
+
 def test_trim_and_frame_count(video, tmp_path):
     code, output = run(tmp_path, "--start", 0.5, "--end", 2.5, "--fps", 10, "--width", 64, "--height", 36,
                        inputs=[video])
@@ -326,7 +340,28 @@ def test_default_id_from_file_name(tmp_path):
     assert convert_image_mode.default_id(Path("動画.mp4"), set()) == "video"
 
 
-def test_jpeg_sheets(video, tmp_path):
+@pytest.fixture(scope="module")
+def noisy_video(tmp_path_factory):
+    """実写のように細かい模様のある映像 (JPEG のほうが PNG より小さくなる)。"""
+    path = tmp_path_factory.mktemp("src") / "clip.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=3,noise=alls=40:allf=t",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:a", "aac", "-c:v", "libx264", "-crf", "12",
+                    "-pix_fmt", "yuv420p", "-shortest", str(path)], check=True)
+    return path
+
+
+def test_jpeg_falls_back_to_png_for_sheets_that_png_stores_smaller(video, tmp_path):
+    """図形だけの映像は PNG のほうが小さいので、jpeg を選んでもそのシートは PNG にする (大きくなって劣化するだけなので)。"""
+    code, out = run(tmp_path, "--width", 64, "--height", 36, "--fps", 10, "--sheet-format", "jpeg", inputs=[video])
+    assert code == 0
+    _archive, names = load(out)
+    assert "RP/textures/bvp_image/clip/sheet_0.png" in names and not any(n.endswith(".jpg") for n in names)
+    report = json.loads(Path(out).with_suffix(".report.json").read_text(encoding="utf-8"))
+    assert report["sheet_format"] == "jpeg" and report["sheet_files"] == {"png": 1}
+
+
+def test_jpeg_sheets(noisy_video, tmp_path):
+    video = noisy_video
     """--sheet-format jpeg: シートは .jpg (テクスチャのパスは拡張子なしのまま)、レポートに形式と品質。ほかのファイルは PNG と同じ
     (TODO.md の P2-4)。"""
     from PIL import Image
@@ -350,6 +385,7 @@ def test_jpeg_sheets(video, tmp_path):
             assert jpg_archive.read(name) == png_archive.read(name), name
     report = json.loads(Path(jpg_out).with_suffix(".report.json").read_text(encoding="utf-8"))
     assert report["sheet_format"] == "jpeg" and report["jpeg_quality"] == convert_image_mode.DEFAULT_JPEG_QUALITY
+    assert report["sheet_files"] == {"jpg": 1}
     png_report = json.loads(Path(png_out).with_suffix(".report.json").read_text(encoding="utf-8"))
     assert png_report["sheet_format"] == "png" and "jpeg_quality" not in png_report
 

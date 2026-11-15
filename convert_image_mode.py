@@ -142,11 +142,25 @@ DEFAULT_JPEG_QUALITY = 92
 def sheet_bytes(image: Image.Image, sheet_format: str = "png", png_optimize: bool = False,
                 jpeg_quality: int = DEFAULT_JPEG_QUALITY) -> bytes:
     """シートの画像のバイト列。jpeg は 4:4:4 (色を間引かない。マスの縁で隣のマスの色が混ざりにくい)。"""
-    if sheet_format == "png":
-        return png_bytes(image, png_optimize)
+    return png_bytes(image, png_optimize) if sheet_format == "png" else _jpeg_bytes(image, jpeg_quality)
+
+
+def _jpeg_bytes(image: Image.Image, jpeg_quality: int) -> bytes:
     out = io.BytesIO()
     image.convert("RGB").save(out, format="JPEG", quality=jpeg_quality, subsampling=0, optimize=True)
     return out.getvalue()
+
+
+def sheet_file(image: Image.Image, sheet_format: str = "png", png_optimize: bool = False,
+               jpeg_quality: int = DEFAULT_JPEG_QUALITY) -> tuple[str, bytes]:
+    """シート 1 枚の (拡張子, バイト列)。jpeg を選んでも、PNG のほうが小さいシートは PNG にする: 図形や文字の多い映像は
+    PNG のほうが小さく、劣化も無い (デモの映像で JPEG 1.6 MiB、PNG 0.8 MiB)。テクスチャのパスは拡張子なしなので、
+    シートごとに形式が違ってよい。"""
+    png = png_bytes(image, png_optimize)
+    if sheet_format == "png":
+        return SHEET_EXTENSIONS["png"], png
+    jpeg = _jpeg_bytes(image, jpeg_quality)
+    return (SHEET_EXTENSIONS["png"], png) if len(png) <= len(jpeg) else (SHEET_EXTENSIONS["jpeg"], jpeg)
 
 
 def png_bytes(image: Image.Image, optimize: bool = False) -> bytes:
@@ -307,10 +321,12 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
             }
 
     # 4. パックを組む
+    sheet_kinds = {}
     for video in videos:
         for number, sheet in enumerate(sheets_of[video["id"]]):
-            put(f"RP/textures/bvp_image/{video['id']}/sheet_{number}.{SHEET_EXTENSIONS[sheet_format]}",
-                sheet_bytes(sheet, sheet_format, png_optimize, jpeg_quality))
+            extension, data = sheet_file(sheet, sheet_format, png_optimize, jpeg_quality)
+            sheet_kinds[extension] = sheet_kinds.get(extension, 0) + 1
+            put(f"RP/textures/bvp_image/{video['id']}/sheet_{number}.{extension}", data)
         for method in methods:
             put(f"BP/entities/screen_{video['id']}_{method}.json",
                 json.dumps(entity_json(video, method, namespace), ensure_ascii=False, indent=2) + "\n")
@@ -330,13 +346,16 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
         put("RP/pack_icon.png", icon)
         put("BP/pack_icon.png", icon)
 
+    if sheet_format == "jpeg" and sheet_kinds.get("png"):
+        log(f"PNG のほうが小さいシート {sheet_kinds['png']} 枚は PNG にしました (JPEG {sheet_kinds.get('jpg', 0)} 枚)")
     memory_summary = {k: v for k, v in memory.items() if k != "table"}
     report = {
         "namespace": namespace, "pack_name": pack_name, "methods": methods, "videos": videos,
         "memory": {**memory_summary, "per_video": [{"id": v["id"], **v["memory"], "handles": v["sheets"]}
                                                     for v in videos]},
         "warnings": memory["warnings"],
-        "sheet_format": sheet_format, **({"jpeg_quality": jpeg_quality} if sheet_format == "jpeg" else {}),
+        # sheet_files は jpeg を選んだときの、実際の形式ごとのシートの数 (PNG のほうが小さいシートは PNG にする)
+        "sheet_format": sheet_format, **({"jpeg_quality": jpeg_quality, "sheet_files": sheet_kinds} if sheet_format == "jpeg" else {}),
         "lang_keys": {"en": lang_keys("en"), "ja": lang_keys("ja")},
         "files": sorted(files),
     }

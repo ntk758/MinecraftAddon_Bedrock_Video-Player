@@ -53,6 +53,8 @@ const FLAT_PAIR_SUFFIX = "_flat";
 // 画像モードのアドオンのコマンドの接頭辞の末尾 (video_player_gui.py の IMAGE_NAMESPACE_SUFFIX と同じ。ブロックモードと
 // 同じ接頭辞だと、ゲームに登録するコマンドの名前がぶつかる)
 const IMAGE_NAMESPACE_SUFFIX = "_img";
+// 画像モードの音声の区切り (web/app.js の IMAGE_AUDIO_CHUNK_SECONDS と同じ)
+const IMAGE_AUDIO_CHUNK_SECONDS = 4;
 // 画面の「平らな面のムラを減らす」で渡す --flat-areas の値 (video_player_gui.py の FLAT_AREAS_CHOICE と同じ)
 const FLAT_AREAS_CHOICE = "smooth";
 
@@ -129,11 +131,20 @@ function buildImageAddon(pyodide, s, jobs) {
   const usable = [];
   for (const job of jobs) {
     if (job.vox || job.mmd || !job.frames.length) say("web.image_skipped", { id: job.id });
-    else usable.push({ id: job.id, title: job.title, frames: job.frames, sounds: job.sounds });
+    else usable.push(job);
+  }
+  // 画像モード用の 4 秒ごとの音声を、音声のある動画すべてで作れたときだけ使う (区切りの長さはパックで 1 つ。
+  // 1 本でも作れなければ、全部ブロックモードと同じ 10 秒ごと)
+  const fine = usable.every((job) => !job.sounds.length || job.imageSounds?.length);
+  const chunkSeconds = fine ? IMAGE_AUDIO_CHUNK_SECONDS : 10;
+  for (let i = 0; i < usable.length; i++) {
+    const job = usable[i];
+    usable[i] = { id: job.id, title: job.title, frames: job.frames, sounds: fine ? (job.imageSounds ?? []) : job.sounds };
   }
   if (!usable.length) return null;
   try {
     pyodide.globals.set("img_jobs", usable);
+    pyodide.globals.set("img_chunk_seconds", chunkSeconds);
     pyodide.globals.set("img_settings", pyodide.toPy({ fps: s.fps, packName: s.packName,
                                                       namespace: s.namespace + IMAGE_NAMESPACE_SUFFIX,
                                                       lighting: s.imageLighting || "bright",
@@ -157,7 +168,8 @@ for _job in img_jobs:
                      "audio": (lambda seconds, _sounds=_sounds: _sounds)})
 _files, _report = cim.build_files(_sources, width=int(_first.shape[1]), height=int(_first.shape[0]), methods=["a"],
                                   namespace=str(_s["namespace"]), pack_name=str(_s["packName"]) + " (Image)",
-                                  audio_chunk_seconds=10, log=lambda _text: None, lighting=str(_s["lighting"]),
+                                  audio_chunk_seconds=float(img_chunk_seconds),
+                                  log=lambda _text: None, lighting=str(_s["lighting"]),
                                   png_optimize=bool(_s["pngOptimize"]))
 cim.zip_bytes(_files)
 `);

@@ -530,6 +530,24 @@ def resolve_dither(dither_text: str) -> str:
         return "none"
 
 
+def signed_exit_code(code: int) -> int:
+    """Windows は負の終了コード (ffmpeg の −22 など) を符号なしの 32 bit で返す (4294967274)。読める負の数に戻す。"""
+    return code - 2 ** 32 if code > 0x7FFFFFFF else code
+
+
+def has_audio_stream(ffmpeg: str, video) -> bool | None:
+    """動画に音声のストリームがあるか (ffmpeg -i の表示で見る)。調べられなければ None。"""
+    try:
+        result = subprocess.run([ffmpeg, "-hide_banner", "-i", str(video)], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=60, **subprocess_kwargs())
+    except (OSError, subprocess.SubprocessError):
+        return None
+    streams = [line for line in result.stderr.splitlines() if line.lstrip().startswith("Stream #")]
+    if not streams:
+        return None
+    return any(" Audio:" in line for line in streams)
+
+
 class PackBuilderApp(tk.Tk):
     def __init__(self, language: str | None = None) -> None:
         super().__init__()
@@ -967,7 +985,9 @@ class PackBuilderApp(tk.Tk):
     def add_video_path(self, path: str | Path) -> str:
         """動画リストに 1 本足し、付けた動画 ID を返す (はじめてガイドからも使う)。"""
         p = Path(path)
-        video_id = re.sub(r"[^a-z0-9_]", "_", p.stem.lower())
+        # ブラウザ版 (web/app.js) と同じ規則: 使えない文字の並びを _ 1 つにし、前後の _ を取る。何も残らなければ video
+        # (日本語だけのファイル名が「______」になり、コマンドで打ちにくかった)
+        video_id = re.sub(r"[^a-z0-9_]+", "_", p.stem.lower()).strip("_") or "video"
         existing_ids = self._video_ids()
         if video_id in existing_ids:
             suffix = 2
@@ -1354,13 +1374,20 @@ class PackBuilderApp(tk.Tk):
                 self.messages.put(text)
         return code, "\n".join(tail)
 
-    def _extract_audio(self, ffmpeg: str, video: Path, sounds_dir: Path) -> list[tuple[int, str, bytes]]:
-        """音声を AUDIO_CHUNK_SECONDS 秒ごとの .ogg (44.1kHz ステレオ) に切り出す。無音の動画やエラーなら []。"""
+    def _extract_audio(self, ffmpeg: str, video: Path, sounds_dir: Path,
+                       duration: float | None = None) -> list[tuple[int, str, bytes]]:
+        """音声を AUDIO_CHUNK_SECONDS 秒ごとの .ogg (44.1kHz ステレオ) に切り出す。無音の動画やエラーなら []。
+        duration (長さの指定) があれば、音声もその秒数で切る (切らないと、映像が終わった後も最後のチャンクの残りが鳴り、
+        使わない音声がアドオンに入る)。"""
         sounds_dir.mkdir(parents=True, exist_ok=True)
+        # 音声の無い動画は、切り出しを試さずに知らせる (試すと ffmpeg が失敗し、「終了コード 4294967274」と出ていた)
+        if has_audio_stream(ffmpeg, video) is False:
+            self.messages.put(self.tr("build.no_audio"))
+            return []
         self.messages.put(self.tr("build.audio", sec=AUDIO_CHUNK_SECONDS))
         try:
             self._run([
-                ffmpeg, "-y", "-i", str(video),
+                ffmpeg, "-y", "-i", str(video), *(["-t", f"{duration:g}"] if duration else []),
                 "-f", "segment", "-segment_time", str(AUDIO_CHUNK_SECONDS),
                 "-vn", "-acodec", "libvorbis",
                 "-ar", "44100", "-ac", "2", "-q:a", "3",
@@ -1369,7 +1396,11 @@ class PackBuilderApp(tk.Tk):
         except Exception as e:
             self.messages.put(self.tr("build.audio_skipped", error=e))
             self.messages.put(self.tr("hint.audio"))
-        return [(int(f.stem.split("_")[1]), "ogg", f.read_bytes()) for f in sounds_dir.glob("chunk_*.ogg")]
+        chunks = [(int(f.stem.split("_")[1]), f) for f in sounds_dir.glob("chunk_*.ogg")]
+        # 長さがチャンクのちょうど倍数だと、-t で切っても数 ms だけのチャンクが 1 つ増えることがある。終わりより後のものは入れない
+        if duration:
+            chunks = [(n, f) for n, f in chunks if n * AUDIO_CHUNK_SECONDS < duration - 0.05]
+        return [(n, "ogg", f.read_bytes()) for n, f in chunks]
 
     def _convert_stage_background(
         self, source: Path, background_id: str, figure_js: str, temp: Path, ffmpeg: str, fps: float, palette: str,
@@ -1381,7 +1412,7 @@ class PackBuilderApp(tk.Tk):
         dims = frame_data_dims(figure_js)
         geom = stage_geometry(dims["width"], dims["height"], dims["depth"])
         self.messages.put(self.tr("build.stage_background", width=geom["stageWidth"], height=geom["wallHeight"]))
-        sounds = self._extract_audio(ffmpeg, source, temp / "sounds" / background_id)
+        sounds = self._extract_audio(ffmpeg, source, temp / "sounds" / background_id, duration)
         output = temp / f"frames_{background_id}.js"
         argv = build_converter_args(
             source, output, ffmpeg, geom["stageWidth"], geom["wallHeight"], fps, palette, dither_method,
@@ -1401,7 +1432,7 @@ class PackBuilderApp(tk.Tk):
         for line in process.stdout:
             self.messages.put(line.rstrip())
         if process.wait() != 0:
-            raise RuntimeError(self.tr("build.cmd_failed", code=process.returncode))
+            raise RuntimeError(self.tr("build.cmd_failed", code=signed_exit_code(process.returncode)))
 
     def _build_pack(
         self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
@@ -1456,7 +1487,7 @@ class PackBuilderApp(tk.Tk):
                     else:
                         self.messages.put(self.tr("build.thumbnail", sec=thumb_sec))
                         self._run([
-                            ffmpeg, "-y", "-ss", str(thumb_sec), "-i", str(video), "-frames:v", "1",
+                            ffmpeg, "-y", "-ss", str(thumb_sec), "-i", str(video), "-frames:v", "1", "-update", "1",
                             "-vf", "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black",
                             str(thumbnail),
                         ])
@@ -1487,7 +1518,7 @@ class PackBuilderApp(tk.Tk):
                     background_id = f"{video_id}_bg" if video_anamorphic and three_d and video_background else None
                     # 背景の映像があれば、その音声を鳴らす (人物の動画の音声は入れない)
                     sounds = [] if is_vox or background_id else self._extract_audio(
-                        ffmpeg, video, temp / "sounds" / video_id)
+                        ffmpeg, video, temp / "sounds" / video_id, duration)
 
                     # ブロックデータ変換
                     self.messages.put(self.tr("build.converting"))

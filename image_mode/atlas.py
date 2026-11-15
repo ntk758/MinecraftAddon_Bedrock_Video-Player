@@ -326,6 +326,10 @@ def format_memory_report(report: dict) -> str:
     return "\n".join(lines)
 
 
+# 映像の終わりまでこの秒数より短い所から始まる音声のチャンクは入れない (鳴らしても聞こえない切れ端)
+AUDIO_TAIL_SECONDS = 0.05
+
+
 def extract_audio_chunks(path, out_dir, chunk_seconds: float = 4, start: float | None = None,
                          end: float | None = None, ffmpeg: str = "ffmpeg",
                          max_seconds: float | None = None) -> list[tuple[int, str, bytes]]:
@@ -347,6 +351,14 @@ def extract_audio_chunks(path, out_dir, chunk_seconds: float = 4, start: float |
            str(out_dir / "chunk_%d.ogg")]
     result = subprocess.run(cmd, capture_output=True, **_subprocess_kwargs())
     files = sorted(out_dir.glob("chunk_*.ogg"), key=lambda f: int(f.stem.split("_")[1]))
+    if max_seconds:
+        # 映像の終わりより後に始まるチャンクは捨てる。長さがチャンクのちょうど倍数 (8 秒を 4 秒ごとなど) だと、-t で切っても
+        # 数 ms だけのチャンクが 1 つ増えることがある (ffmpeg 9.0.1 で確認)。数えると、終わり近くへのシークが
+        # その「最後のチャンクの頭」= 最後のコマへ飛んでしまう
+        late = [f for f in files if int(f.stem.split("_")[1]) * chunk_seconds >= max_seconds - AUDIO_TAIL_SECONDS]
+        for f in late:
+            f.unlink()
+        files = [f for f in files if f not in late]
     if result.returncode != 0 and not files:
         message = result.stderr.decode("utf-8", errors="replace")
         # 音声のない動画は「出力に stream がない」で終わる。それは無音として扱う

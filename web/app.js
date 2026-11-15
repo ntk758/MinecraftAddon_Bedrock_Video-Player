@@ -4,6 +4,9 @@
 "use strict";
 
 const AUDIO_CHUNK_SECONDS = 10; // pack_builder.AUDIO_CHUNK_SECONDS と同じ
+// 画像モードの音声の区切り (convert_image_mode.py の --audio-chunk-seconds の既定と同じ)。シーク・再開は区切りの頭へそろえるので、
+// ブロックモードの 10 秒を使うと最大 5 秒ずれ、10 秒より短い動画ではどこへシークしても頭に戻っていた
+const IMAGE_AUDIO_CHUNK_SECONDS = 4;
 // 音声は Windows 版と同じ Ogg Vorbis (44.1 kHz ステレオ、ffmpeg の libvorbis の既定と同じ品質 3) にする。
 // エンコードは web/ogg-worker.js (web/vendor/wasm-media-encoders を使う) が行う。使えなければ WAV にする
 const OGG_RATE = 44100;
@@ -330,12 +333,12 @@ let oggWorker = null;
 let oggWarned = false;
 
 /** 左右の音を、別のスレッド (web/ogg-worker.js) で AUDIO_CHUNK_SECONDS ごとの OGG にする。 */
-function encodeOgg(left, right) {
+function encodeOgg(left, right, chunkSeconds = AUDIO_CHUNK_SECONDS) {
   if (!oggWorker) oggWorker = new Worker("ogg-worker.js");
   return new Promise((resolve, reject) => {
     oggWorker.onmessage = (event) => (event.data.error ? reject(new Error(event.data.error)) : resolve(event.data.chunks));
     oggWorker.onerror = (event) => { event.preventDefault(); oggWorker = null; reject(new Error(event.message || "ogg-worker.js")); };
-    oggWorker.postMessage({ left, right, rate: OGG_RATE, quality: OGG_QUALITY, chunkSeconds: AUDIO_CHUNK_SECONDS },
+    oggWorker.postMessage({ left, right, rate: OGG_RATE, quality: OGG_QUALITY, chunkSeconds },
       [left.buffer, right.buffer]);
   });
 }
@@ -352,13 +355,19 @@ async function toStereo(decoded, seconds) {
   return [rendered.getChannelData(0).slice(), rendered.getChannelData(1).slice()];
 }
 
-// 音声を AUDIO_CHUNK_SECONDS ごとの OGG (使えなければ 22.05 kHz モノラルの WAV) にする (音声が無ければ [])
-async function extractAudio(v, length) {
+// 音声を AUDIO_CHUNK_SECONDS ごとの OGG (使えなければ 22.05 kHz モノラルの WAV) にする (音声が無ければ [])。
+// imageChunks なら、画像モード用に IMAGE_AUDIO_CHUNK_SECONDS ごとの OGG も作って v.imageSounds に入れる (OGG を作れなければ作らない)
+async function extractAudio(v, length, imageChunks = false) {
   try {
     const decoded = await decodeVideoAudio(v.file);
     const seconds = Math.min(decoded.duration, length);
     try {
       const [left, right] = await toStereo(decoded, seconds);
+      if (imageChunks) {
+        try {
+          v.imageSounds = await encodeOgg(left.slice(), right.slice(), IMAGE_AUDIO_CHUNK_SECONDS);
+        } catch (e) { v.imageSounds = null; }
+      }
       return await encodeOgg(left, right);
     } catch (e) {
       if (!oggWarned) log("  " + t("web.audio_wav_fallback", { error: e.message || e }));
@@ -372,7 +381,8 @@ async function extractAudio(v, length) {
     }
     return chunks;
   } catch (e) {
-    log("  " + t("web.no_audio", { error: e.message || e }));
+    // 音声の無い動画は decodeAudioData が EncodingError で失敗する (メッセージは「Unable to decode audio data」など)
+    log("  " + (e && e.name === "EncodingError" ? t("web.no_audio_track") : t("web.no_audio", { error: e.message || e })));
     return [];
   }
 }
@@ -495,8 +505,9 @@ async function build() {
     log(t("web.extracting", { index: n + 1, total: videos.length, title: v.title }));
     const { frames, thumbnail, length } = await extractFrames(v, s, (f) => { $("progress").value = (n + f * 0.4) / videos.length; });
     log("  " + t("web.frames", { count: frames.length }));
-    const sounds = await extractAudio(v, length);
-    jobs.push({ id: v.id, title: v.title, frames, thumbnail, sounds });
+    v.imageSounds = null;
+    const sounds = await extractAudio(v, length, s.imageMode);
+    jobs.push({ id: v.id, title: v.title, frames, thumbnail, sounds, imageSounds: v.imageSounds });
   }
   const transfer = [];
   for (const job of jobs) {
@@ -505,6 +516,7 @@ async function build() {
     if (job.vox) transfer.push(job.vox.buffer);
     if (job.mmd) transfer.push(job.mmd.motion.buffer, ...job.mmd.files.map(([, bytes]) => bytes.buffer));
     for (const [, , bytes] of job.sounds) transfer.push(bytes.buffer);
+    for (const [, , bytes] of job.imageSounds ?? []) transfer.push(bytes.buffer);
   }
   if (background) {
     for (const f of background.frames) transfer.push(f.buffer);
