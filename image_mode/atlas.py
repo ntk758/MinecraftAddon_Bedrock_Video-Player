@@ -243,6 +243,16 @@ def pack_sheets(frames: Iterable[np.ndarray], width: int, height: int, max_sheet
     return sheets, _layout(np.asarray(sheets[0]), cols, rows, full_cells, len(sheets), count, width, height, gutter)
 
 
+def cells_in_order(sheets: list[Image.Image], layout: dict, slots: list[int]) -> Iterable[np.ndarray]:
+    """並べたシートから、slots の順にマスの絵を取り出す (まとめたコマを元の順に並べ直すとき)。"""
+    cols, per_sheet = layout["cols"], layout["cells_per_sheet"]
+    width, height, gutter = layout["width"], layout["height"], layout["gutter"]
+    for slot in slots:
+        sheet, index = divmod(slot, per_sheet)
+        x, y = (index % cols) * (width + gutter), (index // cols) * (height + gutter)
+        yield np.asarray(sheets[sheet].crop((x, y, x + width, y + height)), dtype=np.uint8)
+
+
 def _check_frame(frame: np.ndarray, width: int, height: int) -> np.ndarray:
     frame = np.asarray(frame)
     if frame.shape != (height, width, 3) or frame.dtype != np.uint8:
