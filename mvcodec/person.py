@@ -1050,21 +1050,93 @@ def _start_ffmpeg(cmd, ffmpeg, **kwargs):
         raise InputError(f"could not start ffmpeg: {ffmpeg} ({error})") from error
 
 
-def _writer(path, width, height, fps, ffmpeg, audio_from=None, duration=None):
+class _CountingPipe:
+    """書いたバイト数を数える標準入力 (書き終えた後に、映像のフレームの数を知るため)。"""
+
+    def __init__(self, pipe):
+        self._pipe = pipe
+        self.written = 0
+
+    def write(self, data):
+        self._pipe.write(data)
+        self.written += len(data)
+
+    def close(self):
+        self._pipe.close()
+
+
+class _AudioAfterWriter:
+    """duration の無い背景の動画: 映像だけを一時ファイルに書き、閉じた後 (wait) に元の音声を映像のちょうどの長さで足す。
+
+    以前は 1 回の ffmpeg で `-shortest` を付けていた (音声が映像より長い動画で、音声だけ長く残らないように)。音声が映像より短いと、
+    ffmpeg が音声の終わりで出力を閉じて標準入力を読まなくなり、残りのフレームを書くところで BrokenPipeError になるか、
+    パイプの余裕に収まる短い動画では気づかずに背景が音声の長さで切れていた。`-af apad -shortest` (音声の後ろを無音で延ばす) にすると
+    失敗はしないが、映像が 1 秒より短いと音声が約 1 秒まで残ることがあった (ffmpeg 9.0.1 の実測。実行ごとに変わる)。
+    フレームの数は書き終えるまで分からないので、書き終えてから `apad` + フレームの数から求めた `-t` で切る。
+    映像は `-c:v copy` で、もう一度エンコードしない。docs/research/roadmap_review_2026-11.md の 2 章。"""
+
+    def __init__(self, path, width, height, fps, ffmpeg, audio_from):
+        self._path = Path(path)
+        self._video_only = self._path.with_name(f"{self._path.stem}.video-only{self._path.suffix}")
+        # 音声を足した結果は、いったんこの名前に書いてから path に置き換える (失敗したとき、途中までのファイルを path に残さない)
+        self._muxing = self._path.with_name(f"{self._path.stem}.muxing{self._path.suffix}")
+        self._frame_bytes = width * height * 3
+        self._fps = fps
+        self._ffmpeg = ffmpeg
+        self._audio_from = audio_from
+        self.error = ""   # 音声を足す ffmpeg が失敗したときの stderr (呼び出し側の例外の文に入れる)
+        self._process = _video_writer(self._video_only, width, height, fps, ffmpeg)
+        self.stdin = _CountingPipe(self._process.stdin)
+
+    def wait(self):
+        """映像の ffmpeg の終わりを待って音声を足す。どちらかの終了コード (0 なら成功) を返す。一時ファイルは必ず消す。"""
+        code = self._process.wait()
+        try:
+            if code != 0:
+                return code
+            seconds = (self.stdin.written // self._frame_bytes) / float(self._fps)
+            cmd = [self._ffmpeg, "-v", "error", "-y", "-i", str(self._video_only), "-i", str(self._audio_from),
+                   "-map", "0:v", "-map", "1:a?", "-c:v", "copy", "-af", "apad", "-c:a", "aac", "-t", f"{seconds:.6f}",
+                   "-f", "mp4", str(self._muxing)]
+            muxer = _start_ffmpeg(cmd, self._ffmpeg, stderr=subprocess.PIPE)
+            _, stderr = muxer.communicate()
+            if muxer.returncode != 0:
+                self.error = stderr.decode("utf-8", "replace").strip()
+                return muxer.returncode
+            try:
+                os.replace(self._muxing, self._path)
+            except OSError as error:   # Windows で、前の背景の動画を別のアプリが開いているときなど (軽い段階でやり直しても直らない)
+                raise InputError(f"could not write {self._path} ({error})") from error
+            return 0
+        finally:
+            self._video_only.unlink(missing_ok=True)
+            self._muxing.unlink(missing_ok=True)
+
+    def abort(self):
+        """途中で失敗したとき: 映像の ffmpeg の終わりを待ち、音声は足さずに一時ファイルを消す (標準入力は閉じてから呼ぶ)。"""
+        try:
+            return self._process.wait()
+        finally:
+            self._video_only.unlink(missing_ok=True)
+
+
+def _video_writer(path, width, height, fps, ffmpeg, extra_inputs=()):
     cmd = [ffmpeg, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
-           "-r", str(fps), "-i", "-"]
-    if audio_from is not None:
-        # 映像は受け取ったフレームの数が正: duration があるとき、出力全体を -t や -shortest で切ると、duration が 1 フレームの長さの倍数でない
-        # とき (0.35 秒を 10 fps など) に最後の 1 フレームが落ちる。音声の入力だけを duration で切る。duration が無いときは
-        # 従来どおり -shortest (音声が映像より長い動画で、音声だけ長く残らないように)
-        if duration is not None:
-            cmd += ["-t", str(duration)]
-        cmd += ["-i", str(audio_from), "-map", "0:v", "-map", "1:a?", "-c:a", "aac"]
-        if duration is None:
-            cmd += ["-shortest"]
+           "-r", str(fps), "-i", "-", *extra_inputs]
     # 色を正確に残す (人物の範囲は白黒、背景はブロックの色を選ぶ元になる)
     cmd += ["-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv444p", str(path)]
     return _start_ffmpeg(cmd, ffmpeg, stdin=subprocess.PIPE)
+
+
+def _writer(path, width, height, fps, ffmpeg, audio_from=None, duration=None):
+    if audio_from is None:
+        return _video_writer(path, width, height, fps, ffmpeg)
+    if duration is None:
+        return _AudioAfterWriter(path, width, height, fps, ffmpeg, audio_from)
+    # 映像は受け取ったフレームの数が正: duration があるとき、出力全体を -t や -shortest で切ると、duration が 1 フレームの長さの倍数でない
+    # とき (0.35 秒を 10 fps など) に最後の 1 フレームが落ちる。音声の入力だけを duration で切る
+    return _video_writer(path, width, height, fps, ffmpeg,
+                         ["-t", str(duration), "-i", str(audio_from), "-map", "0:v", "-map", "1:a?", "-c:a", "aac"])
 
 
 def _check_free_ram():
@@ -1169,6 +1241,8 @@ def make_person_videos(source, mask_path, background_path, fps, duration=None, f
             stats["fallback"] = {**report.get("fallback", {}), "reasons": dict(guard.reasons)}
         stats["salient_dropped"] = report.get("salient_dropped")
 
+    failed = True
+    codes = []
     try:
         for frame in _timed(read_frames(source, fps, duration, ffmpeg, long_side), timings["read"]):
             if not writers:
@@ -1184,12 +1258,21 @@ def make_person_videos(source, mask_path, background_path, fps, duration=None, f
             settled = guard.flush()
             flush_ms = (time.perf_counter() - start) * 1000
             write(settled)
+        failed = False
     finally:
         if stats is not None:
             collect_stats()
         for writer in writers:
-            writer.stdin.close()
-            writer.wait()
+            try:
+                writer.stdin.close()
+            except OSError:
+                pass   # ffmpeg が先に終わっていた (BrokenPipe)。失敗は下の終了コードで知る
+            # 途中で失敗したときは、背景の動画に音声を足さずに一時ファイルだけ消す
+            codes.append(writer.abort() if failed and isinstance(writer, _AudioAfterWriter) else writer.wait())
+    for writer, code, path in zip(writers, codes, (mask_path, background_path)):
+        if code != 0:
+            detail = getattr(writer, "error", "")
+            raise InputError(f"ffmpeg could not write {path} (exit code {code})" + (f": {detail}" if detail else ""))
     if count == 0:
         raise InputError(f"could not read the video: {source}")
     return count
