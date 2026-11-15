@@ -366,3 +366,16 @@ def test_jpeg_sheets_keep_the_colors_close(tmp_path):
     decoded = np.asarray(Image.open(io.BytesIO(convert_image_mode.sheet_bytes(image, "jpeg"))), np.float64)
     mse = ((decoded - np.asarray(image, np.float64)) ** 2).mean()
     assert 10 * np.log10(255 ** 2 / mse) >= 30
+
+
+def test_the_command_line_works_when_the_console_cannot_show_japanese(video, tmp_path):
+    """ログは日本語。パイプの文字コードが cp1252 (Windows の英語などの環境) でも、止まらずに作る (以前は UnicodeEncodeError)。"""
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+    result = subprocess.run([sys.executable, str(Path(convert_image_mode.__file__)), str(video), "-o", str(tmp_path / "x.mcaddon"),
+                             "--width", "64", "--height", "36", "--fps", "10"], capture_output=True, env=env, timeout=120)
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+    assert (tmp_path / "x.mcaddon").is_file()
