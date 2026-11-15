@@ -14,8 +14,9 @@ export const stats = { setBlockCalls: 0, fillCalls: 0, blocksPlaced: 0, commandF
 // costs: { setBlock, fillCall, fillBlock, listCall, listBlock } (マイクロ秒) を入れると、その時間だけ待って実機の費用をまねる
 const playerSpawnHandlers = [];
 /** プレイヤーがワールドに入った (initialSpawn) ときのように、playerSpawn を送る。 */
-export function spawnPlayer(initialSpawn = true) {
-  for (const handler of playerSpawnHandlers) handler({ player, initialSpawn });
+export function spawnPlayer(initialSpawn = true, who = "first") {
+  const target = who === "second" ? secondPlayer : player;
+  for (const handler of playerSpawnHandlers) handler({ player: target, initialSpawn });
 }
 export const options = { fillBlocks: true, failZ: undefined, unloadedZ: undefined, costs: null };
 // フォームを開いたときの応答 (server-ui モックが先頭から順に返す。空なら「閉じた」)
@@ -145,6 +146,18 @@ export const player = {
   sendMessage(message) { messages.push({ to: "player", ...message }); },
 };
 
+// 2 人目 (複数人の確かめ用)。鳴らした音は "p2:<音の ID>" として sounds に残す。立つ位置は画面から離れた所
+export const secondPlayer = {
+  ...player,
+  location: { x: 200, y: 64, z: 300 },
+  viewDirection: { x: 0, y: 0, z: -1 },
+  playSound(id) {
+    sounds.push(`p2:${id}`);
+  },
+  dynamicProperties: new Map(),
+  sendMessage(message) { messages.push({ to: "player2", ...message }); },
+};
+
 // TickingAreaManager (Script API 2.6.0)。このパックの枠は maxChunkCount チャンク (実際の値は公開されていないので、
 // テストでは options.tickingChunks で変えられる)。1 辺 255 チャンクまで
 options.tickingChunks = 1000;
@@ -209,7 +222,8 @@ export const world = {
     dynamicProperties[key] = value;
   },
   getDimension: () => dimension,
-  getAllPlayers: () => [player],
+  // options.secondPlayer を true にすると 2 人 (2 人目が入った・抜けたは drive_main.mjs の secondPlayer の手順)
+  getAllPlayers: () => (options.secondPlayer ? [player, secondPlayer] : [player]),
   sendMessage: (message) => messages.push(message),
 };
 
