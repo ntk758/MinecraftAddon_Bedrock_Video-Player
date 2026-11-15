@@ -5,8 +5,10 @@
  * 自分の時計 (q.life_time) で行う (image_mode/SPEC.md)。このスクリプトは、どのコマから進めるか (frame) と、その書き直しの
  * 通し番号 (seq) と状態 (state) をスクリーンのエンティティのプロパティ (client_sync) に書き、音声のチャンクを鳴らすだけ。
  *
- * 時計は、このスクリプトが再生中に数える tick (playTicks)。world.getAbsoluteTime() は昼夜の時刻で、眠る・/time set で飛び、
- * 昼夜の進行を止めると止まるので使わない。状態は world の dynamic property に JSON で保存する (再生中は 1 秒ごと)。プロパティの書き込みは次の tick に反映され、最大 20 回/秒なので、30 fps のコマを毎回
+ * 時計は、このスクリプトが再生中に数える実時間 (playMs。tick ごとに Date.now() の差を足す。1 tick で足すのは MAX_TICK_MS まで)。
+ * 以前は tick の数 (playTicks) で数えていたので、TPS が 20 を下回るとサーバーの位置が実時間より遅れ、実時間で進むクライアントの
+ * コマが合わせ直しのたびに後ろへ飛び、音声のチャンクの間が空いた (docs/research/roadmap_review_2026-11.md の 1 章)。
+ * world.getAbsoluteTime() は昼夜の時刻で、眠る・/time set で飛び、昼夜の進行を止めると止まるので使わない。状態は world の dynamic property に JSON で保存する (再生中は 1 秒ごと)。プロパティの書き込みは次の tick に反映され、最大 20 回/秒なので、30 fps のコマを毎回
  * 書くことはできない。代わりに 1 秒ごとに「今のコマ」を書き直して、クライアントの時計のずれを戻す。
  */
 import { world, system, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
@@ -14,6 +16,10 @@ import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
 import { IMAGE_VIDEOS, NAMESPACE } from "./image_videos.js";
 
 const TICKS_PER_SECOND = 20;
+const MS_PER_TICK = 1000 / TICKS_PER_SECOND;
+// 1 tick で再生位置を進める実時間の上限 (ms)。シングルプレイのポーズ画面やワールドの読み込みで tick が止まっていた時間は数えない
+// (TPS 4 未満では、そのぶん実時間より遅れる)
+const MAX_TICK_MS = 250;
 // 再生中に frame と seq を書き直す間隔 (tick)。短いほどクライアントのずれが小さいが、そのたびに全員へ送られる
 const SYNC_INTERVAL = 20;
 const SEQ_MODULO = 1024;
@@ -41,7 +47,8 @@ const FACE_NORMAL = { South: [0, 1], West: [-1, 0], North: [0, -1], East: [1, 0]
 const VIDEOS = new Map(IMAGE_VIDEOS.map((v) => [v.id, v]));
 
 /**
- * 保存する状態。playTicks は再生した tick の数 (今のコマは playTicks から決める)。
+ * 保存する状態。playMs は再生した実時間 (ms。今のコマは playMs から決める)。playTicks は古い版のスクリプト向けに、
+ * playMs を tick に直した値も一緒に保存する (古い版で保存したワールドは、playTicks × 50 ms から続ける)。
  * スクリプトの読み込み時 (early execution) は world を読めないので、worldLoad で読み直す。
  */
 let state = defaultState();
@@ -49,6 +56,11 @@ let loaded = false;
 // 最後に鳴らした音声のチャンク (メモリだけ。開き直したら次の境目から鳴らす)
 let playedChunk = -1;
 let ticksSinceSync = 0;
+let ticksSinceSave = 0;
+// 前の tick の Date.now() (メモリだけ。読み込み直した後の最初の tick は 1 tick 分だけ進める)
+let lastTickAt = null;
+// 再生 (start・再開・シーク) してから、上限のために再生位置に数えなかった実時間 (ms。stats で出す)
+let uncountedMs = 0;
 // 画面に書けなかった (読み込まれていなかった) 変更がある。読み込まれ次第、どの状態でも書き直す
 let dirty = false;
 const SAVE_INTERVAL = 20;
@@ -56,20 +68,26 @@ const SCREEN_FAMILY = "bvp_screen";
 
 function defaultState() {
   return { videoId: IMAGE_VIDEOS[0]?.id ?? null, method: IMAGE_VIDEOS[0]?.methods?.[0] ?? "a", entityId: null,
-           dimension: "minecraft:overworld", location: null, rotation: 0, mode: STOPPED, playTicks: 0, pausedFrame: 0,
+           dimension: "minecraft:overworld", location: null, rotation: 0, mode: STOPPED, playMs: 0, pausedFrame: 0,
            volume: 100 };
 }
 
 function loadState() {
   try {
     const saved = JSON.parse(world.getDynamicProperty(STATE_KEY) ?? "null");
-    if (saved && typeof saved === "object") return { ...defaultState(), ...saved };
+    if (saved && typeof saved === "object") {
+      const loadedState = { ...defaultState(), ...saved };
+      // 古い版 (tick で数えていた) で保存したワールド: 続きの位置を tick から作る
+      if (typeof saved.playMs !== "number") loadedState.playMs = (Number(saved.playTicks) || 0) * MS_PER_TICK;
+      delete loadedState.playTicks;
+      return loadedState;
+    }
   } catch (e) { /* 壊れた値は使わない */ }
   return defaultState();
 }
 
 function saveState() {
-  world.setDynamicProperty(STATE_KEY, JSON.stringify(state));
+  world.setDynamicProperty(STATE_KEY, JSON.stringify({ ...state, playTicks: Math.round(state.playMs / MS_PER_TICK) }));
 }
 
 function tr(key, ...args) {
@@ -94,8 +112,19 @@ function entityType(video, method) {
 function currentFrame(video = currentVideo()) {
   if (!video) return 0;
   if (state.mode !== PLAYING) return clampFrame(video, state.pausedFrame);
-  const elapsed = state.playTicks / TICKS_PER_SECOND;
-  return clampFrame(video, Math.floor(elapsed * video.fps));
+  return clampFrame(video, Math.floor((state.playMs / 1000) * video.fps));
+}
+
+/**
+ * 音声のある動画で、コマを音声のチャンクの頭にそろえる。音声は途中から鳴らせないので、チャンクの頭から再生すれば
+ * すぐに音が出る (そろえないと、次の境目まで最大 audio_chunk_seconds 秒無音)。DECISIONS.md の A17。
+ * how は "nearest" (シーク: 近いほうの頭) か "floor" (再開: 今のチャンクの頭まで戻る)。
+ */
+function alignToChunk(video, frame, how) {
+  if (!video.audio_chunks || !video.audio_chunk_seconds) return frame;
+  const chunkFrames = video.audio_chunk_seconds * video.fps;
+  const chunk = how === "nearest" ? Math.round(frame / chunkFrames) : Math.floor(frame / chunkFrames);
+  return clampFrame(video, Math.min(chunk, video.audio_chunks - 1) * chunkFrames);
 }
 
 function clampFrame(video, frame) {
@@ -214,7 +243,7 @@ function stopAudio(video = currentVideo()) {
  */
 function updateAudio(video) {
   if (!video.audio_chunks) return;
-  const seconds = state.playTicks / TICKS_PER_SECOND;
+  const seconds = state.playMs / 1000;
   const chunk = Math.floor(seconds / video.audio_chunk_seconds);
   if (chunk === playedChunk || chunk < 0 || chunk >= video.audio_chunks) return;
   if (seconds - chunk * video.audio_chunk_seconds > AUDIO_START_WINDOW) return;
@@ -234,7 +263,7 @@ function playChunkFor(player, video, chunk) {
 function playForLateJoiner(player) {
   const video = currentVideo();
   if (!video || state.mode !== PLAYING || !video.audio_chunks || playedChunk < 0) return;
-  const seconds = state.playTicks / TICKS_PER_SECOND;
+  const seconds = state.playMs / 1000;
   if (seconds - playedChunk * video.audio_chunk_seconds > LATE_JOIN_SECONDS) return;
   playChunkFor(player, video, playedChunk);
 }
@@ -317,7 +346,8 @@ function start() {
   }
   stopAudio(video);
   state.mode = PLAYING;
-  state.playTicks = 0;
+  state.playMs = 0;
+  uncountedMs = 0;
   saveState();
   syncScreen();
   updateAudio(video);
@@ -337,11 +367,14 @@ function pause() {
 function resume() {
   const video = currentVideo();
   if (!video || state.mode !== PAUSED) return;
-  // 止めたコマを今見せていることにして、時計の起点をずらす
-  state.playTicks = Math.round((state.pausedFrame / video.fps) * TICKS_PER_SECOND);
+  // 止めたコマを含むチャンクの頭から続ける (音声がすぐ鳴るように。最大 audio_chunk_seconds 秒戻る)
+  state.pausedFrame = alignToChunk(video, state.pausedFrame, "floor");
+  state.playMs = (state.pausedFrame / video.fps) * 1000;
   state.mode = PLAYING;
+  uncountedMs = 0;
   saveState();
   syncScreen();
+  updateAudio(video);
   notify("resumed");
 }
 
@@ -363,16 +396,19 @@ function seek(args) {
     notify("seek_usage");
     return;
   }
-  const frame = clampFrame(video, seconds * video.fps);
+  // 音声のある動画は、近いほうのチャンクの頭へ (音声がすぐ鳴るように)
+  const frame = alignToChunk(video, clampFrame(video, seconds * video.fps), "nearest");
   stopAudio(video);
   if (state.mode === PLAYING) {
-    state.playTicks = Math.round((frame / video.fps) * TICKS_PER_SECOND);
+    state.playMs = (frame / video.fps) * 1000;
   } else {
     state.pausedFrame = frame;
     if (state.mode === STOPPED) state.mode = PAUSED;
   }
+  uncountedMs = 0;
   saveState();
   syncScreen();
+  if (state.mode === PLAYING) updateAudio(video);
   notify("seek_done", (frame / video.fps).toFixed(1));
 }
 
@@ -446,6 +482,10 @@ function showStats() {
     { text: (frame / video.fps).toFixed(1) }, { text: String(video.fps) }, { text: `${video.width}x${video.height}` },
     { text: String(state.volume) }, { translate: screenEntity() ? "bvpimg.screen_loaded" : "bvpimg.screen_unloaded" },
   ] } }] });
+  // 再生してから、tick が止まっていた・遅すぎたために再生位置に数えなかった時間 (多いときは TPS が 4 を下回っている)
+  if (state.mode === PLAYING) {
+    world.sendMessage({ rawtext: [{ translate: "bvpimg.stats_clock", with: [(uncountedMs / 1000).toFixed(1)] }] });
+  }
 }
 
 function list() {
@@ -591,12 +631,21 @@ world.afterEvents.itemUse?.subscribe((event) => {
 
 system.runInterval(() => {
   if (!loaded) return;
+  // この tick までに進んだ実時間 (止まっていた分は MAX_TICK_MS まで)
+  const now = Date.now();
+  const passed = lastTickAt === null ? MS_PER_TICK : Math.max(now - lastTickAt, 0);
+  const elapsed = Math.min(passed, MAX_TICK_MS);
+  lastTickAt = now;
   const video = currentVideo();
   if (dirty && state.mode !== PLAYING) syncScreen();
   if (!video || state.mode !== PLAYING) return;
-  state.playTicks++;
-  if (state.playTicks % SAVE_INTERVAL === 0) saveState();
-  if (state.playTicks / TICKS_PER_SECOND >= video.frame_count / video.fps) {
+  state.playMs += elapsed;
+  uncountedMs += passed - elapsed;
+  if (++ticksSinceSave >= SAVE_INTERVAL) {
+    ticksSinceSave = 0;
+    saveState();
+  }
+  if (state.playMs / 1000 >= video.frame_count / video.fps) {
     // 最後のコマで止める (もう一度 start で最初から)
     state.pausedFrame = video.frame_count - 1;
     state.mode = PAUSED;
@@ -640,6 +689,9 @@ world.afterEvents.entityLoad.subscribe((event) => {
 world.afterEvents.playerSpawn?.subscribe((event) => {
   if (!loaded || !event.initialSpawn) return;
   playForLateJoiner(event.player);
+  // 入ってきた人のクライアントは、プロパティを見た時刻を起点に進めるので、書いてから見るまでの分だけ遅れる。
+  // 今のコマを書き直して、次の定期の合わせ直し (SYNC_INTERVAL) を待たずにそろえる
+  if (state.mode === PLAYING) syncScreen();
 });
 
 // --- コマンド ---

@@ -19,10 +19,12 @@ VIDEOS = [{"id": "demo", "title": "demo", "fps": 30, "frame_count": 300, "audio_
            "screen_blocks": [16, 9], "methods": ["a"], "width": 256, "height": 144}]
 
 MOCK = r"""
-export const log = { messages: [], sounds: [], commands: [], spawned: [], volumes: [], placed: [], spawnRotations: [] };
+export const log = { messages: [], sounds: [], commands: [], spawned: [], volumes: [], placed: [], spawnRotations: [], writes: [] };
 const dynamic = globalThis.__dynamic ?? (globalThis.__dynamic = new Map());
 const entities = globalThis.__entities ?? (globalThis.__entities = new Map());
 globalThis.__time ??= 1000;
+// 実時間 (Date.now()、ms)。tick ごとに globalThis.__tickMs (既定 50 = TPS 20) だけ進む
+globalThis.__now ??= 1000000;
 let nextId = globalThis.__nextId ?? 1;
 const intervals = [];
 const timeouts = [];
@@ -35,7 +37,7 @@ class Entity {
     this.loaded = true; }
   setProperty(name, value) {
     if (!Number.isInteger(value)) throw new Error("not int");
-    const [lo, hi] = name.endsWith(":state") ? [0, 2] : name.endsWith(":seq") ? [0, 1023] : [0, 299];
+    const [lo, hi] = name.endsWith(":state") ? [0, 2] : name.endsWith(":seq") ? [0, 1023] : [0, globalThis.__maxFrame ?? 299];
     if (value < lo || value > hi) throw new Error("ArgumentOutOfBoundsError");
     this.pending[name] = value;
   }
@@ -54,7 +56,7 @@ const dimension = {
 const player = {
   typeId: "minecraft:player", location: { x: 0, y: 64, z: 0 }, dimension,
   getViewDirection: () => ({ x: 0, y: 0, z: -1 }), getRotation: () => ({ x: 0, y: 180 }),
-  playSound(id, options) { log.sounds.push([globalThis.__time, id]); log.volumes.push(options?.volume ?? null); },
+  playSound(id, options) { log.sounds.push([globalThis.__time, id, globalThis.__now]); log.volumes.push(options?.volume ?? null); },
   // 見ているブロック (テストで globalThis.__lookAt に入れる)
   getBlockFromViewDirection: () => globalThis.__lookAt ?? undefined,
 };
@@ -85,7 +87,12 @@ export const playerEntity = player;
 export function resetScripts() { intervals.length = 0; timeouts.length = 0; worldLoad = null; }
 export function tick() {
   globalThis.__time++;
-  for (const e of entities.values()) { Object.assign(e.properties, e.pending); e.pending = {}; }
+  globalThis.__now += globalThis.__tickMs ?? 50;
+  for (const e of entities.values()) {
+    // クライアントに届くプロパティ (書いた次の tick に反映される)。時計の模擬 (test_image_clock.py) が使う
+    if (Object.keys(e.pending).length) log.writes.push([globalThis.__now, e.id, { ...e.pending }]);
+    Object.assign(e.properties, e.pending); e.pending = {};
+  }
   for (const f of intervals) f();
   for (const item of timeouts.splice(0)) { if (item[0] <= 0) item[1](); else timeouts.push([item[0] - 1, item[1]]); }
 }
@@ -118,6 +125,10 @@ export class ModalFormData extends Form { constructor() { super("modal"); } }
 
 DRIVER = r"""
 const steps = JSON.parse(process.argv[2]);
+// image_main.js の時計 (Date.now) をモックの実時間にする
+globalThis.__maxFrame = Number(process.argv[3] ?? 299);
+globalThis.__now = 1000000;
+Date.now = () => globalThis.__now;
 const out = [];
 let mock = null;
 async function load(n) {
@@ -134,6 +145,9 @@ let generation = 0;
 await load(generation);
 for (const step of steps) {
   if (step.cmd) { mock.command(step.cmd, step.arg ?? ""); await new Promise((r) => setTimeout(r, 0)); }
+  if ("tickMs" in step) globalThis.__tickMs = step.tickMs;
+  // tick を進めずに実時間だけ進める (シングルプレイのポーズ画面など)
+  if (step.wait) globalThis.__now += step.wait;
   if (step.tick) for (let i = 0; i < step.tick; i++) mock.tick();
   if (step.unload) mock.unloadAll();
   if (step.load) mock.loadAll();
@@ -149,7 +163,9 @@ for (const step of steps) {
     .map(([k, v]) => [k, v.definition.optionalParameters.map((x) => x.type)])) });
   if ("lookAt" in step) globalThis.__lookAt = step.lookAt;
   if (step.count) out.push({ label: step.count, screens: mock.screens().map((e) => e.typeId) });
-  if ("reload" in step) { generation++; globalThis.__time += step.reload; await load(generation); }
+  if ("reload" in step) { generation++; globalThis.__time += step.reload; globalThis.__now += step.reload * 50; await load(generation); }
+  if (step.state) out.push({ label: step.state, state: globalThis.__dynamic.get("bvpimg:image_state") });
+  if (step.setState) globalThis.__dynamic.set("bvpimg:image_state", step.setState);
   if (step.snap) {
     const e = mock.screen();
     out.push({ label: step.snap, type: e?.typeId ?? null, props: e ? { ...e.properties } : null, time: globalThis.__time });
@@ -159,12 +175,13 @@ console.log(JSON.stringify({ snaps: out, log: mock.log }));
 """
 
 
-def run(tmp_path, steps):
+def run(tmp_path, steps, videos=VIDEOS, main=ROOT / "image_mode" / "image_main.js"):
+    """steps をモックで動かす。videos は動画の一覧、main は動かすスクリプト (時計の模擬が古い版と比べるのに使う)。"""
     work = tmp_path / "work"
     (work / "node_modules" / "@minecraft" / "server").mkdir(parents=True)
-    shutil.copy(ROOT / "image_mode" / "image_main.js", work / "image_main.js")
+    shutil.copy(main, work / "image_main.js")
     (work / "image_videos.js").write_text(
-        f'export const NAMESPACE = "bvpimg";\nexport const IMAGE_VIDEOS = {json.dumps(VIDEOS)};\n', encoding="utf-8")
+        f'export const NAMESPACE = "bvpimg";\nexport const IMAGE_VIDEOS = {json.dumps(videos)};\n', encoding="utf-8")
     (work / "node_modules" / "@minecraft" / "server" / "index.js").write_text(MOCK, encoding="utf-8")
     # image_main.js の "@minecraft/server" をモックへ向ける (読み込み直しで同じモジュールの状態を使うため)
     main = (work / "image_main.js").read_text(encoding="utf-8")
@@ -176,7 +193,8 @@ def run(tmp_path, steps):
         "CustomCommandStatus } = m;\n", encoding="utf-8")
     (work / "package.json").write_text('{"type": "module"}', encoding="utf-8")
     (work / "driver.mjs").write_text(DRIVER, encoding="utf-8")
-    result = subprocess.run(["node", "driver.mjs", json.dumps(steps)], cwd=work, capture_output=True, text=True,
+    max_frame = max(video["frame_count"] for video in videos) - 1
+    result = subprocess.run(["node", "driver.mjs", json.dumps(steps), str(max_frame)], cwd=work, capture_output=True, text=True,
                             encoding="utf-8", timeout=60)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
@@ -202,7 +220,8 @@ def test_play_pause_resume_and_seek(tmp_path):
     paused = props(snaps["paused"])
     assert paused["state"] == 2
     # 一時停止の後は止めたコマから進める
-    assert props(snaps["resumed"])["frame"] >= paused["frame"] + 25
+    # 再開は、止めたコマを含む音声のチャンク (4 秒) の頭から (音がすぐ鳴るように)。2 秒で止めたので 0 秒から 21 tick
+    assert paused["frame"] >= 55 and 28 <= props(snaps["resumed"])["frame"] <= 33
     assert props(snaps["seek"])["frame"] == 240
     # seq は書くたびに変わる
     assert len({props(s)["seq"] for s in out["snaps"]}) == len(out["snaps"])
@@ -210,7 +229,7 @@ def test_play_pause_resume_and_seek(tmp_path):
 
 def test_audio_starts_on_chunk_boundaries_and_stops_on_pause(tmp_path):
     out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 100}, {"cmd": "pause"}, {"tick": 2}])
-    sounds = [s for _, s in out["log"]["sounds"]]
+    sounds = [s[1] for s in out["log"]["sounds"]]
     assert sounds == ["bvpimg.img.demo.chunk_0", "bvpimg.img.demo.chunk_1"]
     assert any(c.startswith("stopsound @a bvpimg.img.demo.chunk_1") for c in out["log"]["commands"])
 
@@ -253,10 +272,10 @@ def test_switching_method_far_away_is_refused_and_no_orphan_is_left(tmp_path):
 
 def test_seq_continues_from_the_screen_after_a_script_reload(tmp_path):
     out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 5}, {"cmd": "pause"}, {"tick": 2},
-                         {"snap": "before"}, {"reload": 0}, {"tick": 2}, {"cmd": "seek", "arg": "5"}, {"tick": 2},
+                         {"snap": "before"}, {"reload": 0}, {"tick": 2}, {"cmd": "seek", "arg": "4"}, {"tick": 2},
                          {"snap": "after"}])
     before, after = (props(x) for x in out["snaps"])
-    assert after["seq"] != before["seq"] and after["frame"] == 150
+    assert after["seq"] != before["seq"] and after["frame"] == 120
 
 
 def messages(out, key):
@@ -267,7 +286,8 @@ def test_seek_without_a_number_explains_the_usage(tmp_path):
     out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "seek", "arg": ""}, {"cmd": "seek", "arg": "7.5"}, {"tick": 1},
                          {"snap": "seek"}])
     assert messages(out, "seek_usage")
-    assert props(out["snaps"][0])["frame"] == 225
+    # 7.5 秒は、音声のチャンクの頭の 8 秒へそろえる
+    assert props(out["snaps"][0])["frame"] == 240
 
 
 def test_play_switches_the_video_in_place_and_starts(tmp_path):
@@ -301,7 +321,7 @@ def test_stats_reports_the_state(tmp_path):
 def test_late_joiner_hears_the_chunk_only_near_its_start(tmp_path):
     out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 10}, {"join": True},
                          {"tick": 40}, {"join": True}])
-    sounds = [s for _, s in out["log"]["sounds"]]
+    sounds = [s[1] for s in out["log"]["sounds"]]
     # 開始 0.5 秒で入った人には鳴らす、2.5 秒では鳴らさない (次の境目から)
     assert sounds == ["bvpimg.img.demo.chunk_0", "bvpimg.img.demo.chunk_0"]
 
@@ -347,7 +367,8 @@ def test_custom_commands_take_several_words_and_typed_numbers(tmp_path):
     assert defs["bvpimg:seek"] == ["Float"] and defs["bvpimg:volume"] == ["Integer"]
     [placed] = out["log"]["placed"]
     assert placed["yaw"] % 90 == 0 and placed["location"]["x"] % 1 == 0.5
-    assert props(out["snaps"][1])["frame"] == 225
+    # 7.5 秒は、音声のチャンクの頭の 8 秒へそろえる
+    assert props(out["snaps"][1])["frame"] == 240
 
 
 def test_clock_opens_the_remote_and_its_buttons_work(tmp_path):
@@ -365,7 +386,8 @@ def test_clock_opens_the_remote_and_its_buttons_work(tmp_path):
     snaps = {x["label"]: x for x in out["snaps"]}
     assert props(snaps["play"])["state"] == 1
     assert messages(out, "volume_set") and "30" in messages(out, "volume_set")[0]
-    assert 150 <= props(snaps["seek"])["frame"] <= 152
+    # 5 秒は、近いほうの音声のチャンクの頭 (4 秒) へそろえる
+    assert 120 <= props(snaps["seek"])["frame"] <= 122
     assert snaps["library"]["type"] == "bvpimg:screen_second_a"
     forms = snaps["forms"]["forms"]
     remote = forms[0]
@@ -380,3 +402,25 @@ def test_remote_before_setup_offers_to_place_the_screen(tmp_path):
     out = run(tmp_path, [{"answers": [0]}, {"cmd": "remote"}, {"tick": 3}, {"snap": "placed"}, {"forms": True}])
     assert out["snaps"][0]["type"] == "bvpimg:screen_demo_a"
     assert out["snaps"][1]["forms"][0]["buttons"][0] == "bvpimg.remote.setup_here"
+
+
+def test_seek_and_resume_start_the_sound_at_once(tmp_path):
+    """シークと再開は音声のチャンクの頭にそろえるので、0.3 秒以内に音が鳴る (TODO.md の P0-3)。音声の無い動画はそろえない。"""
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 50}, {"cmd": "seek", "arg": "6.9"},
+                         {"tick": 6}, {"snap": "seek"}, {"tick": 20}, {"cmd": "pause"}, {"tick": 10}, {"cmd": "resume"},
+                         {"tick": 6}, {"snap": "resumed"}])
+    sounds = out["log"]["sounds"]
+    seek_at = sounds[1][2]
+    # シークした tick に 8 秒のチャンク (chunk_2) が鳴り、再開した tick に同じチャンクがもう一度鳴る
+    assert [s[1] for s in sounds] == ["bvpimg.img.demo.chunk_0", "bvpimg.img.demo.chunk_2", "bvpimg.img.demo.chunk_2"]
+    snaps = {s["label"]: s for s in out["snaps"]}
+    assert 240 <= props(snaps["seek"])["frame"] <= 250
+    assert 240 <= props(snaps["resumed"])["frame"] <= 250
+    assert sounds[2][2] - seek_at >= 1000
+
+
+def test_seek_without_audio_keeps_the_exact_position(tmp_path):
+    silent = [dict(VIDEOS[0], audio_chunks=0)]
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"cmd": "seek", "arg": "6.9"}, {"tick": 1},
+                         {"snap": "seek"}], videos=silent)
+    assert props(out["snaps"][0])["frame"] == 207

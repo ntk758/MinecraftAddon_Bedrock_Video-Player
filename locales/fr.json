@@ -394,6 +394,7 @@
   "imgaddon.volume_set": "Volume : %1 %",
   "imgaddon.volume_usage": "Utilisation : volume <0-100>",
   "imgaddon.stats": "%1 : %2, image %3 / %4 (%5 s), %6 fps, %7, volume %8 %, écran %9",
+  "imgaddon.stats_clock": "Horloge : %1 s non comptées depuis le début (jeu en pause ou ticks de plus de 250 ms)",
   "imgaddon.state_playing": "en lecture",
   "imgaddon.state_paused": "en pause",
   "imgaddon.state_stopped": "arrêté",

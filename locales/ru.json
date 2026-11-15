@@ -394,6 +394,7 @@
   "imgaddon.volume_set": "Громкость: %1%",
   "imgaddon.volume_usage": "Использование: volume <0-100>",
   "imgaddon.stats": "%1: %2, кадр %3 / %4 (%5 с), %6 fps, %7, громкость %8%, экран %9",
+  "imgaddon.stats_clock": "Часы: с начала воспроизведения не учтено %1 с (игра на паузе или тики дольше 250 мс)",
   "imgaddon.state_playing": "воспроизводится",
   "imgaddon.state_paused": "пауза",
   "imgaddon.state_stopped": "остановлено",
