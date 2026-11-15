@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import json
 import os
@@ -404,6 +405,8 @@ QUALITY_PRESETS: dict[str, tuple[int, int, int]] = {
 }
 # fps スライダーの範囲 (Minecraft は 1 秒 20 tick なので 20 fps が上限)
 MIN_FPS, MAX_FPS = 1, 20
+# 失敗の原因を見分けるのに使う、直前のログの行数
+RECENT_LOG_LINES = 60
 # ゲーム内の表示言語: all = 各プレイヤーのゲーム言語 (10 言語) / fixed = この画面の言語に固定 (言語ファイル 1 個)
 ADDON_LANG_VALUES = ("all", "fixed")
 DEFAULT_PRESET = "high"
@@ -1356,6 +1359,7 @@ class PackBuilderApp(tk.Tk):
             ])
         except Exception as e:
             self.messages.put(self.tr("build.audio_skipped", error=e))
+            self.messages.put(self.tr("hint.audio"))
         return [(int(f.stem.split("_")[1]), "ogg", f.read_bytes()) for f in sounds_dir.glob("chunk_*.ogg")]
 
     def _convert_stage_background(
@@ -1631,6 +1635,13 @@ class PackBuilderApp(tk.Tk):
                         self._append_log(self.play_guide_text())
                     else:
                         self._append_log(self.tr("log.error_prefix") + text)
+                        # よくある失敗なら、原因と直し方を 1 行で足す (エラーの文と直前のログから見分ける)
+                        from gui_wizard import failure_hint
+
+                        hint = failure_hint(text, *getattr(self, "recent_log", ()))
+                        if hint:
+                            text = f"{text}\n\n{self.tr(hint)}"
+                            self._append_log(self.tr(hint))
                     if self.wizard is not None:
                         self.wizard.build_finished(self.last_output, ok)
                     if ok:
@@ -1639,6 +1650,10 @@ class PackBuilderApp(tk.Tk):
                         messagebox.showerror(self.tr("build.failed_title"), text)
                 else:
                     self._append_log(message)
+                    # 失敗したときに原因を見分けるため、直前のログを少し覚えておく
+                    if not hasattr(self, "recent_log"):
+                        self.recent_log = collections.deque(maxlen=RECENT_LOG_LINES)
+                    self.recent_log.append(str(message))
         except queue.Empty:
             pass
         self.after(100, self._drain_messages)
