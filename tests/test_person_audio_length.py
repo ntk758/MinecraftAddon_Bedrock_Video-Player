@@ -1,9 +1,9 @@
 """人物の切り抜き (make_person_videos) で、音声と映像の長さが違う動画を処理するテスト。
 
-背景の動画を書く ffmpeg (person._writer) は、duration が無いとき `-shortest` で映像の終わりに合わせる (音声が映像より長い動画で、
-音声だけが長く残らないように)。以前は `-shortest` だけだったので、音声が映像より短いと ffmpeg が音声の終わりで出力を閉じ、
-Python が残りのフレームを書くところで BrokenPipeError になっていた (切り抜き自体は動いていた)。今は `-af apad` で音声の後ろを
-無音で延ばしてから `-shortest` で切るので、背景の動画は常に映像の長さになる。docs/research/roadmap_review_2026-11.md の 2 章。
+背景の動画を書く ffmpeg (person._writer) は、duration が無いとき、以前は `-shortest` で映像の終わりに合わせていた。音声が映像より
+短いと ffmpeg が音声の終わりで出力を閉じ、Python が残りのフレームを書くところで BrokenPipeError になっていた。今は映像だけを
+先に書き、書き終えてから音声を無音で延ばして (`-af apad`) フレームの数から求めた長さ (`-t`) で足す (person._AudioAfterWriter)。
+背景の動画は常に映像の長さになる。docs/research/roadmap_review_2026-11.md の 2 章。
 
 許容誤差: 映像は 10 fps なので 1 フレーム (0.1 秒)。音声は AAC の 1 フレーム (1024 サンプル、44.1 kHz で約 0.023 秒) の単位で
 切れるので、映像の長さとの差は 0.05 秒まで (ffmpeg の版で数十 ms 前後する)。
