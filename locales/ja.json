@@ -30,6 +30,7 @@
   "settings.palette": "パレット",
   "settings.dither": "ディザリング",
   "settings.perceptual": "知覚最適化 (輪郭をクッキリさせる)",
+  "settings.flat_areas": "平らな面 (空・壁など) のまだらを減らす (色が少しくすむことがあります)",
   "settings.palette_ai": "人物の色を優先する (AI。自動パレットのとき、人物の切り抜きを使う)",
   "settings.device": "変換デバイス",
   "preset.light": "軽量 (64×64 / 20fps)",

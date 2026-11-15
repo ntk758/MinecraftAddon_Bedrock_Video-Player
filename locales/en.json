@@ -30,6 +30,7 @@
   "settings.palette": "Palette",
   "settings.dither": "Dithering",
   "settings.perceptual": "Perceptual optimization (sharper edges)",
+  "settings.flat_areas": "Smooth out blotches in flat areas (sky, walls; colours may look slightly duller)",
   "settings.palette_ai": "Prioritise people's colours (AI; auto palette, uses the person cutout)",
   "settings.device": "Conversion device",
   "preset.light": "Light (64×64 / 20fps)",

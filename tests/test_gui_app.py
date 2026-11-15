@@ -147,3 +147,13 @@ def test_a_failed_build_adds_the_likely_cause(app):
     assert app.shown[-1][0] == "showerror"
     assert app.tr("hint.memory") in app.shown[-1][1]
     assert app.tr("hint.memory") in app.log.get("1.0", "end")
+
+
+def test_flat_areas_checkbox_adds_the_option_only_when_checked(app):
+    """「平らな面のムラを減らす」: 切っているときは何も足さない (今までと同じ出力)、入れると --flat-areas を足す (TODO.md の P2-1)。"""
+    assert gui.PackBuilderApp._flat_areas_args(app) == []
+    app.flat_areas_var.set(True)
+    try:
+        assert gui.PackBuilderApp._flat_areas_args(app) == ["--flat-areas", gui.FLAT_AREAS_CHOICE]
+    finally:
+        app.flat_areas_var.set(False)

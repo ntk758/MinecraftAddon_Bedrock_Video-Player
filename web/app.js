@@ -163,6 +163,7 @@ function settings() {
     imageLighting: $("imageLighting").value, imagePngOptimize: $("imagePngOptimize").checked,
     palette: $("palette").value, dither: $("dither").value,
     keyframe: Math.max(0, Math.round(Number($("keyframe").value) || 0)), perceptual: $("perceptual").checked,
+    flatAreas: $("flatAreas").checked,
     packName: $("packName").value.trim() || "Block & Image Video Player",
     namespace: ($("namespace").value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "") || "badapple"),
     // 出力先の Minecraft (legacy_target.py の TARGETS)。legacy は Script API 1.x で、チートを有効にして /scriptevent で操作する
