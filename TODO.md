@@ -438,7 +438,12 @@
 - **必要なテスト:** 変換のテスト、実機。
 
 ### P2-5 Windows 10・NVIDIA・Intel の変換ツール
-- **現在の状態:** 未確認。確かめたのは Windows 11 + AMD (DirectML) と CPU だけ。
+- **現在の状態:** 仕組みは実装済み、報告は未着 (2026-11-15)。
+  - CI に Windows のジョブを足した (`windows-latest`、CPU で 1 本変換し、画像モードでも 1 本作り、全部のテストを動かす)。
+  - 不具合の報告のテンプレートに、GPU とドライバの版・変換に使ったデバイスの欄を足した。端末・GPU の動作の報告のテンプレート (`device_report.yml`) を足した (P1-3 のスマートフォンの報告にも使う)。
+  - `.gitattributes` で `web/vendor/**` の改行を変えないようにした。Windows で `test_web_ogg` が失敗していた (CRLF になって SHA-256 が合わない) のが直る。
+  - 以下は着手前の記録。
+- **着手前:** 未確認。確かめたのは Windows 11 + AMD (DirectML) と CPU だけ。
 - **解決する問題:** 多くの人が使う環境で、GPU の変換が動くか分からない。
 - **実装する内容:** 使う人の報告を集める。CI の Windows のジョブで、CPU の変換を毎回動かす (EXE は既にリリースの流れで動かしている)。
 - **技術的な実現方法:** Issue のテンプレートに、GPU とドライバの欄を足す。
@@ -514,7 +519,7 @@
 - 集めたテストは 920 件で、通過 901・スキップ 13・xfail 5・失敗 1。
 - スキップは、手元に torch・scikit-image・PyYAML が無いため。CI ではこれらを入れて実行する。
 - スキップの数は、実行ごとに 13〜14 件 (ときどき 26 件) に変わる。原因は手元の Python (Microsoft Store 版 3.13) の Tk で、画面を作るときに自分の `.tcl` のファイルを読めないことがある (`couldn't read file ".../tk8.6/button.tcl": no such file or directory` など。ファイルはある)。GUI のテスト 3 本だけを 10 回動かすと 5 回起きた。テストは Tk を作れないときにスキップする作りなので、失敗にはならない。CI の Python (`actions/setup-python`) では起きない。手元で GUI のテストを確かめるときは、python.org 版の Python を使うとよい。
-- 失敗は `test_web_ogg` で、Windows の CRLF によるもの (CI では通る)。
+- 失敗は `test_web_ogg` で、Windows の CRLF によるもの (CI では通る)。`.gitattributes` で直した (P2-5)。
 - Minecraft の実機が要る自動テストは 0 件 (API は全部モック)。
 - 詳しくは [roadmap_review_2026-11.md の 5 章](docs/research/roadmap_review_2026-11.md)。
 

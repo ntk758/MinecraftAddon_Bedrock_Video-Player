@@ -1,0 +1,69 @@
+name: 動作の報告 / Device report
+description: この端末・GPU で動いた (動かなかった) / It works (or not) on my device or GPU
+labels: [device-report]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        動いたという報告も助かります。結果は docs/COMPATIBILITY.md の「版ごとの記録」に載せます (お名前は載せません)。
+        Reports that it works help too. Results go into docs/COMPATIBILITY.md (without your name).
+  - type: dropdown
+    id: what
+    attributes:
+      label: 何を試しましたか / What did you try?
+      options:
+        - Minecraft でアドオンを再生 / Playing the add-on in Minecraft
+        - 変換ツール (EXE・GPU) / Converter (EXE, GPU)
+        - ブラウザ版の変換ツール / Browser converter
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: アドオン / ツールの版 / Add-on or tool version
+      placeholder: v6.37.1
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: 端末と OS / Device and OS
+      placeholder: Pixel 8 (Android 15) / iPhone 15 (iOS 18) / Windows 10 / Xbox Series S / BDS on Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: minecraft
+    attributes:
+      label: Minecraft の版 (再生のとき) / Minecraft version (for playback)
+      placeholder: "26.xx"
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU とドライバの版 (変換ツールのとき) / GPU and driver version (for the converter)
+      placeholder: NVIDIA RTX 3060 (566.36) / Intel UHD 770 / なし (none)
+  - type: checkboxes
+    id: modes
+    attributes:
+      label: 試したモード / Modes tried
+      options:
+        - label: ブロックモード / Block mode
+        - label: 画像モード (Tier 2) / Image mode (Tier 2)
+        - label: 画像モード (Tier 5) / Image mode (Tier 5)
+  - type: dropdown
+    id: result
+    attributes:
+      label: 結果 / Result
+      options:
+        - 問題なく動いた / Works fine
+        - 動いたが重い・音がずれる / Works but lags or audio drifts
+        - 動かない・落ちる / Does not work or crashes
+    validations:
+      required: true
+  - type: textarea
+    id: stats
+    attributes:
+      label: stats の結果・ログ / stats output or log
+      description: |
+        再生のときは `/<接頭辞>:stats` の結果を貼ってください。変換ツールは処理ログの最初の 20 行ほど。
+        For playback, paste the output of `/<prefix>:stats`. For the converter, the first ~20 log lines.
+      render: text

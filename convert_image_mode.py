@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from mvcodec.resources import use_utf8_for_pipes
 from image_mode import atlas, budget
 from gui_i18n import LOCALES, addon_lang_files
 from image_mode.rp import LIGHTING_MODES, rp_files
@@ -571,6 +572,9 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 def main(argv=None) -> int:
+    # ログは日本語。パイプへ書くとき (CI・ほかのプログラムから起動) は UTF-8 にする。Windows の英語などの環境 (cp1252) では、
+    # そのままだと UnicodeEncodeError で止まっていた (CI の Windows のジョブで見つけた)
+    use_utf8_for_pipes()
     args = parse_args(argv)
     try:
         build(args)
