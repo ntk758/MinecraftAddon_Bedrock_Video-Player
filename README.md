@@ -37,6 +37,23 @@
   <b>View-dependent trompe-l'oeil</b> (real in-game recording): the dancer is not built from blocks but painted on the floor and walls exactly as the player's eye sees it, and repainted as they walk</sub>
 </p>
 
+<p align="center">
+  <img src="docs/images/genres/genre_mountain.gif" alt="山の風景: 元の映像・ブロックモード・画像モードの比較 (Mountain: source, block mode, image mode)" width="420">
+  <img src="docs/images/genres/genre_sunset.gif" alt="海の夕日: 元の映像・ブロックモード・画像モードの比較 (Sunset sea: source, block mode, image mode)" width="420">
+  <br>
+  <img src="docs/images/genres/genre_animal.gif" alt="動物: 元の映像・ブロックモード・画像モードの比較 (Wildlife: source, block mode, image mode)" width="420">
+  <img src="docs/images/genres/genre_city.gif" alt="街のタイムラプス: 元の映像・ブロックモード・画像モードの比較 (City time-lapse: source, block mode, image mode)" width="420">
+  <br>
+  <img src="docs/images/genres/genre_space.gif" alt="宇宙: 元の映像・ブロックモード・画像モードの比較 (Space: source, block mode, image mode)" width="420">
+  <img src="docs/images/genres/genre_animation.gif" alt="アニメーション: 元の映像・ブロックモード・画像モードの比較 (Animation: source, block mode, image mode)" width="420">
+  <br>
+  <img src="docs/images/genres/genre_fire.gif" alt="炎: 元の映像・ブロックモード・画像モードの比較 (Fire: source, block mode, image mode)" width="420">
+  <img src="docs/images/genres/genre_night.gif" alt="夜景: 元の映像・ブロックモード・画像モードの比較 (Night city: source, block mode, image mode)" width="420">
+  <br>
+  <sub><b>ジャンル別の見え方</b> (ゲーム内の録画、Windows 11、v6.37.0)。左から元の映像、ブロックモード (128×72、20 fps、<code>--flat-areas smooth</code>。宇宙だけ <code>off</code>)、画像モード (256×144、30 fps)。画像モードは再生の最初の約 1.5 秒がテクスチャの読み込みで欠けるので、どれもそこから後を切り出しています。素材はすべて Wikimedia Commons の CC0・パブリックドメイン・CC BY の映像です (<a href="docs/images/genres/CREDITS.md">出典とライセンス</a>) —
+  <b>How different kinds of footage look</b> (real in-game recordings, Windows 11, v6.37.0): source, block mode (128×72, 20 fps, <code>--flat-areas smooth</code>; <code>off</code> for space) and image mode (256×144, 30 fps). Image mode is still loading its textures for about the first 1.5 s of a play, so every clip starts after that point. All footage is CC0, public domain or CC BY from Wikimedia Commons (<a href="docs/images/genres/CREDITS.md">credits and licenses</a>)</sub>
+</p>
+
 **▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.37.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.37.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.37.0-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 
