@@ -66,6 +66,30 @@ def test_numeric_file_names_get_distinct_ids(app, tmp_path):
     assert app.video_ids() == ["123", "123_2", "007"]
 
 
+def test_file_names_without_usable_letters_get_a_readable_id(app, tmp_path):
+    """日本語だけの名前は video になる (以前は「______」。コマンドで打ちにくい)。規則はブラウザ版 (web/app.js) と同じ。"""
+    ids = [app.add_video_path(tmp_path / name) for name in ("テスト 動画.mp4", "別の動画.mp4", "My Clip (1).mp4", "_歌_live_.mp4")]
+    assert ids == ["video", "video_2", "my_clip_1", "live"]
+
+
+def test_audio_is_cut_to_the_chosen_length(app, tmp_path, monkeypatch):
+    """長さを指定したら音声も同じ秒数で切り、終わりより後に始まるチャンクは入れない (以前は音声だけ全部入っていた)。"""
+    commands = []
+
+    def fake_run(command):
+        commands.append(command)
+        for n in range(3):  # ffmpeg が切れ端のチャンクを 1 つ余分に書いた場合
+            (tmp_path / "sounds" / f"chunk_{n}.ogg").write_bytes(b"OggS" + bytes([n]))
+
+    monkeypatch.setattr(app, "_run", fake_run)
+    chunks = app._extract_audio("ffmpeg", tmp_path / "in.mp4", tmp_path / "sounds", 20.0)
+    assert commands[0][commands[0].index("-t") + 1] == "20"
+    assert sorted(n for n, _kind, _data in chunks) == [0, 1]
+    # 指定が無ければ今までどおり全部
+    chunks = app._extract_audio("ffmpeg", tmp_path / "in.mp4", tmp_path / "sounds")
+    assert "-t" not in commands[1] and len(chunks) == 3
+
+
 def test_ids_survive_a_language_switch(app, tmp_path):
     app.add_video_path(tmp_path / "007.png")
     app.add_video_path(tmp_path / "2024_01_05.mp4")

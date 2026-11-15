@@ -380,7 +380,7 @@
   "build.image_start": "Creando el add-on de imágenes: {output} ({width}×{height} px, {fps} fps)",
   "build.image_skipped": "  No usable en el modo de imagen (.vox / MMD): {id}",
   "build.image_none": "Ningún vídeo sirve para el modo de imagen (.vox y MMD no tienen fotogramas originales)",
-  "build.image_done": "Add-on de imágenes: {output} ({mib} MiB). En el juego: /{ns}:setup y luego /{ns}:start (aún sin probar en Minecraft)",
+  "build.image_done": "Add-on de imágenes: {output} ({mib} MiB). En el juego: /{ns}:setup y luego /{ns}:start",
   "build.image_failed": "No se pudo crear el add-on de imágenes ({output}): {error}",
   "web.image_mode": "Crea también el add-on de imágenes (texturas): archivo aparte, dos descargas",
   "web.image_skipped": "  No usable en el modo de imagen (.vox / MMD): {id}",

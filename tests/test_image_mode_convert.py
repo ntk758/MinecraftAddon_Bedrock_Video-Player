@@ -83,6 +83,20 @@ def test_audio_chunks(video, silent_video, tmp_path):
     assert atlas.extract_audio_chunks(silent_video, tmp_path / "c") == []
 
 
+def test_audio_chunks_never_start_after_the_end(video, tmp_path):
+    """映像の終わりより後に始まるチャンクは入れない。長さがチャンクのちょうど倍数だと、数 ms だけのチャンクが 1 つ増える
+    ことがあり (ffmpeg 9.0.1、AAC の音声)、数えると終わり近くへのシークが最後のコマへ飛ぶ。"""
+    # 1 秒ごと・2 秒まで: ffmpeg がその後ろに何を書いても、0 秒と 1 秒のチャンクだけ
+    chunks = atlas.extract_audio_chunks(video, tmp_path / "a", chunk_seconds=1, max_seconds=2)
+    assert [c[0] for c in chunks] == [0, 1]
+    # 切れ端のファイルも残さない
+    extra = tmp_path / "b"
+    extra.mkdir()
+    chunks = atlas.extract_audio_chunks(video, extra, chunk_seconds=1, max_seconds=2.04)
+    assert [c[0] for c in chunks] == [0, 1]
+    assert sorted(f.name for f in extra.glob("chunk_*.ogg")) == ["chunk_0.ogg", "chunk_1.ogg"]
+
+
 def test_trim_and_frame_count(video, tmp_path):
     code, output = run(tmp_path, "--start", 0.5, "--end", 2.5, "--fps", 10, "--width", 64, "--height", 36,
                        inputs=[video])

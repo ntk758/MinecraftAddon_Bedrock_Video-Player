@@ -380,7 +380,7 @@
   "build.image_start": "正在生成影像方式的附加内容：{output}（{width}×{height} 像素，{fps} fps）",
   "build.image_skipped": "  影像方式无法使用（.vox、MMD）：{id}",
   "build.image_none": "没有可用于影像方式的视频（.vox、MMD 没有原始帧）",
-  "build.image_done": "影像方式的附加内容：{output}（{mib} MiB）。游戏中：/{ns}:setup → /{ns}:start（尚未在实际的 Minecraft 中确认）",
+  "build.image_done": "影像方式的附加内容：{output}（{mib} MiB）。游戏中：/{ns}:setup → /{ns}:start",
   "build.image_failed": "无法生成影像方式的附加内容（{output}）：{error}",
   "web.image_mode": "同时生成贴图影像方式的附加内容（单独文件，会有两个下载）",
   "web.image_skipped": "  影像方式无法使用（.vox、MMD）：{id}",

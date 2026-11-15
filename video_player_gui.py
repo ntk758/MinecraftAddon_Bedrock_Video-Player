@@ -967,7 +967,9 @@ class PackBuilderApp(tk.Tk):
     def add_video_path(self, path: str | Path) -> str:
         """動画リストに 1 本足し、付けた動画 ID を返す (はじめてガイドからも使う)。"""
         p = Path(path)
-        video_id = re.sub(r"[^a-z0-9_]", "_", p.stem.lower())
+        # ブラウザ版 (web/app.js) と同じ規則: 使えない文字の並びを _ 1 つにし、前後の _ を取る。何も残らなければ video
+        # (日本語だけのファイル名が「______」になり、コマンドで打ちにくかった)
+        video_id = re.sub(r"[^a-z0-9_]+", "_", p.stem.lower()).strip("_") or "video"
         existing_ids = self._video_ids()
         if video_id in existing_ids:
             suffix = 2
@@ -1354,13 +1356,16 @@ class PackBuilderApp(tk.Tk):
                 self.messages.put(text)
         return code, "\n".join(tail)
 
-    def _extract_audio(self, ffmpeg: str, video: Path, sounds_dir: Path) -> list[tuple[int, str, bytes]]:
-        """音声を AUDIO_CHUNK_SECONDS 秒ごとの .ogg (44.1kHz ステレオ) に切り出す。無音の動画やエラーなら []。"""
+    def _extract_audio(self, ffmpeg: str, video: Path, sounds_dir: Path,
+                       duration: float | None = None) -> list[tuple[int, str, bytes]]:
+        """音声を AUDIO_CHUNK_SECONDS 秒ごとの .ogg (44.1kHz ステレオ) に切り出す。無音の動画やエラーなら []。
+        duration (長さの指定) があれば、音声もその秒数で切る (切らないと、映像が終わった後も最後のチャンクの残りが鳴り、
+        使わない音声がアドオンに入る)。"""
         sounds_dir.mkdir(parents=True, exist_ok=True)
         self.messages.put(self.tr("build.audio", sec=AUDIO_CHUNK_SECONDS))
         try:
             self._run([
-                ffmpeg, "-y", "-i", str(video),
+                ffmpeg, "-y", "-i", str(video), *(["-t", f"{duration:g}"] if duration else []),
                 "-f", "segment", "-segment_time", str(AUDIO_CHUNK_SECONDS),
                 "-vn", "-acodec", "libvorbis",
                 "-ar", "44100", "-ac", "2", "-q:a", "3",
@@ -1369,7 +1374,11 @@ class PackBuilderApp(tk.Tk):
         except Exception as e:
             self.messages.put(self.tr("build.audio_skipped", error=e))
             self.messages.put(self.tr("hint.audio"))
-        return [(int(f.stem.split("_")[1]), "ogg", f.read_bytes()) for f in sounds_dir.glob("chunk_*.ogg")]
+        chunks = [(int(f.stem.split("_")[1]), f) for f in sounds_dir.glob("chunk_*.ogg")]
+        # 長さがチャンクのちょうど倍数だと、-t で切っても数 ms だけのチャンクが 1 つ増えることがある。終わりより後のものは入れない
+        if duration:
+            chunks = [(n, f) for n, f in chunks if n * AUDIO_CHUNK_SECONDS < duration - 0.05]
+        return [(n, "ogg", f.read_bytes()) for n, f in chunks]
 
     def _convert_stage_background(
         self, source: Path, background_id: str, figure_js: str, temp: Path, ffmpeg: str, fps: float, palette: str,
@@ -1381,7 +1390,7 @@ class PackBuilderApp(tk.Tk):
         dims = frame_data_dims(figure_js)
         geom = stage_geometry(dims["width"], dims["height"], dims["depth"])
         self.messages.put(self.tr("build.stage_background", width=geom["stageWidth"], height=geom["wallHeight"]))
-        sounds = self._extract_audio(ffmpeg, source, temp / "sounds" / background_id)
+        sounds = self._extract_audio(ffmpeg, source, temp / "sounds" / background_id, duration)
         output = temp / f"frames_{background_id}.js"
         argv = build_converter_args(
             source, output, ffmpeg, geom["stageWidth"], geom["wallHeight"], fps, palette, dither_method,
@@ -1456,7 +1465,7 @@ class PackBuilderApp(tk.Tk):
                     else:
                         self.messages.put(self.tr("build.thumbnail", sec=thumb_sec))
                         self._run([
-                            ffmpeg, "-y", "-ss", str(thumb_sec), "-i", str(video), "-frames:v", "1",
+                            ffmpeg, "-y", "-ss", str(thumb_sec), "-i", str(video), "-frames:v", "1", "-update", "1",
                             "-vf", "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black",
                             str(thumbnail),
                         ])
@@ -1487,7 +1496,7 @@ class PackBuilderApp(tk.Tk):
                     background_id = f"{video_id}_bg" if video_anamorphic and three_d and video_background else None
                     # 背景の映像があれば、その音声を鳴らす (人物の動画の音声は入れない)
                     sounds = [] if is_vox or background_id else self._extract_audio(
-                        ffmpeg, video, temp / "sounds" / video_id)
+                        ffmpeg, video, temp / "sounds" / video_id, duration)
 
                     # ブロックデータ変換
                     self.messages.put(self.tr("build.converting"))

@@ -380,7 +380,7 @@
   "build.image_start": "画像モードのアドオンを作っています: {output} ({width}×{height} 画素, {fps} fps)",
   "build.image_skipped": "  画像モードでは使えません (.vox・MMD): {id}",
   "build.image_none": "画像モードでは作れる動画がありません (.vox・MMD は元の映像のコマが無い)",
-  "build.image_done": "画像モードのアドオン: {output} ({mib} MiB)。ゲームでは /{ns}:setup → /{ns}:start (実機では未確認)",
+  "build.image_done": "画像モードのアドオン: {output} ({mib} MiB)。ゲームでは /{ns}:setup → /{ns}:start",
   "build.image_failed": "画像モードのアドオンは作れませんでした ({output}): {error}",
   "web.image_mode": "画像モードのアドオンも作る (試作・別ファイル。ダウンロードが 2 個になります)",
   "web.image_skipped": "  画像モードでは使えません (.vox・MMD): {id}",

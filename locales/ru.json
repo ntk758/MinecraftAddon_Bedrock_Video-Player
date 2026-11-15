@@ -380,7 +380,7 @@
   "build.image_start": "Создаётся аддон с изображениями: {output} ({width}×{height} пикс., {fps} к/с)",
   "build.image_skipped": "  В режиме изображений недоступно (.vox / MMD): {id}",
   "build.image_none": "Нет видео для режима изображений (.vox и MMD не имеют исходных кадров)",
-  "build.image_done": "Аддон с изображениями: {output} ({mib} МиБ). В игре: /{ns}:setup, затем /{ns}:start (в Minecraft ещё не проверено)",
+  "build.image_done": "Аддон с изображениями: {output} ({mib} МиБ). В игре: /{ns}:setup, затем /{ns}:start",
   "build.image_failed": "Не удалось создать аддон с изображениями ({output}): {error}",
   "web.image_mode": "Создать и аддон с изображениями на текстурах: отдельный файл, два файла для скачивания",
   "web.image_skipped": "  В режиме изображений недоступно (.vox / MMD): {id}",

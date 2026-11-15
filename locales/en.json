@@ -380,7 +380,7 @@
   "build.image_start": "Building the image-mode add-on: {output} ({width}×{height} px, {fps} fps)",
   "build.image_skipped": "  Not usable in image mode (.vox / MMD): {id}",
   "build.image_none": "No videos can be used in image mode (.vox and MMD have no source frames)",
-  "build.image_done": "Image-mode add-on: {output} ({mib} MiB). In-game: /{ns}:setup, then /{ns}:start (not yet tested in real Minecraft)",
+  "build.image_done": "Image-mode add-on: {output} ({mib} MiB). In-game: /{ns}:setup, then /{ns}:start",
   "build.image_failed": "Could not build the image-mode add-on ({output}): {error}",
   "web.image_mode": "Also build the image-mode add-on (experimental, separate file; you get 2 downloads)",
   "web.image_skipped": "  Not usable in image mode (.vox / MMD): {id}",
