@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from image_mode.dedup import DEFAULT_NEAR_THRESHOLD, MODES as DEDUP_MODES, FrameDeduper, should_use, slot_intervals
 from mvcodec.resources import use_utf8_for_pipes
 from image_mode import atlas, budget
 from gui_i18n import LOCALES, addon_lang_files
@@ -198,7 +199,8 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
                 pack_name: str, max_sheet: int = 2048, gutter: int = 1, max_cells: int = atlas.MAX_CELLS,
                 screen_width: float = 16, audio_chunk_seconds: float = 4, allow_over_budget: bool = False,
                 log=print, lighting: str = "bright", png_optimize: bool = False, sheet_format: str = "png",
-                jpeg_quality: int = DEFAULT_JPEG_QUALITY) -> tuple[dict, dict]:
+                jpeg_quality: int = DEFAULT_JPEG_QUALITY, dedup: str = "off",
+                near_threshold: float = DEFAULT_NEAR_THRESHOLD) -> tuple[dict, dict]:
     """コマから、アドオンのファイル (zip の中のパス → bytes) とレポートを作る。ffmpeg を使わない (ブラウザ版も使う)。
 
     sources の 1 つは {"id", "title", "fps", "frames": コマ (高さ×幅×3 の uint8) を出す iterable,
@@ -206,6 +208,7 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
     予算超過などで作れないときは ConvertError。
     lighting は rp.LIGHTING_MODES ("bright" は周りの光で暗くならない)。png_optimize はシートの PNG の最適化。
     sheet_format はシートの形式 (SHEET_FORMATS)、jpeg_quality は jpeg の品質 (1〜95)。
+    dedup は同じ絵のコマを 1 マスにまとめるか (image_mode/dedup.py の MODES。既定 off は今までと同じ出力)。
     """
     if lighting not in LIGHTING_MODES:
         raise ConvertError(f"lighting は {', '.join(LIGHTING_MODES)} のどれか: {lighting}")
@@ -232,8 +235,24 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
                     first_frame.append(np.array(frame, copy=True))
                 yield frame
 
+        deduper = FrameDeduper(dedup, near_threshold) if dedup != "off" else None
         try:
-            sheets, layout = atlas.pack_sheets(frames(), width, height, max_sheet, gutter, max_cells)
+            sheets, layout = atlas.pack_sheets(deduper(frames()) if deduper else frames(), width, height, max_sheet,
+                                               gutter, max_cells)
+            frame_count = len(deduper.slots) if deduper else layout["frame_count"]
+            slot_map = None
+            if deduper:
+                intervals = slot_intervals(deduper.slots)
+                if should_use(frame_count, layout["frame_count"], intervals):
+                    slot_map = [list(interval) for interval in intervals]
+                    log(f"[{video_id}] 同じ絵のコマをまとめました ({dedup}): {frame_count} コマ -> {layout['frame_count']} マス "
+                        f"(区間 {len(intervals)})")
+                else:
+                    # まとめる価値が無い (省けるマスが少ない・式が長すぎる): 元のコマの順に並べ直す
+                    log(f"[{video_id}] 同じ絵のコマはまとめません ({frame_count} コマ -> {layout['frame_count']} マス、"
+                        f"区間 {len(intervals)})")
+                    sheets, layout = atlas.pack_sheets(atlas.cells_in_order(sheets, layout, deduper.slots), width, height,
+                                                       max_sheet, gutter, max_cells)
         except ValueError as error:
             raise ConvertError(f"[{video_id}] {error}") from None
         if icon is None and first_frame:
@@ -242,7 +261,7 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
         texels = layout["sheet_width"] * layout["sheet_height"] * layout["sheets"]
         videos.append({
             "id": video_id, "title": title, "fps": fps if fps != int(fps) else int(fps),
-            "frame_count": layout["frame_count"], "width": width, "height": height,
+            "frame_count": frame_count, "width": width, "height": height,
             "sheet_width": layout["sheet_width"], "sheet_height": layout["sheet_height"],
             "cols": layout["cols"], "rows": layout["rows"], "cells_per_sheet": layout["cells_per_sheet"],
             "sheets": layout["sheets"], "gutter": gutter,
@@ -251,8 +270,10 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
             "audio_chunks": 0, "audio_chunk_seconds": audio_chunk_seconds, "methods": methods,
             "lighting": lighting,
             "memory": {"texels": texels, "bytes": texels * 4},
+            # まとめたときだけ: マスの数と、コマ → マスの区間 (rp.pre_animation が使う)。無ければコマ = マス
+            **({"cells": layout["frame_count"], "slot_map": slot_map} if slot_map else {}),
         })
-        log(f"[{video_id}] {layout['frame_count']} コマ -> シート {layout['sheets']} 枚 "
+        log(f"[{video_id}] {frame_count} コマ -> シート {layout['sheets']} 枚 "
             f"({layout['sheet_width']}x{layout['sheet_height']}, {layout['cols']}x{layout['rows']} マス)")
 
     # 2. メモリの見積もり (全動画の合計。予算は 1 つのアドオンに対する値)
@@ -438,7 +459,8 @@ def build(args: argparse.Namespace, log=print) -> dict:
             pack_name=pack_name, max_sheet=args.max_sheet, gutter=args.gutter, max_cells=args.max_cells,
             screen_width=args.screen_width, audio_chunk_seconds=args.audio_chunk_seconds,
             allow_over_budget=args.allow_over_budget, log=log, lighting=args.lighting, png_optimize=args.png_optimize,
-            sheet_format=getattr(args, "sheet_format", "png"), jpeg_quality=getattr(args, "jpeg_quality", DEFAULT_JPEG_QUALITY))
+            sheet_format=getattr(args, "sheet_format", "png"), jpeg_quality=getattr(args, "jpeg_quality", DEFAULT_JPEG_QUALITY),
+            dedup=getattr(args, "dedup", "off"), near_threshold=getattr(args, "near_threshold", DEFAULT_NEAR_THRESHOLD))
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -553,6 +575,12 @@ def parse_args(argv=None) -> argparse.Namespace:
                              "スマートフォンで読めるかは未確認)")
     parser.add_argument("--jpeg-quality", type=int, default=DEFAULT_JPEG_QUALITY,
                         help=f"--sheet-format jpeg の品質 (1〜95、既定 {DEFAULT_JPEG_QUALITY})")
+    parser.add_argument("--dedup", default="off", choices=DEDUP_MODES,
+                        help="同じ絵のコマを 1 マスにまとめてテクスチャを減らす。exact: まったく同じコマ (アニメの 2 コマ打ち・止め絵)、"
+                             "near: すぐ前のコマとの差が --near-threshold 以下のものも。off (既定): まとめない "
+                             "(Minecraft での確認がまだなので既定は off)")
+    parser.add_argument("--near-threshold", type=float, default=DEFAULT_NEAR_THRESHOLD,
+                        help=f"--dedup near で同じとみなす画素ごとの差の平均 (0〜255、既定 {DEFAULT_NEAR_THRESHOLD})")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
     args = parser.parse_args(argv)
     if not 1 <= args.jpeg_quality <= 95:

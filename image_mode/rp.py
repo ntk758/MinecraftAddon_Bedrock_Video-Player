@@ -184,9 +184,19 @@ def pre_animation(video: dict, namespace: str) -> list:
         f"v.base_frame = v.changed ? q.property('{ns}:frame') : v.base_frame;",
         "v.seq_seen = v.seq_now;",
         f"v.frame = q.property('{ns}:state') == 1 ? math.min(v.base_frame + math.floor((v.t - v.base_time) * {_fps(video)}), {last}) : v.base_frame;",
-        f"v.sheet = math.floor(v.frame / {per_sheet});",
-        f"v.cell = v.frame - v.sheet * {per_sheet};",
-    ]
+    ] + _cell_lines(video, per_sheet)
+
+
+def _cell_lines(video: dict, per_sheet: int) -> list:
+    """コマ (v.frame) から、シート (v.sheet) とその中のマス (v.cell)。同じ絵のコマをまとめた動画 (slot_map がある) は、
+    先にコマからマス (v.slot) を区間の二分探索で引く (image_mode/dedup.py)。"""
+    if not video.get("slot_map"):
+        return [f"v.sheet = math.floor(v.frame / {per_sheet});", f"v.cell = v.frame - v.sheet * {per_sheet};"]
+    from image_mode.dedup import lookup_expression
+
+    expression = lookup_expression([tuple(interval) for interval in video["slot_map"]])
+    return [f"v.slot = {expression};", f"v.sheet = math.floor(v.slot / {per_sheet});",
+            f"v.cell = v.slot - v.sheet * {per_sheet};"]
 
 
 def client_entity_json(video: dict, method: str, namespace: str) -> dict:
