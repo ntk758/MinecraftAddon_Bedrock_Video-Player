@@ -4,7 +4,9 @@
 
 This download is the **showcase with 5 demo clips** (an original animated short, three 3D holograms and a dancing trompe-l'oeil figure). To play **your own** video, convert it first with the free web converter or Windows app (see below) — it is not an in-game video player for files on your device.
 
-![Animated short as blocks](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/curseforge/gif_cat.gif)
+![Mountain footage: source, block mode and image mode, recorded in game](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/genres/genre_mountain.gif)
+
+*Recorded in game (Windows 11): the source clip, block mode and image mode side by side.*
 
 ## ▶ Try the showcase (3 minutes)
 
@@ -27,6 +29,8 @@ The commands are for the world's operators (the host in single player). On a Rea
 | `waves` | A colourful wave landscape as a 3D relief (brightness = depth) |
 | `bounce` | A MagicaVoxel animation of a striped ball bouncing on a floor |
 | `dancer` | A trompe-l'oeil dancing girl on a floor and back wall that plays the animated short. She keeps dancing as you walk or fly around |
+
+![Animated short as blocks](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/curseforge/gif_cat.gif)
 
 Where things appear: `setup wall` stands a flat screen up 3 blocks in front of you. Plain `/badapple:setup` lays it flat at your feet (spreading east and north), so look down at it from above. 3D holograms stand 2 blocks north of you. The `dancer` stage is about 118 × 51 blocks with an 84-block-high back wall, north of you — watch from in front of it or above the floor. The screen replaces blocks in its way, so pick an empty spot.
 
@@ -75,7 +79,11 @@ The Windows app can also make an **image mode** add-on: instead of placing block
 - Same controls as block mode: `/<prefix>:setup` with `wall`, `face` and `align`, `start`, `play <id>`, `volume`, `seek`, `stats`, and a remote you open with a **clock** (block mode keeps the compass, so both can be installed together).
 - Long videos don't fit in the game's texture memory. When converting, choose what to keep: **picture quality** (lower fps), **smoothness** (smaller picture) or **length**, and whether it should also run on phones and consoles.
 - Put block mode and image mode in **one `.mcaddon`**, or make them separately.
-- Not real blocks: you can't walk through or build on the picture, and there are no 3D modes yet. Tested on PC only so far.
+- Not real blocks: you can't walk through or build on the picture, and there are no 3D modes yet. Tested in game on PC (Windows 11).
+
+![Sunset sea: source, block mode and image mode](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/genres/genre_sunset.gif)
+
+![Fire: source, block mode and image mode](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/genres/genre_fire.gif)
 
 | | Block mode | Image mode |
 |---|---|---|
@@ -105,7 +113,7 @@ The Windows app can also make an **image mode** add-on: instead of placing block
 | + Trompe-l'oeil (option) | Any of the above (figures up to about 64 blocks tall run best) |
 | Stained glass palette | See-through holograms (16 colours) |
 
-![Neon city from Tears of Steel](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/curseforge/gif_neon.gif)
+![Night city: source, block mode and image mode](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/genres/genre_night.gif)
 
 ## 💡 Tips
 
@@ -122,10 +130,10 @@ The Windows app can also make an **image mode** add-on: instead of placing block
 
 ## 🎬 Credits for the preview images
 
-- *Tears of Steel* © Blender Foundation (mango.blender.org), [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), converted to blocks.
+- The three-panel GIFs (mountain, sunset sea, fire, night city) are real in-game recordings on Windows 11. The footage is CC0 from Wikimedia Commons: Mt Hood Aerial View (Pastelitodepapa), Ocean surface waves 06 and Fire 10 (Mostafameraji), Raindrops against the window in the night city, Las Palmas (slavikfi). Full list: [CREDITS.md](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/blob/main/docs/images/genres/CREDITS.md).
 - *A Trip to the Moon* (Georges Méliès, 1902), public domain, converted to a 3D relief.
 - The cat animation, its music and the dancing girl were made for this project.
-- The animated previews are drawn from the block colours outside the game, so lighting and textures look slightly different in-game.
+- The cat and moon previews are drawn from the block colours outside the game, so lighting and textures look slightly different in-game.
 
 ## 🔓 Open source
 
