@@ -98,6 +98,7 @@
   "build.thumbnail_failed": "縮圖產生失敗: {id}",
   "build.audio": "  正在將音訊切分為每段 {sec} 秒（.ogg, 44.1 kHz）…",
   "build.audio_skipped": "  警告: 已略過音訊（無聲影片或發生錯誤）: {error}",
+  "build.no_audio": "  此影片沒有音軌（附加內容中該影片沒有聲音）。",
   "build.converting": "  正在轉換為方塊資料（自動選擇 GPU/CPU）…",
   "build.palette_ai_failed": "用於調色盤的 AI 去背失敗，改用一般的方式：{error}",
   "build.stage_background": "  正在將錯視畫的背景影片轉換為後牆大小（{width}×{height}）…",

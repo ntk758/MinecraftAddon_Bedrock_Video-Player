@@ -530,6 +530,24 @@ def resolve_dither(dither_text: str) -> str:
         return "none"
 
 
+def signed_exit_code(code: int) -> int:
+    """Windows は負の終了コード (ffmpeg の −22 など) を符号なしの 32 bit で返す (4294967274)。読める負の数に戻す。"""
+    return code - 2 ** 32 if code > 0x7FFFFFFF else code
+
+
+def has_audio_stream(ffmpeg: str, video) -> bool | None:
+    """動画に音声のストリームがあるか (ffmpeg -i の表示で見る)。調べられなければ None。"""
+    try:
+        result = subprocess.run([ffmpeg, "-hide_banner", "-i", str(video)], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=60, **subprocess_kwargs())
+    except (OSError, subprocess.SubprocessError):
+        return None
+    streams = [line for line in result.stderr.splitlines() if line.lstrip().startswith("Stream #")]
+    if not streams:
+        return None
+    return any(" Audio:" in line for line in streams)
+
+
 class PackBuilderApp(tk.Tk):
     def __init__(self, language: str | None = None) -> None:
         super().__init__()
@@ -1362,6 +1380,10 @@ class PackBuilderApp(tk.Tk):
         duration (長さの指定) があれば、音声もその秒数で切る (切らないと、映像が終わった後も最後のチャンクの残りが鳴り、
         使わない音声がアドオンに入る)。"""
         sounds_dir.mkdir(parents=True, exist_ok=True)
+        # 音声の無い動画は、切り出しを試さずに知らせる (試すと ffmpeg が失敗し、「終了コード 4294967274」と出ていた)
+        if has_audio_stream(ffmpeg, video) is False:
+            self.messages.put(self.tr("build.no_audio"))
+            return []
         self.messages.put(self.tr("build.audio", sec=AUDIO_CHUNK_SECONDS))
         try:
             self._run([
@@ -1410,7 +1432,7 @@ class PackBuilderApp(tk.Tk):
         for line in process.stdout:
             self.messages.put(line.rstrip())
         if process.wait() != 0:
-            raise RuntimeError(self.tr("build.cmd_failed", code=process.returncode))
+            raise RuntimeError(self.tr("build.cmd_failed", code=signed_exit_code(process.returncode)))
 
     def _build_pack(
         self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,

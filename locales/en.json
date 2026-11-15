@@ -98,6 +98,7 @@
   "build.thumbnail_failed": "Failed to create thumbnail: {id}",
   "build.audio": "  Splitting audio into {sec}-second chunks (.ogg, 44.1 kHz)…",
   "build.audio_skipped": "  Warning: audio skipped (silent video or error): {error}",
+  "build.no_audio": "  This video has no audio track (the add-on will have no sound for it).",
   "build.converting": "  Converting to block data (GPU/CPU selected automatically)…",
   "build.palette_ai_failed": "AI cutout for the palette failed, so the usual palette is used: {error}",
   "build.stage_background": "  Converting the trompe-l'oeil background video to the back wall size ({width}×{height})…",

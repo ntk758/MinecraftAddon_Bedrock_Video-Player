@@ -82,12 +82,25 @@ def test_audio_is_cut_to_the_chosen_length(app, tmp_path, monkeypatch):
             (tmp_path / "sounds" / f"chunk_{n}.ogg").write_bytes(b"OggS" + bytes([n]))
 
     monkeypatch.setattr(app, "_run", fake_run)
+    monkeypatch.setattr(gui, "has_audio_stream", lambda ffmpeg, video: True)
     chunks = app._extract_audio("ffmpeg", tmp_path / "in.mp4", tmp_path / "sounds", 20.0)
     assert commands[0][commands[0].index("-t") + 1] == "20"
     assert sorted(n for n, _kind, _data in chunks) == [0, 1]
     # 指定が無ければ今までどおり全部
     chunks = app._extract_audio("ffmpeg", tmp_path / "in.mp4", tmp_path / "sounds")
     assert "-t" not in commands[1] and len(chunks) == 3
+
+
+def test_a_video_without_audio_is_reported_plainly(app, tmp_path, monkeypatch):
+    """音声の無い動画は、切り出しを試さずに「音声がありません」と知らせる (以前は「終了コード 4294967274 で失敗」)。"""
+    ran = []
+    monkeypatch.setattr(app, "_run", ran.append)
+    monkeypatch.setattr(gui, "has_audio_stream", lambda ffmpeg, video: False)
+    while not app.messages.empty():
+        app.messages.get()
+    assert app._extract_audio("ffmpeg", tmp_path / "in.mp4", tmp_path / "sounds") == []
+    assert not ran and app.messages.get() == app.tr("build.no_audio")
+    assert gui.signed_exit_code(4294967274) == -22 and gui.signed_exit_code(1) == 1
 
 
 def test_ids_survive_a_language_switch(app, tmp_path):

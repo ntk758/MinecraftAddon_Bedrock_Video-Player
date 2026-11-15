@@ -419,6 +419,17 @@ def test_seek_and_resume_start_the_sound_at_once(tmp_path):
     assert sounds[2][2] - seek_at >= 1000
 
 
+def test_seek_past_the_last_chunk_head_keeps_the_asked_position(tmp_path):
+    """7 秒の動画 (チャンクは 0 秒と 4 秒) で 6.5 秒へシーク: 近いほうの頭 (8 秒) は動画の外なので、4 秒へ戻さずに頼まれた所へ行く
+    (以前は 4 秒へ戻っていた)。5 秒へのシークは今までどおり 4 秒の頭へそろえる。"""
+    short = [dict(VIDEOS[0], frame_count=210, audio_chunks=2)]
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "seek", "arg": "6.5"}, {"tick": 1}, {"snap": "late"},
+                         {"cmd": "seek", "arg": "5"}, {"tick": 1}, {"snap": "early"}], videos=short)
+    snaps = {s["label"]: props(s) for s in out["snaps"]}
+    assert snaps["late"]["frame"] == 195
+    assert snaps["early"]["frame"] == 120
+
+
 def test_seek_without_audio_keeps_the_exact_position(tmp_path):
     silent = [dict(VIDEOS[0], audio_chunks=0)]
     out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"cmd": "seek", "arg": "6.9"}, {"tick": 1},

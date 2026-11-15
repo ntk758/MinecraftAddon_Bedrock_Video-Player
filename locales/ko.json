@@ -98,6 +98,7 @@
   "build.thumbnail_failed": "썸네일 생성 실패: {id}",
   "build.audio": "  오디오를 {sec}초 단위로 분할 중 (.ogg, 44.1 kHz)…",
   "build.audio_skipped": "  경고: 오디오를 건너뜀 (무음 동영상 또는 오류): {error}",
+  "build.no_audio": "  이 동영상에는 오디오가 없습니다 (소리 없는 애드온이 됩니다).",
   "build.converting": "  블록 데이터로 변환 중 (GPU/CPU 자동 선택)…",
   "build.palette_ai_failed": "팔레트용 AI 잘라내기에 실패해 평소 방식으로 계속합니다: {error}",
   "build.stage_background": "  트릭아트 배경 영상을 뒷벽 크기({width}×{height})로 변환 중…",

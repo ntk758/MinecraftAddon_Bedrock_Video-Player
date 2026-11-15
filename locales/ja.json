@@ -98,6 +98,7 @@
   "build.thumbnail_failed": "サムネイル生成失敗: {id}",
   "build.audio": "  音声を{sec}秒単位(.ogg, 44.1kHz)で切り出し中…",
   "build.audio_skipped": "  警告: 音声抽出スキップ (無音動画またはエラー): {error}",
+  "build.no_audio": "  この動画には音声がありません (音なしのアドオンになります)。",
   "build.converting": "  ブロックデータへ変換中 (GPU/CPU自動選択)…",
   "build.palette_ai_failed": "パレットのための AI の切り抜きに失敗したので、いつもの選び方で続けます: {error}",
   "build.stage_background": "  だまし絵の背景の映像を、後ろの壁の大きさ ({width}×{height}) に変換中…",

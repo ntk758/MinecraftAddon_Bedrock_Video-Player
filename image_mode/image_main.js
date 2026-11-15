@@ -119,11 +119,14 @@ function currentFrame(video = currentVideo()) {
  * 音声のある動画で、コマを音声のチャンクの頭にそろえる。音声は途中から鳴らせないので、チャンクの頭から再生すれば
  * すぐに音が出る (そろえないと、次の境目まで最大 audio_chunk_seconds 秒無音)。DECISIONS.md の A17。
  * how は "nearest" (シーク: 近いほうの頭) か "floor" (再開: 今のチャンクの頭まで戻る)。
+ * シークで近いほうの頭が動画の終わりより後 (最後のチャンクの後ろ半分) なら、そろえずに頼まれた所へ行く。
+ * 前の頭へ戻すと頼んだ所から大きくずれる (7 秒の動画の 6 秒 → 4 秒)。終わりまでは無音だが、チャンクの半分より短い。
  */
 function alignToChunk(video, frame, how) {
   if (!video.audio_chunks || !video.audio_chunk_seconds) return frame;
   const chunkFrames = video.audio_chunk_seconds * video.fps;
   const chunk = how === "nearest" ? Math.round(frame / chunkFrames) : Math.floor(frame / chunkFrames);
+  if (how === "nearest" && chunk > video.audio_chunks - 1) return frame;
   return clampFrame(video, Math.min(chunk, video.audio_chunks - 1) * chunkFrames);
 }
 

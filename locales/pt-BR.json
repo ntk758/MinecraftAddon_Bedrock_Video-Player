@@ -98,6 +98,7 @@
   "build.thumbnail_failed": "Falha ao criar a miniatura: {id}",
   "build.audio": "  Dividindo o áudio em trechos de {sec} segundos (.ogg, 44,1 kHz)…",
   "build.audio_skipped": "  Aviso: áudio ignorado (vídeo sem som ou erro): {error}",
+  "build.no_audio": "  Este vídeo não tem faixa de áudio (o add-on ficará sem som para ele).",
   "build.converting": "  Convertendo para dados de blocos (GPU/CPU automático)…",
   "build.palette_ai_failed": "O recorte por IA para a paleta falhou; a paleta usual será usada: {error}",
   "build.stage_background": "  Convertendo o vídeo de fundo para o tamanho da parede do fundo ({width}×{height})…",
