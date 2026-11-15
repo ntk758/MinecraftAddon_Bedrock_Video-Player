@@ -15,6 +15,7 @@
 //   {"mark": "名前"}                                  いま数えている projectToStage の呼び出し回数を記録する (marks)
 //   {"command": "badapple:setup", "args": ["face"]}   独自のコマンド (/badapple:setup face) を実行する (処理は次の tick)
 //   {"spawn": true}                                   プレイヤーがワールドに入る (playerSpawn、initialSpawn)
+//   {"secondPlayer": "join"} / {"secondPlayer": "leave"}  2 人目が入る (playerSpawn) / 抜ける
 //   {"forgetTicking": true}                           ワールドを開き直したときのように、常時読み込みの区画を消す
 import {
   board, commands, customCommands, customEnums, fireScriptEvent, forgetTicking, forms, getAnchor, messages, options, player,
@@ -57,6 +58,9 @@ for (const step of steps) {
     else if (step.command) commandResults.push(runCustomCommand(step.command, ...(step.args ?? [])));
     else if (step.forgetTicking) forgetTicking();
     else if (step.spawn) spawnPlayer(step.spawn !== "respawn");
+    // 2 人目が入る ("join": playerSpawn も送る) / 抜ける ("leave")
+    else if (step.secondPlayer === "join") { options.secondPlayer = true; spawnPlayer(true, "second"); }
+    else if (step.secondPlayer === "leave") options.secondPlayer = false;
     else if (step.tick) for (let i = 0; i < step.tick; i++) tick();
     else if (step.sleepMs) await new Promise((resolve) => setTimeout(resolve, step.sleepMs));
     else if (step.settle) {
@@ -96,4 +100,6 @@ process.stdout.write(JSON.stringify({
   customEnums: Object.fromEntries(customEnums),
   // テストが codec.js の projectToStage を包んで数えた回数 (包んでいなければ null)
   projections: globalThis.__bvpProjections ?? null,
+  // テストが main.js に足した計測 (prepare で書き換えたとき。無ければ null)
+  probe: globalThis.__bvpProbe ?? null,
 }));
