@@ -2,172 +2,507 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0c0d10">
 <title>Block &amp; Image Video Player Web Converter</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 28 9.5 16 16 4 9.5Z' fill='%23a9b8ff'/%3E%3Cpath d='M16 16 28 9.5v13L16 29Z' fill='%236a4be0'/%3E%3Cpath d='M16 16 4 9.5v13L16 29Z' fill='%232f6bff'/%3E%3C/svg%3E">
+<link rel="preload" href="vendor/fonts/bricolage-grotesque-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
+<script src="vendor/motion/motion.min.js" defer></script>
+<!-- JS が動くときだけ、読み込んだときの演出のために最初の画面を隠して始める (動きを減らす設定では隠さない)。
+     ui.js が動かなかったときのために、2.5 秒たったら必ず見せる -->
+<script>(function (d) { d.classList.add("js"); if (!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches)) d.classList.add("has-motion"); setTimeout(function () { d.classList.add("is-ready"); }, 2500); })(document.documentElement);</script>
 </head>
 <body>
-<!-- 文字は data-i18n のキーで locales/<言語>.json から入れる (web/i18n.js)。ここに書いた英語は読み込む前の表示 -->
-<header>
-  <div class="topbar">
-    <h1>Block &amp; Image Video Player <span class="sub" data-i18n="web.subtitle">Web Converter (beta)</span></h1>
-    <label class="lang"><span data-i18n="language.label">🌐 Language</span>
-      <select id="language"></select></label>
+<!-- 文字は data-i18n のキーで locales/<言語>.json から入れる (web/i18n.js)。ここに書いた英語は読み込む前の表示。
+     見た目と動きは web/ui.js と web/style.css、変換は app.js / worker.js。ページの組み立て:
+     ナビ → 最初の画面 (本物の変換結果が動く舞台) → 設定の見本 → 入力と出力の流れ → 手順 → 端末から出るもの → 変換ツール → フッター -->
+<a class="skip-link" href="#convert" data-i18n="web.nav_open">Open converter</a>
+
+<header class="nav" id="siteHeader">
+  <div class="nav-inner">
+    <a class="brand" href="#top" aria-label="Block &amp; Image Video Player">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M16 3 28 9.5 16 16 4 9.5Z" class="face-top"/>
+        <path d="M16 16 28 9.5v13L16 29Z" class="face-right"/>
+        <path d="M16 16 4 9.5v13L16 29Z" class="face-left"/>
+      </svg>
+      <span class="brand-name">Block &amp; Image Video Player</span>
+      <span class="brand-version" id="versionBadge" hidden></span>
+    </a>
+    <nav class="nav-links" id="navLinks" aria-label="Sections">
+      <a href="#showcase" data-i18n="web.nav_showcase">Settings</a>
+      <a href="#inputs" data-i18n="web.nav_inputs">Inputs</a>
+      <a href="#how" data-i18n="web.nav_how">How it works</a>
+      <a href="#privacy" data-i18n="web.nav_privacy">Privacy</a>
+    </nav>
+    <div class="nav-actions">
+      <span class="engine" id="engineStatus" data-state="loading" role="status">
+        <span class="engine-dot" aria-hidden="true"></span><span class="engine-text" data-i18n="web.engine_loading">Preparing the converter</span>
+      </span>
+      <label class="lang"><span class="sr-only" data-i18n="language.label">Language</span>
+        <i data-lucide="globe" class="icon" aria-hidden="true"></i>
+        <select id="language"></select></label>
+      <a class="icon-button" href="https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player" aria-label="GitHub" rel="noopener">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="icon icon-fill"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.3 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.86v2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg>
+      </a>
+      <a class="button button-primary nav-cta" href="#convert"><span data-i18n="web.nav_open">Open converter</span></a>
+      <button type="button" class="icon-button nav-toggle" id="navToggle" aria-expanded="false" aria-controls="navLinks" aria-label="Menu" data-i18n-title="web.nav_menu"><i data-lucide="menu" class="icon" aria-hidden="true"></i></button>
+    </div>
   </div>
-  <p data-i18n="web.intro">Turn videos into a Minecraft Bedrock add-on (.mcaddon) entirely in your browser. Your videos are never uploaded.</p>
 </header>
 
-<main>
-  <section class="card">
-    <h2 data-i18n="web.section_videos">1. Videos and .vox</h2>
-    <div class="row">
-      <input type="file" id="files" accept="video/*,image/*,.vox" multiple>
-      <button type="button" id="cameraOpen" data-i18n="web.camera_open">📷 Record with the camera</button>
-    </div>
-    <!-- カメラで撮る (web/camera.js) -->
-    <div id="cameraPanel" class="camera" hidden>
-      <video id="cameraLive" muted playsinline></video>
-      <div class="row">
-        <button type="button" id="cameraStart" disabled data-i18n="web.camera_start">● Start recording</button>
-        <button type="button" id="cameraStop" hidden data-i18n="web.camera_stop">■ Stop</button>
-        <button type="button" id="cameraClose" data-i18n="web.camera_close">Close</button>
+<main id="top">
+  <!-- 最初の画面: 見出しと、元の映像 | この変換ツールの本物の出力 (web/media/hero_blocks.json をゲームと同じ codec.js で復元) -->
+  <section class="hero" aria-labelledby="heroTitle">
+    <div class="wrap hero-head">
+      <h1 class="hero-title" id="heroTitle" data-i18n="web.hero_title">Turn any video into Minecraft blocks</h1>
+      <div class="hero-side">
+        <p class="hero-lead" data-i18n="web.intro">Turn videos into a Minecraft Bedrock add-on (.mcaddon) entirely in your browser. Your videos are never uploaded.</p>
+        <div class="hero-actions">
+          <a class="button button-primary button-large" href="#convert" id="heroCta"><span data-i18n="web.hero_cta">Start converting</span><i data-lucide="arrow-down" class="icon" aria-hidden="true"></i></a>
+          <a class="button button-quiet button-large" href="#how"><span data-i18n="web.nav_how">How it works</span></a>
+        </div>
       </div>
-      <p id="cameraStatus" class="hint"></p>
     </div>
-    <p class="hint" data-i18n="web.vox_hint">MagicaVoxel animations (.vox) can be added too: their size and frames are kept, and only FPS and palette apply.</p>
-    <!-- MMD のモデルと踊りを立体に (web/mmd.js) -->
-    <details id="mmdBox" class="mmd">
-      <summary data-i18n="web.mmd_title">MMD model and dance (.pmx + .vmd) to 3D</summary>
-      <div class="grid">
-        <label><span data-i18n="web.mmd_folder">Model folder (the .pmx and its textures)</span>
-          <input type="file" id="mmdFolder" webkitdirectory multiple></label>
-        <label id="mmdPick" hidden><span data-i18n="web.mmd_model">Model</span> <select id="mmdModel"></select></label>
-        <label><span data-i18n="web.mmd_motion">Dance (.vmd)</span> <input type="file" id="mmdMotion" accept=".vmd"></label>
-        <button type="button" id="mmdAdd" disabled data-i18n="web.mmd_add">Add to the list</button>
+    <div class="wrap">
+      <figure class="stage-figure">
+        <div class="stage" id="stage" style="--split: 50%">
+          <video id="heroVideo" class="stage-source" poster="media/hero_poster.jpg" muted loop playsinline preload="none" tabindex="-1" aria-hidden="true"></video>
+          <canvas id="heroCanvas" class="stage-blocks" width="128" height="72" aria-hidden="true"></canvas>
+          <span class="stage-tag stage-tag-left" data-i18n="web.preview_original">Original</span>
+          <span class="stage-tag stage-tag-right" data-i18n="web.preview_blocks">In Minecraft</span>
+          <div class="stage-divider" id="heroHandle" role="slider" tabindex="0" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-label="Compare" data-i18n-title="web.stage_drag"><span class="stage-knob" aria-hidden="true"></span></div>
+          <button type="button" class="stage-play" id="stagePlay" aria-label="Pause" data-i18n-title="web.preview_pause"><i data-lucide="play" class="icon i-play" aria-hidden="true"></i><i data-lucide="pause" class="icon i-pause" aria-hidden="true"></i></button>
+        </div>
+        <div class="stage-floor-clip" aria-hidden="true"><div class="stage-floor"></div></div>
+        <figcaption class="stage-caption" data-i18n="web.stage_caption">The right half is real output from this converter at its default settings (128 × 72 blocks, 10 fps, auto palette, Blue Noise), decoded by the same code the add-on runs in the game.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 設定の見本: 大きさ・パレット・ディザを選ぶと、その設定での本物の出力 (web/media/showcase/) に替わる -->
+  <section class="section" id="showcase" aria-labelledby="showcaseTitle">
+    <div class="wrap">
+      <header class="section-head">
+        <h2 id="showcaseTitle" data-i18n="web.showcase_title">See what each setting does</h2>
+        <p data-i18n="web.showcase_lead">Pick a size, a palette and a dithering method. Every picture is real output from this converter for one frame of the sample.</p>
+      </header>
+      <div class="explorer" id="explorer">
+        <div class="explorer-view">
+          <img id="explorerImage" src="media/showcase/128x72_auto_blue_noise.png" width="128" height="72" alt="" decoding="async" loading="lazy">
+          <p class="explorer-readout" id="explorerReadout" aria-live="polite"></p>
+        </div>
+        <div class="explorer-controls">
+          <div class="control">
+            <span class="control-label" id="exSizeLabel" data-i18n="web.showcase_size">Screen size (blocks)</span>
+            <div class="segmented" id="exSize" role="radiogroup" aria-labelledby="exSizeLabel">
+              <button type="button" role="radio" data-value="64x36" aria-checked="false">64 × 36</button>
+              <button type="button" role="radio" data-value="128x72" aria-checked="true">128 × 72</button>
+              <button type="button" role="radio" data-value="256x144" aria-checked="false">256 × 144</button>
+            </div>
+          </div>
+          <div class="control">
+            <span class="control-label" id="exPaletteLabel" data-i18n="settings.palette">Palette</span>
+            <div class="segmented" id="exPalette" role="radiogroup" aria-labelledby="exPaletteLabel">
+              <button type="button" role="radio" data-value="auto" aria-checked="true" data-i18n="web.showcase_palette_auto">Auto</button>
+              <button type="button" role="radio" data-value="concrete" aria-checked="false" data-i18n="web.showcase_palette_concrete">Concrete, 16 colours</button>
+            </div>
+          </div>
+          <div class="control">
+            <span class="control-label" id="exDitherLabel" data-i18n="settings.dither">Dithering</span>
+            <div class="segmented" id="exDither" role="radiogroup" aria-labelledby="exDitherLabel">
+              <button type="button" role="radio" data-value="blue_noise" aria-checked="true">Blue Noise</button>
+              <button type="button" role="radio" data-value="floyd" aria-checked="false">Floyd-Steinberg</button>
+              <button type="button" role="radio" data-value="none" aria-checked="false" data-i18n="web.dither_none">None</button>
+            </div>
+          </div>
+          <button type="button" class="button button-ghost" id="explorerApply"><i data-lucide="sliders-horizontal" class="icon" aria-hidden="true"></i><span data-i18n="web.showcase_apply">Use these settings</span></button>
+        </div>
       </div>
-      <label class="check"><input type="checkbox" id="mmdExtreme"> <span id="mmdExtremeLabel"></span></label>
-      <p id="mmdHint" class="hint"></p>
-      <p id="mmdStatus" class="hint"></p>
-    </details>
-    <p class="hint" data-i18n="web.image_hint">Pictures (PNG, JPEG, WebP…) work too: they become still block art.</p>
-    <ul id="videoList"></ul>
-  </section>
-
-  <section class="card">
-    <h2 data-i18n="web.section_settings">2. Settings</h2>
-    <div class="grid">
-      <label><span data-i18n="settings.preset">Quality preset</span>
-        <select id="preset">
-          <option value="" disabled>—</option>
-          <option value="light" data-i18n="preset.light">Light (64×64 / 20fps)</option>
-          <option value="standard" data-i18n="preset.standard">Standard (96×96 / 10fps)</option>
-          <option value="high" data-i18n="preset.high" selected>High (128×128 / 10fps)</option>
-          <option value="detail" data-i18n="preset.detail">Detailed (128×128 / 5fps)</option>
-          <option value="ultra" data-i18n="preset.ultra">Ultra (256×256 / 5fps)</option>
-          <option value="extreme" data-i18n="preset.extreme">Extreme (512×512 / 2fps)</option>
-        </select>
-      </label>
-      <label><span data-i18n="settings.width">Width</span> <input type="number" id="width" value="128" min="8" max="512"></label>
-      <label><span data-i18n="settings.height">Height</span> <input type="number" id="height" value="72" min="8" max="512"></label>
-      <button type="button" id="fitAspect" data-i18n="settings.fit_aspect">Match video aspect ratio</button>
-      <label><span data-i18n="settings.fps">FPS</span> <input type="number" id="fps" value="10" min="1" max="20"></label>
-      <label><span data-i18n="web.max_length">Length to convert (s)</span> <input type="number" id="duration" min="0.1" step="0.1" placeholder="Whole video" data-i18n-placeholder="web.full_length"></label>
-      <label><span data-i18n="settings.mode">Display mode</span>
-        <select id="mode">
-          <option value="screen" data-i18n="mode.screen">Flat screen</option>
-          <option value="relief" data-i18n="mode.relief">3D relief (brightness = depth)</option>
-          <option value="extrude" data-i18n="mode.extrude">3D silhouette (bright parts extruded)</option>
-          <option value="inflate" data-i18n="mode.inflate">3D inflate (bright parts rounded)</option>
-        </select>
-      </label>
-      <label><span data-i18n="settings.depth">Depth (blocks)</span> <input type="number" id="depth" value="16" min="2" max="64"></label>
-      <label class="check"><input type="checkbox" id="anamorphic"> <span data-i18n="web.anamorphic">Trompe-l'oeil (3D and .vox only)</span></label>
-      <label class="check"><input type="checkbox" id="pairFlat"> <span data-i18n="settings.pair_flat">With a 3D mode, also add the normal flat video</span></label>
-      <label class="check"><input type="checkbox" id="imageMode"> <span data-i18n="web.image_mode">Also build the image-mode add-on (experimental, separate file; you get 2 downloads)</span></label>
-      <label><span data-i18n="image.lighting_label">Brightness:</span>
-        <select id="imageLighting">
-          <option value="bright" data-i18n="image.lighting.bright">Always bright (recommended)</option>
-          <option value="world" data-i18n="image.lighting.world">Follow world light (dark at night)</option>
-        </select>
-      </label>
-      <label class="check"><input type="checkbox" id="imagePngOptimize"> <span data-i18n="image.png_optimize">Optimize PNG (smaller pack, slower)</span></label>
-      <label><span data-i18n="web.stage_background">Trompe-l'oeil background video (optional)</span>
-        <input type="file" id="stageBackground" accept="video/*"></label>
-      <label><span data-i18n="settings.palette">Palette</span>
-        <select id="palette">
-          <option value="auto" data-i18n="palette.auto">Auto (recommended: up to 127 of 214 colors per scene)</option>
-          <option value="all" data-i18n="palette.all">All blocks, 127 colors (concrete, terracotta, wool, wood, stone, light blocks…)</option>
-          <option value="full" data-i18n="palette.full">All 39 colors (concrete + terracotta + light blocks)</option>
-          <option value="expanded" data-i18n="palette.expanded">Extended 33 colors (concrete + terracotta)</option>
-          <option value="concrete" data-i18n="palette.concrete">Basic 16 colors (concrete)</option>
-          <option value="glass" data-i18n="palette.glass">Stained glass, 16 colors (translucent, for 3D holograms)</option>
-        </select>
-      </label>
-      <label><span data-i18n="settings.dither">Dithering</span>
-        <select id="dither">
-          <option value="blue_noise">Blue Noise</option>
-          <option value="none" data-i18n="web.dither_none">None</option>
-          <option value="ordered">Ordered</option>
-          <option value="floyd">Floyd-Steinberg</option>
-          <option value="atkinson">Atkinson</option>
-          <option value="burkes">Burkes</option>
-          <option value="sierra">Sierra Lite</option>
-        </select>
-      </label>
-      <label><span data-i18n="settings.keyframe">Keyframe interval</span> <input type="number" id="keyframe" value="30" min="0" max="300"></label>
-      <label class="check"><input type="checkbox" id="perceptual" checked> <span data-i18n="settings.perceptual">Perceptual optimization (sharper edges)</span></label>
-      <label class="check"><input type="checkbox" id="flatAreas"> <span data-i18n="settings.flat_areas">Smooth out blotches in flat areas (sky, walls; colours may look slightly duller)</span></label>
-      <label><span data-i18n="pack.name">Pack name</span> <input type="text" id="packName" value="Block &amp; Image Video Player"></label>
-      <label><span data-i18n="pack.namespace">Command prefix</span> <input type="text" id="namespace" value="badapple" pattern="[a-z0-9_]+"></label>
-      <label><span data-i18n="web.target">Minecraft version</span>
-        <select id="target">
-          <option value="latest" data-i18n="web.target_latest">1.26.10 or newer (no cheats needed)</option>
-          <option value="legacy" data-i18n="web.target_legacy">1.21.80 to 1.26.0 (cheats needed)</option>
-        </select>
-      </label>
     </div>
-    <p id="loadHint" class="hint"></p>
   </section>
 
-  <section class="card">
-    <h2 data-i18n="web.section_build">3. Build</h2>
-    <button type="button" id="build" disabled data-i18n="build.button">Create .mcaddon</button>
-    <a id="download" class="download" hidden data-i18n="web.download">Download</a>
-    <!-- 画像モードのアドオンは別ファイルなので、別のダウンロードのリンク (web/app.js の finish) -->
-    <a id="imageDownload" class="download" hidden data-i18n="web.image_download">Download the image-mode add-on</a>
-    <progress id="progress" max="1" value="0"></progress>
-    <pre id="log"></pre>
-  </section>
-
-  <!-- できあがりのプレビュー: 作り終えたら、ゲームと同じ規則で描いた絵を元の動画と並べて再生する (web/preview.js) -->
-  <section class="card" id="previewCard" hidden>
-    <h2 data-i18n="web.preview_title">4. Preview</h2>
-    <p class="hint" data-i18n="web.preview_note">How the add-on looks in Minecraft, drawn with the same rules as the game.</p>
-    <label id="previewPick" class="inline" hidden><span data-i18n="web.preview_video">Video</span> <select id="previewSelect"></select></label>
-    <div class="preview">
-      <figure id="previewSourceBox"><figcaption data-i18n="web.preview_original">Original</figcaption>
-        <video id="previewSource" controls playsinline preload="auto"></video></figure>
-      <figure><figcaption data-i18n="web.preview_blocks">In Minecraft</figcaption>
-        <canvas id="previewCanvas" width="1" height="1"></canvas>
-        <button type="button" id="previewPlay" hidden data-i18n="web.preview_play">Play</button></figure>
+  <!-- 入力と出力の流れ: 4 種類の入力 → このブラウザ → .mcaddon → Minecraft -->
+  <section class="section section-alt" id="inputs" aria-labelledby="inputsTitle">
+    <div class="wrap">
+      <header class="section-head">
+        <h2 id="inputsTitle" data-i18n="web.inputs_title">Four kinds of input, one add-on</h2>
+        <p data-i18n="web.inputs_lead">Everything is converted in this browser tab and packed into a .mcaddon file for Minecraft Bedrock.</p>
+      </header>
+      <div class="pipeline" id="pipeline">
+        <ul class="pipe-inputs">
+          <li><i data-lucide="film" class="icon" aria-hidden="true"></i><div><strong data-i18n="web.input_video">Video</strong><span class="pipe-formats">MP4, WebM, MOV</span><span class="pipe-out" data-i18n="web.input_video_out">Block animation with sound</span></div></li>
+          <li><i data-lucide="image" class="icon" aria-hidden="true"></i><div><strong data-i18n="web.input_image">Picture</strong><span class="pipe-formats">PNG, JPEG, WebP, GIF</span><span class="pipe-out" data-i18n="web.input_image_out">Still block art</span></div></li>
+          <li><i data-lucide="box" class="icon" aria-hidden="true"></i><div><strong>MagicaVoxel</strong><span class="pipe-formats">.vox</span><span class="pipe-out" data-i18n="web.input_vox_out">3D model or animation, as built</span></div></li>
+          <li><i data-lucide="person-standing" class="icon" aria-hidden="true"></i><div><strong>MMD</strong><span class="pipe-formats">.pmx + .vmd</span><span class="pipe-out" data-i18n="web.input_mmd_out">A dancing 3D figure</span></div></li>
+        </ul>
+        <div class="pipe-link" aria-hidden="true"></div>
+        <div class="pipe-node">
+          <i data-lucide="laptop" class="icon" aria-hidden="true"></i>
+          <strong data-i18n="web.pipe_browser">Your browser</strong>
+          <span data-i18n="web.pipe_browser_note">Python running as WebAssembly. Nothing is uploaded.</span>
+        </div>
+        <div class="pipe-link" aria-hidden="true"></div>
+        <div class="pipe-result">
+          <div class="pipe-file"><i data-lucide="package" class="icon" aria-hidden="true"></i><div><strong>.mcaddon</strong><span data-i18n="web.pipe_addon_note">Behavior pack and resource pack in one file</span></div></div>
+          <div class="pipe-file"><i data-lucide="gamepad-2" class="icon" aria-hidden="true"></i><div><strong>Minecraft Bedrock</strong><span data-i18n="web.chip_versions">Minecraft 1.21.80 or newer</span></div></div>
+        </div>
+      </div>
     </div>
-    <p id="previewInfo" class="hint"></p>
   </section>
 
-  <section class="card small">
-    <h2 data-i18n="web.section_howto">How to use</h2>
-    <ol>
-      <li id="howtoImport" data-i18n="web.howto_import">Open the .mcaddon to import it into Minecraft. In the world settings, turn on both the behavior pack and the resource pack, and turn cheats on.</li>
-      <li id="howtoSetup"></li>
-    </ol>
-    <p><span data-i18n="web.howto_note">The first time, the page loads Python for the converter (about 20 MB), which takes a while.</span>
-       <a href="https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player">GitHub</a></p>
-    <div id="usage" hidden>
-      <p data-i18n="web.usage_note">To learn how many people use it, this page counts page opens and finished add-ons with GoatCounter.</p>
-      <label class="check"><input type="checkbox" id="usageOptOut"> <span data-i18n="web.usage_optout">Don't send usage counts</span></label>
+  <!-- 手順: 本当に順番のある 4 段なので番号を付ける。4 段目の文は設定 (コマンドの接頭辞・Minecraft の版) に合わせて app.js が書く -->
+  <section class="section" id="how" aria-labelledby="howTitle">
+    <div class="wrap">
+      <header class="section-head">
+        <h2 id="howTitle" data-i18n="web.how_title">From file to world in four steps</h2>
+      </header>
+      <ol class="steps">
+        <li><span class="steps-number" aria-hidden="true">1</span><h3 data-i18n="web.how_1">Add your files</h3><p data-i18n="web.how_1_text">Drop videos, pictures or .vox files, record with the camera, or pick an MMD model and dance.</p></li>
+        <li><span class="steps-number" aria-hidden="true">2</span><h3 data-i18n="web.how_2">Choose the look</h3><p data-i18n="web.how_2_text">Start from a quality preset, then adjust size, frame rate, palette and dithering if you want.</p></li>
+        <li><span class="steps-number" aria-hidden="true">3</span><h3 data-i18n="web.how_3">Build the add-on</h3><p data-i18n="web.how_3_text">The page reads the frames, converts them and packs the add-on. A preview shows how it will look in the game.</p></li>
+        <li><span class="steps-number" aria-hidden="true">4</span><h3 data-i18n="web.how_4">Download and play</h3>
+          <ol class="howto">
+            <li id="howtoImport" data-i18n="web.howto_import">Open the .mcaddon to import it into Minecraft. In the world settings, turn on both the behavior pack and the resource pack, and turn cheats on.</li>
+            <li id="howtoSetup"></li>
+          </ol>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 端末から出るもの・出ないもの。書くのは実際の動きだけ (Pyodide は jsDelivr から読む: web/worker.js。利用数は web/usage.js) -->
+  <section class="section section-alt" id="privacy" aria-labelledby="privacyTitle">
+    <div class="wrap">
+      <header class="section-head">
+        <h2 id="privacyTitle" data-i18n="web.privacy_title">What stays on your device</h2>
+        <p data-i18n="web.privacy_lead">The conversion runs in this tab. Here is exactly what moves over the network and what does not.</p>
+      </header>
+      <div class="ledger">
+        <div class="ledger-col ledger-stays">
+          <h3><i data-lucide="hard-drive" class="icon" aria-hidden="true"></i><span data-i18n="web.privacy_stays">Never leaves your device</span></h3>
+          <ul>
+            <li data-i18n="web.privacy_stays_1">Your videos, pictures and models</li>
+            <li data-i18n="web.privacy_stays_2">Every frame and the sound taken from them</li>
+            <li data-i18n="web.privacy_stays_3">The finished add-on: it is made in memory and saved by your browser</li>
+          </ul>
+        </div>
+        <div class="ledger-col">
+          <h3><i data-lucide="cloud-download" class="icon" aria-hidden="true"></i><span data-i18n="web.privacy_loads">Downloaded to your device</span></h3>
+          <ul>
+            <li data-i18n="web.privacy_loads_1">This page and its scripts</li>
+            <li data-i18n="web.privacy_loads_2">The converter itself: Python for the browser, about 20 MB on the first visit, from the jsDelivr CDN</li>
+          </ul>
+        </div>
+        <div class="ledger-col">
+          <h3><i data-lucide="send" class="icon" aria-hidden="true"></i><span data-i18n="web.privacy_sent">Sent from your device</span></h3>
+          <div id="usage" hidden>
+            <p data-i18n="web.usage_note">To learn how many people use it, this page counts page opens and finished add-ons with GoatCounter.</p>
+            <label class="switch"><input type="checkbox" id="usageOptOut"> <span data-i18n="web.usage_optout">Don't send usage counts</span></label>
+          </div>
+          <p id="usageNone" data-i18n="web.privacy_sent_none">Nothing.</p>
+        </div>
+      </div>
+      <p class="perf-note"><i data-lucide="cpu" class="icon" aria-hidden="true"></i><span data-i18n="web.howto_note">The first time, the page loads Python for the converter (about 20 MB), which takes a while.</span>
+        <a href="https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest" rel="noopener" data-i18n="web.perf_windows">Get the Windows app</a></p>
+    </div>
+  </section>
+
+  <!-- 変換ツール: 左に 1 選ぶ・2 設定、右に 3 作る (張り付く)。下に 4 プレビュー。id と選択肢は今までと同じ -->
+  <section class="section studio-section" id="convert" aria-labelledby="convertTitle">
+    <div class="wrap">
+      <header class="section-head">
+        <h2 id="convertTitle" data-i18n="web.convert_title">Converter</h2>
+        <p data-i18n="web.convert_lead">Add files, adjust the settings and build. The add-on is saved straight from this tab.</p>
+      </header>
+      <div class="studio">
+        <div class="studio-main">
+          <section class="panel" aria-labelledby="stepFiles">
+            <header class="panel-head"><span class="panel-index" aria-hidden="true">1</span><h3 id="stepFiles" class="step-title" data-i18n="web.section_videos">1. Videos and .vox</h3></header>
+            <label class="dropzone" id="dropzone">
+              <input type="file" id="files" accept="video/*,image/*,.vox" multiple>
+              <span class="drop-icon" aria-hidden="true"><i data-lucide="upload" class="icon" aria-hidden="true"></i></span>
+              <span class="drop-title" data-i18n="web.drop_title">Drop videos, pictures or .vox files here</span>
+              <span class="drop-sub" data-i18n="web.drop_browse">or click to choose files</span>
+              <span class="drop-formats">MP4, WebM, MOV, PNG, JPEG, WebP, GIF, .vox</span>
+            </label>
+            <ul id="videoList" class="file-list" aria-live="polite"></ul>
+            <div class="source-tools">
+              <button type="button" id="cameraOpen" class="button button-ghost"><i data-lucide="camera" class="icon" aria-hidden="true"></i><span data-i18n="web.camera_open">Record with the camera</span></button>
+            </div>
+            <!-- カメラで撮る (web/camera.js) -->
+            <div id="cameraPanel" class="camera" hidden>
+              <video id="cameraLive" muted playsinline></video>
+              <div class="row">
+                <button type="button" id="cameraStart" class="button button-danger" disabled><i data-lucide="circle-dot" class="icon" aria-hidden="true"></i><span data-i18n="web.camera_start">Start recording</span></button>
+                <button type="button" id="cameraStop" class="button button-ghost" hidden><i data-lucide="square" class="icon" aria-hidden="true"></i><span data-i18n="web.camera_stop">Stop</span></button>
+                <button type="button" id="cameraClose" class="button button-quiet"><i data-lucide="x" class="icon" aria-hidden="true"></i><span data-i18n="web.camera_close">Close</span></button>
+              </div>
+              <p id="cameraStatus" class="hint"></p>
+            </div>
+            <!-- MMD のモデルと踊りを立体に (web/mmd.js) -->
+            <details id="mmdBox" class="disclosure">
+              <summary><i data-lucide="person-standing" class="icon" aria-hidden="true"></i><span data-i18n="web.mmd_title">MMD model and dance (.pmx + .vmd) to 3D</span><i data-lucide="chevron-down" class="icon chevron" aria-hidden="true"></i></summary>
+              <div class="disclosure-body">
+                <div class="fields">
+                  <label class="field"><span class="field-label" data-i18n="web.mmd_folder">Model folder (the .pmx and its textures)</span>
+                    <input type="file" id="mmdFolder" webkitdirectory multiple></label>
+                  <label class="field" id="mmdPick" hidden><span class="field-label" data-i18n="web.mmd_model">Model</span> <select id="mmdModel"></select></label>
+                  <label class="field"><span class="field-label" data-i18n="web.mmd_motion">Dance (.vmd)</span> <input type="file" id="mmdMotion" accept=".vmd"></label>
+                </div>
+                <label class="switch"><input type="checkbox" id="mmdExtreme"> <span id="mmdExtremeLabel"></span></label>
+                <p id="mmdHint" class="hint"></p>
+                <p id="mmdStatus" class="hint"></p>
+                <button type="button" id="mmdAdd" class="button button-ghost" disabled data-i18n="web.mmd_add">Add to the list</button>
+              </div>
+            </details>
+            <p class="hint" data-i18n="web.image_hint">Pictures (PNG, JPEG, WebP…) work too: they become still block art.</p>
+            <p class="hint" data-i18n="web.vox_hint">MagicaVoxel animations (.vox) can be added too: their size and frames are kept, and only FPS and palette apply.</p>
+          </section>
+
+          <section class="panel" aria-labelledby="stepSettings">
+            <header class="panel-head"><span class="panel-index" aria-hidden="true">2</span><h3 id="stepSettings" class="step-title" data-i18n="web.section_settings">2. Settings</h3></header>
+            <div class="settings">
+              <div class="setting" role="group" aria-labelledby="gQuality">
+                <h4 class="setting-name" id="gQuality"><i data-lucide="layout-grid" class="icon" aria-hidden="true"></i><span data-i18n="web.group_quality">Quality and size</span></h4>
+                <div class="setting-body">
+                  <div class="field field-wide">
+                    <span class="field-label"><span data-i18n="settings.preset">Quality preset</span><button type="button" class="tip" data-i18n-title="web.tip_preset" title="Sets width, height and FPS together."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span>
+                    <div class="segmented segmented-grid" data-for="preset" role="radiogroup"></div>
+                    <select id="preset">
+                      <option value="" disabled>—</option>
+                      <option value="light" data-i18n="preset.light">Light (64×64 / 20fps)</option>
+                      <option value="standard" data-i18n="preset.standard">Standard (96×96 / 10fps)</option>
+                      <option value="high" data-i18n="preset.high" selected>High (128×128 / 10fps)</option>
+                      <option value="detail" data-i18n="preset.detail">Detailed (128×128 / 5fps)</option>
+                      <option value="ultra" data-i18n="preset.ultra">Ultra (256×256 / 5fps)</option>
+                      <option value="extreme" data-i18n="preset.extreme">Extreme (512×512 / 2fps)</option>
+                    </select>
+                  </div>
+                  <div class="fields">
+                    <label class="field"><span class="field-label"><span data-i18n="settings.width">Width</span><button type="button" class="tip" data-i18n-title="web.tip_size" title="Size of the screen in blocks."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span> <input type="number" id="width" value="128" min="8" max="512"></label>
+                    <label class="field"><span class="field-label" data-i18n="settings.height">Height</span> <input type="number" id="height" value="72" min="8" max="512"></label>
+                    <div class="field field-action"><button type="button" id="fitAspect" class="button button-ghost" data-i18n="settings.fit_aspect">Match video aspect ratio</button></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="setting" role="group" aria-labelledby="gTime">
+                <h4 class="setting-name" id="gTime"><i data-lucide="timer" class="icon" aria-hidden="true"></i><span data-i18n="web.group_time">Frame rate and length</span></h4>
+                <div class="setting-body fields">
+                  <label class="field"><span class="field-label"><span data-i18n="settings.fps">FPS</span><button type="button" class="tip" data-i18n-title="web.tip_fps" title="Frames per second."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span>
+                    <span class="range-pair"><input type="range" class="range" data-sync="fps" min="1" max="20" step="1" aria-hidden="true" tabindex="-1"><input type="number" id="fps" value="10" min="1" max="20"></span></label>
+                  <label class="field"><span class="field-label"><span data-i18n="web.max_length">Length to convert (s)</span><button type="button" class="tip" data-i18n-title="web.tip_duration" title="Empty converts the whole video."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span> <input type="number" id="duration" min="0.1" step="0.1" placeholder="Whole video" data-i18n-placeholder="web.full_length"></label>
+                </div>
+              </div>
+
+              <div class="setting" role="group" aria-labelledby="gDisplay">
+                <h4 class="setting-name" id="gDisplay"><i data-lucide="box" class="icon" aria-hidden="true"></i><span data-i18n="web.group_display">Display mode and depth</span></h4>
+                <div class="setting-body">
+                  <div class="fields">
+                    <label class="field"><span class="field-label"><span data-i18n="settings.mode">Display mode</span><button type="button" class="tip" data-i18n-title="web.tip_mode" title="Flat screen or a 3D sculpture."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span>
+                      <select id="mode">
+                        <option value="screen" data-i18n="mode.screen">Flat screen</option>
+                        <option value="relief" data-i18n="mode.relief">3D relief (brightness = depth)</option>
+                        <option value="extrude" data-i18n="mode.extrude">3D silhouette (bright parts extruded)</option>
+                        <option value="inflate" data-i18n="mode.inflate">3D inflate (bright parts rounded)</option>
+                      </select>
+                    </label>
+                    <label class="field"><span class="field-label"><span data-i18n="settings.depth">Depth (blocks)</span><button type="button" class="tip" data-i18n-title="web.tip_depth" title="How deep the 3D modes go."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span>
+                      <span class="range-pair"><input type="range" class="range" data-sync="depth" min="2" max="64" step="1" aria-hidden="true" tabindex="-1"><input type="number" id="depth" value="16" min="2" max="64"></span></label>
+                  </div>
+                  <label class="switch"><input type="checkbox" id="anamorphic"> <span data-i18n="web.anamorphic">Trompe-l'oeil (3D and .vox only)</span></label>
+                  <label class="switch"><input type="checkbox" id="pairFlat"> <span data-i18n="settings.pair_flat">With a 3D mode, also add the normal flat video</span></label>
+                  <label class="field field-wide"><span class="field-label" data-i18n="web.stage_background">Trompe-l'oeil background video (optional)</span>
+                    <input type="file" id="stageBackground" accept="video/*"></label>
+                </div>
+              </div>
+
+              <div class="setting" role="group" aria-labelledby="gColor">
+                <h4 class="setting-name" id="gColor"><i data-lucide="palette" class="icon" aria-hidden="true"></i><span data-i18n="web.group_color">Colour and palette</span></h4>
+                <div class="setting-body fields">
+                  <label class="field"><span class="field-label"><span data-i18n="settings.palette">Palette</span><button type="button" class="tip" data-i18n-title="web.tip_palette" title="Which blocks can be used."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span>
+                    <select id="palette">
+                      <option value="auto" data-i18n="palette.auto">Auto (recommended: up to 127 of 214 colors per scene)</option>
+                      <option value="all" data-i18n="palette.all">All blocks, 127 colors (concrete, terracotta, wool, wood, stone, light blocks…)</option>
+                      <option value="full" data-i18n="palette.full">All 39 colors (concrete + terracotta + light blocks)</option>
+                      <option value="expanded" data-i18n="palette.expanded">Extended 33 colors (concrete + terracotta)</option>
+                      <option value="concrete" data-i18n="palette.concrete">Basic 16 colors (concrete)</option>
+                      <option value="glass" data-i18n="palette.glass">Stained glass, 16 colors (translucent, for 3D holograms)</option>
+                    </select>
+                  </label>
+                  <label class="field"><span class="field-label"><span data-i18n="settings.dither">Dithering</span><button type="button" class="tip" data-i18n-title="web.tip_dither" title="Mixes blocks to show colours that are not in the palette."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span>
+                    <select id="dither">
+                      <option value="blue_noise">Blue Noise</option>
+                      <option value="none" data-i18n="web.dither_none">None</option>
+                      <option value="ordered">Ordered</option>
+                      <option value="floyd">Floyd-Steinberg</option>
+                      <option value="atkinson">Atkinson</option>
+                      <option value="burkes">Burkes</option>
+                      <option value="sierra">Sierra Lite</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              <div class="setting" role="group" aria-labelledby="gImage">
+                <h4 class="setting-name" id="gImage"><i data-lucide="image" class="icon" aria-hidden="true"></i><span data-i18n="web.group_image">Image mode (experimental)</span></h4>
+                <div class="setting-body">
+                  <label class="switch"><input type="checkbox" id="imageMode"> <span data-i18n="web.image_mode">Also build the image-mode add-on (experimental, separate file; you get 2 downloads)</span><button type="button" class="tip" data-i18n-title="web.tip_image" title="Shows the video as pictures instead of blocks."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></label>
+                  <div class="fields depends" data-depends="imageMode">
+                    <label class="field"><span class="field-label" data-i18n="image.lighting_label">Brightness:</span>
+                      <select id="imageLighting">
+                        <option value="bright" data-i18n="image.lighting.bright">Always bright (recommended)</option>
+                        <option value="world" data-i18n="image.lighting.world">Follow world light (dark at night)</option>
+                      </select>
+                    </label>
+                    <label class="switch"><input type="checkbox" id="imagePngOptimize"> <span data-i18n="image.png_optimize">Optimize PNG (smaller pack, slower)</span></label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="setting" role="group" aria-labelledby="gOptimize">
+                <h4 class="setting-name" id="gOptimize"><i data-lucide="zap" class="icon" aria-hidden="true"></i><span data-i18n="web.group_optimize">Optimization</span></h4>
+                <div class="setting-body">
+                  <div class="fields">
+                    <label class="field"><span class="field-label"><span data-i18n="settings.keyframe">Keyframe interval</span><button type="button" class="tip" data-i18n-title="web.tip_keyframe" title="How often a whole frame is stored."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span> <input type="number" id="keyframe" value="30" min="0" max="300"></label>
+                  </div>
+                  <label class="switch"><input type="checkbox" id="perceptual" checked> <span data-i18n="settings.perceptual">Perceptual optimization (sharper edges)</span></label>
+                  <label class="switch"><input type="checkbox" id="flatAreas"> <span data-i18n="settings.flat_areas">Smooth out blotches in flat areas (sky, walls; colours may look slightly duller)</span></label>
+                </div>
+              </div>
+
+              <div class="setting" role="group" aria-labelledby="gCompat">
+                <h4 class="setting-name" id="gCompat"><i data-lucide="gamepad-2" class="icon" aria-hidden="true"></i><span data-i18n="web.group_compat">Minecraft compatibility</span></h4>
+                <div class="setting-body">
+                  <label class="field"><span class="field-label"><span data-i18n="web.target">Minecraft version</span><button type="button" class="tip" data-i18n-title="web.tip_target" title="Older versions need cheats."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span>
+                    <select id="target">
+                      <option value="latest" data-i18n="web.target_latest">1.26.10 or newer (no cheats needed)</option>
+                      <option value="legacy" data-i18n="web.target_legacy">1.21.80 to 1.26.0 (cheats needed)</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              <details class="setting setting-fold disclosure">
+                <summary><i data-lucide="settings" class="icon" aria-hidden="true"></i><span data-i18n="web.group_advanced">Pack name and commands</span><i data-lucide="chevron-down" class="icon chevron" aria-hidden="true"></i></summary>
+                <div class="disclosure-body fields">
+                  <label class="field"><span class="field-label" data-i18n="pack.name">Pack name</span> <input type="text" id="packName" value="Block &amp; Image Video Player"></label>
+                  <label class="field"><span class="field-label"><span data-i18n="pack.namespace">Command prefix</span><button type="button" class="tip" data-i18n-title="web.tip_namespace" title="Commands start with this."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span> <input type="text" id="namespace" value="badapple" pattern="[a-z0-9_]+"></label>
+                </div>
+              </details>
+            </div>
+          </section>
+        </div>
+
+        <!-- 3. 作る: 段階は worker のログのキーと <progress> の実際の値から出す (架空の進み具合は出さない。web/ui.js) -->
+        <aside class="studio-side">
+          <section class="panel console" id="buildCard" aria-labelledby="stepBuild" data-state="idle">
+            <header class="panel-head"><span class="panel-index" aria-hidden="true">3</span><h3 id="stepBuild" class="step-title" data-i18n="web.section_build">3. Build</h3></header>
+            <div class="summary" id="settingsSummary" aria-live="polite"></div>
+            <p id="loadHint" class="hint load-hint"></p>
+            <button type="button" id="build" class="button button-primary button-build" disabled>
+              <span class="build-icon" aria-hidden="true"><span class="spinner"></span><i data-lucide="check" class="icon check" aria-hidden="true"></i></span>
+              <span data-i18n="build.button">Create .mcaddon</span>
+            </button>
+            <div class="progress-wrap">
+              <div class="progress-meta"><span id="buildActivity" class="activity" aria-live="polite"></span><span id="progressText" class="progress-number"></span></div>
+              <progress id="progress" max="1" value="0"></progress>
+            </div>
+            <ol class="stepper" id="stepper" aria-label="Progress">
+              <li data-stage="frames"><span class="stepper-dot" aria-hidden="true"></span><span data-i18n="web.stage_frames">Read frames</span></li>
+              <li data-stage="prepare"><span class="stepper-dot" aria-hidden="true"></span><span data-i18n="web.stage_prepare">Prepare</span></li>
+              <li data-stage="convert"><span class="stepper-dot" aria-hidden="true"></span><span data-i18n="web.stage_convert">Convert</span></li>
+              <li data-stage="pack"><span class="stepper-dot" aria-hidden="true"></span><span data-i18n="web.stage_pack">Package</span></li>
+              <li data-stage="done"><span class="stepper-dot" aria-hidden="true"></span><span data-i18n="web.stage_done">Done</span></li>
+            </ol>
+            <div class="alert" id="buildError" role="alert" hidden>
+              <i data-lucide="circle-x" class="icon" aria-hidden="true"></i>
+              <div><strong data-i18n="web.build_failed_title">The build failed</strong><p id="buildErrorText"></p></div>
+            </div>
+            <!-- できたファイル (リンクの id は今までと同じ。画像モードは別ファイル) -->
+            <div class="results" id="results" hidden>
+              <p class="results-title"><i data-lucide="circle-check" class="icon" aria-hidden="true"></i><span data-i18n="web.build_done_title">Your add-on is ready</span></p>
+              <div class="file-result">
+                <div class="file-meta"><span class="file-name" id="downloadName"></span><span class="file-size" id="downloadSize"></span></div>
+                <a id="download" class="button button-primary button-download" hidden><i data-lucide="download" class="icon" aria-hidden="true"></i><span data-i18n="web.download">Download</span></a>
+              </div>
+              <div class="file-result" id="imageResult" hidden>
+                <div class="file-meta"><span class="file-name" id="imageDownloadName"></span><span class="file-size" id="imageDownloadSize"></span></div>
+                <a id="imageDownload" class="button button-ghost button-download" hidden><i data-lucide="download" class="icon" aria-hidden="true"></i><span data-i18n="web.image_download">Download the image-mode add-on</span></a>
+              </div>
+            </div>
+            <details class="disclosure log-box" id="logBox">
+              <summary><span data-i18n="web.show_log">Details</span><i data-lucide="chevron-down" class="icon chevron" aria-hidden="true"></i></summary>
+              <pre id="log"></pre>
+            </details>
+          </section>
+        </aside>
+      </div>
+
+      <!-- 4. できあがりのプレビュー (web/preview.js)。並べる・元だけ・Minecraft だけ、再生とシークの帯 (web/ui.js) -->
+      <section class="panel preview-panel" id="previewCard" aria-labelledby="stepPreview" hidden>
+        <header class="panel-head"><span class="panel-index" aria-hidden="true">4</span><h3 id="stepPreview" class="step-title" data-i18n="web.preview_title">4. Preview</h3></header>
+        <p class="hint" data-i18n="web.preview_note">How the add-on looks in Minecraft, drawn with the same rules as the game.</p>
+        <div class="preview-toolbar">
+          <div class="segmented segmented-view" id="previewView" role="radiogroup">
+            <button type="button" role="radio" data-view="split" aria-checked="true" data-i18n="web.view_split">Side by side</button>
+            <button type="button" role="radio" data-view="source" aria-checked="false" data-i18n="web.preview_original">Original</button>
+            <button type="button" role="radio" data-view="blocks" aria-checked="false" data-i18n="web.preview_blocks">In Minecraft</button>
+          </div>
+          <label id="previewPick" class="field field-inline" hidden><span class="field-label" data-i18n="web.preview_video">Video</span> <select id="previewSelect"></select></label>
+        </div>
+        <div class="player" id="player" data-view="split">
+          <div class="preview">
+            <figure id="previewSourceBox"><figcaption data-i18n="web.preview_original">Original</figcaption>
+              <video id="previewSource" playsinline preload="auto"></video></figure>
+            <figure id="previewBlocksBox"><figcaption data-i18n="web.preview_blocks">In Minecraft</figcaption>
+              <canvas id="previewCanvas" width="1" height="1"></canvas>
+              <button type="button" id="previewPlay" class="button button-ghost play-own" hidden data-i18n="web.preview_play">Play</button></figure>
+          </div>
+          <div class="glass-bar" id="glassBar" hidden>
+            <button type="button" class="glass-play" id="glassPlay" aria-label="Play" data-i18n-title="web.preview_play">
+              <i data-lucide="play" class="icon i-play" aria-hidden="true"></i>
+              <i data-lucide="pause" class="icon i-pause" aria-hidden="true"></i>
+            </button>
+            <span class="glass-time" id="glassTime">0:00</span>
+            <input type="range" class="range glass-seek" id="glassSeek" min="0" max="1000" value="0" aria-label="Seek">
+            <span class="glass-time" id="glassLength">0:00</span>
+          </div>
+        </div>
+        <p id="previewInfo" class="hint"></p>
+      </section>
     </div>
   </section>
 </main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <div class="footer-brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M16 3 28 9.5 16 16 4 9.5Z" class="face-top"/>
+        <path d="M16 16 28 9.5v13L16 29Z" class="face-right"/>
+        <path d="M16 16 4 9.5v13L16 29Z" class="face-left"/>
+      </svg>
+      <div><strong>Block &amp; Image Video Player</strong><span data-i18n="web.subtitle">Web Converter (beta)</span></div>
+    </div>
+    <nav class="footer-links" aria-label="Project">
+      <a href="https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player" rel="noopener" data-i18n="web.footer_source">Source code</a>
+      <a href="https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest" rel="noopener" data-i18n="web.footer_releases">Windows app and releases</a>
+      <a href="https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/blob/main/CHANGELOG.md" rel="noopener" data-i18n="web.footer_changelog">Changelog</a>
+      <a href="https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/issues" rel="noopener" data-i18n="web.footer_issues">Report a problem</a>
+      <a href="https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/blob/main/LICENSE" rel="noopener" data-i18n="web.footer_license">MIT License</a>
+    </nav>
+    <p class="footer-note" data-i18n="web.footer_disclaimer">Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.</p>
+  </div>
+</footer>
+
+<!-- 知らせ (追加・完成・失敗) を右下に積む -->
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+<div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+
 <script src="config.js"></script>
 <script src="i18n.js"></script>
 <script src="usage.js"></script>
@@ -176,6 +511,8 @@
 <script src="preview.js"></script>
 <script src="camera.js"></script>
 <script src="mmd.js"></script>
+<script src="vendor/lucide/icons.js"></script>
+<script src="ui.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

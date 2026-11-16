@@ -40,6 +40,7 @@ function log(text) {
   const el = $("log");
   el.textContent += text + "\n";
   el.scrollTop = el.scrollHeight;
+  UI.activity(text); // 作っている間の「いまの処理」の 1 行 (web/ui.js)
 }
 
 function safeId(name, used) {
@@ -75,6 +76,7 @@ function loadVideoElement(url, name = "") {
 
 async function addFiles(fileList) {
   const hadVideo = videos.some((v) => !v.vox);
+  const before = videos.length;
   const used = new Set(videos.map((v) => v.id));
   for (const file of fileList) {
     if (isVox(file)) {
@@ -105,6 +107,7 @@ async function addFiles(fileList) {
   }
   renderList();
   fillDuration();
+  if (videos.length > before) UI.toast(t("web.toast_added", { count: videos.length - before }), "file");
   // 最初の動画を足したら、その縦横比に合わせる (Windows 版のはじめてガイドと同じく黒帯を出さない)
   if (!hadVideo && videos.some((v) => !v.vox)) fitAspect();
 }
@@ -129,21 +132,28 @@ function durationLimit(s) {
   return s.duration > 0 ? s.duration : Infinity;
 }
 
+// 一覧はカード (サムネイル・名前・大きさ・ID・外すボタン) で見せる。カードの見た目は web/ui.js の UI.fileCard
 function renderList() {
   const list = $("videoList");
   list.innerHTML = "";
   for (const v of videos) {
-    const li = document.createElement("li");
     const input = document.createElement("input");
     input.value = v.id;
     input.title = t("web.video_id");
     input.onchange = () => { v.id = safeId(input.value, new Set(videos.filter((o) => o !== v).map((o) => o.id))); input.value = v.id; };
-    li.append(input, v.mmd ? ` ${v.title} (MMD 3D)` : v.vox ? ` ${v.title} (MagicaVoxel 3D)`
-      : v.image ? ` ${v.title} (${t("web.image_item")}, ${v.width}×${v.height})` : ` ${v.title} (${v.width}×${v.height}, ${v.duration.toFixed(1)} s)`);
-    list.append(li);
+    list.append(UI.fileCard(v, input, () => removeVideo(v)));
   }
   $("build").disabled = videos.length === 0;
   updateLoadHint();
+}
+
+/** 一覧から外す (作り終えたアドオンには関係しない)。 */
+function removeVideo(v) {
+  const index = videos.indexOf(v);
+  if (index < 0) return;
+  videos.splice(index, 1);
+  renderList();
+  fillDuration();
 }
 
 // GUI の「動画の縦横比に合わせる」と同じ: 長い辺をそのままに、短い辺を縦横比に合わせる (偶数にそろえる)
@@ -393,7 +403,7 @@ function startWorker() {
   worker.onmessage = (event) => {
     const msg = event.data;
     // worker の文はキーで受け取ってここで翻訳する (Python の出力はそのまま)
-    if (msg.type === "log") log(msg.key ? (msg.indent || "") + t(msg.key, msg.params) : msg.text);
+    if (msg.type === "log") { UI.workerLog(msg); log(msg.key ? (msg.indent || "") + t(msg.key, msg.params) : msg.text); }
     else if (msg.type === "progress") $("progress").value = msg.value;
     else if (msg.type === "done") finish(msg);
     else if (msg.type === "error") failed(msg.text);
@@ -426,6 +436,8 @@ function finish(msg) {
   $("progress").value = 1;
   $("build").disabled = false;
   log(t("web.done", { size: (blob.size / 1024).toFixed(0) }));
+  UI.buildDone({ name: link.download, size: blob.size, imageName: msg.imageAddon ? $("imageDownload").download : "",
+                 imageSize: msg.imageAddon ? msg.imageAddon.byteLength : 0 });
   window.lastResult = msg; // テスト用
   if (msg.previews && msg.previews.length) {
     // プレビューが出せなくてもアドオンはできている (ダウンロードはそのまま)
@@ -441,6 +453,7 @@ function finish(msg) {
 
 function failed(text) {
   log(t("web.error", { error: text }));
+  UI.buildFailed(text);
   $("build").disabled = false;
   if (lastBuild) Usage.event("build-error");
   lastBuild = null;
@@ -476,6 +489,7 @@ async function build() {
   $("imageDownload").hidden = true;
   Preview.hide();
   $("log").textContent = "";
+  UI.buildStart();
   const w = startWorker();
   lastBuild = { kind: Usage.kindOf(s, videos.some((v) => v.vox), videos.some((v) => !v.vox)), lang: I18n.language };
   Usage.event("build-start");
@@ -522,6 +536,7 @@ async function build() {
     for (const f of background.frames) transfer.push(f.buffer);
     for (const [, , bytes] of background.sounds) transfer.push(bytes.buffer);
   }
+  UI.handedOver();
   w.postMessage({ type: "build", settings: s, jobs, background, lang: I18n.language },
     transfer);
 }
