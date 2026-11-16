@@ -1,0 +1,166 @@
+{
+ "items": [
+  {
+   "width": 64,
+   "height": 36,
+   "palette": "auto",
+   "dither": "blue_noise",
+   "file": "64x36_auto_blue_noise.png",
+   "blocks": 2304,
+   "colours": 23
+  },
+  {
+   "width": 64,
+   "height": 36,
+   "palette": "auto",
+   "dither": "floyd",
+   "file": "64x36_auto_floyd.png",
+   "blocks": 2304,
+   "colours": 29
+  },
+  {
+   "width": 64,
+   "height": 36,
+   "palette": "auto",
+   "dither": "none",
+   "file": "64x36_auto_none.png",
+   "blocks": 2304,
+   "colours": 18
+  },
+  {
+   "width": 64,
+   "height": 36,
+   "palette": "concrete",
+   "dither": "blue_noise",
+   "file": "64x36_concrete_blue_noise.png",
+   "blocks": 2304,
+   "colours": 12
+  },
+  {
+   "width": 64,
+   "height": 36,
+   "palette": "concrete",
+   "dither": "floyd",
+   "file": "64x36_concrete_floyd.png",
+   "blocks": 2304,
+   "colours": 13
+  },
+  {
+   "width": 64,
+   "height": 36,
+   "palette": "concrete",
+   "dither": "none",
+   "file": "64x36_concrete_none.png",
+   "blocks": 2304,
+   "colours": 8
+  },
+  {
+   "width": 128,
+   "height": 72,
+   "palette": "auto",
+   "dither": "blue_noise",
+   "file": "128x72_auto_blue_noise.png",
+   "blocks": 9216,
+   "colours": 36
+  },
+  {
+   "width": 128,
+   "height": 72,
+   "palette": "auto",
+   "dither": "floyd",
+   "file": "128x72_auto_floyd.png",
+   "blocks": 9216,
+   "colours": 36
+  },
+  {
+   "width": 128,
+   "height": 72,
+   "palette": "auto",
+   "dither": "none",
+   "file": "128x72_auto_none.png",
+   "blocks": 9216,
+   "colours": 26
+  },
+  {
+   "width": 128,
+   "height": 72,
+   "palette": "concrete",
+   "dither": "blue_noise",
+   "file": "128x72_concrete_blue_noise.png",
+   "blocks": 9216,
+   "colours": 14
+  },
+  {
+   "width": 128,
+   "height": 72,
+   "palette": "concrete",
+   "dither": "floyd",
+   "file": "128x72_concrete_floyd.png",
+   "blocks": 9216,
+   "colours": 14
+  },
+  {
+   "width": 128,
+   "height": 72,
+   "palette": "concrete",
+   "dither": "none",
+   "file": "128x72_concrete_none.png",
+   "blocks": 9216,
+   "colours": 9
+  },
+  {
+   "width": 256,
+   "height": 144,
+   "palette": "auto",
+   "dither": "blue_noise",
+   "file": "256x144_auto_blue_noise.png",
+   "blocks": 36864,
+   "colours": 40
+  },
+  {
+   "width": 256,
+   "height": 144,
+   "palette": "auto",
+   "dither": "floyd",
+   "file": "256x144_auto_floyd.png",
+   "blocks": 36864,
+   "colours": 41
+  },
+  {
+   "width": 256,
+   "height": 144,
+   "palette": "auto",
+   "dither": "none",
+   "file": "256x144_auto_none.png",
+   "blocks": 36864,
+   "colours": 27
+  },
+  {
+   "width": 256,
+   "height": 144,
+   "palette": "concrete",
+   "dither": "blue_noise",
+   "file": "256x144_concrete_blue_noise.png",
+   "blocks": 36864,
+   "colours": 14
+  },
+  {
+   "width": 256,
+   "height": 144,
+   "palette": "concrete",
+   "dither": "floyd",
+   "file": "256x144_concrete_floyd.png",
+   "blocks": 36864,
+   "colours": 14
+  },
+  {
+   "width": 256,
+   "height": 144,
+   "palette": "concrete",
+   "dither": "none",
+   "file": "256x144_concrete_none.png",
+   "blocks": 36864,
+   "colours": 9
+  }
+ ]
+}

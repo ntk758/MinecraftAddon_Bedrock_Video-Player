@@ -42,3 +42,4 @@ Thumbs.db
 *.mcaddon
 traffic_log.md
 web_dist/
+node_modules/

@@ -1,0 +1,14 @@
+{
+  "name": "block-image-video-player-web",
+  "private": true,
+  "description": "Front-end libraries for the browser version (web/). They are copied into web/vendor by scripts/vendor_web_libs.mjs; GitHub Pages does not run npm.",
+  "license": "MIT",
+  "scripts": {
+    "vendor:web": "node scripts/vendor_web_libs.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/bricolage-grotesque": "5.3.0",
+    "lucide": "1.73.0",
+    "motion": "14.14.0"
+  }
+}
