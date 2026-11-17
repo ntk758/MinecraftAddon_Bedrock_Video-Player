@@ -41,6 +41,8 @@ audio_chunks     音声のチャンク数 (0 なら無音)
 audio_chunk_seconds  チャンクの秒数 (既定 4)
 methods          ["a", "c"] など
 memory           {"texels": 全シートの画素数, "bytes": texels * 4}
+views            (立体だけ) 向きの数。マス = コマ × views (コマ f・向き k はマス f * views + k)。cells にマスの数
+loop             (立体だけ) true なら終わりで頭へ戻る (スクリプトもクライアントも)
 ```
 
 ## 名前
@@ -76,6 +78,9 @@ v.cell = v.frame - v.sheet * <cells_per_sheet>;
   `RP/materials/entity.material` に `"bvp_uv_anim:entity_alphatest": {"+defines": ["USE_UV_ANIM"]}`
   (Microsoft Learn「Improving performance and resource usage」の手順。同じ Learn が自作マテリアルは将来削除されうると書いているので、壊れるリスクをコメントに書く)。
 - 状態が 0 (停止) のときは、方式 A は全ボーンを隠し、方式 C も板を隠す (part_visibility で `q.property('<ns>:state') != 0`)。
+- 立体 (views ≥ 2、方式 A だけ): `v.rel = q.body_y_rotation - q.rotation_to_camera(1)` を 0〜360 にし、`v.view = math.mod(math.round(v.rel / (360 / views)), views)`、
+  `v.slot = v.frame * views + v.view` からシートとマスを求める。geometry はマスのボーンの親にボーン `root` を置き、アニメーション
+  `animation.<ns>.screen_<id>_a.face` が `root` を `[0, v.face, 0]` (`v.face = -v.rel`) 回してカメラへ向ける。マテリアルは `entity_alphatest`。
 
 ## スクリプトとの約束 (image_main.js)
 

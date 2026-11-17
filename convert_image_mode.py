@@ -20,7 +20,7 @@ from PIL import Image
 
 from image_mode.dedup import DEFAULT_NEAR_THRESHOLD, MODES as DEDUP_MODES, FrameDeduper, should_use, slot_intervals
 from mvcodec.resources import use_utf8_for_pipes
-from image_mode import atlas, budget
+from image_mode import atlas, budget, impostor
 from gui_i18n import LOCALES, addon_lang_files
 from image_mode.rp import LIGHTING_MODES, rp_files
 from pack_builder import build_manifest_version, write_file_atomic
@@ -30,6 +30,8 @@ APP_DIR = Path(__file__).resolve().parent
 IMAGE_MAIN_SCRIPT = APP_DIR / "image_mode" / "image_main.js"
 
 DEFAULT_NAMESPACE = "bvpimg"
+# 立体 (.vox) の既定の fps (ブロックモードの立体と同じ 10)
+IMPOSTOR_DEFAULT_FPS = 10.0
 DEFAULT_PACK_NAME = "Block & Image Video Player (Image)"
 MIN_ENGINE_VERSION = [1, 26, 10]
 ID_PATTERN = re.compile(r"^[a-z0-9_]+$")
@@ -249,6 +251,11 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
                     first_frame.append(np.array(frame, copy=True))
                 yield frame
 
+        views = int(source.get("views") or 1)
+        if views > 1 and dedup != "off":
+            raise ConvertError(f"[{video_id}] 角度で絵を切り替える立体 (.vox) は、同じ絵のコマをまとめる (--dedup) と一緒に使えません")
+        if views > 1 and sheet_format != "png":
+            raise ConvertError(f"[{video_id}] 角度で絵を切り替える立体 (.vox) は背景を透かすので、シートは PNG だけです")
         deduper = FrameDeduper(dedup, near_threshold) if dedup != "off" else None
         try:
             sheets, layout = atlas.pack_sheets(deduper(frames()) if deduper else frames(), width, height, max_sheet,
@@ -270,7 +277,10 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
         except ValueError as error:
             raise ConvertError(f"[{video_id}] {error}") from None
         if icon is None and first_frame:
-            icon = pack_icon(first_frame[0])
+            icon = pack_icon(first_frame[0][..., :3])
+        if views > 1:
+            # マス = コマ × 向き。メタデータの frame_count は時間のコマ数
+            frame_count = layout["frame_count"] // views
         sheets_of[video_id] = sheets
         texels = layout["sheet_width"] * layout["sheet_height"] * layout["sheets"]
         videos.append({
@@ -279,13 +289,15 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
             "sheet_width": layout["sheet_width"], "sheet_height": layout["sheet_height"],
             "cols": layout["cols"], "rows": layout["rows"], "cells_per_sheet": layout["cells_per_sheet"],
             "sheets": layout["sheets"], "gutter": gutter,
-            "screen_blocks": screen_blocks(width, height, screen_width),
+            "screen_blocks": source.get("screen_blocks") or screen_blocks(width, height, screen_width),
             "texture_paths": [f"textures/bvp_image/{video_id}/sheet_{n}" for n in range(layout["sheets"])],
             "audio_chunks": 0, "audio_chunk_seconds": audio_chunk_seconds, "methods": methods,
             "lighting": lighting,
             "memory": {"texels": texels, "bytes": texels * 4},
             # まとめたときだけ: マスの数と、コマ → マスの区間 (rp.pre_animation が使う)。無ければコマ = マス
             **({"cells": layout["frame_count"], "slot_map": slot_map} if slot_map else {}),
+            # 角度で絵を切り替える立体 (image_mode/impostor.py): 向きの数と、終わりで頭へ戻すこと
+            **({"views": views, "loop": True, "cells": layout["frame_count"]} if views > 1 else {}),
         })
         log(f"[{video_id}] {frame_count} コマ -> シート {layout['sheets']} 枚 "
             f"({layout['sheet_width']}x{layout['sheet_height']}, {layout['cols']}x{layout['rows']} マス)")
@@ -451,6 +463,13 @@ def build(args: argparse.Namespace, log=print) -> dict:
         used.add(video_id)
         ids.append(video_id)
     titles = args.titles or [p.stem for p in inputs]
+    voxes = [path.suffix.lower() == ".vox" for path in inputs]
+    if any(voxes):
+        if not all(voxes):
+            raise ConvertError("立体 (.vox) と動画は同じアドオンに入れられません (試作)。別々に作ってください")
+        return _build_impostor(args, inputs, ids, titles, log)
+    if args.fps is None:
+        args.fps = 30.0
     ends = [args.end] * len(inputs)
     if args.priority != "none":
         ends = apply_priority(args, inputs, log)
@@ -482,6 +501,42 @@ def build(args: argparse.Namespace, log=print) -> dict:
             sheet_format=getattr(args, "sheet_format", "png"), jpeg_quality=getattr(args, "jpeg_quality", DEFAULT_JPEG_QUALITY),
             dedup=getattr(args, "dedup", "off"), near_threshold=getattr(args, "near_threshold", DEFAULT_NEAR_THRESHOLD))
 
+    return _write_output(args, files, report, log)
+
+
+def _build_impostor(args: argparse.Namespace, inputs: list[Path], ids: list[str], titles: list[str], log=print) -> dict:
+    """立体 (.vox) から、角度で絵を切り替える立体 (image_mode/impostor.py) のアドオンを作る。音声なし・繰り返し再生。"""
+    from mvcodec.volume import load_vox_frames_with_palettes
+
+    if args.priority != "none":
+        raise ConvertError("立体 (.vox) では --priority を使えません (試作)")
+    views = args.views
+    fps = args.fps if args.fps is not None else IMPOSTOR_DEFAULT_FPS
+    loaded = []
+    for path in inputs:
+        try:
+            frames, palettes = load_vox_frames_with_palettes(path)
+        except (OSError, ValueError) as error:
+            raise ConvertError(f"立体を読めませんでした: {path}: {error}") from None
+        loaded.append(impostor.dense_frames(frames, palettes))
+    # 1 マスの高さは --height。幅は、全部の立体のうち一番広いものに合わせる (どの向きでも入るように)
+    sizes = [impostor.cell_size(shape, args.height) for _volumes, _rgbs, shape in loaded]
+    width = max(size[0] for size in sizes)
+    height = args.height
+    log(f"立体を {views} 方向から描きます: 1 マス {width}x{height}、{fps:g} fps、高さ {args.figure_blocks:g} ブロック")
+    sources = [{
+        "id": video_id, "title": title, "fps": fps, "views": views,
+        "screen_blocks": impostor.screen_blocks(width, height, args.figure_blocks),
+        "frames": impostor.render_cells(volumes, rgbs, shape, views, width, height, scale),
+    } for (volumes, rgbs, shape), (_w, _h, scale), video_id, title in zip(loaded, sizes, ids, titles)]
+    files, report = build_files(
+        sources, width=width, height=height, methods=["a"], namespace=args.namespace,
+        pack_name=args.pack_name or titles[0], max_sheet=args.max_sheet, gutter=args.gutter, max_cells=args.max_cells,
+        allow_over_budget=args.allow_over_budget, log=log, lighting=args.lighting, png_optimize=args.png_optimize)
+    return _write_output(args, files, report, log)
+
+
+def _write_output(args: argparse.Namespace, files: dict, report: dict, log=print) -> dict:
     output = Path(args.output)
     write_file_atomic(output, zip_bytes(files))
     report = {"namespace": report["namespace"], "pack_name": report["pack_name"], "output": str(output),
@@ -553,7 +608,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--titles", nargs="+", default=None, metavar="TITLE", help="表示名 (動画と同じ数)。既定はファイル名")
     parser.add_argument("--width", type=_positive_int, default=256, help="1 コマの横の画素数 (既定 256)")
     parser.add_argument("--height", type=_positive_int, default=144, help="1 コマの縦の画素数 (既定 144)")
-    parser.add_argument("--fps", type=_fps, default=30, help="再生の fps (1〜60、既定 30)")
+    parser.add_argument("--fps", type=_fps, default=None, help="再生の fps (1〜60、既定は動画 30・立体 (.vox) 10)")
     parser.add_argument("--start", type=float, default=None, help="開始位置 (秒)")
     parser.add_argument("--end", type=float, default=None, help="終了位置 (秒)")
     parser.add_argument("--fit", default="pad", choices=["pad", "cover"],
@@ -600,6 +655,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                              "(Minecraft での確認がまだなので既定は off)")
     parser.add_argument("--near-threshold", type=float, default=DEFAULT_NEAR_THRESHOLD,
                         help=f"--dedup near で同じとみなす画素ごとの差の平均 (0〜255、既定 {DEFAULT_NEAR_THRESHOLD})")
+    parser.add_argument("--views", type=_positive_int, default=impostor.DEFAULT_VIEWS,
+                        help="立体 (.vox) を何方向から描くか (試作。既定 8 = 45 度ごと。テクスチャは向きの数だけ増える)")
+    parser.add_argument("--figure-blocks", type=_positive_float, default=6,
+                        help="立体 (.vox) の高さ (ブロック数、既定 6)")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
     args = parser.parse_args(argv)
     if not 1 <= args.jpeg_quality <= 95:

@@ -648,6 +648,12 @@ system.runInterval(() => {
     ticksSinceSave = 0;
     saveState();
   }
+  if (video.loop && state.playMs / 1000 >= video.frame_count / video.fps) {
+    // 繰り返す動画 (角度で絵を切り替える立体。音声なし): 頭へ戻し、すぐ frame と seq を書き直す
+    state.playMs %= (video.frame_count / video.fps) * 1000;
+    syncScreen();
+    return;
+  }
   if (state.playMs / 1000 >= video.frame_count / video.fps) {
     // 最後のコマで止める (もう一度 start で最初から)
     state.pausedFrame = video.frame_count - 1;
