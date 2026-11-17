@@ -31,6 +31,19 @@ UV_ANIM_MATERIAL_KEY = "bvp_uv_anim:entity_alphatest"
 
 METHODS = ("a", "c")
 
+# インポスター (image_mode/impostor.py。動画のメタデータの views が 2 以上) の角度の向き。
+# v.rel = VIEW_SIGN * (体の向き - カメラへの向き) を、上から見て反時計回りの角度 (impostor.py の向き k の角度と同じ回り方) にし、
+# 板 (ボーン root) は FACE_SIGN * v.rel 回してカメラへ向ける。符号は Minecraft の実機 (Windows 11、1.26.63、2026-11-17) で決めた:
+# 両方 1 のとき、正面から 45 度・135 度では板が真横を向いて見えず、90 度では板の裏 (左右が逆の絵) が見えた。
+# 絵の選び方 (VIEW_SIGN) は正しく、板の回し方だけが逆だった。entity_alphatest は裏の面も描くので、板が逆を向くと鏡写しになる
+VIEW_SIGN = 1
+FACE_SIGN = -1
+IMPOSTOR_MATERIAL = "entity_alphatest"
+
+
+def _views(video: dict) -> int:
+    return int(video.get("views") or 1)
+
 
 def _num(value):
     """整数で表せる数は int にする (JSON と Molang に 30.0 のような余計な小数を出さない)。"""
@@ -104,6 +117,11 @@ def geometry_json(video: dict, method: str, namespace: str) -> dict:
         {"name": f"c{i}", "pivot": [0, 0, 0], "cubes": [_plane_cube(video, i)]}
         for i in range(cells)
     ]
+    if _views(video) > 1:
+        # インポスター: 板をまとめて回す親のボーン (中心 x = 0・z = 0 のまわりにカメラへ向ける)
+        for bone in bones:
+            bone["parent"] = "root"
+        bones.insert(0, {"name": "root", "pivot": [0, 0, 0]})
     return {
         "format_version": "1.12.0",
         "minecraft:geometry": [{
@@ -176,6 +194,12 @@ def pre_animation(video: dict, namespace: str) -> list:
     ns = namespace
     last = video["frame_count"] - 1
     per_sheet = video["cells_per_sheet"]
+    fps = _fps(video)
+    if video.get("loop"):
+        # 繰り返す動画 (インポスターの立体アニメ): 終わりで止めずに頭へ戻す
+        advance = f"math.mod(v.base_frame + math.floor((v.t - v.base_time) * {fps}), {video['frame_count']})"
+    else:
+        advance = f"math.min(v.base_frame + math.floor((v.t - v.base_time) * {fps}), {last})"
     return [
         f"v.seq_now = q.property('{ns}:seq');",
         "v.changed = (v.seq_seen ?? -1) != v.seq_now;",
@@ -183,13 +207,34 @@ def pre_animation(video: dict, namespace: str) -> list:
         "v.base_time = v.changed ? v.t : v.base_time;",
         f"v.base_frame = v.changed ? q.property('{ns}:frame') : v.base_frame;",
         "v.seq_seen = v.seq_now;",
-        f"v.frame = q.property('{ns}:state') == 1 ? math.min(v.base_frame + math.floor((v.t - v.base_time) * {_fps(video)}), {last}) : v.base_frame;",
-    ] + _cell_lines(video, per_sheet)
+        f"v.frame = q.property('{ns}:state') == 1 ? {advance} : v.base_frame;",
+    ] + _view_lines(video) + _cell_lines(video, per_sheet)
+
+
+def _view_lines(video: dict) -> list:
+    """インポスター: カメラの向きから、見せる向きの番号 (v.view) と板を回す角度 (v.face)。v.slot = v.frame * views + v.view。
+
+    q.rotation_to_camera(1) は、このエンティティからカメラを向くヨー。体の向き q.body_y_rotation との差が、
+    正面から見て何度まわった所にカメラがあるか。カメラの向きは見る人ごとなので、各自に自分の角度の絵が出る。
+    """
+    views = _views(video)
+    if views <= 1:
+        return []
+    step = _num(360 / views)
+    return [
+        f"v.rel = {VIEW_SIGN} * (q.body_y_rotation - q.rotation_to_camera(1));",
+        "v.rel = math.mod(math.mod(v.rel, 360) + 360, 360);",
+        f"v.view = math.mod(math.round(v.rel / {step}), {views});",
+        f"v.face = {FACE_SIGN} * v.rel;",
+        f"v.slot = v.frame * {views} + v.view;",
+    ]
 
 
 def _cell_lines(video: dict, per_sheet: int) -> list:
     """コマ (v.frame) から、シート (v.sheet) とその中のマス (v.cell)。同じ絵のコマをまとめた動画 (slot_map がある) は、
     先にコマからマス (v.slot) を区間の二分探索で引く (image_mode/dedup.py)。"""
+    if _views(video) > 1:
+        return [f"v.sheet = math.floor(v.slot / {per_sheet});", f"v.cell = v.slot - v.sheet * {per_sheet};"]
     if not video.get("slot_map"):
         return [f"v.sheet = math.floor(v.frame / {per_sheet});", f"v.cell = v.frame - v.sheet * {per_sheet};"]
     from image_mode.dedup import lookup_expression
@@ -207,16 +252,35 @@ def client_entity_json(video: dict, method: str, namespace: str) -> dict:
     # 出さないよう、裏の面を描かない entity にする。entity_alphatest は両面を描く: 実機の録画 2026-11-12。entity が裏を
     # 描かないことは実機で未確認)
     material = UV_ANIM_MATERIAL if method == "c" else "entity"
+    scripts = {"pre_animation": pre_animation(video, namespace)}
+    description = {
+        "identifier": entity_name(video, method, namespace),
+        "materials": {"default": material},
+        "textures": {f"sheet_{n}": path for n, path in enumerate(video["texture_paths"])},
+        "geometry": {"default": f"geometry.{namespace}.{short}"},
+        "render_controllers": [f"controller.render.{namespace}.{short}"],
+        "scripts": scripts,
+    }
+    if _views(video) > 1:
+        # インポスター: 背景を透かす (アルファテスト)。板はいつもカメラを向くので、裏の面が見えることは無い
+        description["materials"] = {"default": IMPOSTOR_MATERIAL}
+        description["animations"] = {"face": _face_animation_name(video, method, namespace)}
+        scripts["animate"] = ["face"]
+    return {"format_version": "1.10.0", "minecraft:client_entity": {"description": description}}
+
+
+def _face_animation_name(video: dict, method: str, namespace: str) -> str:
+    return f"animation.{namespace}.{_short_name(video, method)}.face"
+
+
+def face_animation_json(video: dict, method: str, namespace: str) -> dict:
+    """インポスターの板 (ボーン root) を、pre_animation が求めた角度 v.face だけ縦の軸のまわりに回す。"""
     return {
-        "format_version": "1.10.0",
-        "minecraft:client_entity": {
-            "description": {
-                "identifier": entity_name(video, method, namespace),
-                "materials": {"default": material},
-                "textures": {f"sheet_{n}": path for n, path in enumerate(video["texture_paths"])},
-                "geometry": {"default": f"geometry.{namespace}.{short}"},
-                "render_controllers": [f"controller.render.{namespace}.{short}"],
-                "scripts": {"pre_animation": pre_animation(video, namespace)},
+        "format_version": "1.8.0",
+        "animations": {
+            _face_animation_name(video, method, namespace): {
+                "loop": True,
+                "bones": {"root": {"rotation": [0, "v.face", 0]}},
             },
         },
     }
@@ -256,6 +320,10 @@ def rp_files(videos: list, namespace: str) -> dict:
             files[f"models/entity/{short}.geo.json"] = _dump(geometry_json(video, method, namespace))
             files[f"render_controllers/{short}.render_controllers.json"] = _dump(
                 render_controller_json(video, method, namespace))
+            if _views(video) > 1:
+                if method != "a":
+                    raise ValueError("インポスター (views) は方式 a だけに対応しています")
+                files[f"animations/{short}.animation.json"] = _dump(face_animation_json(video, method, namespace))
             uses_c = uses_c or method == "c"
     if uses_c:
         # 方式 c を使う動画があるときだけ自作マテリアルを置く (material_json の注意を参照)
