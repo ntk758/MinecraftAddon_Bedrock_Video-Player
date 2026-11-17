@@ -72,3 +72,20 @@ def test_volume_slider_uses_the_2_0_form(scene, tmp_path):
     out = drive(tmp_path / "addon", {"demo": path}, steps)
     assert out["errors"] == []
     assert any("bvp.volume_set" in m for m in out["messages"]), out["messages"][-3:]
+
+
+def test_play_does_not_take_builtin_names_for_videos(scene, tmp_path):
+    """/scriptevent badapple:play constructor など、Object の性質の名前を動画と取り違えない (監査 AUD-11)。
+
+    VIDEOS はふつうのオブジェクトなので、以前は VIDEOS["constructor"] が真になり、その名前を選んで保存し、再生でエラーになった。"""
+    path, _ = scene
+    names = ("constructor", "toString", "__proto__", "hasOwnProperty")
+    steps = [{"event": "badapple:setup"}, {"tick": 1}]
+    for name in names:
+        steps += [{"event": "badapple:play", "message": name}, {"tick": 2}]
+    steps += [{"event": "badapple:play"}, {"until": "bvp.playback_finished"}]
+    out = drive(tmp_path / "addon", {"demo": path}, steps)
+    assert out["errors"] == []
+    assert sum("bvp.video_not_found" in m for m in out["messages"]) == len(names)
+    # 選んだ動画は変わらず、そのまま最後まで再生できる
+    assert any("bvp.playback_finished" in m for m in out["messages"])

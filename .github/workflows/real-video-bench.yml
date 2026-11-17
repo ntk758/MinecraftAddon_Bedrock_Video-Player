@@ -43,8 +43,11 @@ jobs:
           key: real-videos-${{ hashFiles('benchmark/datasets/real_videos.json') }}
 
       - name: Benchmark
+        env:
+          # 入力はスクリプトに直接埋め込まず、環境変数で渡す (引用符などを含む値がコマンドとして実行されないように)
+          BASELINE_INPUT: ${{ github.event.inputs.baseline }}
         run: |
-          BASELINE="${{ github.event.inputs.baseline }}"
+          BASELINE="$BASELINE_INPUT"
           if [ -z "$BASELINE" ]; then BASELINE="$(git describe --tags --abbrev=0)"; fi
           python benchmark/real_video_bench.py --out bench_out --cache bench_videos --baseline "$BASELINE"
           echo "## Real-video benchmark (vs $BASELINE)" >> "$GITHUB_STEP_SUMMARY"

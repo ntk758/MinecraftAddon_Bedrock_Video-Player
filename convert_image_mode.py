@@ -23,7 +23,7 @@ from mvcodec.resources import use_utf8_for_pipes
 from image_mode import atlas, budget
 from gui_i18n import LOCALES, addon_lang_files
 from image_mode.rp import LIGHTING_MODES, rp_files
-from pack_builder import build_manifest_version
+from pack_builder import build_manifest_version, write_file_atomic
 from pack_metadata import version_text
 
 APP_DIR = Path(__file__).resolve().parent
@@ -386,7 +386,8 @@ def combine_addons(block_addon: Path, image_addon: Path, output: Path | None = N
             if target in files:
                 raise ConvertError(f"まとめるファイルの名前が重なりました: {target}")
             files[target] = image.read(name)
-    output.write_bytes(zip_bytes(files))
+    # 書き終えてから置き換える (output を省くとブロックモードのファイルを上書きするので、途中で失敗してもそれを壊さない)
+    write_file_atomic(output, zip_bytes(files))
     return output
 
 
@@ -482,8 +483,7 @@ def build(args: argparse.Namespace, log=print) -> dict:
             dedup=getattr(args, "dedup", "off"), near_threshold=getattr(args, "near_threshold", DEFAULT_NEAR_THRESHOLD))
 
     output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(zip_bytes(files))
+    write_file_atomic(output, zip_bytes(files))
     report = {"namespace": report["namespace"], "pack_name": report["pack_name"], "output": str(output),
               "size_bytes": output.stat().st_size,
               "plan": getattr(args, "plan", None),

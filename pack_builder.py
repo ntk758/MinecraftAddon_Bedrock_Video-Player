@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import time
 import uuid
@@ -27,6 +28,47 @@ BUILD_STAMP_EPOCH = 1704067200  # 2024-01-01T00:00:00Z
 MANIFEST_VERSION_MAX = 65535
 # main.js の AUDIO_CHUNK_SECONDS と一致させること
 AUDIO_CHUNK_SECONDS = 10
+
+
+# 動画 ID とコマンドの接頭辞に使える文字。動画 ID は videos.js の名前・zip の中のパス (frames_<ID>.js など) に、接頭辞は
+# main.js の文字列とコマンドの名前 (/<接頭辞>:setup) にそのまま入るので、ここで確かめる (呼び出し側の検査が漏れても壊さない)
+SAFE_NAME = re.compile(r"[a-z0-9_]+")
+# Minecraft のコマンドの名前空間なので、独自のコマンドを登録できない
+RESERVED_NAMESPACES = {"minecraft"}
+# main.js の中の、接頭辞を差し替える行
+NAMESPACE_LINE = 'const EVENT_NAMESPACE = "badapple";'
+
+
+def check_names(ids, namespace: str) -> None:
+    """動画 ID と接頭辞が SAFE_NAME だけでできていて、接頭辞が予約された名前でないことを確かめる (違えば ValueError)。"""
+    bad = sorted({video_id for video_id in ids if not SAFE_NAME.fullmatch(str(video_id))})
+    if bad:
+        raise ValueError(f"動画 ID は小文字の英数字と _ だけにしてください / video IDs may only use a-z, 0-9 and _: "
+                         f"{', '.join(map(repr, bad))}")
+    if not SAFE_NAME.fullmatch(str(namespace)) or namespace in RESERVED_NAMESPACES:
+        raise ValueError(f"コマンドの接頭辞は小文字の英数字と _ だけで、minecraft 以外にしてください / "
+                         f"the command prefix may only use a-z, 0-9 and _ and must not be minecraft: {namespace!r}")
+
+
+def write_file_atomic(path, data: bytes) -> Path:
+    """data を path に書く。同じフォルダの一時ファイルに書き終えてから置き換えるので、途中で失敗 (ディスクがいっぱいなど) しても
+    前からあるファイルは壊れず、書きかけのファイルも残らない。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.part")
+    try:
+        with open(temp, "wb") as out:
+            out.write(data)
+            out.flush()
+            try:
+                os.fsync(out.fileno())
+            except (OSError, AttributeError):  # fsync の無いファイルシステム (ブラウザ版の Pyodide のメモリなど)
+                pass
+        os.replace(temp, path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+    return path
 
 
 # 製品名を "Block Video Player" から変えた (v6.36.0)。既定のパック名のまま作り直した人のパックが別のパックに
@@ -147,6 +189,10 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
         files[path] = content.encode("utf-8") if isinstance(content, str) else bytes(content)
 
     ids = [video["id"] for video in videos]
+    check_names(ids, namespace)
+    if NAMESPACE_LINE not in main_text:
+        # 差し替えられないと、接頭辞が badapple のままのアドオンを黙って作ってしまう
+        raise ValueError(f"main.js に接頭辞の行がありません / main.js has no line: {NAMESPACE_LINE}")
     duplicates = sorted({video_id for video_id in ids if ids.count(video_id) > 1})
     if duplicates:
         # 同じ ID が 2 つあると videos.js の import がぶつかり、アドオン全体が読み込めなくなる
@@ -215,8 +261,7 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
     }
     put("RP/manifest.json", json.dumps(rp_manifest, ensure_ascii=False, indent=2) + "\n")
     # 再生速度は各動画データの fps から決まるので、main.js は接頭辞だけ差し替える
-    put("BP/scripts/main.js", main_text.replace('const EVENT_NAMESPACE = "badapple";',
-                                                 f'const EVENT_NAMESPACE = "{namespace}";'))
+    put("BP/scripts/main.js", main_text.replace(NAMESPACE_LINE, f'const EVENT_NAMESPACE = "{namespace}";'))
     put("BP/scripts/codec.js", codec_text)
     if icon is not None:
         put("RP/pack_icon.png", icon)
@@ -224,12 +269,15 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
     put("BP/CHANGELOG.md", changelog_markdown(pack_name))
     put("RP/CHANGELOG.md", changelog_markdown(pack_name))
 
-    target = output
-    if isinstance(output, (str, Path)):
-        Path(output).parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(files):
             archive.writestr(path, files[path])
+    if isinstance(output, (str, Path)):
+        # 書き終えてから置き換える (作り直しの途中で失敗しても、前の .mcaddon を壊さない)
+        write_file_atomic(output, buffer.getvalue())
+    else:
+        output.write(buffer.getvalue())
     return entries
 
 

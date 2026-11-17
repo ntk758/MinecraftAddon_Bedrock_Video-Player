@@ -164,8 +164,9 @@ class StreamEncoder:
         return apply_motion(self._prev, vectors, self.width, self.rows, MV_BLOCK)
 
     def payload_size(self):
-        """ここまでのデータの大きさ (UTF-16 文字に詰める前のバイト数の目安)。"""
-        return sum(len(s) for s in self._gop_strings) * 2 + len(self._gop_binary)
+        """ここまでのデータの大きさのバイト数の目安 (閉じた GOP は base64 の文字列で 1 文字 1 バイト、作りかけの GOP はバイト列)。
+        EncoderSet.best は全部の GOP を閉じてから比べる。"""
+        return sum(len(s) for s in self._gop_strings) + len(self._gop_binary)
 
     def _close_gop(self):
         data = pack_gop(self._gop_binary, self._gop_frames, self.entropy_mode) if self.entropy else self._gop_binary

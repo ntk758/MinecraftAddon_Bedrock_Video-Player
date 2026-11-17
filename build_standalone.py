@@ -1,5 +1,6 @@
-"""PyInstaller を使って Python・Node未インストール環境用の単体実行 EXE (dist/BlockVideoPlayer.exe) を作成するスクリプト。"""
+"""PyInstaller を使って Python・Node未インストール環境用の単体実行 EXE (dist/BlockVideoPlayer/BlockVideoPlayer.exe) を作成するスクリプト。"""
 
+import importlib.util
 import os
 import sys
 import subprocess
@@ -13,10 +14,9 @@ def build_standalone_exe():
     print("==================================================")
 
     # PyInstaller チェック
-    try:
-        import PyInstaller
+    if importlib.util.find_spec("PyInstaller") is not None:
         print("[1/3] PyInstaller 検出 OK")
-    except ImportError:
+    else:
         print("[1/3] PyInstaller をインストールしています...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
 
@@ -66,7 +66,7 @@ def build_standalone_exe():
 
     dist_dir = APP_DIR / "dist" / "BlockVideoPlayer"
     print("--------------------------------------------------")
-    print(f"[3/3] ビルド完了!")
+    print("[3/3] ビルド完了!")
     print(f"  出力ディレクトリ: {dist_dir}")
     print(f"  実行ファイル: {dist_dir / 'BlockVideoPlayer.exe'}")
     print("  ※ ポータブル用 ffmpeg.exe を上記ディレクトリに配置すると、PATH未設定の環境でも動作します。")

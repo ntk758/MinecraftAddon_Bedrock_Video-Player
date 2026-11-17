@@ -80,7 +80,8 @@ jobs:
 
       - name: Zip
         shell: pwsh
-        run: Compress-Archive -Path dist\BlockVideoPlayer -DestinationPath "BlockVideoPlayer-${{ env.TAG }}-windows-x64.zip"
+        # TAG はスクリプトに埋め込まず、環境変数として読む (前の段階で版と同じことを確かめてあるが、念のため)
+        run: Compress-Archive -Path dist\BlockVideoPlayer -DestinationPath "BlockVideoPlayer-$($env:TAG)-windows-x64.zip"
 
       - uses: actions/upload-artifact@v4
         with:
