@@ -2564,7 +2564,8 @@ function runAction(action, message, player) {
       if (!videoId) {
         startPlayback(dimension);
       } else {
-        if (VIDEOS[videoId]) {
+        // VIDEOS はふつうのオブジェクトなので、constructor・toString などの名前も「ある」と取り違えないよう、自分の動画だけを見る
+        if (Object.prototype.hasOwnProperty.call(VIDEOS, videoId)) {
           selectVideo(videoId);
           notify("video_selected", videoId);
           startPlayback(dimension);

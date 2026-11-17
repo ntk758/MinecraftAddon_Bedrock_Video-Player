@@ -417,7 +417,7 @@ function finish(msg) {
   lastDownloadUrl = URL.createObjectURL(blob);
   const link = $("download");
   link.href = lastDownloadUrl;
-  const s = settings();
+  const s = buildSettings || settings();
   // 旧版向けはファイル名で分かるようにする (パック名は変えないので、取り込み直すと同じパックとして置き換わる)
   link.download = `${s.packName.replace(/[^\w.-]+/g, "_")}${s.target === "legacy" ? "-mc1.21.80" : ""}.mcaddon`;
   link.hidden = false;
@@ -482,8 +482,18 @@ async function extractBackground(s) {
   return { title: file.name.replace(/\.[^.]+$/, ""), frames, sounds };
 }
 
+// コマンドの名前空間として予約されている接頭辞 (Windows 版・pack_builder.RESERVED_NAMESPACES と同じ)。/minecraft:setup は登録できない
+const RESERVED_NAMESPACES = ["minecraft"];
+// 作り始めたときの設定。完成の表示 (ファイル名・コマンドの接頭辞) は、作っている途中に書き換えた入力欄ではなくこれを使う
+let buildSettings = null;
+
 async function build() {
   const s = settings();
+  if (RESERVED_NAMESPACES.includes(s.namespace)) {
+    failed(t("error.namespace"));
+    return;
+  }
+  buildSettings = s;
   $("build").disabled = true;
   $("download").hidden = true;
   $("imageDownload").hidden = true;

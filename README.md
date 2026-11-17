@@ -483,7 +483,7 @@ python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 
 |---|---|
 | `--input-video` / `--frames-dir` | 入力動画、または画像連番フォルダ |
 | `--profile` | 既定値の組。`legacy` (既定: 64×64・20 fps・`full`・ディザなし。以前からの値) / `recommended` (Windows 版とブラウザ版の画面の既定: 128×128・10 fps・`auto`・Blue Noise)。個別に指定した引数が優先されます (v6.38.0 から) |
-| `--width` `--height` `--fps` `--duration` | 解像度・fps (最大 20)・変換する秒数 |
+| `--width` `--height` `--fps` `--duration` | 解像度・fps (最大 20)・変換する秒数 (0 より大きい値。最後までなら付けない) |
 | `--palette` | `concrete` (16 色) / `expanded` (33 色) / `full` (39 色) / `all` (全ブロックから色の離れた 127 色) / `auto` (214 色からシーンごとに選ぶ。GUI の既定) / `glass` (ステンドグラス 16 色、立体向け)。立体ではブロックの側面の色で選ぶ |
 | `--palette-colors` / `--palette-space` | `--palette auto` で選ぶ色数。既定の `auto` はシーンごとに 24 / 32 / 48 / 64 / 96 / 127 色から、色の誤差が 127 色のときの 1.05 倍以内に収まる一番少ない色数を選ぶ (数を指定するとその数まで。候補は光るブロックを除く 214 色) / 色を選ぶ色空間 `rgb` (既定) か `oklab` ([比較](docs/research/palette_space.md)) |
 | `--dither-method` | `none` / `blue_noise` / `ordered` / `floyd` / `atkinson` / `burkes` / `sierra` |
@@ -497,7 +497,7 @@ python convert.py --input-video in.mp4 --output out.js --width 128 --height 128 
 | `--depth` | 立体の奥行き (2〜128 ブロック、既定 16) |
 | `--depth-video` | `relief` の奥行きに使うグレースケール動画 (明るいほど手前) |
 | `--depth-hysteresis` | `relief` で奥行きを変えない揺れの幅 (段数、既定 1、0 で無効) |
-| `--extrude-threshold` / `--extrude-invert` | `extrude` / `inflate` で立体にする明るさのしきい値 / 暗い部分を立体にする |
+| `--extrude-threshold` / `--extrude-invert` | `extrude` / `inflate` で立体にする明るさのしきい値 (0〜1) / 暗い部分を立体にする |
 | `--thickness` | `extrude` の厚み (既定は奥行き全体) |
 | `--hollow` | 外から見えない内部を置かない (既定は無効。`block` 描画方式で置く数を減らしたいとき用。有効にすると 2.5D の送り方は使えない) |
 | `--entropy` / `--no-entropy` | GOP ごとにハフマン符号で圧縮する (既定は有効、`varint_rle_v6`)。`.js` が約 3〜5 割、`.mcaddon` が約 3 割小さくなる。v6.5 以前のアドオンでは再生できないので、古いアドオンに入れるデータは `--no-entropy` |

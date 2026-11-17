@@ -377,6 +377,10 @@ class _Reader:
         return {self.string(): self.string() for _ in range(self.int32())}
 
 
+# .vox の 1 ファイルのアニメーションのフレーム数の上限 (20 fps で 83 分。MagicaVoxel のアニメはふつう数百まで)
+MAX_VOX_FRAMES = 100_000
+
+
 def _rotation_matrix(byte):
     """nTRN の _r (1 バイト) を 3x3 の回転行列にする。"""
     c0 = byte & 3
@@ -467,9 +471,14 @@ def _evaluate_scene(models, nodes, hidden_layers, anim_range):
         items = node[4] if node[0] == "trn" else node[2] if node[0] == "shp" else []
         keys.update(int(item.get("_f", 0)) for item in items)
     if anim_range is not None:
-        frame_numbers = list(range(anim_range[0], anim_range[1] + 1))
+        first, last = anim_range
     else:
-        frame_numbers = list(range(0, max(keys) + 1)) if keys else [0]
+        first, last = 0, (max(keys) if keys else 0)
+    # 壊れた・細工したファイルの「とても長いアニメ」で、フレームの一覧を作り続けて固まらないよう、作る前に断る
+    if last < first or last - first + 1 > MAX_VOX_FRAMES:
+        raise ValueError(f".vox のアニメーションのフレームの範囲が正しくありません ({first}〜{last}。"
+                         f"1〜{MAX_VOX_FRAMES} フレームにしてください)")
+    frame_numbers = list(range(first, last + 1))
 
     def collect(node_id, frame, rotation, translation, out):
         node = nodes.get(node_id)

@@ -330,7 +330,8 @@ def make_auto_palette_builder(gpu, color_space="rgb", max_colors=AUTO_PALETTE_MA
     def build(samples, first_frame):
         # 同じ見た目の GOP はパレットを使い回す (JS 側の容量節約)。最初のコマだけで比べると、黒い画面から
         # 始まる別々の場面が同じパレットになってしまうので、パレットを作るのに使うコマ全部で比べる
-        digest = hashlib.md5(np.ascontiguousarray(first_frame[::8, ::8]).tobytes())
+        # 見た目を比べる鍵なので安全用途ではない (FIPS の Python でも使えるよう usedforsecurity=False)
+        digest = hashlib.md5(np.ascontiguousarray(first_frame[::8, ::8]).tobytes(), usedforsecurity=False)
         for sample in samples:
             digest.update(np.ascontiguousarray(sample[::8, ::8]).tobytes())
         thumb_hash = digest.hexdigest()
@@ -655,6 +656,12 @@ def parse_args(argv=None):
         parser.error("--width / --height は 1 以上にしてください")
     if not 0 < args.fps <= 20:
         parser.error("--fps は 0 より大きく 20 以下にしてください")
+    if args.duration is not None and not args.duration > 0:
+        # 0 以下は ffmpeg が分かりにくいエラーで止まるか、コマが 1 つも無くなる
+        parser.error("--duration は 0 より大きくしてください (最後までなら付けない)")
+    if not 0 <= args.extrude_threshold <= 1:
+        # 範囲の外では、どの画素も立体にならない (空のアドオンを黙って作る) か、全部の画素が立体になる
+        parser.error("--extrude-threshold は 0〜1 にしてください")
     if args.keyframe_interval < 0:
         parser.error("--keyframe-interval は 0 以上にしてください")
     if not 1 <= args.mv_range <= 15:
