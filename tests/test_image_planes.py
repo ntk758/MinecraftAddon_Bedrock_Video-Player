@@ -411,3 +411,29 @@ def test_the_uv_test_pack_holds_sixteen_variants_and_a_case(tmp_path):
     assert faces == {"east", "north", "up"}
     assert len(module.MAPPINGS) == 16 and len(set(module.MAPPINGS)) == 16
     assert "RP/models/entity/screen_case_test_a_case.geo.json" in files
+
+
+def test_rig_test_pack_script_adds_bone_animations(tmp_path):
+    """骨で動かす人物の試験用のアドオン (A20): 回す形のボーンに pivot があり、アニメーションが client_entity から動く。"""
+    import importlib.util
+    from pathlib import Path as _Path
+
+    script = _Path(__file__).resolve().parent.parent / "scripts" / "make_rig_test_pack.py"
+    spec = importlib.util.spec_from_file_location("make_rig_test_pack", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    out = tmp_path / "rig_test.mcaddon"
+    assert module.main([str(out)]) == 0
+    files = load(out)
+    bones = {b["name"]: b for b in
+             json.loads(files["RP/models/entity/screen_r_chain_a.geo.json"])["minecraft:geometry"][0]["bones"]}
+    assert bones["test"]["parent"] == "f0" and bones["child"]["parent"] == "test"
+    # pivot は白い角の中心と赤の先の中心 (1 ボクセル = 8、見本との間は geometry の x)
+    assert bones["test"]["pivot"] == [module.TEST_X, (1 + module.LIFT) * module.VOXEL, 0.0]
+    assert bones["child"]["pivot"][0] == module.TEST_X + 7 * module.VOXEL
+    description = json.loads(files["RP/entity/screen_r_x_a.entity.json"])["minecraft:client_entity"]["description"]
+    assert description["scripts"]["animate"] == ["pose"]
+    animation = json.loads(files["RP/animations/screen_r_x_a.animation.json"])["animations"]
+    assert animation[description["animations"]["pose"]]["bones"]["test"]["rotation"] == [90, 0, 0]
+    clock = json.loads(files["RP/animations/screen_r_clock_a.animation.json"])["animations"]
+    assert next(iter(clock.values()))["anim_time_update"] == "math.mod(v.t, 4)"
