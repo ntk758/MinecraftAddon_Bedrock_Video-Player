@@ -282,6 +282,16 @@ def quad_cube(quad: Quad, place: Placement, placing: Placing, mapping: FaceMappi
     }
 
 
+def model_point(voxel, placing: Placing, mapping: FaceMapping = DEFAULT_MAPPING) -> list[float]:
+    """ボクセルの座標の点 (x, y, z。実数) → geometry の座標 (quad_cube と同じ置き方。ボーンの pivot に使う)。"""
+    centres = (placing.centre[0], placing.centre[1], 0.0)
+    out = [0.0, 0.0, 0.0]
+    for vox_axis in range(3):
+        model, sign = mapping.model_axis(vox_axis)
+        out[model] = sign * (float(voxel[vox_axis]) - centres[vox_axis]) * placing.scale + placing.offset[model]
+    return out
+
+
 def figure_extent(volumes: list[np.ndarray]) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
     """全コマを合わせた、埋まっているボクセルの範囲 ((x0, y0, z0), (x1, y1, z1)。1 は含まない)。"""
     union = np.zeros(volumes[0].shape, bool)
