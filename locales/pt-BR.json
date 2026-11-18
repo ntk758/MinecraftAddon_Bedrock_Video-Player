@@ -402,6 +402,7 @@
   "imgaddon.seek_usage": "Uso: seek <segundos> (ex.: seek 7.5)",
   "imgaddon.reload_resumed": "Tela restaurada após recarregar o mundo: quadro %1",
   "imgaddon.wall_not_found": "Para colocar na parede, olhe para a lateral de um bloco (até 32 blocos).",
+  "imgaddon.case_not_on_wall": "Uma vitrine fica no chão, então foi colocada à sua frente em vez de na parede.",
   "imgaddon.volume_set": "Volume: %1%",
   "imgaddon.volume_usage": "Uso: volume <0-100>",
   "imgaddon.stats": "%1: %2, quadro %3 / %4 (%5 s), %6 fps, %7, volume %8%, tela %9",

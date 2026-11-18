@@ -402,6 +402,7 @@
   "imgaddon.seek_usage": "Uso: seek <segundos> (p. ej. seek 7.5)",
   "imgaddon.reload_resumed": "Pantalla restaurada tras recargar el mundo: fotograma %1",
   "imgaddon.wall_not_found": "Para ponerla en la pared, mira el lateral de un bloque (a 32 bloques o menos).",
+  "imgaddon.case_not_on_wall": "Una vitrina se coloca en el suelo, así que se puso delante de ti en lugar de en la pared.",
   "imgaddon.volume_set": "Volumen: %1%",
   "imgaddon.volume_usage": "Uso: volume <0-100>",
   "imgaddon.stats": "%1: %2, fotograma %3 / %4 (%5 s), %6 fps, %7, volumen %8%, pantalla %9",

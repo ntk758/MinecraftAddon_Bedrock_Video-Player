@@ -402,6 +402,7 @@
   "imgaddon.seek_usage": "사용법: seek <초> (예: seek 7.5)",
   "imgaddon.reload_resumed": "월드를 다시 열어 스크린을 복원했습니다: %1프레임",
   "imgaddon.wall_not_found": "벽에 붙이려면 32블록 안에 있는 블록의 옆면을 바라보세요.",
+  "imgaddon.case_not_on_wall": "유리 케이스는 바닥에 세우므로 벽 대신 앞에 놓았습니다.",
   "imgaddon.volume_set": "음량: %1%",
   "imgaddon.volume_usage": "사용법: volume <0-100>",
   "imgaddon.stats": "%1: %2, %3 / %4프레임 (%5초), %6 fps, %7, 음량 %8%, 스크린 %9",

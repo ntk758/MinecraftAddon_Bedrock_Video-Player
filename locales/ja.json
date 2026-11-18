@@ -402,6 +402,7 @@
   "imgaddon.seek_usage": "使い方: seek <秒> (例: seek 7.5)",
   "imgaddon.reload_resumed": "ワールドを開き直したので、スクリーンを元に戻しました: %1 コマ目",
   "imgaddon.wall_not_found": "壁に貼るには、32 ブロック以内のブロックの横の面を見てください。",
+  "imgaddon.case_not_on_wall": "ガラスケースは床に立てるので、壁ではなく目の前に置きました。",
   "imgaddon.volume_set": "音量: %1%",
   "imgaddon.volume_usage": "使い方: volume <0〜100>",
   "imgaddon.stats": "%1: %2、%3 / %4 コマ (%5 秒)、%6 fps、%7、音量 %8%、スクリーン %9",

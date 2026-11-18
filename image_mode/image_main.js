@@ -321,7 +321,10 @@ function setup(player, args) {
   const video = currentVideo();
   if (!video || !player) return;
   if (!video.methods.includes(state.method)) state.method = video.methods[0];
-  const placed = options.wall ? placeOnWall(player) : placeInFront(player, video, options.face);
+  // ガラスケースの立体 (video.glass) は床に立てるもので、壁には貼らない (wall を付けても目の前に置く)
+  const onWall = options.wall && !video.glass;
+  if (options.wall && video.glass) notify("case_not_on_wall");
+  const placed = onWall ? placeOnWall(player) : placeInFront(player, video, options.face);
   if (!placed) {
     notify("wall_not_found");
     return;
@@ -329,7 +332,7 @@ function setup(player, args) {
   state.location = placed.location;
   state.rotation = placed.rotation;
   // ブロックの格子にそろえる (横はブロックの中心、下端はブロックの面)。壁に貼るときは、もともとそろっている
-  if (options.align && !options.wall) {
+  if (options.align && !onWall) {
     const at = state.location;
     state.location = { x: Math.floor(at.x) + 0.5, y: Math.floor(at.y), z: Math.floor(at.z) + 0.5 };
   }

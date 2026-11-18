@@ -34,6 +34,32 @@ python convert_image_mode.py dancer.vox -o dancer_image.mcaddon --height 128 --f
 - PC (Windows 11、Minecraft 1.26.63) の実機で、正面・45 度ごと・後ろから、向きに合った絵がこちらを向いて映ること、踊りが繰り返すことを確かめました (2026-11-17)。スマートフォン・マルチプレイは未確認です。ブラウザ版・Windows 版の画面にはまだ出していません。
 - 角度の求め方と符号の決め方は DECISIONS.md の A18、作り方は `image_mode/impostor.py`。
 
+## ガラスケースの立体 (試作)
+
+立体を「ボクセルの外に出ている面」の板にして置きます (設計: [research/glass_case.md](research/glass_case.md))。板はゲームが見る人ごとに描くので、回り込んでも、上や斜め下から見ても、本物の立方体と同じ形に見えます。角度ごとの絵 (上の節) のように絵が切り替わることはありません。周りにケースを置くと、手前の壁は透けて、奥の壁だけが背景として見えます。
+
+```bash
+python convert_image_mode.py dancer.vox -o dancer_case.mcaddon --case --case-image back=bg.png --figure-blocks 6
+python convert_image_mode.py dancer.vox -o show.mcaddon --case --case-video mv.mp4      # 奥の壁で動画 (音声付き)
+python convert_image_mode.py mv.mp4 -o relief.mcaddon --lift relief --case --end 20      # 動画を浮き彫りにして置く
+```
+
+| オプション | 内容 |
+|---|---|
+| `--solid planes` | 面の板にする。`--case`・`--case-image`・`--case-video`・`--case-frame`・`--lift` を付けると自動で planes (既定の views は上の節の角度ごとの絵) |
+| `--plane-split rect\|tile8\|tile16` | 板の分け方。`rect` (既定) は平面ごとに 1 枚。`tile8` は透明な所とテクスチャが減るが、板が十数倍に増える |
+| `--case` / `--case-margin` / `--case-frame` | 床と 4 枚の壁 (人物との間は既定 0.5 ブロック) / 12 本の縁 |
+| `--case-image SIDE=PATH` | 壁と床の絵。SIDE は `back`・`front`・`left`・`right`・`floor`・`all`。渡さない所は暗い色 |
+| `--case-video VIDEO` | 奥の壁の内側で動画を流す。音声もこの動画。大きさは `--width`・`--height`、fps は `--case-video-fps` (既定 30)。人物は同じ時計で自分の fps (`--fps`、既定 10) で繰り返す |
+| `--lift relief\|extrude\|inflate` | 入力の動画を、ブロックモードと同じ方法で浮き彫りの立体にする (`--lift-size` 既定 128x72、`--depth` 既定 16、`--depth-video`・`--mask-video`)。正面から斜めまでは立体、横からは薄く、後ろからは平ら |
+| `--max-figure-frames` | 人物のコマ数の上限 (既定 240) |
+| `--face-mapping N,E,UU,UV` | 板の UV の向き (試験用。既定は実機で決めた `1,-1,1,-1`) |
+
+- `/bvpimg:setup <ID>` で、目の前の床にケースを立てます (`face`・`align` も使えます。`wall` を付けても壁には貼らず、目の前に置きます)。
+- 大きさの目安 (変換ツールで測った値): 踊る人物 (高さ 128 ボクセル・40 コマ) で板 7,715 枚・テクスチャ 31.5 MiB。動画の浮き彫り (128x72・奥行き 16) で 1 コマ板 126 枚・約 0.56 MiB (`tile8` なら 1,900 枚・約 0.39 MiB)。
+- PC (Windows 11、Minecraft v26.65) の実機で、人物が前・横・後ろ・斜め上から立方体に見えること、ケースの手前の壁だけが消えて残りの壁の絵が鏡写しにならないことを確かめました (2026-11-18)。板の UV の向きは、`python scripts/make_planes_test_pack.py planes_test.mcaddon` の試験用のアドオンの 16 通りから選びました (DECISIONS.md の A19)。スマートフォン・マルチプレイ・重さ (fps と読み込み時間)・遠くからの見え方は未確認です。
+- 限界: 入力はボクセル (`.vox`) か、動画の浮き彫りだけ。光の向きは立体に固定。透明は「あり・なし」の 2 段。人物の音声は無く、`.vox` は繰り返し再生。
+
 ## 明るさ・縮め方・シートの詰め方
 
 | オプション | 既定 | 内容 |

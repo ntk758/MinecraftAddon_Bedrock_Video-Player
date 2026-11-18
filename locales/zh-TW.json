@@ -402,6 +402,7 @@
   "imgaddon.seek_usage": "用法：seek <秒>（例：seek 7.5）",
   "imgaddon.reload_resumed": "重新開啟世界後已恢復螢幕：第 %1 格",
   "imgaddon.wall_not_found": "要貼在牆上，請看著 32 格以內方塊的側面。",
+  "imgaddon.case_not_on_wall": "玻璃展示櫃立在地面上，所以放在你面前，而不是牆上。",
   "imgaddon.volume_set": "音量：%1%",
   "imgaddon.volume_usage": "用法：volume <0-100>",
   "imgaddon.stats": "%1：%2，第 %3 / %4 格（%5 秒），%6 fps，%7，音量 %8%，螢幕%9",

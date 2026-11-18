@@ -43,6 +43,12 @@ methods          ["a", "c"] など
 memory           {"texels": 全シートの画素数, "bytes": texels * 4}
 views            (立体だけ) 向きの数。マス = コマ × views (コマ f・向き k はマス f * views + k)。cells にマスの数
 loop             (立体だけ) true なら終わりで頭へ戻る (スクリプトもクライアントも)
+glass            (ガラスケースの立体だけ) {"box": [幅, 奥行き, 高さ] ブロック, "master": "figure" か "wall_video",
+                 "figure": {frames, fps, loop, per_sheet, sheets, sheet_width, sheet_height, texture_paths, quads},
+                 "case": {texture_path, texture_size, uv: {部品: [x, y, 幅, 高さ]}, frame, frame_texel} (--case のとき),
+                 "wall_video": {frame_count, fps, width, height, cols, rows, cells_per_sheet, sheets, gutter,
+                                sheet_width, sheet_height, texture_paths, plane: [幅, 高さ, 下端] ブロック} (--case-video のとき)}
+                 トップの fps・frame_count・audio_* は主 (master) の時計。width・height は壁の動画 (無ければ人物のシート) の大きさ
 ```
 
 ## 名前
@@ -81,6 +87,21 @@ v.cell = v.frame - v.sheet * <cells_per_sheet>;
 - 立体 (views ≥ 2、方式 A だけ): `v.rel = q.body_y_rotation - q.rotation_to_camera(1)` を 0〜360 にし、`v.view = math.mod(math.round(v.rel / (360 / views)), views)`、
   `v.slot = v.frame * views + v.view` からシートとマスを求める。geometry はマスのボーンの親にボーン `root` を置き、アニメーション
   `animation.<ns>.screen_<id>_a.face` が `root` を `[0, v.face, 0]` (`v.face = -v.rel`) 回してカメラへ向ける。マテリアルは `entity_alphatest`。
+
+## ガラスケースの立体 (glass。image_mode/planes.py・glass.py・glass_rp.py)
+
+- 人物: ボクセルの外に出ている面を、軸ごとの境目の平面の板 (厚み 0 の直方体の east・north・up の面の 1 つだけに UV) にする。
+  ボーンはコマごとに `f<n>`、テクスチャ `Texture.fig_<n>` はシート 1 枚に `per_sheet` コマ。マテリアルは `entity_alphatest` (両面)。
+  UV の向き (FaceMapping) は uv_size がいつも正になるよう、画像を反転してシートに置く。向きの既定 (1, -1, 1, -1) は実機で決めた (DECISIONS.md の A19。east の面は -x を向く)。
+- ケース: geometry `geometry.<ns>.screen_<id>_a_case` のボーン `case_back`・`case_front`・`case_left`・`case_right`・`case_floor`
+  (内向きの面)・`case_frame`。マテリアルは `entity` (client_entity の `opaque`)。手前の壁は part_visibility で隠す:
+  `v.rel = q.body_y_rotation - q.rotation_to_camera(1)`、`v.flat = q.distance_from_camera * math.cos(q.rotation_to_camera(0))`、
+  カメラの位置 `v.cam_x = v.flat * math.sin(v.rel)`・`v.cam_y = -v.flat * math.cos(v.rel)` (ボクセルの向き。A18 と同じ符号)。
+  奥の壁は `v.cam_y < 奥行き/2` のときだけ、手前は `v.cam_y > -奥行き/2`、左は `v.cam_x > -幅/2`、右は `v.cam_x < 幅/2`。
+- 壁の動画: geometry `..._wall` のボーン `c<i>` (方式 a のマス)、テクスチャ `Texture.vid_<n>`。奥の壁と同じ条件で見せる。
+- 時計: 主が壁の動画なら、`v.secs` (主の時刻、終わりで止まる) から `v.fig = math.mod(math.floor(v.secs * 人物の fps + 0.0001), コマ数)`
+  (浮き彫りの人物は math.min で最後に止める)。主が人物なら `v.fig = v.frame`。`v.fsheet = math.floor(v.fig / per_sheet)`。
+- スクリプト: `setup` の `wall` は使わず、目の前の床に置く (`bvpimg.case_not_on_wall` で知らせる)。それ以外は今までの動画と同じ。
 
 ## スクリプトとの約束 (image_main.js)
 

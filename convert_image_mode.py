@@ -339,24 +339,9 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
             extension, data = sheet_file(sheet, sheet_format, png_optimize, jpeg_quality)
             sheet_kinds[extension] = sheet_kinds.get(extension, 0) + 1
             put(f"RP/textures/bvp_image/{video['id']}/sheet_{number}.{extension}", data)
-        for method in methods:
-            put(f"BP/entities/screen_{video['id']}_{method}.json",
-                json.dumps(entity_json(video, method, namespace), ensure_ascii=False, indent=2) + "\n")
-    if sound_definitions:
-        put("RP/sounds/sound_definitions.json", json.dumps(
-            {"format_version": "1.14.0", "sound_definitions": sound_definitions}, ensure_ascii=False, indent=2) + "\n")
     for relative, content in rp_files(videos, namespace).items():
         put(f"RP/{relative}", content)
-    for relative, content in lang_files().items():
-        put(f"RP/{relative}", content)
-    bp_manifest, rp_manifest = manifests(namespace, pack_name)
-    put("BP/manifest.json", json.dumps(bp_manifest, ensure_ascii=False, indent=2) + "\n")
-    put("RP/manifest.json", json.dumps(rp_manifest, ensure_ascii=False, indent=2) + "\n")
-    put("BP/scripts/image_videos.js", image_videos_js(videos, namespace))
-    put("BP/scripts/image_main.js", IMAGE_MAIN_SCRIPT.read_bytes())
-    if icon is not None:
-        put("RP/pack_icon.png", icon)
-        put("BP/pack_icon.png", icon)
+    _common_files(put, videos, namespace, pack_name, icon, sound_definitions)
 
     if sheet_format == "jpeg" and sheet_kinds.get("png"):
         log(f"PNG のほうが小さいシート {sheet_kinds['png']} 枚は PNG にしました (JPEG {sheet_kinds.get('jpg', 0)} 枚)")
@@ -372,6 +357,188 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
         "files": sorted(files),
     }
     return files, report
+
+
+def _common_files(put, videos: list[dict], namespace: str, pack_name: str, icon: bytes | None,
+                  sound_definitions: dict) -> None:
+    """どのアドオンにも入るファイル: BP のエンティティ・音の定義・lang・マニフェスト・スクリプト・アイコン。"""
+    for video in videos:
+        for method in video["methods"]:
+            put(f"BP/entities/screen_{video['id']}_{method}.json",
+                json.dumps(entity_json(video, method, namespace), ensure_ascii=False, indent=2) + "\n")
+    if sound_definitions:
+        put("RP/sounds/sound_definitions.json", json.dumps(
+            {"format_version": "1.14.0", "sound_definitions": sound_definitions}, ensure_ascii=False, indent=2) + "\n")
+    for relative, content in lang_files().items():
+        put(f"RP/{relative}", content)
+    bp_manifest, rp_manifest = manifests(namespace, pack_name)
+    put("BP/manifest.json", json.dumps(bp_manifest, ensure_ascii=False, indent=2) + "\n")
+    put("RP/manifest.json", json.dumps(rp_manifest, ensure_ascii=False, indent=2) + "\n")
+    put("BP/scripts/image_videos.js", image_videos_js(videos, namespace))
+    put("BP/scripts/image_main.js", IMAGE_MAIN_SCRIPT.read_bytes())
+    if icon is not None:
+        put("RP/pack_icon.png", icon)
+        put("BP/pack_icon.png", icon)
+
+
+def _sound_definition(namespace: str, video_id: str, index: int) -> tuple[str, dict]:
+    return f"{namespace}.img.{video_id}.chunk_{index}", {
+        "category": "ui",
+        "sounds": [{"name": f"sounds/bvp_image/{video_id}/chunk_{index}", "stream": True, "load_on_low_memory": True}],
+    }
+
+
+def _figure_icon(sheet: Image.Image, size: int = 256) -> bytes:
+    """人物のシートの左上 (最初のコマの板が並ぶ所) を黒地に置いたアイコン。"""
+    image = sheet.copy()
+    image.thumbnail((size, size), Image.Resampling.NEAREST)
+    canvas = Image.new("RGB", (size, size))
+    canvas.paste(image, ((size - image.width) // 2, (size - image.height) // 2), image)
+    out = io.BytesIO()
+    canvas.save(out, format="PNG")
+    return out.getvalue()
+
+
+def build_glass_files(entries: list[dict], *, namespace: str, pack_name: str, max_sheet: int = 2048, gutter: int = 1,
+                      max_cells: int = atlas.MAX_CELLS, audio_chunk_seconds: float = 4, allow_over_budget: bool = False,
+                      log=print, lighting: str = "bright", png_optimize: bool = False, sheet_format: str = "png",
+                      jpeg_quality: int = DEFAULT_JPEG_QUALITY, mapping=None) -> tuple[dict, dict]:
+    """ガラスケースの立体 (docs/research/glass_case.md) のアドオンのファイルとレポート。ffmpeg を使わない。
+
+    entries の 1 つは {"id", "title", "figure": glass.figure_from_volumes の戻り値, "figure_fps", "figure_loop",
+    "case": glass.CaseOptions か None, "wall_video": {"frames", "width", "height", "fps"} か None,
+    "audio": (最長の秒数) → [(番号, 拡張子, bytes)] か None (壁の動画か、浮き彫りにした動画の音声)}。
+    主の時計は、壁の動画があればその動画、無ければ人物 (figure_loop なら繰り返し、そうでなければ最後で止まる)。"""
+    from image_mode import glass, glass_rp, planes
+
+    mapping = mapping or planes.DEFAULT_MAPPING
+    if lighting not in LIGHTING_MODES:
+        raise ConvertError(f"lighting は {', '.join(LIGHTING_MODES)} のどれか: {lighting}")
+    files: dict[str, bytes] = {}
+
+    def put(path: str, content) -> None:
+        files[path] = content.encode("utf-8") if isinstance(content, str) else bytes(content)
+
+    videos, layouts, warnings = [], [], []
+    sound_definitions: dict = {}
+    icon = None
+    rp_texts: dict[str, str] = {}
+    for entry in entries:
+        video_id = entry["id"]
+        if not ID_PATTERN.match(video_id):
+            raise ConvertError(f"動画 ID は小文字の英数字と _ だけにしてください: {video_id}")
+        figure = entry["figure"]
+        first_layout = len(layouts)
+        box = glass.case_box(figure["size_blocks"], entry.get("case"))
+        log(f"[{video_id}] 人物: {figure['frames']} コマ、板 {figure['quads']} 枚、シート {len(figure['sheets'])} 枚 "
+            f"({figure['sheet_width']}x{figure['sheet_height']}、1 枚 {figure['per_sheet']} コマ)、"
+            f"大きさ {box[0]:g}x{box[1]:g}x{box[2]:g} ブロック")
+        if figure["quads"] > glass.QUAD_ERROR and not allow_over_budget:
+            raise ConvertError(f"[{video_id}] 板が {figure['quads']} 枚で多すぎます (上限 {glass.QUAD_ERROR})。"
+                               "コマ数・立体の細かさを減らすか、--allow-over-budget で作ってください")
+        if figure["quads"] > glass.QUAD_WARNING:
+            warnings.append(f"[{video_id}] 板が {figure['quads']} 枚あります。重くなるかもしれません "
+                            "(--plane-split rect で減る。コマ数・細かさを減らしても減る)")
+        fig_paths = [f"textures/bvp_image/{video_id}/fig_{n}" for n in range(len(figure["sheets"]))]
+        for number, sheet in enumerate(figure["sheets"]):
+            put(f"RP/{fig_paths[number]}.png", png_bytes(sheet, png_optimize))
+        layouts.append({"sheet_width": figure["sheet_width"], "sheet_height": figure["sheet_height"],
+                        "sheets": len(figure["sheets"])})
+        if icon is None and figure["sheets"]:
+            icon = _figure_icon(figure["sheets"][0])
+        glass_meta = {
+            "box": list(box),
+            "master": "wall_video" if entry.get("wall_video") else "figure",
+            "figure": {"frames": figure["frames"], "fps": _plain(entry["figure_fps"]), "loop": bool(entry["figure_loop"]),
+                       "per_sheet": figure["per_sheet"], "sheets": len(figure["sheets"]),
+                       "sheet_width": figure["sheet_width"], "sheet_height": figure["sheet_height"],
+                       "texture_paths": fig_paths, "quads": figure["quads"]},
+        }
+        case = entry.get("case")
+        if case is not None:
+            try:
+                texture, uv, frame_texel = glass.case_texture(box, case, mapping, gutter)
+            except ValueError as error:
+                raise ConvertError(f"[{video_id}] {error}") from None
+            path = f"textures/bvp_image/{video_id}/case"
+            put(f"RP/{path}.png", png_bytes(texture, png_optimize))
+            layouts.append({"sheet_width": texture.width, "sheet_height": texture.height, "sheets": 1})
+            glass_meta["case"] = {"texture_path": path, "texture_size": [texture.width, texture.height], "uv": uv,
+                                  "frame": bool(case.frame), **({"frame_texel": list(frame_texel)} if frame_texel else {})}
+        wall = entry.get("wall_video")
+        width, height = figure["sheet_width"], figure["sheet_height"]
+        if wall is not None:
+            if case is None:
+                raise ConvertError(f"[{video_id}] 壁の動画 (--case-video) はケース (--case) と一緒に使います")
+            try:
+                sheets, layout = atlas.pack_sheets(wall["frames"], wall["width"], wall["height"], max_sheet, gutter,
+                                                   max_cells)
+            except ValueError as error:
+                raise ConvertError(f"[{video_id}] {error}") from None
+            vid_paths = [f"textures/bvp_image/{video_id}/sheet_{n}" for n in range(layout["sheets"])]
+            for number, sheet in enumerate(sheets):
+                extension, data = sheet_file(sheet, sheet_format, png_optimize, jpeg_quality)
+                put(f"RP/{vid_paths[number]}.{extension}", data)
+            layouts.append({"sheet_width": layout["sheet_width"], "sheet_height": layout["sheet_height"],
+                            "sheets": layout["sheets"]})
+            glass_meta["wall_video"] = {
+                "frame_count": layout["frame_count"], "fps": _plain(wall["fps"]), "width": wall["width"],
+                "height": wall["height"], "cols": layout["cols"], "rows": layout["rows"],
+                "cells_per_sheet": layout["cells_per_sheet"], "sheets": layout["sheets"], "gutter": gutter,
+                "sheet_width": layout["sheet_width"], "sheet_height": layout["sheet_height"], "texture_paths": vid_paths,
+                "plane": glass.wall_plane(box, wall["width"], wall["height"]),
+            }
+            width, height = wall["width"], wall["height"]
+            fps, frame_count, loop = wall["fps"], layout["frame_count"], False
+            log(f"[{video_id}] 壁の動画: {frame_count} コマ -> シート {layout['sheets']} 枚")
+        else:
+            fps, frame_count, loop = entry["figure_fps"], figure["frames"], bool(entry["figure_loop"])
+        texels = sum(item["sheet_width"] * item["sheet_height"] * item["sheets"] for item in layouts[first_layout:])
+        video = {
+            "id": video_id, "title": entry["title"], "fps": _plain(fps), "frame_count": frame_count,
+            "width": width, "height": height, "screen_blocks": [box[0], box[2]],
+            "audio_chunks": 0, "audio_chunk_seconds": audio_chunk_seconds, "methods": ["a"], "lighting": lighting,
+            "memory": {"texels": texels, "bytes": texels * 4},
+            **({"loop": True} if loop else {}),
+            "glass": glass_meta,
+        }
+        chunks = entry["audio"](frame_count / fps) if entry.get("audio") else []
+        video["audio_chunks"] = len(chunks)
+        for index, ext, data in chunks:
+            put(f"RP/sounds/bvp_image/{video_id}/chunk_{index}.{ext}", data)
+            key, definition = _sound_definition(namespace, video_id, index)
+            sound_definitions[key] = definition
+        log(f"[{video_id}] 音声 {len(chunks)} チャンク" + ("" if chunks else " (音声なし)"))
+        for relative, content in glass_rp.glass_rp_files(video, namespace, figure["bones"], mapping).items():
+            rp_texts[relative] = content
+        videos.append(video)
+
+    memory = atlas.memory_report(layouts, allow_over_budget=allow_over_budget)
+    log(memory["table"])
+    if memory["errors"]:
+        raise ConvertError("テクスチャが予算を超えるので作りません (--allow-over-budget で作れます)。"
+                           "コマ数・立体の細かさ・壁の動画の大きさを減らしてください")
+    for relative, content in rp_texts.items():
+        put(f"RP/{relative}", content)
+    _common_files(put, videos, namespace, pack_name, icon, sound_definitions)
+    memory_summary = {k: v for k, v in memory.items() if k != "table"}
+    report = {
+        "namespace": namespace, "pack_name": pack_name, "methods": ["a"], "videos": videos,
+        "memory": {**memory_summary, "per_video": [{"id": v["id"], **v["memory"]} for v in videos]},
+        "warnings": memory["warnings"] + warnings,
+        "face_mapping": {"north_u": mapping.north_u, "east_u": mapping.east_u, "up_u": mapping.up_u, "up_v": mapping.up_v},
+        "lang_keys": {"en": lang_keys("en"), "ja": lang_keys("ja")},
+        "files": sorted(files),
+    }
+    for warning in warnings:
+        log(f"警告: {warning}")
+    return files, report
+
+
+def _plain(value):
+    """30.0 のような値を 30 にする (JSON と Molang に余計な小数を出さない)。"""
+    value = float(value)
+    return int(value) if value == int(value) else value
 
 
 COMBINED_FOLDERS = {"BP/": "BP_image/", "RP/": "RP_image/"}
@@ -463,6 +630,8 @@ def build(args: argparse.Namespace, log=print) -> dict:
         used.add(video_id)
         ids.append(video_id)
     titles = args.titles or [p.stem for p in inputs]
+    if wants_glass(args):
+        return _build_glass(args, inputs, ids, titles, log)
     voxes = [path.suffix.lower() == ".vox" for path in inputs]
     if any(voxes):
         if not all(voxes):
@@ -536,6 +705,119 @@ def _build_impostor(args: argparse.Namespace, inputs: list[Path], ids: list[str]
     return _write_output(args, files, report, log)
 
 
+GLASS_ONLY_OPTIONS = ("case", "case_image", "case_video", "case_frame", "lift")
+
+
+def wants_glass(args: argparse.Namespace) -> bool:
+    """ガラスケースの立体 (面の板) を作るか。--solid planes か、ケース・浮き彫りのオプションがあるとき。"""
+    used = [name for name in GLASS_ONLY_OPTIONS if getattr(args, name, None)]
+    solid = getattr(args, "solid", None)
+    if solid == "views" and used:
+        raise ConvertError("--case・--case-image・--case-video・--case-frame・--lift は --solid planes (面の板) で使います")
+    return solid == "planes" or (solid is None and bool(used))
+
+
+def _read_limited(frames, limit: int, what: str) -> list:
+    """コマを limit 枚まで読む (多すぎる長い動画を全部読む前に止める)。"""
+    out = []
+    for frame in frames:
+        out.append(frame)
+        if len(out) > limit:
+            raise ConvertError(f"{what}のコマが {limit} 枚を超えます (--max-figure-frames)。"
+                               "--fps を下げるか、--start / --end で短くしてください")
+    return out
+
+
+def _build_glass(args: argparse.Namespace, inputs: list[Path], ids: list[str], titles: list[str], log=print) -> dict:
+    """ガラスケースの立体 (docs/research/glass_case.md) のアドオンを作る。人物は .vox か、動画の浮き彫り (--lift)。"""
+    from image_mode import glass, planes
+    from mvcodec.volume import load_vox_frames_with_palettes
+
+    if args.priority != "none":
+        raise ConvertError("ガラスケースの立体では --priority を使えません")
+    if getattr(args, "dedup", "off") != "off":
+        raise ConvertError("ガラスケースの立体では --dedup を使えません")
+    if (args.case_video or args.lift) and len(inputs) != 1:
+        raise ConvertError("--case-video・--lift のときは、入力を 1 つだけにしてください")
+    mapping = args.face_mapping or planes.DEFAULT_MAPPING
+    try:
+        images = glass.parse_case_images(args.case_image)
+    except ValueError as error:
+        raise ConvertError(str(error)) from None
+    case = None
+    if args.case or images or args.case_video or args.case_frame:
+        case = glass.CaseOptions(margin=args.case_margin, images=images, frame=args.case_frame)
+    figure_fps = args.fps if args.fps is not None else IMPOSTOR_DEFAULT_FPS
+    wall_path = Path(args.case_video) if args.case_video else None
+    if wall_path is not None and not wall_path.is_file():
+        raise ConvertError(f"壁の動画が見つかりません: {wall_path}")
+    for extra in (args.depth_video, args.mask_video):
+        if extra and not Path(extra).is_file():
+            raise ConvertError(f"動画が見つかりません: {extra}")
+    with tempfile.TemporaryDirectory(prefix="bvp-glass-") as temp:
+        entries = []
+        for path, video_id, title in zip(inputs, ids, titles):
+            audio = None
+            if path.suffix.lower() == ".vox":
+                if args.lift:
+                    raise ConvertError("--lift は動画を浮き彫りにするオプションです (.vox はそのまま立体になります)")
+                try:
+                    frames, palettes = load_vox_frames_with_palettes(path)
+                except (OSError, ValueError) as error:
+                    raise ConvertError(f"立体を読めませんでした: {path}: {error}") from None
+                volumes, rgbs, _shape = impostor.dense_frames(frames, palettes)
+                if len(volumes) > args.max_figure_frames:
+                    raise ConvertError(f"立体のコマが {len(volumes)} 枚で、上限 {args.max_figure_frames} を超えます "
+                                       "(--max-figure-frames)")
+                loop = True
+                log(f"[{video_id}] 立体 {len(volumes)} コマを面の板にします ({args.plane_split})")
+            else:
+                if not args.lift:
+                    raise ConvertError("動画から人物を作るには --lift relief|extrude|inflate を付けてください "
+                                       "(普通の動画を奥の壁で流すだけなら --case-video)")
+                lift_w, lift_h = args.lift_size
+                log(f"[{video_id}] 動画を浮き彫り ({args.lift}、{lift_w}x{lift_h}、奥行き {args.depth}) にします")
+                frames = _read_limited(atlas.read_frames(path, lift_w, lift_h, figure_fps, args.start, args.end,
+                                                         args.fit, args.ffmpeg), args.max_figure_frames, "浮き彫りにする動画")
+                if not frames:
+                    raise ConvertError(f"動画からコマを読めませんでした: {path}")
+                heights = None
+                extra = args.depth_video or args.mask_video
+                if extra:
+                    heights = glass.luminance_frames(_read_limited(
+                        atlas.read_frames(Path(extra), lift_w, lift_h, figure_fps, args.start, args.end, args.fit,
+                                          args.ffmpeg), args.max_figure_frames, "深度・切り抜きの動画"))
+                volumes, rgbs = glass.lift_frames(frames, args.lift, args.depth, heights, args.lift_threshold,
+                                                  args.lift_invert)
+                loop = False
+                if wall_path is None:
+                    audio = (lambda seconds, path=path, video_id=video_id: atlas.extract_audio_chunks(
+                        path, Path(temp) / video_id, args.audio_chunk_seconds, args.start, args.end, args.ffmpeg,
+                        max_seconds=seconds))
+            try:
+                figure = glass.figure_from_volumes(volumes, rgbs, figure_blocks=args.figure_blocks, split=args.plane_split,
+                                                   shade=args.plane_shade, mapping=mapping, max_sheet=args.max_sheet,
+                                                   gutter=args.gutter)
+            except ValueError as error:
+                raise ConvertError(f"[{video_id}] {error}") from None
+            wall = None
+            if wall_path is not None:
+                wall = {"frames": atlas.read_frames(wall_path, args.width, args.height, args.case_video_fps, args.start,
+                                                    args.end, args.fit, args.ffmpeg),
+                        "width": args.width, "height": args.height, "fps": args.case_video_fps}
+                audio = (lambda seconds, video_id=video_id: atlas.extract_audio_chunks(
+                    wall_path, Path(temp) / f"{video_id}_wall", args.audio_chunk_seconds, args.start, args.end,
+                    args.ffmpeg, max_seconds=seconds))
+            entries.append({"id": video_id, "title": title, "figure": figure, "figure_fps": figure_fps,
+                            "figure_loop": loop, "case": case, "wall_video": wall, "audio": audio})
+        files, report = build_glass_files(
+            entries, namespace=args.namespace, pack_name=args.pack_name or titles[0], max_sheet=args.max_sheet,
+            gutter=args.gutter, max_cells=args.max_cells, audio_chunk_seconds=args.audio_chunk_seconds,
+            allow_over_budget=args.allow_over_budget, log=log, lighting=args.lighting, png_optimize=args.png_optimize,
+            sheet_format=args.sheet_format, jpeg_quality=args.jpeg_quality, mapping=mapping)
+    return _write_output(args, files, report, log)
+
+
 def _write_output(args: argparse.Namespace, files: dict, report: dict, log=print) -> dict:
     output = Path(args.output)
     write_file_atomic(output, zip_bytes(files))
@@ -589,6 +871,33 @@ def _positive_float(text: str) -> float:
     if value <= 0:
         raise argparse.ArgumentTypeError("0 より大きくしてください")
     return value
+
+
+def _non_negative_float(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("数を指定してください") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError("0 以上にしてください")
+    return value
+
+
+def _size(text: str) -> tuple[int, int]:
+    match = re.fullmatch(r"\s*(\d+)\s*[xX×]\s*(\d+)\s*", text)
+    if not match or int(match.group(1)) < 2 or int(match.group(2)) < 2 or int(match.group(1)) > 512 or int(match.group(2)) > 512:
+        raise argparse.ArgumentTypeError("幅x高さ (2〜512) で指定してください。例: 128x72")
+    return int(match.group(1)), int(match.group(2))
+
+
+def _face_mapping(text: str):
+    from image_mode.planes import FaceMapping
+
+    parts = [p.strip() for p in text.split(",")]
+    if len(parts) != 4 or any(p not in ("1", "-1", "+1") for p in parts):
+        raise argparse.ArgumentTypeError("1 か -1 を 4 つ、カンマで区切って指定してください。例: 1,1,-1,1")
+    north_u, east_u, up_u, up_v = (int(p) for p in parts)
+    return FaceMapping(north_u=north_u, east_u=east_u, up_u=up_u, up_v=up_v)
 
 
 def _namespace(text: str) -> str:
@@ -659,8 +968,54 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="立体 (.vox) を何方向から描くか (試作。既定 8 = 45 度ごと。テクスチャは向きの数だけ増える)")
     parser.add_argument("--figure-blocks", type=_positive_float, default=6,
                         help="立体 (.vox) の高さ (ブロック数、既定 6)")
+    glass_group = parser.add_argument_group(
+        "ガラスケースの立体 (試作。docs/research/glass_case.md)",
+        "立体を、ボクセルの外に出ている面の板にして置きます。どの向きから見ても本物の立方体と同じに見え、ケースの奥の壁に"
+        "背景や動画を出せます。--case・--case-image・--case-video・--lift を付けると --solid planes になります")
+    glass_group.add_argument("--solid", default=None, choices=["views", "planes"],
+                             help="立体 (.vox) の見せ方。views=角度ごとの絵 (今までの試作)、planes=面の板。既定は views "
+                                  "(ケース・浮き彫りのオプションがあれば planes)")
+    glass_group.add_argument("--plane-split", default="rect", choices=["rect", "tile8", "tile16"],
+                             help="面の板の分け方。rect=平面ごとに 1 枚 (板が少ない)、tile8・tile16=区画に分ける "
+                                  "(透明な所が減り、テクスチャも減るが板が増える)。既定 rect")
+    glass_group.add_argument("--plane-shade", action=argparse.BooleanOptionalAction, default=True,
+                             help="面の向きの明るさ (上 1.0・横 0.8 / 0.6・下 0.5) を色に焼き込む (既定)。--no-plane-shade で付けない")
+    glass_group.add_argument("--max-figure-frames", type=_positive_int, default=240,
+                             help="人物のコマ数の上限 (既定 240。geometry はコマごとに板を持つ)")
+    glass_group.add_argument("--case", action="store_true", help="人物の周りにケース (床と 4 枚の壁) を置く。手前の壁は透け、奥の壁が見える")
+    glass_group.add_argument("--case-image", action="append", default=None, metavar="SIDE=PATH",
+                             help="ケースの絵。SIDE は back・front・left・right・floor・all (何度でも指定できる)")
+    glass_group.add_argument("--case-margin", type=_non_negative_float, default=0.5,
+                             help="人物とケースの壁の間 (ブロック、既定 0.5)")
+    glass_group.add_argument("--case-frame", action="store_true", help="ケースの 12 本の縁を描く")
+    glass_group.add_argument("--case-video", default=None, metavar="VIDEO",
+                             help="奥の壁で流す動画 (音声付き。大きさは --width・--height、範囲は --start・--end)")
+    glass_group.add_argument("--case-video-fps", type=_fps, default=30.0, help="壁の動画の fps (既定 30)")
+    glass_group.add_argument("--lift", default=None, choices=["relief", "extrude", "inflate"],
+                             help="入力の動画を浮き彫りの立体にして人物にする (ブロックモードと同じ方法)。正面から斜めまでは立体、"
+                                  "後ろからは平らに見える")
+    glass_group.add_argument("--lift-size", type=_size, default=(128, 72), metavar="WxH",
+                             help="浮き彫りにするときの動画の大きさ (画素 = ボクセル、既定 128x72)")
+    glass_group.add_argument("--depth", type=int, default=16, help="浮き彫りの奥行き (ボクセル、2〜128、既定 16)")
+    glass_group.add_argument("--depth-video", default=None,
+                             help="relief の奥行きに使う深度動画 (明るいほど手前。scripts/make_depth_video.py で作れる)")
+    glass_group.add_argument("--mask-video", default=None, help="extrude・inflate で立体にする範囲の動画 (明るい所)")
+    glass_group.add_argument("--lift-threshold", type=float, default=0.5,
+                             help="extrude・inflate で立体にする明るさのしきい値 (0〜1、既定 0.5)")
+    glass_group.add_argument("--lift-invert", action="store_true", help="extrude・inflate で暗い所を立体にする")
+    glass_group.add_argument("--face-mapping", type=_face_mapping, default=None, metavar="N,E,UU,UV",
+                             help="面の板の UV の向き (試験用。north の u・east の u・up の u・up の v を 1 か -1 で)。"
+                                  "既定は実機で決めた 1,-1,1,-1 (DECISIONS.md の A19)")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
     args = parser.parse_args(argv)
+    if not 2 <= args.depth <= 128:
+        parser.error("--depth は 2〜128 にしてください")
+    if not 0 <= args.lift_threshold <= 1:
+        parser.error("--lift-threshold は 0〜1 にしてください")
+    if args.depth_video and args.lift != "relief":
+        parser.error("--depth-video は --lift relief でだけ使えます")
+    if args.mask_video and args.lift not in ("extrude", "inflate"):
+        parser.error("--mask-video は --lift extrude / inflate でだけ使えます")
     if not 1 <= args.jpeg_quality <= 95:
         parser.error("--jpeg-quality は 1〜95 にしてください")
     if args.ids is not None and len(args.ids) != len(args.inputs):
