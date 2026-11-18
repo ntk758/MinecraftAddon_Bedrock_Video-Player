@@ -602,6 +602,8 @@ class PackBuilderApp(tk.Tk):
         self.image_png_optimize_var = tk.BooleanVar(value=False)
         # MMD のモデル (.pmx のパス) → 踊り (.vmd のパス)
         self.mmd_motions: dict[str, str] = {}
+        # MMD のモデル (.pmx のパス) → 画像モードのガラスケースの人物にもするときの {"audio": 曲, "case_image": 奥の壁の絵}
+        self.mmd_glass: dict[str, dict] = {}
         # だまし絵の後ろの壁に流す背景の映像 (空なら壁は単色)
         self.stage_background_var = tk.StringVar(value="")
         self.preset_key = DEFAULT_PRESET
@@ -972,7 +974,29 @@ class PackBuilderApp(tk.Tk):
                 if not motion:
                     continue
                 self.mmd_motions[str(p)] = motion
+                self._ask_mmd_glass(p)
             self.add_video_path(p)
+
+    def _ask_mmd_glass(self, model: Path) -> None:
+        """MMD のモデルを、画像モードのガラスケースの人物 (骨で動かす。image_mode/rig_anim.py) にもするかを聞く。
+        するなら、一緒に鳴らす曲と、ケースの奥の壁の絵を選ぶ (どちらも無くてよい)。画像モードのアドオンを作るようにする。"""
+        self.mmd_glass.pop(str(model), None)
+        if not messagebox.askyesno(self.tr("dialog.mmd_glass_title"), self.tr("dialog.mmd_glass_ask", model=model.name)):
+            return
+        song = filedialog.askopenfilename(
+            title=self.tr("dialog.select_song", model=model.name),
+            filetypes=[(self.tr("dialog.audio_files"), "*.wav *.mp3 *.ogg *.m4a *.flac"),
+                       (self.tr("dialog.all_files"), "*.*")],
+        )
+        picture = filedialog.askopenfilename(
+            title=self.tr("dialog.select_case_image"),
+            filetypes=[(self.tr("dialog.image_files"), "*.png *.jpg *.jpeg *.webp *.bmp"),
+                       (self.tr("dialog.all_files"), "*.*")],
+        )
+        self.mmd_glass[str(model)] = {"audio": song or None, "case_image": picture or None}
+        if not self.image_mode_var.get():
+            self.image_mode_var.set(True)
+            messagebox.showinfo(self.tr("dialog.mmd_glass_title"), self.tr("dialog.mmd_glass_image_mode_on"))
 
     def _row(self, iid) -> list[str]:
         """動画リストの 1 行 (動画 ID・パス・サムネイルの秒) を文字列のまま返す。Treeview.item()["values"] は数字に見える
@@ -1145,6 +1169,8 @@ class PackBuilderApp(tk.Tk):
             })
             if str(vals[1]) in self.mmd_motions:
                 video_entries[-1]["motion"] = self.mmd_motions[str(vals[1])]
+            if str(vals[1]) in getattr(self, "mmd_glass", {}):
+                video_entries[-1]["glass"] = self.mmd_glass[str(vals[1])]
 
         if not video_entries:
             messagebox.showerror(self.tr("error.no_videos_title"), self.tr("error.no_videos"))
@@ -1602,20 +1628,29 @@ class PackBuilderApp(tk.Tk):
                           width: int, height: int, duration: float | None, ffmpeg: str) -> Path | None:
         """画像モードのアドオン (convert_image_mode.py) を、ブロックモードの出力の隣に作る。
 
-        .vox と MMD は元の映像のコマが無いので使わない。テクスチャが予算 (選んだ Tier) を超えるときは、選んだ優先
-        (画質・なめらかさ・長さ) に合わせて、fps・コマの大きさ・長さを image_mode/budget.py が決める。
+        .vox と MMD は元の映像のコマが無いので使わない。ただし MMD のモデルで「ガラスケースの人物にもする」を選んだもの
+        (entry の "glass") は、骨で動かす人物にして同じアドオンに入れる (convert_image_mode.build の figures)。
+        テクスチャが予算 (選んだ Tier) を超えるときは、選んだ優先 (画質・なめらかさ・長さ) に合わせて、fps・コマの大きさ・
+        長さを image_mode/budget.py が決める (人物とケースのテクスチャを先に引いた残りで)。
         作れなかったときはログに理由を出して None を返す (ブロックモードのアドオンはもうできている)。
         """
         import convert_image_mode as image_mode
         image_output = output.with_name(f"{output.stem}{IMAGE_MODE_SUFFIX}.mcaddon")
         sources = []
+        figures = []
         for entry in video_entries:
             path = Path(entry["file_path"])
-            if path.suffix.lower() in (VOX_SUFFIX, PMX_SUFFIX):
+            if path.suffix.lower() == PMX_SUFFIX and entry.get("glass"):
+                glass = entry["glass"]
+                figures.append({"id": str(entry["video_id"]), "title": path.stem, "pmx": str(path),
+                                "motion": entry.get("motion"), "audio": glass.get("audio"),
+                                "case_image": glass.get("case_image")})
+                self.messages.put(self.tr("build.image_mmd", id=entry["video_id"]))
+            elif path.suffix.lower() in (VOX_SUFFIX, PMX_SUFFIX):
                 self.messages.put(self.tr("build.image_skipped", id=entry["video_id"]))
             else:
                 sources.append((path, str(entry["video_id"])))
-        if not sources:
+        if not sources and not figures:
             self.messages.put(self.tr("build.image_none"))
             return None
         tex_width, tex_height = image_mode_size(width, height)
@@ -1628,17 +1663,17 @@ class PackBuilderApp(tk.Tk):
         png_optimize = optimize_var.get() if optimize_var is not None else False
         self.messages.put(self.tr("build.image_start", output=image_output, width=tex_width, height=tex_height,
                                   fps=IMAGE_MODE_FPS))
+        named = ["--ids", *[video_id for _, video_id in sources], "--titles", *[path.stem for path, _ in sources]]
         args = image_mode.parse_args([
-            *[str(path) for path, _ in sources], "--ids", *[video_id for _, video_id in sources],
-            "--titles", *[path.stem for path, _ in sources], "-o", str(image_output),
+            *[str(path) for path, _ in sources], *(named if sources else []), "-o", str(image_output),
             "--width", str(tex_width), "--height", str(tex_height), "--fps", str(IMAGE_MODE_FPS),
             "--namespace", image_namespace, "--pack-name", f"{pack_name} (Image)", "--ffmpeg", ffmpeg,
             "--priority", priority, "--target-tier", tier, "--lighting", lighting,
             "--snap" if snap else "--no-snap", *(["--png-optimize"] if png_optimize else []),
             *(["--end", str(duration)] if duration else []),
-        ])
+        ], allow_no_inputs=bool(figures))
         try:
-            report = image_mode.build(args, log=lambda _text: None)
+            report = image_mode.build(args, log=lambda _text: None, figures=figures or None)
         except Exception as failure:  # noqa: BLE001 (別のアドオンなので、どんな失敗でもブロックモードを止めない)
             self.messages.put(self.tr("build.image_failed", output=image_output, error=str(failure)))
             return None

@@ -246,3 +246,13 @@ def test_the_figure_test_pack_has_the_five_variants(doll, tmp_path):
     assert "ignore_lighting" not in controllers["controller.render.bvpimg.screen_sw_a"]
     body = json.loads(files["RP/animations/screen_j0_a.animation.json"])["animations"]
     assert next(iter(body.values()))["anim_time_update"].startswith("math.mod(v.secs, ")
+
+
+def test_inputs_can_be_left_out_only_by_callers_that_pass_figures(tmp_path):
+    with pytest.raises(SystemExit):
+        convert_image_mode.parse_args(["-o", str(tmp_path / "a.mcaddon")])
+    with pytest.raises(SystemExit):
+        convert_image_mode.parse_args([], allow_no_inputs=True)  # 出力の場所が決まらない
+    args = convert_image_mode.parse_args(["-o", str(tmp_path / "a.mcaddon")], allow_no_inputs=True)
+    with pytest.raises(convert_image_mode.ConvertError):
+        convert_image_mode.build(args)

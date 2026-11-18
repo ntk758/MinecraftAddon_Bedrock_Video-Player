@@ -548,7 +548,7 @@ def build_glass_files(entries: list[dict], *, namespace: str, pack_name: str, ma
         "warnings": memory["warnings"] + warnings,
         "face_mapping": {"north_u": mapping.north_u, "east_u": mapping.east_u, "up_u": mapping.up_u, "up_v": mapping.up_v},
         "lang_keys": {"en": lang_keys("en"), "ja": lang_keys("ja")},
-        "files": sorted(files),
+        "files": sorted(files), "layouts": layouts,
     }
     for warning in warnings:
         log(f"警告: {warning}")
@@ -603,8 +603,9 @@ PRIORITY_LABELS = {"quality": "画質", "smooth": "なめらかさ", "length": "
 CHANGED_LABELS = {"fps": "fps", "size": "コマの大きさ", "length": "長さ"}
 
 
-def apply_priority(args: argparse.Namespace, inputs: list[Path], log=print) -> list:
-    """--priority: 予算 (--target-tier) に収まるよう args の大きさ・fps を直し、動画ごとの終わり (秒) を返す。"""
+def apply_priority(args: argparse.Namespace, inputs: list[Path], log=print, reserved_bytes: int = 0) -> list:
+    """--priority: 予算 (--target-tier) に収まるよう args の大きさ・fps を直し、動画ごとの終わり (秒) を返す。
+    reserved_bytes は、同じアドオンに入るほかのもの (ガラスケースの人物) が先に使うテクスチャ。"""
     start = args.start or 0.0
     durations = []
     for path in inputs:
@@ -616,7 +617,7 @@ def apply_priority(args: argparse.Namespace, inputs: list[Path], log=print) -> l
     source_size = atlas.probe_size(inputs[0], args.ffmpeg) if args.snap else None
     result = budget.plan(durations, args.width, args.height, args.fps, args.priority, args.target_tier,
                          max_sheet=args.max_sheet, gutter=args.gutter, max_cells=args.max_cells, snap=args.snap,
-                         source_size=source_size)
+                         source_size=source_size, reserved_bytes=reserved_bytes)
     if not result["fits"]:
         raise ConvertError(f"Tier {args.target_tier} の予算にどうしても収まりません (1 コマも入りません)")
     if result["changed"]:
@@ -633,9 +634,13 @@ def apply_priority(args: argparse.Namespace, inputs: list[Path], log=print) -> l
             for seconds, duration in zip(result["seconds"], durations)]
 
 
-def build(args: argparse.Namespace, log=print) -> dict:
-    """引数どおりにアドオンを作り、レポート (dict) を返す。予算超過などで作れないときは ConvertError。"""
+def build(args: argparse.Namespace, log=print, figures: list[dict] | None = None) -> dict:
+    """引数どおりにアドオンを作り、レポート (dict) を返す。予算超過などで作れないときは ConvertError。
+
+    figures は、同じアドオンに入れる骨で動かす MMD の人物 (_build_with_figures。Windows 版の画面が使う)。"""
     inputs = [Path(p) for p in args.inputs]
+    if not inputs and not figures:
+        raise ConvertError("入力がありません")
     for path in inputs:
         if not path.is_file():
             raise ConvertError(f"入力動画が見つかりません: {path}")
@@ -650,6 +655,8 @@ def build(args: argparse.Namespace, log=print) -> dict:
         used.add(video_id)
         ids.append(video_id)
     titles = args.titles or [p.stem for p in inputs]
+    if figures:
+        return _build_with_figures(args, inputs, ids, titles, figures, log)
     if wants_glass(args):
         return _build_glass(args, inputs, ids, titles, log)
     voxes = [path.suffix.lower() == ".vox" for path in inputs]
@@ -792,33 +799,12 @@ def _build_glass(args: argparse.Namespace, inputs: list[Path], ids: list[str], t
             audio = None
             figure = None
             if path.suffix.lower() == ".pmx":
-                from image_mode import glass_rp, rig_anim
-
                 if args.lift:
                     raise ConvertError("--lift は動画を浮き彫りにするオプションです (MMD のモデルはそのまま人物になります)")
-                log(MMD_NOTICE)
-                seconds = None
-                if args.audio:
-                    seconds = atlas.probe_duration(args.audio, args.ffmpeg)
-                    if seconds is None:
-                        raise ConvertError(f"曲の長さを読めませんでした: {args.audio}")
-                    audio = (lambda limit, video_id=video_id: atlas.extract_audio_chunks(
-                        args.audio, Path(temp) / f"{video_id}_song", args.audio_chunk_seconds, None, None, args.ffmpeg,
-                        max_seconds=limit))
-                elif not args.motion:
-                    log(f"[{video_id}] 踊り (--motion) が無いので、動かない人物にします")
-                log(f"[{video_id}] MMD の人物を骨で動かす板にします (高さ {args.figure_voxels} ボクセル、"
-                    f"重ね代 {args.joint_overlap})")
-                try:
-                    figure = rig_anim.mmd_figure(
-                        path, args.motion, identifier=glass_rp.animation_identifier(video_id, args.namespace),
-                        figure_blocks=args.figure_blocks, voxels=args.figure_voxels, overlap=args.joint_overlap,
-                        seconds=seconds, loop=args.figure_loop, split=args.plane_split, shade=args.plane_shade,
-                        mapping=mapping, max_sheet=args.max_sheet, gutter=args.gutter, log=log)
-                except (OSError, ValueError) as error:
-                    raise ConvertError(f"[{video_id}] MMD の人物を作れませんでした: {error}") from None
-                figure_fps = RIG_CLOCK_FPS
-                loop = bool(args.figure_loop)
+                mmd_entry = mmd_glass_entry(path, video_id, title, args, Path(temp), log, motion=args.motion,
+                                            audio=args.audio, case=case)
+                figure, audio = mmd_entry["figure"], mmd_entry["audio"]
+                figure_fps, loop = mmd_entry["figure_fps"], mmd_entry["figure_loop"]
             elif path.suffix.lower() == ".vox":
                 if args.lift:
                     raise ConvertError("--lift は動画を浮き彫りにするオプションです (.vox はそのまま立体になります)")
@@ -883,6 +869,144 @@ def _build_glass(args: argparse.Namespace, inputs: list[Path], ids: list[str], t
             gutter=args.gutter, max_cells=args.max_cells, audio_chunk_seconds=args.audio_chunk_seconds,
             allow_over_budget=args.allow_over_budget, log=log, lighting=args.lighting, png_optimize=args.png_optimize,
             sheet_format=args.sheet_format, jpeg_quality=args.jpeg_quality, mapping=mapping)
+    return _write_output(args, files, report, log)
+
+
+def mmd_glass_entry(path: Path, video_id: str, title: str, args: argparse.Namespace, temp: Path, log=print, *,
+                    motion=None, audio=None, case=None) -> dict:
+    """MMD のモデル (.pmx) から、骨で動かす人物の build_glass_files の entry を作る。motion は踊り (.vmd)、audio は曲
+    (再生の長さになる)、case は glass.CaseOptions か None。細かさなどは args (--figure-voxels など) のもの。"""
+    from image_mode import glass_rp, planes, rig_anim
+
+    log(MMD_NOTICE)
+    seconds = None
+    chunks = None
+    if audio:
+        seconds = atlas.probe_duration(audio, args.ffmpeg)
+        if seconds is None:
+            raise ConvertError(f"曲の長さを読めませんでした: {audio}")
+        chunks = (lambda limit: atlas.extract_audio_chunks(
+            audio, temp / f"{video_id}_song", args.audio_chunk_seconds, None, None, args.ffmpeg, max_seconds=limit))
+    elif not motion:
+        log(f"[{video_id}] 踊り (.vmd) が無いので、動かない人物にします")
+    log(f"[{video_id}] MMD の人物を骨で動かす板にします (高さ {args.figure_voxels} ボクセル、重ね代 {args.joint_overlap})")
+    try:
+        figure = rig_anim.mmd_figure(
+            path, motion, identifier=glass_rp.animation_identifier(video_id, args.namespace),
+            figure_blocks=args.figure_blocks, voxels=args.figure_voxels, overlap=args.joint_overlap, seconds=seconds,
+            loop=args.figure_loop, split=args.plane_split, shade=args.plane_shade,
+            mapping=args.face_mapping or planes.DEFAULT_MAPPING, max_sheet=args.max_sheet, gutter=args.gutter, log=log)
+    except (OSError, ValueError) as error:
+        raise ConvertError(f"[{video_id}] MMD の人物を作れませんでした: {error}") from None
+    return {"id": video_id, "title": title, "figure": figure, "figure_fps": RIG_CLOCK_FPS,
+            "figure_loop": bool(args.figure_loop), "case": case, "wall_video": None, "audio": chunks}
+
+
+def merge_image_files(parts: list[tuple[dict, dict]], *, namespace: str, allow_over_budget: bool = False,
+                      log=print) -> tuple[dict, dict]:
+    """build_files と build_glass_files の出力 ((ファイル, レポート) のリスト) を 1 つのアドオンにまとめる。
+
+    名前空間とパック名が同じなので、マニフェスト・スクリプト・lang は同じ中身。動画の一覧 (image_videos.js) と
+    音の定義はまとめて書き直し、テクスチャの予算はアドオン全体で数え直す。アイコンは最初の出力のもの。"""
+    files: dict[str, bytes] = {}
+    videos: list[dict] = []
+    sounds: dict = {}
+    layouts: list[dict] = []
+    warnings: list[str] = []
+    for part_files, report in reversed(parts):  # 最初の出力のファイル (アイコンなど) を最後に書いて残す
+        files.update(part_files)
+    for part_files, report in parts:
+        for video in report["videos"]:
+            if any(video["id"] == other["id"] for other in videos):
+                raise ConvertError(f"動画 ID が重なっています: {video['id']}")
+            videos.append(video)
+        layouts += report.get("layouts") or [{"sheet_width": v["sheet_width"], "sheet_height": v["sheet_height"],
+                                               "sheets": v["sheets"]} for v in report["videos"]]
+        if "RP/sounds/sound_definitions.json" in part_files:
+            sounds.update(json.loads(part_files["RP/sounds/sound_definitions.json"])["sound_definitions"])
+        warnings += [w for w in report.get("warnings", []) if not w.startswith("テクスチャ")]
+    memory = atlas.memory_report(layouts, allow_over_budget=allow_over_budget)
+    log("アドオン全体: " + memory["table"])
+    if memory["errors"]:
+        raise ConvertError("動画とガラスケースの人物を合わせると、テクスチャが予算を超えるので作りません "
+                           "(--allow-over-budget で作れます)")
+    files["BP/scripts/image_videos.js"] = image_videos_js(videos, namespace).encode("utf-8")
+    if sounds:
+        files["RP/sounds/sound_definitions.json"] = (json.dumps(
+            {"format_version": "1.14.0", "sound_definitions": sounds}, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    first = parts[0][1]
+    memory_summary = {k: v for k, v in memory.items() if k != "table"}
+    report = {**first, "videos": videos, "methods": sorted({m for v in videos for m in v["methods"]}),
+              "memory": {**memory_summary, "per_video": [{"id": v["id"], **v["memory"]} for v in videos]},
+              "warnings": memory["warnings"] + warnings, "layouts": layouts, "files": sorted(files)}
+    return files, report
+
+
+def _build_with_figures(args: argparse.Namespace, inputs: list[Path], ids: list[str], titles: list[str],
+                        figures: list[dict], log=print) -> dict:
+    """普通の動画 (inputs) と、骨で動かす MMD の人物 (figures) を 1 つの画像モードのアドオンにする (Windows 版の画面)。
+
+    figures の 1 つは {"id", "title", "pmx", "motion" (.vmd か None), "audio" (曲か None), "case_image" (奥の壁の絵か
+    None)}。人物はケース付き。動画の予算 (--priority) は、人物とケースのテクスチャを引いた残りで決める。"""
+    from image_mode import glass, planes
+
+    for path in inputs:
+        if path.suffix.lower() in (".vox", ".pmx"):
+            raise ConvertError("MMD の人物と一緒に入れられるのは普通の動画だけです (.vox・.pmx は入れられません)")
+    if getattr(args, "dedup", "off") != "off":
+        raise ConvertError("MMD の人物と一緒のときは --dedup を使えません")
+    if args.fps is None:
+        args.fps = 30.0
+    mapping = args.face_mapping or planes.DEFAULT_MAPPING
+    used = set(ids)
+    for figure in figures:
+        if not ID_PATTERN.match(figure["id"]):
+            raise ConvertError(f"動画 ID は小文字の英数字と _ だけにしてください: {figure['id']}")
+        if figure["id"] in used:
+            raise ConvertError(f"動画 ID が重なっています: {figure['id']}")
+        used.add(figure["id"])
+    pack_name = args.pack_name or (titles[0] if titles else figures[0]["title"])
+    common = {"namespace": args.namespace, "pack_name": pack_name, "max_sheet": args.max_sheet, "gutter": args.gutter,
+              "max_cells": args.max_cells, "audio_chunk_seconds": args.audio_chunk_seconds,
+              "allow_over_budget": args.allow_over_budget, "log": log, "lighting": args.lighting,
+              "png_optimize": args.png_optimize}
+    with tempfile.TemporaryDirectory(prefix="bvp-image-") as temp:
+        entries = []
+        reserved = 0
+        for figure in figures:
+            images = {"back": figure["case_image"]} if figure.get("case_image") else {}
+            case = glass.CaseOptions(margin=args.case_margin, images=images, frame=args.case_frame)
+            entry = mmd_glass_entry(Path(figure["pmx"]), figure["id"], figure["title"], args, Path(temp), log,
+                                    motion=figure.get("motion"), audio=figure.get("audio"), case=case)
+            entries.append(entry)
+            sheet = entry["figure"]
+            reserved += sheet["sheet_width"] * sheet["sheet_height"] * len(sheet["sheets"]) * 4
+            try:
+                texture, _uv, _frame = glass.case_texture(glass.case_box(sheet["size_blocks"], case), case, mapping,
+                                                          args.gutter)
+            except ValueError as error:
+                raise ConvertError(f"[{figure['id']}] {error}") from None
+            reserved += texture.width * texture.height * 4
+        parts = [build_glass_files(entries, mapping=mapping, **common)]
+        if inputs:
+            ends = [args.end] * len(inputs)
+            if args.priority != "none":
+                ends = apply_priority(args, inputs, log, reserved_bytes=reserved)
+            sources = [{
+                "id": video_id, "title": title, "fps": args.fps,
+                "frames": atlas.read_frames(path, args.width, args.height, args.fps, args.start, end, args.fit,
+                                            args.ffmpeg),
+                "audio": (lambda seconds, path=path, video_id=video_id, end=end: atlas.extract_audio_chunks(
+                    path, Path(temp) / video_id, args.audio_chunk_seconds, args.start, end, args.ffmpeg,
+                    max_seconds=seconds)),
+            } for path, video_id, title, end in zip(inputs, ids, titles, ends)]
+            methods = ["a", "c"] if args.method == "both" else [args.method]
+            parts.insert(0, build_files(sources, width=args.width, height=args.height, methods=methods,
+                                        screen_width=args.screen_width,
+                                        sheet_format=getattr(args, "sheet_format", "png"),
+                                        jpeg_quality=getattr(args, "jpeg_quality", DEFAULT_JPEG_QUALITY), **common))
+        files, report = merge_image_files(parts, namespace=args.namespace, allow_over_budget=args.allow_over_budget,
+                                          log=log)
     return _write_output(args, files, report, log)
 
 
@@ -1006,11 +1130,13 @@ def _namespace(text: str) -> str:
     return text
 
 
-def parse_args(argv=None) -> argparse.Namespace:
+def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
+    """コマンドラインの引数。allow_no_inputs は、入力の動画を渡さない呼び出し (画面から MMD の人物だけを作るとき。
+    -o が要る) のため。"""
     parser = argparse.ArgumentParser(
         description="画像モード: 動画のコマをテクスチャのシートにして、エンティティで再生するアドオン (.mcaddon) を作ります。"
                     "ブロックモード (convert.py) とは別のアドオンです。")
-    parser.add_argument("inputs", nargs="+", metavar="VIDEO",
+    parser.add_argument("inputs", nargs="*", metavar="VIDEO",
                         help="入力動画ファイル (複数可。1 本が 1 つの動画になる)。立体 (.vox) と MMD のモデル (.pmx) も使える")
     parser.add_argument("--output", "-o", default=None, help="出力の .mcaddon (既定は最初の動画と同じ場所の <名前>_image.mcaddon)")
     parser.add_argument("--ids", nargs="+", default=None, metavar="ID",
@@ -1118,6 +1244,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                                   "既定は実機で決めた 1,-1,1,-1 (DECISIONS.md の A19)")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
     args = parser.parse_args(argv)
+    if not args.inputs and not allow_no_inputs:
+        parser.error("入力の動画を 1 つ以上渡してください")
+    if not args.inputs and args.output is None:
+        parser.error("入力の動画が無いときは -o で出力を決めてください")
     if not 2 <= args.depth <= 128:
         parser.error("--depth は 2〜128 にしてください")
     if not 0 <= args.lift_threshold <= 1:
