@@ -58,7 +58,30 @@ python convert_image_mode.py mv.mp4 -o relief.mcaddon --lift relief --case --end
 - `/bvpimg:setup <ID>` で、目の前の床にケースを立てます (`face`・`align` も使えます。`wall` を付けても壁には貼らず、目の前に置きます)。
 - 大きさの目安 (変換ツールで測った値): 踊る人物 (高さ 128 ボクセル・40 コマ) で板 7,715 枚・テクスチャ 31.5 MiB。動画の浮き彫り (128x72・奥行き 16) で 1 コマ板 126 枚・約 0.56 MiB (`tile8` なら 1,900 枚・約 0.39 MiB)。
 - PC (Windows 11、Minecraft v26.65) の実機で、人物が前・横・後ろ・斜め上から立方体に見えること、ケースの手前の壁だけが消えて残りの壁の絵が鏡写しにならないことを確かめました (2026-11-18)。板の UV の向きは、`python scripts/make_planes_test_pack.py planes_test.mcaddon` の試験用のアドオンの 16 通りから選びました (DECISIONS.md の A19)。スマートフォン・マルチプレイ・重さ (fps と読み込み時間)・遠くからの見え方は未確認です。
-- 限界: 入力はボクセル (`.vox`) か、動画の浮き彫りだけ。光の向きは立体に固定。透明は「あり・なし」の 2 段。人物の音声は無く、`.vox` は繰り返し再生。
+- 限界: 入力はボクセル (`.vox`)、動画の浮き彫り、MMD のモデル (下の節)。光の向きは立体に固定。透明は「あり・なし」の 2 段。`.vox` は音声なしで繰り返し再生。
+
+### MMD の人物を骨で動かす (試作)
+
+MMD のモデル (`.pmx`) を入力にすると、人物を初期姿勢で 1 回だけボクセルにしてボーンごとの部品に分け、踊り (`.vmd`) はボーンのアニメーションにします (設計: [research/glass_case_practical.md](research/glass_case_practical.md))。コマごとに板を持たないので、1 曲を通してもテクスチャは 1〜2 MiB で、動きは描画のたびになめらかに補間されます。
+
+```bash
+python convert_image_mode.py model.pmx --motion dance.vmd --audio song.wav --case --case-image back=stage.png -o show.mcaddon
+python convert_image_mode.py model.pmx --motion dance.vmd --case --case-video mv.mp4 --priority quality -o show.mcaddon
+```
+
+| オプション | 内容 |
+|---|---|
+| `--motion VMD` | 踊り。無ければ動かない人物 |
+| `--audio FILE` | 曲。曲の長さだけ再生し、踊りが短ければ最後の姿勢で止まる (長ければそこで切る)。`--case-video` と一緒なら、壁の動画の音声の代わりに鳴らす |
+| `--figure-voxels N` | 細かさ (初期姿勢の高さのボクセル数、既定 128)。大きさは `--figure-blocks` (既定 6 ブロック) |
+| `--joint-overlap N` | 関節で隣の部品に重ねるボクセルの数 (既定 1)。重ねるのはウェイトが 2 本のボーンに分かれている所だけ |
+| `--figure-loop` | 踊りを繰り返す |
+| `--priority` | `--case-video` があるとき、人物とケースの絵を除いた予算 (`--target-tier`) に壁の動画が収まるよう、壁の動画の fps・大きさ・長さを下げる |
+
+- 踊りで動かないボーン (物理の髪・スカートなど) は親にまとめます。IK・付与・センターの移動は、変換ツールが解いた姿勢を焼き込みます。その場で踊らせます (センターの前後左右の移動を消す。上下は残す)。ケースは、踊りの間に人物が通る範囲に合わせます。
+- ボーンの回転の向きと順番は PC の実機で決めました (DECISIONS.md の A20)。移動 (センターの上下など) の向き、関節のすき間、陰、1 曲を通したときの重さと同期は、まだ実機で見ていません (docs/TESTING.md の 6)。
+- MMD のモデル・踊り・曲には作者の利用規約があります。規約で許された範囲で使ってください。作ったアドオンを人に配れるかも規約しだいです。
+- 画面 (Windows 版) とブラウザ版にはまだありません。
 
 ## 明るさ・縮め方・シートの詰め方
 

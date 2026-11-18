@@ -44,7 +44,8 @@ memory           {"texels": 全シートの画素数, "bytes": texels * 4}
 views            (立体だけ) 向きの数。マス = コマ × views (コマ f・向き k はマス f * views + k)。cells にマスの数
 loop             (立体だけ) true なら終わりで頭へ戻る (スクリプトもクライアントも)
 glass            (ガラスケースの立体だけ) {"box": [幅, 奥行き, 高さ] ブロック, "master": "figure" か "wall_video",
-                 "figure": {frames, fps, loop, per_sheet, sheets, sheet_width, sheet_height, texture_paths, quads},
+                 "figure": {frames, fps, loop, per_sheet, sheets, sheet_width, sheet_height, texture_paths, quads,
+                            rig: {animation, seconds, bones} (骨で動かす MMD の人物だけ)},
                  "case": {texture_path, texture_size, uv: {部品: [x, y, 幅, 高さ]}, frame, frame_texel} (--case のとき),
                  "wall_video": {frame_count, fps, width, height, cols, rows, cells_per_sheet, sheets, gutter,
                                 sheet_width, sheet_height, texture_paths, plane: [幅, 高さ, 下端] ブロック} (--case-video のとき)}
@@ -102,6 +103,20 @@ v.cell = v.frame - v.sheet * <cells_per_sheet>;
 - 時計: 主が壁の動画なら、`v.secs` (主の時刻、終わりで止まる) から `v.fig = math.mod(math.floor(v.secs * 人物の fps + 0.0001), コマ数)`
   (浮き彫りの人物は math.min で最後に止める)。主が人物なら `v.fig = v.frame`。`v.fsheet = math.floor(v.fig / per_sheet)`。
 - スクリプト: `setup` の `wall` は使わず、目の前の床に置く (`bvpimg.case_not_on_wall` で知らせる)。それ以外は今までの動画と同じ。
+
+### 骨で動かす MMD の人物 (figure.rig。image_mode/rig.py・rig_anim.py)
+
+- geometry: 部品ごとのボーン `b<PMX のボーンの番号>` (親は残したボーンの親、pivot は初期姿勢のボーンの位置で全体の座標)。
+  踊りで動かないボーンは親にまとめてあり、geometry には入らない。移動のあるボーン (センターなど) は、移動だけを受け持つ
+  親のボーン `m<番号>` (板なし、pivot は同じ) を持つ。テクスチャは 1 枚 (`Texture.fig_0`)、part_visibility は `{"*": state != 0}`。
+- アニメーション: `RP/animations/screen_<id>_a.animation.json` の `animation.<ns>.screen_<id>_a.dance`。client_entity の
+  `animations: {"dance": …}`、`scripts.animate: ["dance"]`。`loop: true`、`anim_time_update` は時計 `v.secs` (秒) で、
+  繰り返すなら `math.mod(v.secs, 長さ)`、繰り返さないなら `math.clamp(v.secs, 0, 長さ − 0.001)`。キーは 30 Hz の時刻に置く。
+- 回転: `b<番号>` の `rotation` (a, b, c) 度。ボクセルの軸 (x 右・y 奥・z 上) で R = Ry(c) · Rz(−b) · Rx(a)、子はローカル (DECISIONS.md の A20)。
+- 移動: `m<番号>` の `position`。geometry の軸の移動に `POSITION_SIGNS` (−1, 1, 1) を掛けた値 (**見込み**。実機では未確認。docs/TESTING.md の 6.1)。
+- 時計: 主の時計 (人物が主なら fps 20、コマ数は長さ × 20 + 1) から、`v.secs = state == 1 ? math.min(v.base_frame / fps + (v.t − v.base_time), 長さ) : v.base_frame / fps`
+  (繰り返すなら math.mod)。コマで刻まないので、動きは描画のたびになめらかに補間される。`v.fig = 0`。
+- 曲 (`--audio`): 主の時計の長さは曲の長さ。踊りが短ければ最後の姿勢で止まり、長ければそこで切る。壁の動画があれば主は壁の動画のまま、音声だけ曲にする。
 
 ## スクリプトとの約束 (image_main.js)
 

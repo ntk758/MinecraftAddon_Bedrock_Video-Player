@@ -429,10 +429,11 @@ def motion_frames(tracks: dict, rate: float) -> np.ndarray:
 
 def build_rig(model, materials, motions=(), *, voxels: int = DEFAULT_VOXELS, overlap: int = DEFAULT_OVERLAP,
               tolerance: float = DEFAULT_TOLERANCE, check_rate: float = DEFAULT_CHECK_RATE, fill: bool = True,
-              merge: bool = True, margin: int = 2, progress=None) -> Rig:
+              merge: bool = True, margin: int = 2, posed=None, progress=None) -> Rig:
     """MMD のモデル (と踊り) から、部品とボーンを決める。motions は read_vmd の結果のリスト (同じモデルで入れる全部の
     踊り)。どれかの踊りで動くボーンは残し、どの踊りでも動かないボーンは親にまとめる (merge が偽ならまとめない)。
-    tolerance はまとめてよいずれ (ボクセル)。margin は格子の余白 (ボクセル。テストで、踊った形も格子に入れるとき)。"""
+    tolerance はまとめてよいずれ (ボクセル)。margin は格子の余白 (ボクセル。テストで、踊った形も格子に入れるとき)。
+    posed は計算済みの姿勢 (踊りごとの (F, B, 4, 4)。rig_anim.pose_song)。あれば motions の代わりにこれで調べる。"""
     grid = rest_grid(model, voxels, margin)
     rest = surface_voxels(model, materials, grid)
     if fill:
@@ -442,7 +443,14 @@ def build_rig(model, materials, motions=(), *, voxels: int = DEFAULT_VOXELS, ove
     errors = None
     checked = 0
     motions = list(motions)
-    if merge and motions:
+    if merge and posed is not None:
+        check = MotionCheck(poser.parent, subtree_boxes(poser.parent, rest, bones))
+        for skins in posed:
+            for skin in skins:
+                check.add(np.asarray(skin, np.float64))
+        errors = check.errors()
+        checked = check.poses
+    elif merge and motions:
         check = MotionCheck(poser.parent, subtree_boxes(poser.parent, rest, bones))
         frames = [(tracks, f) for tracks in motions for f in motion_frames(tracks, check_rate)]
         for number, (tracks, frame) in enumerate(frames):
@@ -465,12 +473,16 @@ def bone_name(bone: int) -> str:
     return f"b{bone}"
 
 
-def rig_placing(rig: Rig, figure_blocks: float) -> planes.Placing:
-    """人物の初期姿勢の高さ (格子の voxels) を figure_blocks ブロックにし、水平の中心を原点、MMD の床を y = 0 に置く。"""
+def rig_placing(rig: Rig, figure_blocks: float, extent=None) -> planes.Placing:
+    """人物の初期姿勢の高さ (格子の voxels) を figure_blocks ブロックにし、水平の中心を原点、MMD の床を y = 0 に置く。
+    水平の中心は、extent (踊りが通る範囲) があればその真ん中 (ケースが踊りにちょうど合う)、無ければ初期姿勢の真ん中。"""
     rest = rig.rest
     scale = 16 * figure_blocks / rest.grid.height
-    lo = rest.cells.min(axis=0)
-    hi = rest.cells.max(axis=0) + 1
+    if extent is not None:
+        lo, hi = np.asarray(extent[0]), np.asarray(extent[1])
+    else:
+        lo = rest.cells.min(axis=0)
+        hi = rest.cells.max(axis=0) + 1
     return planes.Placing(scale=scale, centre=((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2),
                           offset=(0.0, -rest.grid.floor * scale, 0.0))
 
@@ -500,11 +512,14 @@ def part_quads(rig: Rig, bone: int, split: str = planes.DEFAULT_PLANE_SPLIT, sha
 
 
 def rig_figure(rig: Rig, *, figure_blocks: float, split: str = planes.DEFAULT_PLANE_SPLIT, shade: bool = True,
-               mapping: planes.FaceMapping = planes.DEFAULT_MAPPING, max_sheet: int = 2048, gutter: int = 1) -> dict:
+               mapping: planes.FaceMapping = planes.DEFAULT_MAPPING, max_sheet: int = 2048, gutter: int = 1,
+               movers=(), extent=None) -> dict:
     """部品の板のシートと geometry のボーン (convert_image_mode の人物と同じ形。コマは 1 つ)。
 
-    ボーンは b<PMX の番号>。親は残したボーンの親、pivot は初期姿勢のボーンの位置 (全体の座標)。"""
-    placing = rig_placing(rig, figure_blocks)
+    ボーンは b<PMX の番号>。親は残したボーンの親、pivot は初期姿勢のボーンの位置 (全体の座標)。
+    movers のボーンには、移動だけを受け持つ親のボーン m<番号> を足す (image_mode/rig_anim.py)。extent は踊りが通る
+    範囲 (ボクセルの座標の (最小, 最大)。rig_anim.Motion.extent)。あれば人物の大きさ (ケースの大きさ) をそれに合わせる。"""
+    placing = rig_placing(rig, figure_blocks, extent)
     quads_of = {bone: part_quads(rig, bone, split, shade) for bone in rig.bones}
     images = [planes.oriented_image(q, mapping) for bone in rig.bones for q in quads_of[bone]]
     if not images:
@@ -519,19 +534,32 @@ def rig_figure(rig: Rig, *, figure_blocks: float, split: str = planes.DEFAULT_PL
             cursor += 1
         entry = {"name": bone_name(bone)}
         parent = rig.parents[bone]
-        if parent >= 0:
+        pivot = bone_pivot(rig, bone, placing, mapping)
+        if bone in movers:
+            mover = {"name": f"m{bone}"}
+            if parent >= 0:
+                mover["parent"] = bone_name(parent)
+            mover["pivot"] = pivot
+            geometry_bones.append(mover)
+            entry["parent"] = mover["name"]
+        elif parent >= 0:
             entry["parent"] = bone_name(parent)
-        entry["pivot"] = bone_pivot(rig, bone, placing, mapping)
+        entry["pivot"] = pivot
         entry["cubes"] = cubes
         geometry_bones.append(entry)
     rest = rig.rest
-    lo = rest.cells.min(axis=0)
-    hi = rest.cells.max(axis=0) + 1
     s = placing.scale / 16
+    if extent is None:
+        lo = rest.cells.min(axis=0)
+        hi = rest.cells.max(axis=0) + 1
+        size_blocks = ((hi[0] - lo[0]) * s, (hi[1] - lo[1]) * s, figure_blocks)
+    else:  # 水平の中心は範囲の真ん中。範囲は外形の近似なので 1 ボクセルの余白を足す
+        lo, hi = np.asarray(extent[0]) - 1, np.asarray(extent[1]) + 1
+        size_blocks = ((hi[0] - lo[0]) * s, (hi[1] - lo[1]) * s, max(figure_blocks, (hi[2] - rest.grid.floor) * s))
     return {
         "frames": 1, "per_sheet": 1, "sheet_width": size[0], "sheet_height": size[1],
         "sheets": [Image.fromarray(sheets[0], "RGBA")], "bones": geometry_bones, "quads": cursor,
-        "size_blocks": ((hi[0] - lo[0]) * s, (hi[1] - lo[1]) * s, figure_blocks),
+        "size_blocks": tuple(round(float(v), 4) for v in size_blocks),
         "rig": {"placing": placing, "bones": list(rig.bones), "parents": dict(rig.parents)},
     }
 

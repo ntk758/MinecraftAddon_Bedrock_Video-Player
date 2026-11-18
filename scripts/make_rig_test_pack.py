@@ -14,6 +14,9 @@
   子の回転が親の回した後の軸で効くか (ローカル)、元の軸で効くかを、水色の腕の向きで読む。
 - r_clock: y の周りに 1 秒 90 度で回り続ける (キーフレームを 1 秒ごと、`anim_time_update` に pre_animation の
   時計 v.t を渡す)。止まらずに同じ速さで回り、180 度の所で戻らないこと。
+- r_px・r_py・r_pz: 回さずに、アニメーションの `position` の 1 つの値だけを 8 (半ブロック) にする。形が見本から
+  どちら (正面から見て左右・上下・手前と奥) へ半ブロック動いたかを読む。image_mode/rig_anim.py の POSITION_SIGNS
+  (今は見込みで (-1, 1, 1)。r_px は左、r_py は上、r_pz は奥へ動くはず) を決める。
 
 回転は全部 90 度の倍数にしてある (腕は必ず軸の向きを向くので、読み違えにくい)。
 
@@ -59,6 +62,8 @@ POSES = {
     "r_chain": {"test": [0, 0, 90], "child": [90, 0, 0]},
 }
 CLOCK_ID = "r_clock"
+# アニメーションの position の値 (geometry の単位)。動いた向きを読む
+POSITIONS = {"r_px": [8, 0, 0], "r_py": [0, 8, 0], "r_pz": [0, 0, 8]}
 
 
 def arm_shape(with_child: bool = False) -> tuple[np.ndarray, np.ndarray | None]:
@@ -127,6 +132,8 @@ def animation(identifier: str, video_id: str) -> dict:
     if video_id == CLOCK_ID:
         keys = {f"{t}.0": [0, 90 * t, 0] for t in range(5)}
         body = {"loop": True, "anim_time_update": "math.mod(v.t, 4)", "bones": {"test": {"rotation": keys}}}
+    elif video_id in POSITIONS:
+        body = {"loop": True, "bones": {"test": {"position": POSITIONS[video_id]}}}
     else:
         body = {"loop": True, "bones": {bone: {"rotation": value} for bone, value in POSES[video_id].items()}}
     return {"format_version": "1.8.0", "animations": {identifier: body}}
@@ -159,7 +166,7 @@ def main(argv=None) -> int:
     parser.add_argument("output", help="出力の .mcaddon")
     parser.add_argument("--pack-name", default="BVP rig test", help="パック名")
     args = parser.parse_args(argv)
-    ids = list(POSES) + [CLOCK_ID]
+    ids = list(POSES) + [CLOCK_ID] + list(POSITIONS)
     entries = []
     for video_id in ids:
         figure = build_figure(with_child=video_id == "r_chain")
@@ -171,7 +178,9 @@ def main(argv=None) -> int:
     write_file_atomic(output, convert_image_mode.zip_bytes(files))
     print(f"出力: {output}")
     for video_id in ids:
-        print(f"  {video_id}: {POSES.get(video_id, 'y の周りに 1 秒 90 度 (v.t)')}")
+        what = POSES.get(video_id) or (f"position {POSITIONS[video_id]}" if video_id in POSITIONS
+                                       else "y の周りに 1 秒 90 度 (v.t)")
+        print(f"  {video_id}: {what}")
     return 0
 
 

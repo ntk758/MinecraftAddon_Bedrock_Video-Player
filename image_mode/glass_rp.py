@@ -36,6 +36,11 @@ def _short(video: dict) -> str:
     return f"screen_{video['id']}_a"
 
 
+def animation_identifier(video_id: str, namespace: str) -> str:
+    """骨で動かす人物 (image_mode/rig.py) の踊りのアニメーションの名前。"""
+    return f"animation.{namespace}.screen_{video_id}_a.dance"
+
+
 def _state(namespace: str) -> str:
     return f"q.property('{namespace}:state')"
 
@@ -194,7 +199,14 @@ def pre_animation(video: dict, namespace: str) -> list:
         "v.seq_seen = v.seq_now;",
         f"v.frame = q.property('{ns}:state') == 1 ? {master} : v.base_frame;",
     ]
-    if glass["master"] == "figure":
+    if figure.get("rig"):
+        # 骨で動かす人物: アニメーションの時刻 (秒) をなめらかに進める (コマで刻まない)。主のコマの数え方は同じ
+        total = _num(round(frames / fps, 6))
+        moving = f"v.base_frame / {fps} + (v.t - v.base_time)"
+        now = f"math.mod({moving}, {total})" if video.get("loop") else f"math.min({moving}, {total})"
+        lines.append(f"v.secs = q.property('{ns}:state') == 1 ? {now} : v.base_frame / {fps};")
+        lines.append("v.fig = 0;")
+    elif glass["master"] == "figure":
         lines.append("v.fig = v.frame;")
     else:
         # 人物は主 (壁の動画・音声) の時刻から、自分の fps で進める。主の終わり (最後のコマ) より先へは進めない
@@ -239,7 +251,10 @@ def render_controllers(video: dict, namespace: str) -> dict:
     controllers = {}
 
     figure = glass["figure"]
-    visibility = [{"*": False}] + [{f"f{n}": f"v.fig == {n} && {state} != 0"} for n in range(figure["frames"])]
+    if figure.get("rig"):  # 骨で動かす人物は、全部のボーン (部品) をいつも見せる
+        visibility = [{"*": f"{state} != 0"}]
+    else:
+        visibility = [{"*": False}] + [{f"f{n}": f"v.fig == {n} && {state} != 0"} for n in range(figure["frames"])]
     controllers[f"controller.render.{namespace}.{short}"] = {
         "arrays": {"textures": {"Array.fig": [f"Texture.fig_{n}" for n in range(figure["sheets"])]}},
         "geometry": "Geometry.default",
@@ -297,7 +312,9 @@ def client_entity(video: dict, namespace: str) -> dict:
         "textures": textures,
         "geometry": geometry,
         "render_controllers": controllers,
-        "scripts": {"pre_animation": pre_animation(video, namespace)},
+        "scripts": {"pre_animation": pre_animation(video, namespace),
+                    **({"animate": ["dance"]} if glass["figure"].get("rig") else {})},
+        **({"animations": {"dance": glass["figure"]["rig"]["animation"]}} if glass["figure"].get("rig") else {}),
     }}}
 
 
@@ -310,8 +327,8 @@ def _dump_compact(data: dict) -> str:
     return json.dumps(data, separators=(",", ":"), ensure_ascii=False) + "\n"
 
 
-def glass_rp_files(video: dict, namespace: str, figure_bones: list, mapping) -> dict:
-    """リソースパック内の相対パス (RP/ の下) → JSON の文字列。"""
+def glass_rp_files(video: dict, namespace: str, figure_bones: list, mapping, animation: str | None = None) -> dict:
+    """リソースパック内の相対パス (RP/ の下) → JSON の文字列。animation は骨で動かす人物の踊り (JSON の文字列)。"""
     short = _short(video)
     files = {
         f"entity/{short}.entity.json": _dump(client_entity(video, namespace)),
@@ -322,4 +339,6 @@ def glass_rp_files(video: dict, namespace: str, figure_bones: list, mapping) -> 
         files[f"models/entity/{short}_case.geo.json"] = _dump(case_geometry(video, namespace, mapping))
     if video["glass"].get("wall_video"):
         files[f"models/entity/{short}_wall.geo.json"] = _dump(wall_geometry(video, namespace))
+    if animation is not None:
+        files[f"animations/{short}.animation.json"] = animation
     return files

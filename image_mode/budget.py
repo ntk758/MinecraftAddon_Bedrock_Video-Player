@@ -99,19 +99,20 @@ def scaled(width: int, height: int, factor: float) -> tuple[int, int]:
 
 def plan(durations: list[float], width: int, height: int, fps: float, priority: str, target_tier: int = 2,
          max_sheet: int = 2048, gutter: int = 1, max_cells: int = MAX_CELLS, snap: bool = False,
-         source_size: tuple[int, int] | None = None) -> dict:
+         source_size: tuple[int, int] | None = None, reserved_bytes: int = 0) -> dict:
     """予算 (Tier target_tier) に収まる設定。snap なら、最初と大きさを下げるたびに snap_size (元の動画の大きさ
     source_size を割り切れる大きさ) を通す。戻り値:
 
     {"width", "height", "fps", "seconds": [動画ごとの長さ], "bytes", "budget_bytes", "changed": [変えたもの], "fits"}
     changed は "fps"・"size"・"length" のうち変えたもの。どうしても入らない (1 コマも入らない) ときは fits が False。
+    reserved_bytes は予算のうち、ほかのもの (ガラスケースの人物とケースの絵) が先に使う分。
     """
     if priority not in PRIORITIES:
         raise ValueError(f"priority は {', '.join(PRIORITIES)} のどれか: {priority}")
     if target_tier not in TIER_BUDGETS_MB:
         raise ValueError(f"target_tier は {min(TIER_BUDGETS_MB)}〜{max(TIER_BUDGETS_MB)}: {target_tier}")
     layout = {"max_sheet": max_sheet, "gutter": gutter, "max_cells": max_cells}
-    budget = TIER_BUDGETS_MB[target_tier] * MIB
+    budget = max(0, TIER_BUDGETS_MB[target_tier] * MIB - int(reserved_bytes))
     seconds = [max(0.0, float(s)) for s in durations]
     w, h, f = int(width), int(height), float(fps)
     if snap:

@@ -437,3 +437,6 @@ def test_rig_test_pack_script_adds_bone_animations(tmp_path):
     assert animation[description["animations"]["pose"]]["bones"]["test"]["rotation"] == [90, 0, 0]
     clock = json.loads(files["RP/animations/screen_r_clock_a.animation.json"])["animations"]
     assert next(iter(clock.values()))["anim_time_update"] == "math.mod(v.t, 4)"
+    # 移動の向きを読む試験 (rig_anim.POSITION_SIGNS)
+    moved = json.loads(files["RP/animations/screen_r_py_a.animation.json"])["animations"]
+    assert next(iter(moved.values()))["bones"]["test"] == {"position": [0, 8, 0]}

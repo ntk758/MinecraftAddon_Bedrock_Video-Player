@@ -290,3 +290,38 @@ ffprobe -v error -count_frames -show_entries stream=codec_type,duration,nb_read_
 6. **重さ**: 画面を見たまま `/bvpimg:method a` と `c` を切り替え、端末の fps の差を書く。
 
 記録すること: 端末、Minecraft の版、方式、見えたコマ数/10 秒、音ズレ (秒)、読み直し後に戻るまでの秒数、fps の差、崩れの有無。
+
+## 6. ガラスケースの、骨で動かす MMD の人物を実機で確かめる
+
+骨で動かす人物 (docs/research/glass_case_practical.md、docs/IMAGE_MODE.md の「MMD の人物を骨で動かす」) は、変換ツールの中では、ゲームと同じ回転の決まり (DECISIONS.md の A20) で計算して確かめてあります。次の 4 つは、まだ Minecraft の実機で見ていません。結果は「4. リリースごとの記録」の備考と、DECISIONS.md に書きます。
+
+### 準備
+- MMD のモデル (.pmx)・踊り (.vmd)・曲を用意します。どれも作者の利用規約の範囲で使ってください。
+- 毎回、新しいワールド (クリエイティブ、昼、平地) で、ビヘイビアーパックとリソースパックを両方有効にします。設定 → 「コンテンツ ログ」を有効にして、エラーが出ないことを確かめます。
+
+### 6.1 移動の向き (`scripts/make_rig_test_pack.py`)
+1. `python scripts/make_rig_test_pack.py rig_test.mcaddon` で作ります。
+2. `/bvpimg:setup r_px` → `/bvpimg:start` → `/bvpimg:play r_px`。`r_py`・`r_pz` も同じように見ます。
+3. 右の形が左の見本から、正面から見て左右・上下・手前と奥のどちらへ半ブロック動いたかを書きます。
+4. 見込みは「`r_px` は左、`r_py` は上、`r_pz` は奥」です (image_mode/rig_anim.py の `POSITION_SIGNS`)。違ったら、その値を直して DECISIONS.md に書きます。
+
+### 6.2 関節のすき間と陰 (`scripts/make_rig_figure_test_pack.py`)
+1. `python scripts/make_rig_figure_test_pack.py model.pmx dance.vmd figure_test.mcaddon` で作ります。踊りの最初の 30 秒の人物が、作り方を変えて 5 体入ります。
+2. `j0`・`j1`・`j2`・`sn`・`sw` を、それぞれ 4 ブロックずつ離して `setup` → `play` します。
+3. **重ね代** (`j0`・`j1`・`j2` = 0・1・2 ボクセル): ひざ・ひじ・肩を大きく曲げた所で、関節に向こうが透ける細い線が見えるか、重ねた所がちらつくかを見ます。線が見えない一番小さい重ね代を、`--joint-overlap` の既定にします (今は 1)。
+4. **陰** (`j1` は焼き込む、`sn` は焼き込まない、`sw` は焼き込まずにゲームの光を受ける): 昼と夜 (`/time set night`) に見比べます。腕を上げたときに、横を向いた面が上の面の明るさのままで変に見えないかを見ます。
+
+### 6.3 1 曲を通す
+1. `python convert_image_mode.py model.pmx --motion dance.vmd --audio song.wav --case --case-image back=stage.png -o show.mcaddon` で作ります。
+2. `setup` → `play` で最後まで再生します。
+3. 次のことを見ます。
+   - 曲の最初・真ん中・最後で、拍と動きがずれないか。画面を録画して、0.1 秒単位で書きます。
+   - `pause` → `resume`、`seek` の後もずれないか。
+   - 踊りの間、人物がケースからはみ出さないか。
+   - 最後の姿勢で止まるか。
+4. 重さも書きます。PC の fps (ケースだけ・人物あり)、ワールドを開くまでの秒数、変換のレポート (`.report.json`) のアニメーションの大きさ。
+
+### 6.4 スマートフォンと 2 人
+6.3 のアドオンで、スマートフォンでも読み込めるか、fps を書きます。2 人で別の角度から同時に見て、どちらも同じ姿勢で動くかを見ます。
+
+記録すること: 端末、Minecraft の版、6.1 の 3 つの向き、6.2 で選んだ重ね代と陰、6.3 のずれ (秒)・fps・読み込みの秒数、6.4 の結果。
