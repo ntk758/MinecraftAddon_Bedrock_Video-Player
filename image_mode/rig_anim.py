@@ -11,7 +11,7 @@
 
 移動 (d) があるボーン (センター・全ての親など、根の近く) には、geometry に移動だけを受け持つボーン m<番号> を親として
 足す (rig.rig_figure の movers)。回転と移動を同じボーンに入れたときの順番を実機で確かめなくて済む。
-移動の値の向き (POSITION_SIGNS) はまだ実機で確かめていない (**見込み**。scripts/make_rig_test_pack.py の r_px など)。
+移動の値の向き (POSITION_SIGNS) は実機で確かめた (DECISIONS.md の A21。geometry の軸の移動がそのまま position)。
 """
 from __future__ import annotations
 
@@ -26,9 +26,9 @@ ANIMATION_RATE = 30          # 踊りを並べる間隔 (1 秒あたり)。MMD �
 ROTATION_TOLERANCE = 0.25    # キーを落としてよい、部品の点のずれ (ボクセル)
 POSITION_TOLERANCE = 0.1     # 移動のキーを落としてよいずれ (ボクセル)
 MOVER_THRESHOLD = 0.05       # 踊りの間にこれより動く (ボクセル) ボーンだけ、移動のボーンを足す
-# アニメーションの position の値 = geometry の軸での移動 × この符号 (x, y, z)。Bedrock Wiki の「アニメーションでは x が
-# geometry と逆」に合わせた **見込み** (回転は A20 で確かめたが、移動はまだ)
-POSITION_SIGNS = (-1, 1, 1)
+# アニメーションの position の値 = geometry の軸での移動 × この符号 (x, y, z)。実機で、x も含めて geometry と同じ向き
+# (DECISIONS.md の A21。Bedrock Wiki の「アニメーションでは x が geometry と逆」は、移動には当たらなかった)
+POSITION_SIGNS = (1, 1, 1)
 # ボクセルの軸 ↔ MMD の軸 (x, y 上, z 奥) → (x, y 奥, z 上)
 _SWAP = np.array([[1, 0, 0], [0, 0, 1], [0, 1, 0]], np.float64)
 

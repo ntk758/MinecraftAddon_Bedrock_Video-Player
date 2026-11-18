@@ -113,7 +113,7 @@ v.cell = v.frame - v.sheet * <cells_per_sheet>;
   `animations: {"dance": …}`、`scripts.animate: ["dance"]`。`loop: true`、`anim_time_update` は時計 `v.secs` (秒) で、
   繰り返すなら `math.mod(v.secs, 長さ)`、繰り返さないなら `math.clamp(v.secs, 0, 長さ − 0.001)`。キーは 30 Hz の時刻に置く。
 - 回転: `b<番号>` の `rotation` (a, b, c) 度。ボクセルの軸 (x 右・y 奥・z 上) で R = Ry(c) · Rz(−b) · Rx(a)、子はローカル (DECISIONS.md の A20)。
-- 移動: `m<番号>` の `position`。geometry の軸の移動に `POSITION_SIGNS` (−1, 1, 1) を掛けた値 (**見込み**。実機では未確認。docs/TESTING.md の 6.1)。
+- 移動: `m<番号>` の `position`。geometry の軸の移動そのまま (`POSITION_SIGNS` = (1, 1, 1)。実機で確かめた。DECISIONS.md の A21)。
 - 時計: 主の時計 (人物が主なら fps 20、コマ数は長さ × 20 + 1) から、`v.secs = state == 1 ? math.min(v.base_frame / fps + (v.t − v.base_time), 長さ) : v.base_frame / fps`
   (繰り返すなら math.mod)。コマで刻まないので、動きは描画のたびになめらかに補間される。`v.fig = 0`。
 - 曲 (`--audio`): 主の時計の長さは曲の長さ。踊りが短ければ最後の姿勢で止まり、長ければそこで切る。壁の動画があれば主は壁の動画のまま、音声だけ曲にする。
