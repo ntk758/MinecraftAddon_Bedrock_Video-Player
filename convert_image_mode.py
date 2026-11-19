@@ -32,6 +32,8 @@ IMAGE_MAIN_SCRIPT = APP_DIR / "image_mode" / "image_main.js"
 DEFAULT_NAMESPACE = "bvpimg"
 # 立体 (.vox) の既定の fps (ブロックモードの立体と同じ 10)
 IMPOSTOR_DEFAULT_FPS = 10.0
+# 角度で絵を切り替える立体の向きの数の上限 (5 度ごと)。向きの数だけ絵を描いてから予算で断っていた (2026-11-19 の監査 AUD2-07)
+MAX_VIEWS = 72
 # 骨で動かす人物 (MMD) の再生の時計の fps (コマの数え方。動きはアニメーションの補間でなめらか)。ゲームの 1 秒 20 tick
 RIG_CLOCK_FPS = 20.0
 MMD_NOTICE = ("MMD のモデル・踊り・曲には作者の利用規約があります。規約で許された範囲で使ってください "
@@ -379,7 +381,9 @@ def _common_files(put, videos: list[dict], namespace: str, pack_name: str, icon:
     put("BP/manifest.json", json.dumps(bp_manifest, ensure_ascii=False, indent=2) + "\n")
     put("RP/manifest.json", json.dumps(rp_manifest, ensure_ascii=False, indent=2) + "\n")
     put("BP/scripts/image_videos.js", image_videos_js(videos, namespace))
-    put("BP/scripts/image_main.js", IMAGE_MAIN_SCRIPT.read_bytes())
+    # 文字として読んで LF にそろえる (ブロックモードの main.js と同じ)。バイトのまま入れると、Windows の
+    # core.autocrlf で取り出した場所では CRLF になり、同じ版でもアドオンの中身が違っていた (2026-11-19 の監査 AUD2-10)
+    put("BP/scripts/image_main.js", IMAGE_MAIN_SCRIPT.read_text(encoding="utf-8"))
     if icon is not None:
         put("RP/pack_icon.png", icon)
         put("BP/pack_icon.png", icon)
@@ -913,7 +917,7 @@ def merge_image_files(parts: list[tuple[dict, dict]], *, namespace: str, allow_o
     sounds: dict = {}
     layouts: list[dict] = []
     warnings: list[str] = []
-    for part_files, report in reversed(parts):  # 最初の出力のファイル (アイコンなど) を最後に書いて残す
+    for part_files, _report in reversed(parts):  # 最初の出力のファイル (アイコンなど) を最後に書いて残す
         files.update(part_files)
     for part_files, report in parts:
         for video in report["videos"]:
@@ -1107,6 +1111,18 @@ def _non_negative_float(text: str) -> float:
     return value
 
 
+def _bounded_int(low: int, high: int):
+    def parse(text: str) -> int:
+        try:
+            value = int(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError("整数を指定してください") from None
+        if not low <= value <= high:
+            raise argparse.ArgumentTypeError(f"{low}〜{high} にしてください")
+        return value
+    return parse
+
+
 def _size(text: str) -> tuple[int, int]:
     match = re.fullmatch(r"\s*(\d+)\s*[xX×]\s*(\d+)\s*", text)
     if not match or int(match.group(1)) < 2 or int(match.group(2)) < 2 or int(match.group(1)) > 512 or int(match.group(2)) > 512:
@@ -1133,6 +1149,8 @@ def _namespace(text: str) -> str:
 def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
     """コマンドラインの引数。allow_no_inputs は、入力の動画を渡さない呼び出し (画面から MMD の人物だけを作るとき。
     -o が要る) のため。"""
+    from image_mode.rig import MAX_VOXELS
+
     parser = argparse.ArgumentParser(
         description="画像モード: 動画のコマをテクスチャのシートにして、エンティティで再生するアドオン (.mcaddon) を作ります。"
                     "ブロックモード (convert.py) とは別のアドオンです。")
@@ -1191,8 +1209,9 @@ def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
                              "(Minecraft での確認がまだなので既定は off)")
     parser.add_argument("--near-threshold", type=float, default=DEFAULT_NEAR_THRESHOLD,
                         help=f"--dedup near で同じとみなす画素ごとの差の平均 (0〜255、既定 {DEFAULT_NEAR_THRESHOLD})")
-    parser.add_argument("--views", type=_positive_int, default=impostor.DEFAULT_VIEWS,
-                        help="立体 (.vox) を何方向から描くか (試作。既定 8 = 45 度ごと。テクスチャは向きの数だけ増える)")
+    parser.add_argument("--views", type=_bounded_int(1, MAX_VIEWS), default=impostor.DEFAULT_VIEWS,
+                        help=f"立体 (.vox) を何方向から描くか (試作。1〜{MAX_VIEWS}、既定 8 = 45 度ごと。"
+                             "テクスチャは向きの数だけ増える)")
     parser.add_argument("--figure-blocks", type=_positive_float, default=6,
                         help="立体 (.vox) の高さ (ブロック数、既定 6)")
     glass_group = parser.add_argument_group(
@@ -1234,8 +1253,9 @@ def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
                              help="MMD のモデル (.pmx) を踊らせるモーション (.vmd)。骨で動かすので、1 曲を通しても軽い")
     glass_group.add_argument("--audio", default=None, metavar="FILE",
                              help="MMD の人物と一緒に鳴らす曲 (wav・mp3 など)。曲の長さだけ再生し、踊りが短ければ最後の姿勢で止まる")
-    glass_group.add_argument("--figure-voxels", type=_positive_int, default=128,
-                             help="MMD の人物の細かさ (初期姿勢の高さのボクセル数、既定 128)。大きさは --figure-blocks")
+    glass_group.add_argument("--figure-voxels", type=_bounded_int(1, MAX_VOXELS), default=128,
+                             help=f"MMD の人物の細かさ (初期姿勢の高さのボクセル数、1〜{MAX_VOXELS}、既定 128)。"
+                                  "大きさは --figure-blocks")
     glass_group.add_argument("--joint-overlap", type=_non_negative_int, default=1,
                              help="MMD の人物の関節で、隣の部品に重ねるボクセルの数 (曲げたときのすき間を防ぐ。既定 1)")
     glass_group.add_argument("--figure-loop", action="store_true", help="MMD の人物の踊りを繰り返す (既定は最後で止まる)")

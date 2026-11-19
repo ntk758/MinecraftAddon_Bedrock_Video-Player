@@ -31,6 +31,9 @@ JOINT_SHARE = 0.1
 DEFAULT_TOLERANCE = 0.25
 DEFAULT_OVERLAP = 1
 DEFAULT_VOXELS = 128
+# 細かさ (初期姿勢の高さのボクセル数) の上限。格子の大きさの 3 乗でメモリが増え、試験用の小さな人形でも 1024 で 7 GiB 使って
+# から「シートに入りません」で失敗した (512 は 558 MiB。2026-11-19 の監査 AUD2-06)
+MAX_VOXELS = 512
 # 動かないボーンを調べるときの姿勢の間隔 (1 秒あたり)
 DEFAULT_CHECK_RATE = 10
 _SIDES = [(axis, step) for axis in range(3) for step in (1, -1)]
@@ -65,6 +68,8 @@ def rest_height(model) -> float:
 
 def rest_grid(model, voxels: int = DEFAULT_VOXELS, margin: int = 2) -> RestGrid:
     """初期姿勢の高さを voxels ボクセルにする格子。周りに margin ボクセルの余白を付ける。"""
+    if not 1 <= voxels <= MAX_VOXELS:
+        raise ValueError(f"人物の細かさ (ボクセル) は 1〜{MAX_VOXELS} にしてください: {voxels}")
     height = rest_height(model)
     if height <= 0:
         raise ValueError("モデルの高さが 0 です")
@@ -423,6 +428,9 @@ class Rig:
 def motion_frames(tracks: dict, rate: float) -> np.ndarray:
     """踊りの最初から最後のキーまでを、1 秒 rate 回で並べた MMD のフレーム番号 (30 fps)。"""
     last = max((keys[-1][0] for keys in tracks.values() if keys), default=0)
+    if last / 30 > mmd.MAX_MOTION_SECONDS:
+        raise ValueError(f"踊りが長すぎます: 最後のキーが {last / 30 / 60:.0f} 分の所にあります "
+                         f"(上限 {mmd.MAX_MOTION_SECONDS // 60} 分)")
     count = int(last * rate / 30) + 1
     return np.arange(count) * (30 / rate)
 

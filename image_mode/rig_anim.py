@@ -21,6 +21,7 @@ import math
 import numpy as np
 
 from image_mode import planes, rig as rigmod
+from mvcodec.mmd import MAX_MOTION_SECONDS
 
 ANIMATION_RATE = 30          # 踊りを並べる間隔 (1 秒あたり)。MMD のフレームと同じ
 ROTATION_TOLERANCE = 0.25    # キーを落としてよい、部品の点のずれ (ボクセル)
@@ -135,9 +136,16 @@ def mmd_centre(poser) -> int:
 
 
 def song_frames(tracks: dict, rate: float = ANIMATION_RATE, seconds: float | None = None) -> np.ndarray:
-    """踊りを 1 秒 rate 回で並べた MMD のフレーム番号。seconds があれば、その長さまで (踊りが短ければ最後の姿勢のまま)。"""
+    """踊りを 1 秒 rate 回で並べた MMD のフレーム番号。seconds があれば、その長さまで (踊りが短ければ最後の姿勢のまま)。
+    長さは mvcodec.mmd.MAX_MOTION_SECONDS まで (超えたら ValueError)。"""
     last = max((keys[-1][0] for keys in tracks.values() if keys), default=0)
     length = last / 30 if seconds is None else seconds
+    if length > MAX_MOTION_SECONDS:
+        limit = MAX_MOTION_SECONDS // 60
+        if seconds is None:
+            raise ValueError(f"踊りが長すぎます: 最後のキーが {last / 30 / 60:.0f} 分の所にあります (上限 {limit} 分)。"
+                             "曲を付けると、曲の長さで作ります")
+        raise ValueError(f"曲が長すぎます: {seconds / 60:.0f} 分 (上限 {limit} 分)")
     count = int(math.floor(length * rate + 1e-9)) + 1
     return np.minimum(np.arange(count) * (30 / rate), last if seconds is None else np.inf)
 

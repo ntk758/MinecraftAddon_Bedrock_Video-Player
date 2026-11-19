@@ -107,7 +107,7 @@ def case_texture(box: tuple, case: CaseOptions, mapping: planes.FaceMapping = pl
             try:
                 with Image.open(path) as source:
                     picture = np.asarray(_fit_cover(source, w, h))
-            except OSError as error:
+            except (OSError, Image.DecompressionBombError) as error:  # 大きすぎる絵は Pillow が断る (AUD2-08)
                 raise ValueError(f"ケースの絵を読めませんでした: {path}: {error}") from None
         else:
             picture = np.array([[CASE_DEFAULT_COLOURS[part]]], np.uint8)
