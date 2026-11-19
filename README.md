@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v6.40.0](https://img.shields.io/badge/Release-v6.40.0-blue.svg)](#-releases)
+[![Release v6.40.1](https://img.shields.io/badge/Release-v6.40.1-blue.svg)](#-releases)
 [![CI](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml/badge.svg)](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
@@ -54,7 +54,7 @@
   <b>How different kinds of footage look</b> (real in-game recordings, Windows 11, v6.37.0): source, block mode (128×72, 20 fps, <code>--flat-areas smooth</code>; <code>off</code> for space) and image mode (256×144, 30 fps). In v6.37.0 the image-mode screen faced sideways for about the first 1.5 s of a play (fixed in v6.37.1), so every clip starts after that point. All footage is CC0, public domain or CC BY from Wikimedia Commons (<a href="docs/images/genres/CREDITS.md">credits and licenses</a>)</sub>
 </p>
 
-**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.40.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.40.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.40.0-windows-x64.zip` (Python 不要) を使ってください。
+**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.40.1.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.40.1.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.40.1-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 
 > **画像モード (30 fps のテクスチャ再生、新しい方式)** — Windows 版・ブラウザ版の「画像モードのアドオンも作る」か `convert_image_mode.py` で作れます。ブロックモードと同じ操作 (コマンド・時計のリモコン・音量・シーク・10 言語) に対応し、長い動画では画質・なめらかさ・長さのどれを優先するかを選べます。
@@ -65,7 +65,7 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
 ## 🚀 クイックスタート / Quick start
 
 **A. サンプルを試す (変換は不要・約 3 分) / Try the sample (no conversion)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.40.0.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.40.0.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.40.1.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.40.1.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
    Download a sample `.mcaddon` from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) and double-click it to import it into Minecraft Bedrock.
 2. 新しいワールドを作り、**ビヘイビアーパックとリソースパックの両方** を有効にします (スーパーフラットがおすすめ)。**チートは不要** です (v6.31.0 以前の版はチートが必要)。
    Create a world with **both** the Behavior Pack and the Resource Pack enabled (a superflat world works best). **Cheats are not needed** (versions up to v6.31.0 need cheats).
@@ -73,8 +73,8 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
    Run `/badapple:setup` then `/badapple:start`. Use a compass to open the remote control (up to v6.31.0: `/scriptevent badapple:setup`).
 
 **B. 自分の動画を変換する (Windows) / Convert your own video (Windows)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.40.0-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
-   Unzip `BlockVideoPlayer-v6.40.0-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.40.1-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
+   Unzip `BlockVideoPlayer-v6.40.1-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
 2. 初めて起動すると **はじめてガイド** が開きます (左上のボタンでいつでも開けます): 環境 (FFmpeg・GPU・メモリ・AI の切り抜き・保存先の空き・Minecraft) を自動で調べ、動画を選ぶと勧める設定とアドオンの大きさの見込みを出し、作り終わると「保存先を開く」「Minecraft に読み込む」と再生のコマンドを案内します。ガイドを使わないときは「動画を追加」→「動画の縦横比に合わせる」→「.mcaddon を作成」。画面の **再生負荷の目安** が「重い」なら幅・高さ・fps を下げます。
    Add a video → *Match video aspect ratio* → *Create .mcaddon*. If the **playback load estimate** says *heavy*, lower the size or fps.
 3. できた `.mcaddon` を A の 2〜3 と同じように使います。うまくいかないときは [既知の問題](docs/KNOWN_ISSUES.md) を見てください。
@@ -110,10 +110,10 @@ Python で動かす方法・GPU の設定は [インストールと使い方](#-
 リリースページでは各ファイルの横に SHA-256 が表示されます (`SHA256SUMS.txt` が付いている版はそのファイルにも)。手元のファイルの値と一致すれば、壊れても書き換えられてもいません。
 Each file on the release page shows its SHA-256; it must match the value you compute:
 ```powershell
-Get-FileHash .\BlockVideoPlayer-v6.40.0-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\BlockVideoPlayer-v6.40.1-windows-x64.zip -Algorithm SHA256
 ```
 ```bash
-sha256sum BlockVideoPlayer-v6.40.0-windows-x64.zip
+sha256sum BlockVideoPlayer-v6.40.1-windows-x64.zip
 ```
 
 ### 🖼 画像モード (試作) / Image mode (experimental)
@@ -642,6 +642,7 @@ This project is licensed under the [MIT License](LICENSE).
 すべての版の変更点は [CHANGELOG.md](CHANGELOG.md) にあります / Full history: [CHANGELOG.md](CHANGELOG.md).
 
 
+- **v6.40.1**: 変換ツールの修正。途中で切れた動画 (ダウンロードの途中で止まった mp4 など) を黙って短く変換せず止める。EXE をコマンドから使うと `--help` が出ない・失敗でダイアログが出て終わらないのを直し、`--threads 0`・512 を超える `--width` / `--height` を断る。
 - **v6.40.0**: 画像モードにガラスケースの立体と、骨で動かす MMD の人物 (試作、`convert_image_mode.py` と Windows 版。PC の実機で確認)。2 回目の全体の監査で見つけた 10 件 (壊れた `.pmx`・`.vmd` で固まる、踊りと曲の長さの上限、`--figure-voxels`・`--views` の上限 など) を直し、MMD の IK を約 30% 速くした。
 - **v6.39.0**: ブラウザ版のページを作り直した。8×8 の最適化の継ぎ目を減らした。全体の監査で見つけた 13 件 (ブラウザ版の接頭辞 `minecraft`、`.mcaddon` の書き込みの途中の失敗で前のファイルを壊す、壊れた `.vox` で固まる など) を直し、Pillow 13 以上に。
 - **v6.38.0**: 画像モードの時計を実時間に (TPS が下がっても音と映像がずれない)・シークと再開の直後に音が出る。人物の切り抜きで、音声が映像より短い動画が失敗するのを直した。画像モードに JPEG のシートと同じ絵のコマをまとめる設定 (任意)。画面に勧めるモードとよくある失敗の原因 (実機では未確認)。
