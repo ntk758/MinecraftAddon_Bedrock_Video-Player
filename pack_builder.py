@@ -224,6 +224,9 @@ def screen_block_files(namespace: str, pack_name: str) -> dict:
                 "minecraft:destructible_by_mining": {"seconds_to_destroy": 0.5},
                 "minecraft:destructible_by_explosion": {"explosion_resistance": 6},
                 "minecraft:map_color": "#1a2633",
+                # material_instances だけでは Minecraft が「Block needs both a geometry and material instances component」で
+                # 定義ごと読まない (ブロックが無くなる。PC の実機で確認)。普通の立方体の形を書く
+                "minecraft:geometry": "minecraft:geometry.full_block",
                 "minecraft:material_instances": {
                     "*": {"texture": side, "render_method": "opaque"},
                     "up": {"texture": top, "render_method": "opaque"},

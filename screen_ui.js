@@ -22,7 +22,7 @@ const ICONS = {
   play: "textures/items/emerald",
   pause: "textures/items/emerald",
   stop: "textures/blocks/redstone_block",
-  seek: "textures/items/clock",
+  seek: "textures/items/clock_item",
   library: "textures/items/book_portfolio",
   settings: "textures/items/repeater",
   remove: "textures/blocks/barrier",

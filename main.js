@@ -2627,7 +2627,7 @@ function showRemoteControlGUI(player) {
     .button(tr("remote.next"), "textures/items/paper")
     .button(tr("remote.prev"), "textures/items/paper")
     .button(tr("remote.volume_button"), "textures/items/repeater")
-    .button(tr("remote.seek"), "textures/items/clock")
+    .button(tr("remote.seek"), "textures/items/clock_item")
     .button(tr("remote.library"), "textures/items/book_portfolio");
 
   form.show(player).then((response) => {

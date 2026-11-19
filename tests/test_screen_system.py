@@ -67,6 +67,8 @@ def test_the_addon_has_a_complete_screen_block():
     assert "const SCREEN_BLOCK_ID = `${EVENT_NAMESPACE}:video_screen`;" in main
     assert 'const EVENT_NAMESPACE = "ns";' in main
     assert "ns:screen_controller" in components
+    # material_instances があるのに geometry が無いと、Minecraft は定義ごと読まない (PC の実機で見つけた)
+    assert components["minecraft:geometry"] == "minecraft:geometry.full_block"
     # テクスチャの参照先: material_instances の名前 → terrain_texture.json → PNG
     terrain = json.loads(z.read("RP/textures/terrain_texture.json"))
     assert terrain["texture_name"] == "atlas.terrain"

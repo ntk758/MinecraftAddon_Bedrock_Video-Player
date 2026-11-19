@@ -71,7 +71,7 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
    Create a world with **both** the Behavior Pack and the Resource Pack enabled (a superflat world works best). **Cheats are not needed** (versions up to v6.31.0 need cheats).
 3. 平らな場所でチャットに `/badapple:setup` → `/badapple:start`。コンパスを使うとリモコンが開きます (v6.31.0 以前の版は `/scriptevent badapple:setup` → `/scriptevent badapple:start`)。
    Run `/badapple:setup` then `/badapple:start`. Use a compass to open the remote control (up to v6.31.0: `/scriptevent badapple:setup`).
-4. (次の版から・実機は未確認) クリエイティブのインベントリの「アイテム」から **ビデオスクリーン** を置いて使うと、コマンド無しで動画を選んで再生できます。いくつでも (16 個まで) 置けて、それぞれ別の動画を流せます ([スクリーンシステム](docs/SCREEN_SYSTEM.md))
+4. (次の版から・PC の実機で一部を確認) クリエイティブのインベントリの「アイテム」から **ビデオスクリーン** を置いて使うと、コマンド無しで動画を選んで再生できます。いくつでも (16 個まで) 置けて、それぞれ別の動画を流せます ([スクリーンシステム](docs/SCREEN_SYSTEM.md))
    (Next release, not yet checked in the game) Place a **Video Screen** block from the creative inventory (*Items*) and use it to pick and play a video without commands. Up to 16 screens can each play their own video ([Screen System](docs/SCREEN_SYSTEM.md)).
 
 **B. 自分の動画を変換する (Windows) / Convert your own video (Windows)**
