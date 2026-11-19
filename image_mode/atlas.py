@@ -15,6 +15,8 @@ from typing import Iterable, Iterator
 import numpy as np
 from PIL import Image
 
+from mvcodec import truncation
+
 # Microsoft Learn「Texture Budgets」(https://learn.microsoft.com/en-us/minecraft/creator/documents/texturebudgets) の
 # アドオンのテクスチャ予算。ページの MB は 1024*1024 バイト (MiB) に近いので、ここでは MB = MiB として扱う。
 # メモリは「幅 × 高さ × 4 バイト」で数える (Learn の規則)。
@@ -98,17 +100,7 @@ def probe_size(path, ffmpeg: str = "ffmpeg") -> tuple[int, int] | None:
 
 def probe_duration(path, ffmpeg: str = "ffmpeg") -> float | None:
     """動画の長さ (秒)。ffmpeg -i の Duration の行から読む (ffprobe が無い環境でも動くように)。読めなければ None。"""
-    import re
-    try:
-        result = subprocess.run([ffmpeg, "-hide_banner", "-i", str(path)], capture_output=True, text=True,
-                                encoding="utf-8", errors="replace", timeout=60, **_subprocess_kwargs())
-    except (OSError, subprocess.SubprocessError):
-        return None
-    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", result.stderr)
-    if not match:
-        return None
-    hours, minutes, secs = match.groups()
-    return int(hours) * 3600 + int(minutes) * 60 + float(secs)
+    return truncation.probe_duration(path, ffmpeg)
 
 
 def read_frames(path, width: int, height: int, fps: float, start: float | None = None, end: float | None = None,
@@ -120,11 +112,13 @@ def read_frames(path, width: int, height: int, fps: float, start: float | None =
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **_subprocess_kwargs())
     frame_size = width * height * 3
     completed = False
+    frames = 0
     try:
         while True:
             raw = proc.stdout.read(frame_size)
             if len(raw) < frame_size:
                 break
+            frames += 1
             yield np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3))
         completed = True
     finally:
@@ -136,6 +130,10 @@ def read_frames(path, width: int, height: int, fps: float, start: float | None =
         returncode = proc.wait()
     if completed and returncode != 0:
         raise RuntimeError(f"ffmpeg がエラー終了しました (code {returncode}): {stderr.strip()}")
+    if completed:
+        # 末尾の欠けた動画は ffmpeg が 0 で終わるので、読めた長さとエラーの文で見つける (mvcodec/truncation.py)
+        truncation.check_complete(path, frames, fps,
+                                  truncation.expected_seconds(probe_duration(path, ffmpeg), start=start, end=end), stderr)
 
 
 # 1 枚のマスの数の上限。方式 a はマスの数だけボーンと part_visibility の式を持ち、その負荷は文書に無い (実機で未確認)

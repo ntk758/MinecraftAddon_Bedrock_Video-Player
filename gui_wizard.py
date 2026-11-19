@@ -111,6 +111,8 @@ FAILURE_HINTS = (
     ("hint.ffmpeg", re.compile(r"could not start ffmpeg|\[WinError 2\][^\n]*ffmpeg|No such file or directory: '?[^'\n]*ffmpeg",
                                re.I)),
     ("hint.memory", re.compile(r"MemoryError|out of memory|Unable to allocate|bad_alloc|空きの RAM", re.I)),
+    # 途中で切れた動画は、ffmpeg のエラーの文 (Invalid data など) も一緒に出るので、読めない動画より先に調べる
+    ("hint.video_truncated", re.compile(r"The video is truncated|動画が途中で切れています", re.I)),
     ("hint.video_unreadable", re.compile(r"Invalid data found when processing input|moov atom not found|"
                                          r"Error opening input|could not read the video|ffmpeg がエラー終了しました", re.I)),
     ("hint.budget", re.compile(r"\bbudget\b|予算", re.I)),

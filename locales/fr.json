@@ -280,6 +280,7 @@
   "wizard.mode_block_fps": "Mode : le mode blocs convient à cette vidéo (pour tenir dans le Tier {tier}, le mode image descendrait à {fps} fps, proche du mode blocs).",
   "hint.ffmpeg": "Cause probable : ffmpeg n’a pas pu être lancé. Placez ffmpeg.exe à côté de l’application ou installez-le (winget install Gyan.FFmpeg).",
   "hint.memory": "Cause probable : mémoire insuffisante. Réduisez la largeur, la hauteur ou les fps, convertissez une partie plus courte ou fermez d’autres applications.",
+  "hint.video_truncated": "Cause probable : la vidéo est coupée en cours de route (téléchargement ou copie interrompu). Récupérez à nouveau le fichier complet, puis relancez la création.",
   "hint.video_unreadable": "Cause probable : la vidéo n’a pas pu être lue (fichier endommagé ou format non pris en charge). Réenregistrez-la en MP4 (H.264).",
   "hint.budget": "Cause probable : les textures du mode image ne tiennent pas dans le budget mémoire (Tier). Choisissez la priorité à la durée, une taille plus petite ou une partie plus courte.",
   "hint.audio": "  Cette vidéo n’aura pas de son dans l’add-on. Si elle devrait en avoir, vérifiez que le fichier se lit avec le son dans un lecteur vidéo.",

@@ -26,6 +26,7 @@ import json
 import math
 import os
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -34,6 +35,8 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageFilter
+
+from mvcodec import truncation
 
 # DeepLabV3 (Pascal VOC の 21 種類) の「人」の番号
 PERSON_CLASS = 15
@@ -1002,23 +1005,54 @@ def read_frames(path, fps, duration=None, ffmpeg="ffmpeg", long_side=ANALYSIS_LO
     if duration is not None:
         cmd += ["-t", str(duration)]
     cmd += ["-f", "image2pipe", "-c:v", "ppm", "-"]
-    proc = _start_ffmpeg(cmd, ffmpeg, stdout=subprocess.PIPE)
+    proc = _start_ffmpeg(cmd, ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # stderr は別のスレッドで読み続ける (読まないと、壊れた動画でパイプが詰まって止まる)。最後の 8 KB だけ使う
+    stderr_tail = bytearray()
+
+    def drain_stderr():
+        for chunk in iter(lambda: proc.stderr.read(4096), b""):
+            stderr_tail.extend(chunk)
+            del stderr_tail[:-8192]
+
+    reader = threading.Thread(target=drain_stderr, daemon=True)
+    reader.start()
+    frames = 0
+    completed = False
     try:
         while True:
             fields = []
             while len(fields) < 4:
                 token = _read_token(proc.stdout)
                 if token is None:
-                    return
+                    break
                 fields.append(token)
+            if len(fields) < 4:
+                break
             width, height = int(fields[1]), int(fields[2])
             raw = proc.stdout.read(width * height * 3)
             if len(raw) < width * height * 3:
-                return
+                break
+            frames += 1
             yield np.frombuffer(raw, np.uint8).reshape(height, width, 3)
+        completed = True
     finally:
+        if not completed:
+            proc.kill()
         proc.stdout.close()
-        proc.wait()
+        returncode = proc.wait()
+        reader.join(timeout=5)
+        proc.stderr.close()
+    if not completed:
+        return
+    stderr = bytes(stderr_tail).decode("utf-8", errors="replace")
+    if returncode != 0:
+        raise InputError(f"could not read the video: {path} (ffmpeg code {returncode}): {stderr.strip()[-500:]}")
+    # 末尾の欠けた動画は ffmpeg が 0 で終わるので、読めた長さとエラーの文で見つける (mvcodec/truncation.py)
+    try:
+        truncation.check_complete(path, frames, fps,
+                                  truncation.expected_seconds(truncation.probe_duration(path, ffmpeg), duration=duration), stderr)
+    except truncation.TruncatedVideoError as error:
+        raise InputError(str(error)) from error
 
 
 def _read_token(stream):
@@ -1269,13 +1303,28 @@ def make_person_videos(source, mask_path, background_path, fps, duration=None, f
                 pass   # ffmpeg が先に終わっていた (BrokenPipe)。失敗は下の終了コードで知る
             # 途中で失敗したときは、背景の動画に音声を足さずに一時ファイルだけ消す
             codes.append(writer.abort() if failed and isinstance(writer, _AudioAfterWriter) else writer.wait())
-    for writer, code, path in zip(writers, codes, (mask_path, background_path)):
-        if code != 0:
-            detail = getattr(writer, "error", "")
-            raise InputError(f"ffmpeg could not write {path} (exit code {code})" + (f": {detail}" if detail else ""))
-    if count == 0:
-        raise InputError(f"could not read the video: {source}")
+        if failed:
+            _remove_outputs(mask_path, background_path)
+    try:
+        for writer, code, path in zip(writers, codes, (mask_path, background_path)):
+            if code != 0:
+                detail = getattr(writer, "error", "")
+                raise InputError(f"ffmpeg could not write {path} (exit code {code})" + (f": {detail}" if detail else ""))
+        if count == 0:
+            raise InputError(f"could not read the video: {source}")
+    except InputError:
+        _remove_outputs(mask_path, background_path)
+        raise
     return count
+
+
+def _remove_outputs(*paths):
+    """失敗したときに、途中まで書いた動画を消す (途中で切れた動画などで、短いマスクだけが残って使われないように)。"""
+    for path in paths:
+        try:
+            os.remove(path)
+        except OSError:
+            pass   # 作る前に失敗した (ファイルが無い) など
 
 
 def skipped_profiles(model, profile, ram_free, vram_free):
