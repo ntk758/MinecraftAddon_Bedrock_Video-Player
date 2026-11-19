@@ -28,7 +28,9 @@ def test_screen_system_unit_tests():
     result = subprocess.run(["node", "--test", "tests/js/screen_system_test.mjs"], cwd=ROOT, capture_output=True, text=True,
                             encoding="utf-8", timeout=300, check=False)
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]
-    assert re.search(r"^ℹ pass \d+", result.stdout, re.M) and re.search(r"^ℹ fail 0", result.stdout, re.M)
+    # 結果の行は、端末なら「ℹ pass 32」、パイプ (CI の Node 22 など) なら TAP の「# pass 32」
+    assert re.search(r"^(?:ℹ|#) pass [1-9]\d*", result.stdout, re.M), result.stdout[-2000:]
+    assert re.search(r"^(?:ℹ|#) fail 0$", result.stdout, re.M), result.stdout[-2000:]
 
 
 def build(namespace="ns", pack_name="P", **kwargs):
