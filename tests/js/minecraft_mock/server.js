@@ -53,6 +53,9 @@ export const commands = [];
 const jobs = new Map();
 let nextJobId = 0;
 const intervals = [];
+const timeouts = [];
+let timeoutCount = 0;
+let currentTick = 0;
 const dynamicProperties = {};
 let scriptEventHandler = null;
 let itemUseHandler = null;
@@ -62,7 +65,8 @@ export const dimension = {
   heightRange: { min: -64, max: 320 },
   getBlock(location) {
     if (options.unloadedZ !== undefined && location.z >= options.unloadedZ) return undefined;
-    return { location: { ...location } };
+    if (location.y < this.heightRange.min || location.y >= this.heightRange.max) throw new Error("LocationOutOfWorldBoundariesError");
+    return blockAt(location);
   },
   // Script API 2.4.0
   isChunkLoaded(location) {
@@ -205,6 +209,24 @@ export function forgetTicking() {
   tickingRects.clear();
 }
 
+// スクリーンブロックなどのブロックの状態 ("x,y,z" -> { 状態名: 値 })
+export const blockStates = new Map();
+const worldEventHandlers = { playerBreakBlock: [], blockExplode: [], worldLoad: [] };
+
+/** その位置のブロック (getBlock の戻り値)。board に無ければ空気。 */
+function blockAt(location) {
+  const key = `${location.x},${location.y},${location.z}`;
+  const typeId = board.get(key) ?? "minecraft:air";
+  const states = blockStates.get(key) ?? {};
+  return {
+    location: { x: location.x, y: location.y, z: location.z },
+    typeId,
+    isAir: typeId === "minecraft:air",
+    dimension,
+    permutation: { type: { id: typeId }, getState: (name) => states[name] },
+  };
+}
+
 export const world = {
   get structureManager() {
     return structureManager;
@@ -215,6 +237,9 @@ export const world = {
   afterEvents: {
     itemUse: { subscribe: (handler) => { itemUseHandler = handler; } },
     playerSpawn: { subscribe: (handler) => { playerSpawnHandlers.push(handler); } },
+    playerBreakBlock: { subscribe: (handler) => { worldEventHandlers.playerBreakBlock.push(handler); } },
+    blockExplode: { subscribe: (handler) => { worldEventHandlers.blockExplode.push(handler); } },
+    worldLoad: { subscribe: (handler) => { worldEventHandlers.worldLoad.push(handler); } },
   },
   getDynamicProperty: (key) => dynamicProperties[key],
   setDynamicProperty: (key, value) => {
@@ -225,6 +250,16 @@ export const world = {
   // options.secondPlayer を true にすると 2 人 (2 人目が入った・抜けたは drive_main.mjs の secondPlayer の手順)
   getAllPlayers: () => (options.secondPlayer ? [player, secondPlayer] : [player]),
   sendMessage: (message) => messages.push(message),
+};
+
+// ブロックのカスタムコンポーネント (Script API 2.x の custom components V2)。名前 -> コンポーネントの関数の組
+export const blockComponents = new Map();
+const blockComponentRegistry = {
+  registerCustomComponent(name, component) {
+    if (!/^[a-z0-9_]+:[a-z0-9_]+$/.test(name)) throw new Error(`NamespaceNameError: ${name}`);
+    if (blockComponents.has(name)) throw new Error(`CustomComponentNameError: ${name} is already registered`);
+    blockComponents.set(name, component);
+  },
 };
 
 // 独自のコマンド (Script API 2.4.0)。名前 -> { command, callback }
@@ -257,7 +292,7 @@ export const CustomCommandStatus = { Success: 0, Failure: 1 };
 export const system = {
   afterEvents: { scriptEventReceive: { subscribe: (handler) => { scriptEventHandler = handler; } } },
   // startup は main.js を読み込んだ直後に 1 回だけ呼ぶ (実際の Minecraft でもワールドを読み込む前)
-  beforeEvents: { startup: { subscribe: (handler) => { handler({ customCommandRegistry }); } } },
+  beforeEvents: { startup: { subscribe: (handler) => { handler({ customCommandRegistry, blockComponentRegistry }); } } },
   run(callback) {
     pendingRuns.push(callback);
     return pendingRuns.length;
@@ -265,6 +300,23 @@ export const system = {
   runInterval(callback) {
     intervals.push(callback);
     return intervals.length;
+  },
+  clearRun(id) {
+    // 番号は intervals の位置 + 1。消した所は null にして、ほかの番号をずらさない
+    if (intervals[id - 1]) {
+      intervals[id - 1] = null;
+      stats.clearedRuns = (stats.clearedRuns ?? 0) + 1;
+    }
+    const timeout = timeouts.findIndex((t) => t.id === id);
+    if (timeout >= 0) timeouts.splice(timeout, 1);
+  },
+  runTimeout(callback, ticks = 1) {
+    const id = 100000 + ++timeoutCount;
+    timeouts.push({ id, at: currentTick + Math.max(1, ticks), callback });
+    return id;
+  },
+  get currentTick() {
+    return currentTick;
   },
   runJob(generator) {
     jobs.set(++nextJobId, generator);
@@ -338,8 +390,13 @@ export function useItem(typeId) {
 }
 
 export function tick() {
+  currentTick++;
   for (const callback of pendingRuns.splice(0)) callback();
-  for (const callback of intervals) callback();
+  for (const t of timeouts.filter((t) => t.at <= currentTick)) {
+    timeouts.splice(timeouts.indexOf(t), 1);
+    t.callback();
+  }
+  for (const callback of intervals) if (callback) callback();
   for (const [id, generator] of [...jobs]) {
     for (let i = 0; i < 8; i++) {
       if (generator.next().done) {
@@ -348,4 +405,89 @@ export function tick() {
       }
     }
   }
+}
+
+// --- スクリーンブロックのテスト用の操作 ---
+
+function componentOf(typeId) {
+  // ブロックの定義 (BP/blocks/video_screen.json) と同じく、<接頭辞>:video_screen は <接頭辞>:screen_controller を持つ
+  const match = /^([a-z0-9_]+):video_screen$/.exec(typeId);
+  return match ? blockComponents.get(`${match[1]}:screen_controller`) : undefined;
+}
+
+/** プレイヤーがブロックを置いたように、board に置いて onPlace を送る。facing は置いた人が見ていた方向。 */
+export function placeBlock(location, typeId, facing = "north") {
+  const key = `${location.x},${location.y},${location.z}`;
+  board.set(key, typeId);
+  blockStates.set(key, { "minecraft:cardinal_direction": facing });
+  componentOf(typeId)?.onPlace?.({ block: blockAt(location), dimension, previousBlock: { type: { id: "minecraft:air" } } }, { params: {} });
+}
+
+/** プレイヤーがブロックを使う (右クリック)。 */
+export function interactBlock(location, who = player) {
+  const block = blockAt(location);
+  componentOf(block.typeId)?.onPlayerInteract?.({ block, dimension, player: who, face: "Up" }, { params: {} });
+}
+
+/** プレイヤーがブロックを壊す (onPlayerBreak と world.afterEvents.playerBreakBlock の両方)。 */
+export function breakBlock(location, who = player) {
+  const key = `${location.x},${location.y},${location.z}`;
+  const typeId = board.get(key) ?? "minecraft:air";
+  board.delete(key);
+  blockStates.delete(key);
+  const event = { block: blockAt(location), dimension, player: who, brokenBlockPermutation: { type: { id: typeId } } };
+  componentOf(typeId)?.onPlayerBreak?.(event, { params: {} });
+  for (const handler of worldEventHandlers.playerBreakBlock) handler(event);
+}
+
+/** 爆発でブロックが消える (コンポーネントの onBreak は送らず、world.afterEvents.blockExplode だけ)。 */
+export function explodeBlock(location) {
+  const key = `${location.x},${location.y},${location.z}`;
+  const typeId = board.get(key) ?? "minecraft:air";
+  board.delete(key);
+  blockStates.delete(key);
+  for (const handler of worldEventHandlers.blockExplode) {
+    handler({ block: blockAt(location), dimension, explodedBlockPermutation: { type: { id: typeId } } });
+  }
+}
+
+/** /setblock のように、イベントを送らずにブロックを置き換える。 */
+export function setBlockSilently(location, typeId) {
+  const key = `${location.x},${location.y},${location.z}`;
+  if (typeId === "minecraft:air") board.delete(key);
+  else board.set(key, typeId);
+  blockStates.delete(key);
+}
+
+/** ワールドを読み込んだ (worldLoad)。 */
+export function fireWorldLoad() {
+  for (const handler of worldEventHandlers.worldLoad) handler({});
+}
+
+/** ワールドの動的プロパティ (テストが保存の内容を見る)。 */
+export function getDynamicProperties() {
+  return { ...dynamicProperties };
+}
+
+/** 動いているタイマー (runInterval) の数。 */
+export function activeIntervals() {
+  return intervals.filter(Boolean).length;
+}
+
+/**
+ * スクリプトを読み込み直したとき (ワールドを開き直したとき) のように、タイマー・ジョブ・イベントの登録・
+ * コンポーネント・コマンドを消す。ワールドのブロック・動的プロパティ・常時読み込みの区画は残す。
+ */
+export function restartScripts() {
+  intervals.length = 0;
+  jobs.clear();
+  pendingRuns.length = 0;
+  timeouts.length = 0;
+  scriptEventHandler = null;
+  itemUseHandler = null;
+  playerSpawnHandlers.length = 0;
+  for (const list of Object.values(worldEventHandlers)) list.length = 0;
+  blockComponents.clear();
+  customCommands.clear();
+  customEnums.clear();
 }

@@ -146,11 +146,12 @@ export const FRAME_DATA = {
 
 1. **`VideoPlayer` クラスによるオブジェクト指向化**:
    - `VideoPlayer` クラスをインスタンス化することで、座標や状態を個別にカプセル化する (スクリーンの位置をキーにした `activePlayers` で管理)。
-   - ただし今の `setup` は、前の画面を片付けてから新しい画面を 1 つ作る。同時に動くのは、だまし絵の人物と背景の映像の組み合わせだけで、別々の場所の複数のスクリーンを同時に再生する機能は無い (TODO.md の P3-1)。
+   - コマンドの `setup` は、前の画面を片付けてから新しい画面を 1 つ作る (以前と同じ)。別々の場所の複数のスクリーンは、スクリーンブロック (`screen_system.js` の `ScreenManager`) が受け持つ。どちらの画面も同じ `VideoPlayer` で描き、1 tick の予算は `PlaybackScheduler` が分ける ([docs/SCREEN_SYSTEM.md](docs/SCREEN_SYSTEM.md))。
 2. **`BlockPermutation` の一括事前キャッシュ (`initPaletteCache`)**:
    - C++ バインディングである `BlockPermutation.resolve(blockId, states)` を毎フレーム呼び出すと非常に重いため、起動時に配列へ 1 回だけキャッシュ。
 3. **tick 予算付きの描画 (`MAX_BLOCKS_PER_TICK` / `TICK_TIME_BUDGET_MS`)**:
    - 1 フレームの描画をジェネレータで分割し、1 tick あたりのブロック設置数と時間 (30 ms) を上限内に抑える。盤面クリアやシークも `system.runJob` で分割実行する。
+   - 画面が複数あるときは、`PlaybackScheduler` (`screen_system.js`) がこの予算を、描くものがある画面で分ける (`VideoPlayer.tick(budget)`)。画面が 1 つなら予算は全部で、以前と同じ。
 4. **論理盤面と表示盤面の分離 (`decoded` / `board`)**:
    - `decoded` はエンコーダの参照と同じ「直前のフレーム」で、動き補償・タイル辞書の予測はこれを使う。`board` は **実際にワールドに置かれているブロック** (不明は -1)。
    - `decodeFrameInto` で次の盤面を作ってから、`board` と値が違うブロックだけを置きます。キーフレームでも全ブロックを置き直さず、実際に変わったブロックだけを置きます (自動パレットで GOP が変わったときだけ、表示中の盤面を「不明」にして置き直す)。
@@ -198,3 +199,17 @@ export const FRAME_DATA = {
 | 描画 | 3D の箱 (rect)・色ごとの座標リスト (list)・実機ベンチマーク | `main.js` |
 | プレビュー | 等角投影の GIF (ゲームと同じ規則で復元) | `scripts/preview_volume.py`、`mvcodec/volume.py` (`iso_view`) |
 | ベンチマーク | 合成映像で別の版とデータ量・API 呼び出し数を比較 | `benchmark/codec_bench.py` |
+
+## 7. スクリーンシステム (複数のスクリーンとスクリーンブロック)
+
+設計・使い方・制約は [docs/SCREEN_SYSTEM.md](docs/SCREEN_SYSTEM.md) にあります。
+
+| 要素 | 実装 | 主なファイル |
+|---|---|---|
+| スクリーンの状態 | `ScreenSession` (動画・描画方式・設置方式・位置・再生状態・音量・ループ・大きさ・置いた範囲) | `screen_system.js` |
+| 登録 | `ScreenRegistry` (ID と位置。同じ位置に 2 つ置かない。ディメンション別) | `screen_system.js` |
+| 操作・保存・復元 | `ScreenManager` (同時再生の上限、準備中の操作を断る、壊れた記録を捨てる) | `screen_system.js` |
+| 毎 tick の描画 | `PlaybackScheduler` (予算を分ける。タイマーは 1 つ。描くものが無ければ止める) | `screen_system.js`、`main.js` (`tickSources`) |
+| ブロックモードの描画 | `BlockScreenRenderer` → 既存の `VideoPlayer` (拡大 `scale` を足した) | `main.js` (`legacy:screens`) |
+| スクリーンブロック | `<接頭辞>:video_screen` とカスタムコンポーネント `<接頭辞>:screen_controller` | `pack_builder.py`、`main.js` |
+| 操作画面 | 動画の一覧・再生・一時停止・停止・シーク・音量・ループ・大きさ・削除 | `screen_ui.js` |

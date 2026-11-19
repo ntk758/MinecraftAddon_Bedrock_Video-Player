@@ -567,7 +567,7 @@ function showRemote(player) {
   button("remote.next", "textures/items/paper", () => switchVideo(1, player));
   button("remote.prev", "textures/items/paper", () => switchVideo(-1, player));
   button("remote.volume_button", "textures/items/repeater", () => showVolume(player));
-  button("remote.seek", "textures/items/clock", () => showSeek(player));
+  button("remote.seek", "textures/items/clock_item", () => showSeek(player));
   button("remote.library", "textures/items/book_portfolio", () => showLibrary(player));
   if (placed) button("remote.setup_here", "textures/items/item_frame", () => setup(player, ""));
   form.show(player).then((response) => {

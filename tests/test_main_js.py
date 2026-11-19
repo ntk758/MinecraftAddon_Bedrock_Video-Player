@@ -54,8 +54,8 @@ def run_addon(work, frames_js, *node_args, audio_from=None):
     """frames_js (convert.py の出力) を収録したアドオンを、モックの Minecraft 上で再生した結果を返す。
     audio_from を渡すと、その動画の音声を鳴らす一覧にする (立体版と平面版のセット)。"""
     work.mkdir()
-    shutil.copy(ROOT / "main.js", work / "main.js")
-    shutil.copy(ROOT / "codec.js", work / "codec.js")
+    for name in ("main.js", "codec.js", "screen_system.js", "screen_ui.js"):
+        shutil.copy(ROOT / name, work / name)
     shutil.copy(frames_js, work / "frames_demo.js")
     shutil.copy(ROOT / "tests" / "js" / "run_main.mjs", work / "run_main.mjs")
     (work / "videos.js").write_text(

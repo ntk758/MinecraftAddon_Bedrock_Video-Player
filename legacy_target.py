@@ -5,7 +5,7 @@ v6.32.0 から main.js は Script API 2.6.0 (Minecraft 1.26.10 以降) を使う
 このモジュールを使わない (出力は変わらない)。印が 1 組ずつ無ければ例外にする (main.js を変えて印を壊したら、テストで分かる)。
 
 旧版で使えないもの: 独自のコマンド (チート無しの /<接頭辞>:setup など。/scriptevent はチートが要る)、TickingAreaManager
-(tickingarea コマンドに戻す。ワールド全体の 10 区画の上限を使う)。
+(tickingarea コマンドに戻す。ワールド全体の 10 区画の上限を使う)、スクリーンブロック (カスタムコンポーネント V2)。
 """
 import json
 import re
@@ -83,7 +83,9 @@ function addSlider(form, label, minimum, maximum, step, value) {
 }
 '''
 
-REPLACEMENTS = {"imports": _IMPORTS, "ticking": _TICKING, "slider": _SLIDER, "commands": ""}
+# スクリーンブロック (screen_imports・screens) は Script API 2.x のカスタムコンポーネントで動くので、旧版向けでは消す
+# (ブロックの定義もアドオンに入れない: pack_builder.build_addon が main.js の印で見分ける)
+REPLACEMENTS = {"imports": _IMPORTS, "ticking": _TICKING, "slider": _SLIDER, "commands": "", "screen_imports": "", "screens": ""}
 
 
 def _replace_region(text: str, name: str, new: str) -> str:
