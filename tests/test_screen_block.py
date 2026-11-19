@@ -209,13 +209,28 @@ def test_too_tall_and_unloaded_areas_are_refused_without_changes(scene, tmp_path
     assert not [b for b in out["allBlocks"] if b[3] in palette]
 
     # 東向きの画面は z = 78〜101 に立つ。z が 95 以上のチャンクが読み込まれていなければ置かない
+    # (常時読み込みに入れて 10 秒待っても読み込まれなければ、置かずに知らせて、入れた区画を外す)
     steps = [{"placeScreen": BLOCK, "facing": "east"}, {"unloadedZ": 95},
-             {"useScreen": BLOCK, "ui": choose_video()}, {"run": 10}]
+             {"useScreen": BLOCK, "ui": choose_video()}, {"run": 260}]
     out = drive(tmp_path / "unloaded", {"a": path}, steps)
     assert out["errors"] == []
     unloaded = messages_with(out, "bvp.screen.error.not_loaded")
     assert len(unloaded) == 1 and '"text":"95"' in unloaded[0]
     assert not [b for b in out["allBlocks"] if b[3] in palette]
+    assert any(cmd.startswith("tickingarea add") and "bvp_screen_s1_load_" in cmd for cmd in out["commands"])
+    assert any(cmd.startswith("tickingarea remove bvp_screen_s1_load_") for cmd in out["commands"])
+
+
+def test_a_far_area_is_kept_loaded_and_waited_for(scene, tmp_path):
+    """遠くて読み込まれていない部分は、常時読み込みに入れて待ち、読み込まれたら置く (PC の実機で、2 倍の画面が置けなかった)。"""
+    path, data = scene
+    palette = {spec["block"] for spec in data["level_blocks"]}
+    steps = [{"placeScreen": BLOCK, "facing": "east"}, {"unloadedZ": 95},
+             {"useScreen": BLOCK, "ui": choose_video()}, {"run": 60}, {"unloadedZ": None}, {"run": 200}]
+    out = drive(tmp_path / "later", {"a": path}, steps)
+    assert out["errors"] == []
+    assert not messages_with(out, "bvp.screen.error.not_loaded")
+    assert [b for b in out["allBlocks"] if b[3] in palette]
 
 
 def test_removing_a_screen_clears_only_the_blocks_it_placed(scene, tmp_path):
@@ -278,6 +293,27 @@ def test_scale_makes_the_screen_bigger_and_back(scene, tmp_path):
     big = {b for blocks in screen_cells(BLOCK, "north", w, h, 2) for b in blocks}
     assert all(pos not in end for pos in big - small)
     assert shown_board(end, screen_cells(BLOCK, "north", w, h)) == frames[-1]
+
+
+def test_shrinking_clears_the_far_parts_of_the_bigger_screen(scene, tmp_path):
+    """プレイヤーから遠くて読み込まれていない部分も、常時読み込みに入れて待ってから片付ける (PC の実機で、2 倍から 1 倍に
+    戻すと左右が残った)。"""
+    path, data = scene
+    w, h = data["width"], data["height"]
+    steps = [{"tickingOnly": True}, {"x": 60, "z": 70}, {"placeScreen": BLOCK}, {"useScreen": BLOCK, "ui": choose_video()},
+             {"runUntil": "bvp.screen.playing", "max": 200},
+             {"useScreen": BLOCK, "ui": [{"selection": SETTINGS}, {"formValues": [100, False, 3]}]},
+             {"runUntil": "bvp.screen.scale_set", "max": 300}, {"run": 40},
+             {"useScreen": BLOCK, "ui": [{"selection": SETTINGS}, {"formValues": [100, False, 0]}]},
+             {"runUntil": "bvp.screen.scale_set", "count": 2, "max": 600}, {"run": 60}]
+    out = drive(tmp_path / "addon", {"a": path}, steps)
+    assert out["errors"] == []
+    end = world_of(out)
+    small = {b for blocks in screen_cells(BLOCK, "north", w, h) for b in blocks}
+    big = {b for blocks in screen_cells(BLOCK, "north", w, h, 4) for b in blocks}
+    far = [pos for pos in big - small if abs(pos[0] - 60) > 64]
+    assert far, "4 倍の画面にプレイヤーから遠い部分が無い (確かめになっていない)"
+    assert all(pos not in end for pos in big - small)
 
 
 def test_screens_come_back_paused_after_reopening_the_world(scene, tmp_path):
@@ -427,3 +463,25 @@ def test_volume_and_loop_settings_are_per_screen(scene, tmp_path):
     # ループするスクリーンは最後まで行っても止まらない (終わりの知らせも出さない)
     assert first["state"] == "playing"
     assert not messages_with(out, "bvp.screen.finished")
+
+
+@pytest.mark.parametrize("action", ["stop", "pause_then_seek"])
+def test_the_area_stays_loaded_until_drawing_ends(scene, tmp_path, action):
+    """止めた・シークした直後にプレイヤーが離れても、描き終わるまで常時読み込みに入れておく。描き終わったら外す。
+
+    PC の実機で、大きさを 2 倍にした直後に離れたら、読み込まれていない部分に 9216 個置けなかった (再生していないので、
+    常時読み込みをすぐ外していた)。"""
+    path, _ = scene
+    after = ([{"useScreen": BLOCK, "ui": [{"selection": STOP}]}] if action == "stop" else
+             [{"useScreen": BLOCK, "ui": [{"selection": PLAY_OR_PAUSE}]}, {"run": 3},
+              {"useScreen": BLOCK, "ui": [{"selection": SEEK}, {"formValues": [1]}]}])
+    steps = [{"tickingOnly": True}, {"placeScreen": BLOCK}, {"useScreen": BLOCK, "ui": choose_video()},
+             {"runUntil": "bvp.screen.playing", "max": 200}, {"run": 5}, *after,
+             {"x": 5000, "z": 5000}, {"run": 300}]
+    out = drive(tmp_path / action, {"a": path}, steps)
+    assert out["errors"] == []
+    assert not any("bvp.place_failed" in m for m in out["messages"])
+    assert not any("bvp.seek_done" in m or "bvp.seeking" in m for m in out["messages"])
+    added = [i for i, c in enumerate(out["commands"]) if c.startswith("tickingarea add") and "bvp_screen_s1_" in c]
+    removed = [i for i, c in enumerate(out["commands"]) if c.startswith("tickingarea remove bvp_screen_s1_")]
+    assert added and removed and max(removed) > max(added)

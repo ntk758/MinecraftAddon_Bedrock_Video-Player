@@ -123,6 +123,10 @@ const DEFAULT_STAGE_FLOOR = "minecraft:black_concrete";
 const VIEW_REDRAW_DISTANCE = 0.25;
 const BLOCK_ID_ALIASES = {
   "minecraft:terracotta": "minecraft:hardened_clay",
+  // くり抜いたカボチャは、雪・銅・鉄のブロックの上に置かれるとゴーレムができる (ブロックが消えて、銅は銅のチェストになる)。
+  // 立てた画面・立体では上下に並ぶので、PC の実機で画面からコッパーゴーレムが出て、画面が崩れた。上面と側面の色は普通の
+  // カボチャと同じ (顔は 1 面だけ) なので、普通のカボチャを置く
+  "minecraft:carved_pumpkin": "minecraft:pumpkin",
 };
 
 // スクリーンブロック (screen_system.js) とのつなぎ。ファイルの最後の legacy:screens の印の範囲で入れる (旧版向けの出力では null のまま)。
@@ -3017,6 +3021,34 @@ function screenScaleOptions(session, videoData) {
  * このスクリーンが前に置いた範囲 (ownedBoxes) の中の、動画のパレットのブロックは自分の画面なので置いてよい。
  * 置けなければ { reason, detail }、置ければ null。
  */
+// 置く範囲が読み込まれていないとき、常時読み込みに入れてから待つ長さと、調べ直す間隔 (tick)。コマンドの setup の待ち (10 秒) と同じ
+const SCREEN_LOAD_WAIT_TICKS = 200;
+const SCREEN_LOAD_RETRY_TICKS = 20;
+// 描き終わってから常時読み込みを外すまでの tick (続けて描くときに、外して入れ直さないように)
+const SCREEN_TICKING_GRACE_TICKS = 100;
+
+/**
+ * box (x・z と y0) のチャンクがすべて読み込まれているか (チャンクごとに 1 マスを見る)。VideoPlayer.screenLoaded と同じく
+ * isChunkLoaded で調べる (getBlock は読めても、置くときに「loaded and ticking でない」で失敗することがある)。
+ */
+function boxIsLoaded(dimension, box) {
+  const probe = typeof dimension.isChunkLoaded === "function"
+    ? (at) => dimension.isChunkLoaded(at) : (at) => Boolean(dimension.getBlock(at));
+  const loc = { x: 0, y: box.y0, z: 0 };
+  for (let cz = Math.floor(box.z0 / 16); cz <= Math.floor(box.z1 / 16); cz++) {
+    for (let cx = Math.floor(box.x0 / 16); cx <= Math.floor(box.x1 / 16); cx++) {
+      loc.x = Math.min(Math.max(cx * 16, box.x0), box.x1);
+      loc.z = Math.min(Math.max(cz * 16, box.z0), box.z1);
+      try {
+        if (!probe(loc)) return false;
+      } catch (e) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 function* scanScreenArea(dimension, box, ownedBoxes) {
   const ids = screenPaletteIds();
   const loc = { x: 0, y: 0, z: 0 };
@@ -3167,6 +3199,11 @@ class BlockScreenRenderer {
     // 最後に操作した人 (シーク・置けなかったブロックなどの知らせを出す相手)
     this.operator = null;
     this.tickingName = `${SCREEN_TICKING_PREFIX}${session.screenId}`;
+    // 描き終わったら常時読み込みを外す (一時停止・停止・シーク・用意の後。releaseTickingLater)
+    this.releaseTickingWhenIdle = false;
+    this.idleSince = null;
+    // いま常時読み込みに入れてある範囲 (loadBox。同じ範囲なら入れ直さない)
+    this.tickingKey = null;
     this.onFinished = null;
   }
 
@@ -3183,7 +3220,11 @@ class BlockScreenRenderer {
         if (!this.session.loop) this.tell("screen.finished", screenNumber(this.session.screenId));
         this.onFinished?.();
       },
-      message: (key, ...args) => this.tell(key, ...args),
+      message: (key, ...args) => {
+        // シーク中・シーク完了はリモコン向けの文 (「リモコンの再生で再開」)。スクリーンでは操作画面が結果を知らせる
+        if (key === "seeking" || key === "seek_done") return;
+        this.tell(key, ...args);
+      },
       playAudio: (trackId, volume) => this.playAudio(trackId, volume),
       stopAudio: (trackId) => this.stopAudio(trackId),
       playAudioFor: (player, trackId, volume) => {
@@ -3236,15 +3277,52 @@ class BlockScreenRenderer {
   }
 
   addTicking(vp) {
-    removeTickingAreasNamed(`${this.tickingName}_`);
+    this.releaseTickingWhenIdle = false;
     const box = this.session.box;
-    if (!box) return;
-    const ticking = addTickingAreas(vp.dimension, box, box.y0, box.y1, this.tickingName);
-    if (ticking.added < ticking.needed) this.tell("tickingarea_partial", ticking.added, ticking.needed);
+    if (!box) {
+      this.removeTicking();
+      return;
+    }
+    const ticking = this.loadBox(vp.dimension, box);
+    if (ticking && ticking.added < ticking.needed) this.tell("tickingarea_partial", ticking.added, ticking.needed);
+  }
+
+  /**
+   * box を常時読み込みに入れる。もう同じ box で入れてあれば何もしない (外して入れ直すと、入れ直した区画が読み込まれるまでの
+   * 間に置けなくなる。PC の実機で、1 倍に戻した直後の描き直しで 9216 個置けなかった)。入れ直したときは addTickingAreas の結果。
+   */
+  loadBox(dimension, box) {
+    const key = `${box.x0},${box.y0},${box.z0},${box.x1},${box.y1},${box.z1}`;
+    if (this.tickingKey === key && hasTickingAreaNamed(`${this.tickingName}_0`)) return null;
+    removeTickingAreasNamed(`${this.tickingName}_`);
+    this.tickingKey = key;
+    return addTickingAreas(dimension, box, box.y0, box.y1, this.tickingName);
   }
 
   removeTicking() {
+    this.releaseTickingWhenIdle = false;
+    this.idleSince = null;
+    this.tickingKey = null;
     removeTickingAreasNamed(`${this.tickingName}_`);
+  }
+
+  /**
+   * 再生していないときは常時読み込みを外す (ワールド全体の区画の数に限りがあるため)。ただし描いている途中 (片付け・シークした
+   * コマ・大きさを変えたときの描き直し) は、描き終わってから外す。途中で外すと、プレイヤーが離れたときに読み込まれていない
+   * 部分に置けなくなる (PC の実機で、2 倍にした直後に離れたら 9216 個置けなかった)。
+   */
+  releaseTickingLater() {
+    // 描き終わってから少し (SCREEN_TICKING_GRACE_TICKS) 待って外す。続けて描くこと (大きさを変えた後のシークなど) が多いので
+    this.releaseTickingWhenIdle = true;
+    this.idleSince = null;
+    scheduler.ensureRunning();
+  }
+
+  /** 描いている間だけ、今の画面の範囲を常時読み込みに入れる (描き終わったら tick で外す)。 */
+  keepLoadedWhileDrawing(dimension, box) {
+    if (!box) return;
+    this.loadBox(dimension, box);
+    this.releaseTickingLater();
   }
 
   /** 今の動画の VideoPlayer (ワールドを開き直した後などで無ければ作る)。動画が無い・置けなければ null。 */
@@ -3313,7 +3391,20 @@ class BlockScreenRenderer {
       const self = this;
       this.prepareJob = system.runJob((function* () {
         // 1. 置く範囲を調べる (ここまではワールドを変えない。置けなければ前の動画と画面のまま)
-        const problem = yield* scanScreenArea(dimension, layout.box, session.ownedBoxes);
+        let problem = yield* scanScreenArea(dimension, layout.box, session.ownedBoxes);
+        if (problem?.reason === "not_loaded") {
+          // 遠くて読み込まれていない部分がある (2 倍の 256 ブロックの画面など。PC の実機で、プレイヤーから 127 ブロック先が
+          // 読み込まれていなかった)。コマンドの setup と同じく常時読み込みに入れて、読み込まれるまで待ってから調べ直す。
+          // 名前は addTicking と同じ接頭辞なので、再生を始めるときに画面の区画に置き換わる
+          addTickingAreas(dimension, layout.box, layout.box.y0, layout.box.y1, `${self.tickingName}_load`);
+          const until = system.currentTick + SCREEN_LOAD_WAIT_TICKS;
+          while (problem?.reason === "not_loaded" && system.currentTick < until) {
+            const next = system.currentTick + SCREEN_LOAD_RETRY_TICKS;
+            while (system.currentTick < next) yield;
+            problem = yield* scanScreenArea(dimension, layout.box, session.ownedBoxes);
+          }
+          if (problem) removeTickingAreasNamed(`${self.tickingName}_load`);
+        }
         if (problem) {
           self.finishPrepare(screenFail(problem.reason, problem.detail));
           return;
@@ -3321,8 +3412,21 @@ class BlockScreenRenderer {
         // 2. 前の画面を止めて、前の画面の範囲のうち新しい画面の外を片付ける (このスクリーンが置いたブロックだけ)
         if (self.vp) self.vp.dispose();
         self.vp = null;
-        self.removeTicking();
+        // 前の画面の区画を外し、新しい画面の範囲を描き終わるまで読み込んでおく (片付け・空の色で塗る・続く描き直しの間)
+        self.keepLoadedWhileDrawing(dimension, layout.box);
         const oldBoxes = session.ownedBoxes.filter((box) => !sameBox(box, layout.box));
+        // 片付ける前の画面の範囲も読み込んでおき、読み込まれるまで待つ (PC の実機で、2 倍から 1 倍に戻すと、プレイヤーから
+        // 遠い左右の部分が読み込まれておらず残った)。名前は画面の区画と同じ接頭辞なので、描き終わったら一緒に外れる
+        removeTickingAreasNamed(`${self.tickingName}_old`);
+        oldBoxes.forEach((box, i) => addTickingAreas(dimension, box, box.y0, box.y1, `${self.tickingName}_old${i}`));
+        const loadedBy = system.currentTick + SCREEN_LOAD_WAIT_TICKS;
+        // 新しい画面の範囲も、区画を入れ直した直後は読み込まれていないことがあるので、描く前に一緒に待つ (PC の実機で、2 倍に
+        // した直後に遠い部分の 4104 個を置けなかった)
+        const mustLoad = [layout.box, ...oldBoxes];
+        while (mustLoad.some((box) => !boxIsLoaded(dimension, box)) && system.currentTick < loadedBy) {
+          const next = system.currentTick + SCREEN_LOAD_RETRY_TICKS;
+          while (system.currentTick < next) yield;
+        }
         const leftovers = yield* clearScreenArea(dimension, oldBoxes, (loc) => boxContains(layout.box, loc));
         // 3. 新しい画面を空の色で塗る (平面はパレットの先頭のブロック、立体は空気)
         self.prepareJob = null;
@@ -3344,6 +3448,7 @@ class BlockScreenRenderer {
     if (!vp) throw new Error(`video ${this.session.mediaId} is not in this add-on`);
     vp.masterVolume = this.session.volume;
     this.addTicking(vp);
+    this.releaseTickingWhenIdle = false;
     if (fromStart) {
       vp.restart();
       return;
@@ -3358,13 +3463,13 @@ class BlockScreenRenderer {
 
   pause() {
     this.vp?.stopPlayback();
-    this.removeTicking();
+    this.releaseTickingLater();
   }
 
   stop() {
     const vp = this.ensurePlayer();
     if (vp) vp.stopAndClear(null, false);
-    this.removeTicking();
+    this.releaseTickingLater();
   }
 
   seek(seconds, { resume = false } = {}) {
@@ -3380,6 +3485,8 @@ class BlockScreenRenderer {
       this.addTicking(vp);
       vp.resume();
     } else {
+      // 一時停止中: そのコマを描き終わるまで読み込んでおく
+      this.keepLoadedWhileDrawing(vp.dimension, this.session.box);
       vp.seekToFrame(frame);
     }
   }
@@ -3413,12 +3520,27 @@ class BlockScreenRenderer {
     return !!this.vp?.running;
   }
 
-  wantsTick() {
+  /** 再生中か、描いている途中 (用意 (範囲の確かめと片付け)・シークしたコマ・描き直し)。 */
+  isDrawing() {
+    if (this.prepareJob !== null) return true;
     return !!this.vp && !this.vp.disposed && (this.vp.running || this.vp.viewIterator !== null);
+  }
+
+  wantsTick() {
+    // 描き終わった後、常時読み込みを外すために 1 回は呼んでもらう
+    return this.isDrawing() || this.releaseTickingWhenIdle;
   }
 
   tick(budget) {
     this.vp?.tick(budget);
+    if (!this.releaseTickingWhenIdle) return;
+    if (this.isDrawing()) {
+      this.idleSince = null;
+    } else if (this.idleSince === null) {
+      this.idleSince = system.currentTick;
+    } else if (system.currentTick - this.idleSince >= SCREEN_TICKING_GRACE_TICKS) {
+      this.removeTicking();
+    }
   }
 
   /** 止めて片付ける。clearBlocks なら、このスクリーンが置いたブロックだけを空気に戻す。片付け残しはあとで片付ける。 */
