@@ -31,6 +31,19 @@ class RecordingForm {
     return this;
   }
 
+  // @minecraft/server-ui 2.0.0 の書き方: toggle(ラベル, { defaultValue }) / dropdown(ラベル, 選択肢, { defaultValueIndex })
+  toggle(label, toggleOptions) {
+    if (typeof toggleOptions === "boolean") throw new Error("toggle: 2.0 takes (label, options)");
+    this.record.toggles = [...(this.record.toggles ?? []), { label, ...(toggleOptions ?? {}) }];
+    return this;
+  }
+
+  dropdown(label, items, dropdownOptions) {
+    if (typeof dropdownOptions === "number") throw new Error("dropdown: 2.0 takes (label, items, options)");
+    this.record.dropdowns = [...(this.record.dropdowns ?? []), { label, items, ...(dropdownOptions ?? {}) }];
+    return this;
+  }
+
   show() {
     forms.push(this.record);
     return Promise.resolve(uiResponses.shift() ?? { canceled: true });

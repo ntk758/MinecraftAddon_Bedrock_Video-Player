@@ -17,9 +17,24 @@
 //   {"spawn": true}                                   プレイヤーがワールドに入る (playerSpawn、initialSpawn)
 //   {"secondPlayer": "join"} / {"secondPlayer": "leave"}  2 人目が入る (playerSpawn) / 抜ける
 //   {"forgetTicking": true}                           ワールドを開き直したときのように、常時読み込みの区画を消す
+// スクリーンブロック (Promise を待つ手順は、tick のたびにマイクロタスクも進める):
+//   {"run": 10}                                       10 tick 進める (tick ごとに Promise の続きも進める)
+//   {"runUntil": "bvp.screen.ready", "max": 400, "count": 2}  そのメッセージが count 回出るまで run する
+//   {"tickMark": "名前"}                              いまの tick の数を記録する
+//   {"placeScreen": {"x": 0, "y": 64, "z": 90}, "facing": "north"}  スクリーンブロックを置く (onPlace)
+//   {"useScreen": {"x": 0, "y": 64, "z": 90}, "ui": [...]}  スクリーンブロックを使い、開いたフォームへ順に応答する
+//   {"breakScreen": {...}} / {"explode": {...}}       プレイヤーが壊す / 爆発で消える
+//   {"setBlock": {"x": 0, "y": 65, "z": 90, "id": "minecraft:stone"}}  イベントを送らずにブロックを置く (建物の代わり)
+//   {"restart": true}                                 スクリプトを読み込み直す (ワールドを開き直したとき。ブロックと保存は残る)
+//   {"worldLoad": true}                               worldLoad を送る
+//   {"dp": "名前"} / {"intervals": "名前"}             動的プロパティ / 動いているタイマーの数を記録する
+//   {"setDp": {"鍵": "値"}}                           ワールドの動的プロパティを書く (壊れた保存の確かめ)
 import {
   board, commands, customCommands, customEnums, fireScriptEvent, forgetTicking, forms, getAnchor, messages, options, player,
   runCustomCommand, sounds, spawnPlayer, stats, tick as mockTick, uiResponses, useItem,
+  // スクリーンブロックの手順 (テストが上の行を書き換えて名前を足すので、上の並びは変えない)
+  activeIntervals, breakBlock, explodeBlock, fireWorldLoad, getDynamicProperties, interactBlock, placeBlock, restartScripts,
+  setBlockSilently, world,
 } from "@minecraft/server";
 
 const steps = JSON.parse(process.argv[2]);
@@ -52,11 +67,53 @@ function snap(label, videoId) {
 const worlds = [];
 const errors = [];
 const commandResults = [];
+const dps = {};
+const tickMarks = {};
+const intervalCounts = {};
+let restarts = 0;
+/** Promise の続き (フォームの応答・画面の用意の後の再生など) を進める。 */
+async function flush() {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+}
+async function run(n) {
+  for (let i = 0; i < n; i++) {
+    tick();
+    await flush();
+  }
+}
+const SCREEN_BLOCK = "badapple:video_screen";
 for (const step of steps) {
   try {
     if (step.event) fireScriptEvent(step.event, step.message ?? "");
     else if (step.command) commandResults.push(runCustomCommand(step.command, ...(step.args ?? [])));
     else if (step.forgetTicking) forgetTicking();
+    else if (step.run) await run(step.run);
+    else if (step.runUntil) {
+      // count: そのメッセージがこの数だけ出るまで (既定 1)
+      const seen = () => messages.filter((m) => JSON.stringify(m).includes(step.runUntil)).length;
+      for (let n = 0; n < (step.max ?? 2000) && seen() < (step.count ?? 1); n++) await run(1);
+    } else if (step.tickMark) tickMarks[step.tickMark] = ticks; else if (step.placeScreen) {
+      placeBlock(step.placeScreen, SCREEN_BLOCK, step.facing ?? "north");
+      await run(1);
+    } else if (step.useScreen) {
+      uiResponses.push(...(step.ui ?? []));
+      interactBlock(step.useScreen);
+      await run(step.wait ?? 3);
+    } else if (step.breakScreen) {
+      breakBlock(step.breakScreen);
+      await run(1);
+    } else if (step.explode) {
+      explodeBlock(step.explode);
+      await run(1);
+    } else if (step.setBlock) setBlockSilently(step.setBlock, step.setBlock.id);
+    else if (step.restart) {
+      restartScripts();
+      restarts++;
+      await import(`./main.js?restart=${restarts}`);
+    } else if (step.worldLoad) fireWorldLoad();
+    else if (step.setDp) for (const [key, value] of Object.entries(step.setDp)) world.setDynamicProperty(key, value);
+    else if (step.dp) dps[step.dp] = getDynamicProperties();
+    else if (step.intervals) intervalCounts[step.intervals] = activeIntervals();
     else if (step.spawn) spawnPlayer(step.spawn !== "respawn");
     // 2 人目が入る ("join": playerSpawn も送る) / 抜ける ("leave")
     else if (step.secondPlayer === "join") { options.secondPlayer = true; spawnPlayer(true, "second"); }
@@ -93,6 +150,7 @@ for (const step of steps) {
 const allBlocks = [...board.entries()].map(([key, id]) => [...key.split(",").map(Number), id]);
 process.stdout.write(JSON.stringify({
   snaps, worlds, marks, ticks, stats, commands, errors, allBlocks, messages: messages.map((m) => JSON.stringify(m)),
+  dps, intervalCounts, tickMarks,
   commandResults,
   sounds,
   forms,

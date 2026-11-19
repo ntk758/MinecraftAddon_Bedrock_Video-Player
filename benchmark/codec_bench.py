@@ -187,6 +187,10 @@ def play(tree, js_path, work, *node_args):
     work.mkdir(parents=True)
     shutil.copy(tree / "main.js", work / "main.js")
     shutil.copy(tree / "codec.js", work / "codec.js")
+    # main.js が import するスクリーンシステムのスクリプト (古い版には無い)
+    for name in ("screen_system.js", "screen_ui.js"):
+        if (tree / name).is_file():
+            shutil.copy(tree / name, work / name)
     shutil.copy(js_path, work / "frames_demo.js")
     shutil.copy(ROOT / "tests" / "js" / "run_main.mjs", work / "run_main.mjs")
     (work / "videos.js").write_text(

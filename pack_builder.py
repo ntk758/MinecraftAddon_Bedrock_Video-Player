@@ -9,18 +9,30 @@ import io
 import json
 import os
 import re
+import struct
 import time
 import uuid
 import zipfile
+import zlib
 from pathlib import Path
 
-from gui_i18n import addon_lang_files
+from gui_i18n import FALLBACK_LANGUAGE, LOCALES, MINECRAFT_LOCALES, addon_lang_files
 from pack_metadata import PACK_VERSION, changelog_markdown, manifest_description, version_text
 
 APP_DIR = Path(__file__).resolve().parent
 MANIFEST = APP_DIR / "manifest.json"
 MAIN_SCRIPT = APP_DIR / "main.js"
 CODEC_SCRIPT = APP_DIR / "codec.js"
+# スクリーンの管理 (複数のスクリーン) と、スクリーンブロックの操作画面。main.js が import する
+SCREEN_SYSTEM_SCRIPT = APP_DIR / "screen_system.js"
+SCREEN_UI_SCRIPT = APP_DIR / "screen_ui.js"
+# アドオンの scripts/ に入れるファイル (テストもこの一覧でモックの作業フォルダに並べる)
+ADDON_SCRIPTS = ("main.js", "codec.js", "screen_system.js", "screen_ui.js")
+# main.js にこの印があれば、スクリーンブロック (BP/blocks・テクスチャ・ブロック名) も入れる。旧版向けの出力
+# (legacy_target.py) は印の範囲ごと消すので、ブロックも入れない (カスタムコンポーネント V2 は Script API 2.x から)
+SCREEN_BLOCK_MARKER = "// <legacy:screens>"
+# カスタムブロックの定義の版 (カスタムコンポーネント V2 を書ける版)。アドオンの min_engine_version (1.26.10) より古い
+SCREEN_BLOCK_FORMAT = "1.21.90"
 
 BUILD_STAMP_EPOCH = 1704067200  # 2024-01-01T00:00:00Z
 # 再ビルドしたパックをワールドが「新しい版」と認識できるよう、ビルド日時をバージョン番号に使う。
@@ -162,6 +174,93 @@ def flat_pair_dither(dither_method: str) -> str:
     return "blue_noise" if dither_method == "none" else dither_method
 
 
+def _png_rgba(pixels: list[list[tuple[int, int, int, int]]]) -> bytes:
+    """RGBA の画素 (行のリスト) を PNG にする (Pillow を使わない。ブラウザ版でも同じバイト列になる)。"""
+    height, width = len(pixels), len(pixels[0])
+    raw = b"".join(b"\x00" + bytes(c for px in row for c in px) for row in pixels)
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def screen_block_textures() -> dict[str, bytes]:
+    """スクリーンブロックのテクスチャ (16x16)。side は横 4 面 (画面と再生の印)、top は上と下。"""
+    frame, screen = (0x3A, 0x3A, 0x3A, 255), (0x10, 0x1A, 0x26, 255)
+    play, stand = (0x39, 0xC5, 0xE0, 255), (0x55, 0x55, 0x55, 255)
+    side = [[frame] * 16 for _ in range(16)]
+    for y in range(2, 13):
+        for x in range(2, 14):
+            side[y][x] = screen
+    for i, y in enumerate(range(4, 11)):
+        for x in range(7, 7 + min(i, 6 - i) + 1):
+            side[y][x] = play
+    for y in (14, 15):
+        side[y] = [stand] * 16
+    edge, face = (0x4A, 0x4A, 0x4A, 255), (0x2E, 0x2E, 0x2E, 255)
+    top = [[edge if x in (0, 15) or y in (0, 15) else face for x in range(16)] for y in range(16)]
+    return {"side": _png_rgba(side), "top": _png_rgba(top)}
+
+
+def screen_block_files(namespace: str, pack_name: str) -> dict:
+    """スクリーンブロック (<接頭辞>:video_screen) の定義・テクスチャ。識別子とテクスチャの名前は接頭辞ごとに別にする
+    (同じワールドに 2 つのアドオンを入れても、ブロックとテクスチャの名前がぶつからない)。"""
+    block_id = f"{namespace}:video_screen"
+    side, top = f"{namespace}_video_screen_side", f"{namespace}_video_screen_top"
+    block = {
+        "format_version": SCREEN_BLOCK_FORMAT,
+        "minecraft:block": {
+            "description": {
+                "identifier": block_id,
+                "menu_category": {"category": "items"},
+                # minecraft:cardinal_direction = 置いた人が見ていた方向。画面はその方向に (置いた人の方を向いて) 立つ
+                "traits": {"minecraft:placement_direction": {"enabled_states": ["minecraft:cardinal_direction"]}},
+            },
+            "components": {
+                # main.js の SCREEN_COMPONENT_ID。使う・置く・壊すと main.js が呼ばれる
+                f"{namespace}:screen_controller": {},
+                "minecraft:destructible_by_mining": {"seconds_to_destroy": 0.5},
+                "minecraft:destructible_by_explosion": {"explosion_resistance": 6},
+                "minecraft:map_color": "#1a2633",
+                "minecraft:material_instances": {
+                    "*": {"texture": side, "render_method": "opaque"},
+                    "up": {"texture": top, "render_method": "opaque"},
+                    "down": {"texture": top, "render_method": "opaque"},
+                },
+            },
+        },
+    }
+    terrain = {
+        "resource_pack_name": pack_name,
+        "texture_name": "atlas.terrain",
+        "texture_data": {side: {"textures": f"textures/blocks/{side}"}, top: {"textures": f"textures/blocks/{top}"}},
+    }
+    textures = screen_block_textures()
+    return {
+        "BP/blocks/video_screen.json": json.dumps(block, ensure_ascii=False, indent=2) + "\n",
+        "RP/textures/terrain_texture.json": json.dumps(terrain, ensure_ascii=False, indent=2) + "\n",
+        f"RP/textures/blocks/{side}.png": textures["side"],
+        f"RP/textures/blocks/{top}.png": textures["top"],
+    }
+
+
+def screen_block_lang_line(namespace: str, language: str) -> str:
+    """ブロックの名前の翻訳の行 (tile.<識別子>.name=...)。"""
+    texts = LOCALES.get(language) or LOCALES[FALLBACK_LANGUAGE]
+    name = texts.get("addon.screen.block_name") or LOCALES[FALLBACK_LANGUAGE]["addon.screen.block_name"]
+    return f"tile.{namespace}:video_screen.name={name}\n"
+
+
+def _language_of_lang_file(relative_path: str, addon_language) -> str:
+    """texts/<コード>.lang がどの言語の文か (言語を固定したときは、その言語)。"""
+    if addon_language is not None:
+        return addon_language if addon_language in LOCALES else FALLBACK_LANGUAGE
+    code = relative_path[len("texts/"):-len(".lang")]
+    return next((language for language, codes in MINECRAFT_LOCALES.items() if code in codes), FALLBACK_LANGUAGE)
+
+
 def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addon_language: str | None = None,
                 manifest_text: str | None = None, main_text: str | None = None, codec_text: str | None = None,
                 lang_transform=None) -> list[dict]:
@@ -183,6 +282,8 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
     manifest_text = manifest_text if manifest_text is not None else MANIFEST.read_text(encoding="utf-8")
     main_text = main_text if main_text is not None else MAIN_SCRIPT.read_text(encoding="utf-8")
     codec_text = codec_text if codec_text is not None else CODEC_SCRIPT.read_text(encoding="utf-8")
+    # スクリーンブロックを入れるか (main.js に印があるか。旧版向けの出力は印ごと消してある)
+    with_screen_block = SCREEN_BLOCK_MARKER in main_text
     files: dict[str, bytes] = {}
 
     def put(path: str, content) -> None:
@@ -237,9 +338,12 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
             {"format_version": "1.14.0", "sound_definitions": sound_definitions}, ensure_ascii=False, indent=2))
     # ゲーム内表示の翻訳 (既定は各プレイヤーのゲーム言語。固定なら GUI の言語だけ)
     for relative_path, content in addon_lang_files(addon_language).items():
+        text = content
         if lang_transform is not None and relative_path.endswith(".lang"):
-            content = lang_transform(content)
-        put(f"RP/{relative_path}", content)
+            text = lang_transform(text)
+        if with_screen_block and relative_path.endswith(".lang"):
+            text += screen_block_lang_line(namespace, _language_of_lang_file(relative_path, addon_language))
+        put(f"RP/{relative_path}", text)
     put("BP/scripts/videos.js", videos_js(entries))
 
     bp_uuid = stable_pack_uuid(namespace, pack_name, "bp")
@@ -249,6 +353,10 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
     bp_manifest["header"].update({"name": f"{pack_name} v{version_text()}", "description": manifest_description(namespace),
                                   "uuid": bp_uuid, "version": version})
     bp_manifest["modules"][0].update({"uuid": stable_pack_uuid(namespace, pack_name, "bp-script"), "version": version})
+    if with_screen_block:
+        # ブロックの定義 (BP/blocks) を読ませる data モジュール。前からある UUID (パック・スクリプト) は変えない
+        bp_manifest["modules"].append({"description": "Screen block", "type": "data",
+                                       "uuid": stable_pack_uuid(namespace, pack_name, "bp-data"), "version": version})
     bp_manifest.setdefault("dependencies", []).append({"uuid": rp_uuid, "version": version})
     put("BP/manifest.json", json.dumps(bp_manifest, ensure_ascii=False, indent=2) + "\n")
     rp_manifest = {
@@ -263,6 +371,12 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
     # 再生速度は各動画データの fps から決まるので、main.js は接頭辞だけ差し替える
     put("BP/scripts/main.js", main_text.replace(NAMESPACE_LINE, f'const EVENT_NAMESPACE = "{namespace}";'))
     put("BP/scripts/codec.js", codec_text)
+    # main.js が import するので、旧版向けの出力にも入れる (スクリーンブロックを使わなくても読み込みに要る)
+    put("BP/scripts/screen_system.js", SCREEN_SYSTEM_SCRIPT.read_text(encoding="utf-8"))
+    if with_screen_block:
+        put("BP/scripts/screen_ui.js", SCREEN_UI_SCRIPT.read_text(encoding="utf-8"))
+        for path, content in screen_block_files(namespace, pack_name).items():
+            put(path, content)
     if icon is not None:
         put("RP/pack_icon.png", icon)
         put("BP/pack_icon.png", icon)

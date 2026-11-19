@@ -30,7 +30,7 @@ def drive(work, videos, steps, prepare=None, listing_extra=None):
     listing_extra: {動画ID: {項目: 値}} を VIDEO_LIST のその動画に足す (audio_chunks など)。
     """
     work.mkdir(parents=True)
-    for name in ("main.js", "codec.js"):
+    for name in ("main.js", "codec.js", "screen_system.js", "screen_ui.js"):
         shutil.copy(ROOT / name, work / name)
     shutil.copy(ROOT / "tests" / "js" / "drive_main.mjs", work / "drive_main.mjs")
     imports, entries, listing = [], [], []

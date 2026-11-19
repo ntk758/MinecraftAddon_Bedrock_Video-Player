@@ -38,6 +38,12 @@ import {
   unpackGopJob,
   unpackRun,
 } from "./codec.js";
+import {
+  PLAYBACK_STATES, PlaybackScheduler, ScreenManager, boxContains, boxesIntersect, sameBox,
+} from "./screen_system.js";
+// <legacy:screen_imports> (旧版向けの出力では消す。スクリーンブロックは Script API 2.x で動く)
+import { showScreenMenu } from "./screen_ui.js";
+// </legacy:screen_imports>
 
 const EVENT_NAMESPACE = "badapple";
 const TICKS_PER_SECOND = 20;
@@ -119,7 +125,11 @@ const BLOCK_ID_ALIASES = {
   "minecraft:terracotta": "minecraft:hardened_clay",
 };
 
-let mainIntervalId = null;
+// スクリーンブロック (screen_system.js) とのつなぎ。ファイルの最後の legacy:screens の印の範囲で入れる (旧版向けの出力では null のまま)。
+//   tickSources()        スケジューラーに渡す、スクリーンブロックの描画するもの
+//   overlapsScreen(dimensionId, box)  コマンドで置く画面の箱と重なるスクリーンブロックの ID (無ければ null)
+//   onPlayerSpawn(player)  途中で入ってきた人に、スクリーンブロックの今の音を鳴らす
+let screenHooks = null;
 
 function currentRenderMode() {
   const saved = world.getDynamicProperty(RENDER_MODE_KEY);
@@ -246,6 +256,8 @@ function standsAsWall(videoData, anchor) {
 //  立体: x は右、高さは上向き (行 0 が一番上)、奥行き 0 が一番奥 (プレイヤーから遠い側)
 //  だまし絵: 壁と床 (stageCellOffset。anchor は舞台の左奥の角の床の高さ)
 function cellToWorld(videoData, anchor, p, loc) {
+  // 拡大した平面 (スクリーンブロックの「大きさ」) は、マスの正方形の若い方の角
+  if (anchor.scale > 1) return scaledCellCorner(videoData, anchor, p, loc, 0);
   let lx;
   let lz;
   if (isAnamorphic(videoData)) {
@@ -273,6 +285,43 @@ function cellToWorld(videoData, anchor, p, loc) {
   loc.x += anchor.x;
   loc.z += anchor.z;
   return loc;
+}
+
+/**
+ * 拡大して置く平面 (anchor.scale 倍。スクリーンブロックだけが使う) で、盤面の p 番目のマスが占める scale×scale の
+ * 正方形の角。far = 0 は盤面の若い方 (左・上) の角、far = 1 は反対 (右・下) の角。箱の最初のマスの far = 0 と最後のマスの
+ * far = 1 を BlockVolume の角にすると、箱のマスの正方形がすべて入る (90 度ずつ回しても箱は箱のまま)。
+ */
+function scaledCellCorner(videoData, anchor, p, loc, far) {
+  const s = anchor.scale;
+  const width = videoData.width;
+  const row = Math.floor(p / width);
+  const lx = (p % width) * s + far * (s - 1);
+  let lz;
+  if (anchor.wall) {
+    // 行 0 が一番上。若い角はマスの上の端、反対の角は下の端
+    loc.y = anchor.y + (videoData.height - 1 - row) * s + (far ? 0 : s - 1);
+    lz = 0;
+  } else {
+    loc.y = anchor.y;
+    lz = row * s + far * (s - 1);
+  }
+  rotateCell(anchor.facing ?? 0, lx, lz, loc);
+  loc.x += anchor.x;
+  loc.z += anchor.z;
+  return loc;
+}
+
+/** 拡大した平面のマス p の正方形の、すべてのブロックの位置を out に足す。 */
+function scaledCellBlocks(videoData, anchor, p, out) {
+  const a = scaledCellCorner(videoData, anchor, p, { x: 0, y: 0, z: 0 }, 0);
+  const b = scaledCellCorner(videoData, anchor, p, { x: 0, y: 0, z: 0 }, 1);
+  for (let x = Math.min(a.x, b.x); x <= Math.max(a.x, b.x); x++) {
+    for (let y = Math.min(a.y, b.y); y <= Math.max(a.y, b.y); y++) {
+      for (let z = Math.min(a.z, b.z); z <= Math.max(a.z, b.z); z++) out.push({ x, y, z });
+    }
+  }
+  return out;
 }
 
 // 動画一覧に出す大きさ (立体は 幅x高さx奥行き)
@@ -329,7 +378,9 @@ function footprintOf(videoData, layout = DEFAULT_LAYOUT) {
     return { sizeX: geom.sizeX, sizeZ: geom.sizeZ };
   }
   if (isVolume(videoData)) return { sizeX: videoData.width, sizeZ: videoData.depth };
-  return { sizeX: videoData.width, sizeZ: layout.wall ? 1 : videoData.height };
+  // 拡大した平面 (スクリーンブロック) は scale 倍
+  const s = layout.scale > 1 ? layout.scale : 1;
+  return { sizeX: videoData.width * s, sizeZ: layout.wall ? 1 : videoData.height * s };
 }
 
 /** 占める範囲のワールドでの x・z の最小と最大 (両端を含む)。向きに合わせて回した後の範囲。 */
@@ -357,10 +408,25 @@ function secondsToFrame(videoData, seconds) {
 }
 
 class VideoPlayer {
-  constructor(anchor, dimension, videoId) {
+  /**
+   * hooks (スクリーンブロックの画面だけ。コマンドで置く画面は null で、以前と同じ動き):
+   *   volume              音量 (0〜1。無ければワールド全体の音量)
+   *   onFinished()        最後まで再生した (チャットで全員に知らせる代わりに呼ぶ)
+   *   message(key, ...)   この画面の知らせ (シーク・置けなかったブロックなど。全員ではなく操作した人へ)
+   *   playAudio(trackId, volume) / stopAudio(trackId) / playAudioFor(player, trackId, volume)
+   *                       この画面の音声だけを鳴らす・止める (ほかの画面の音を止めない)
+   */
+  constructor(anchor, dimension, videoId, hooks = null) {
     // 保存した anchor (x・y・z だけ) にも、setup で決めた向きを付ける
     const layout = anchor.facing === undefined ? storedLayout() : anchor;
     this.anchor = { x: anchor.x, y: anchor.y, z: anchor.z, facing: layout.facing, wall: layout.wall };
+    // 拡大 (スクリーンブロックの平面だけ)。1 マスを scale×scale のブロックで置く
+    this.scale = anchor.scale > 1 ? anchor.scale : 1;
+    if (this.scale > 1) this.anchor.scale = this.scale;
+    // fillBlocks 1 回に入れる盤面のマスの数 (拡大するとマス 1 つが scale² ブロック)
+    this.maxFillCells = Math.max(1, Math.floor(MAX_FILL_BLOCKS / (this.scale * this.scale)));
+    this.hooks = hooks;
+    this.disposed = false;
     this.dimension = dimension;
     this.videoId = videoId;
     this.videoData = VIDEOS[videoId];
@@ -370,7 +436,7 @@ class VideoPlayer {
     this.elapsedTicks = 0;
     this.running = false;
     this.currentAudioChunk = -1;
-    this.masterVolume = savedVolume();
+    this.masterVolume = hooks?.volume ?? savedVolume();
 
     this.decodedIndex = null;
     this.decodedVideoId = null;
@@ -646,7 +712,8 @@ class VideoPlayer {
     const entry = this.startGopDecode(gopId);
     system.runJob((function* () {
       try {
-        while (!entry.done && self.videoId === entry.videoId) {
+        // 片付けた画面 (スクリーンの削除・動画の切り替え) の先読みは、そこでやめる
+        while (!entry.done && self.videoId === entry.videoId && !self.disposed) {
           self.stepGopDecode(gopId, entry);
           if (!entry.done) yield;
         }
@@ -654,6 +721,43 @@ class VideoPlayer {
         warnOnce(`prefetch:${gopId}`, `Failed to decode GOP ${gopId}: ${e}`);
       }
     })());
+  }
+
+  /** この画面の知らせ。コマンドで置く画面は全員へ (以前と同じ)、スクリーンブロックの画面は hooks.message へ。 */
+  say(key, ...args) {
+    if (this.hooks) {
+      this.hooks.message?.(key, ...args);
+      return;
+    }
+    notify(key, ...args);
+  }
+
+  /**
+   * 盤面のマス q に permutation を置く (拡大していなければ 1 ブロック、拡大していれば scale×scale の正方形)。
+   * 置けなければ例外を投げる (呼ぶ側がマスを「不明」にする)。
+   */
+  placeCell(q, permutation) {
+    if (this.scale === 1) {
+      this.dimension.setBlockPermutation(cellToWorld(this.videoData, this.anchor, q, this.tempBlockLoc), permutation);
+      return;
+    }
+    const a = scaledCellCorner(this.videoData, this.anchor, q, { x: 0, y: 0, z: 0 }, 0);
+    const b = scaledCellCorner(this.videoData, this.anchor, q, { x: 0, y: 0, z: 0 }, 1);
+    if (this.useFill !== false && typeof this.dimension.fillBlocks === "function") {
+      try {
+        this.dimension.fillBlocks(new BlockVolume(a, b), permutation);
+        return;
+      } catch (e) { /* 一部が読み込まれていないなど。1 ブロックずつ置き直す */ }
+    }
+    let lastError = null;
+    for (const loc of scaledCellBlocks(this.videoData, this.anchor, q, [])) {
+      try {
+        this.dimension.setBlockPermutation(loc, permutation);
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    if (lastError) throw lastError;
   }
 
   initPaletteCache() {
@@ -814,7 +918,7 @@ class VideoPlayer {
     if (this.placeFailureNotified) return;
     this.placeFailureNotified = true;
     const reason = String(error?.message ?? error ?? "").replace(/\s+/g, " ").slice(0, 120);
-    notify("place_failed", String(count), reason);
+    this.say("place_failed", String(count), reason);
   }
 
   /** rect / block 方式 (useRects が false なら 1 個ずつ)。 */
@@ -857,7 +961,9 @@ class VideoPlayer {
           const lastRow = r1 + (slices - 1) * contiguousRows;
           this.fillBoxCells(board, width, contiguousRows, x, x1, r, r1, slices, level);
           cellToWorld(video, this.anchor, p, from);
-          cellToWorld(video, this.anchor, lastRow * width + x1, to);
+          // 拡大していれば、最後のマスの正方形の反対の角まで
+          if (this.scale > 1) scaledCellCorner(video, this.anchor, lastRow * width + x1, to, 1);
+          else cellToWorld(video, this.anchor, lastRow * width + x1, to);
           try {
             this.dimension.fillBlocks(new BlockVolume(from, to), permutation);
           } catch (e) {
@@ -867,20 +973,20 @@ class VideoPlayer {
             //   置き直し、置けないマスだけを「不明」にする (以前は箱ごと置かれず、毎フレーム同じ箱で失敗していた)
             failures += this.placeBoxCellsOneByOne(board, width, contiguousRows, x, x1, r, r1, slices, permutation, level);
           }
-          operations += area;
+          operations += area * this.scale * this.scale;
         } else {
           // 1 個ずつ置く (途中で yield しても盤面と実際の表示がずれないよう、置くたびに盤面を更新する)
           for (let q = p; q <= rowStart + x1; q++) {
             board[q] = level;
             if (!permutation) continue;
             try {
-              this.dimension.setBlockPermutation(cellToWorld(video, this.anchor, q, this.tempBlockLoc), permutation);
+              this.placeCell(q, permutation);
             } catch (e) {
               failures++;
               lastError = e;
               board[q] = -1;
             }
-            if (++operations >= BLOCKS_PER_YIELD) {
+            if ((operations += this.scale * this.scale) >= BLOCKS_PER_YIELD) {
               operations = 0;
               yield;
             }
@@ -914,13 +1020,15 @@ class VideoPlayer {
     // だまし絵の壁と床の区画はワールドでつながっていないので、箱は区画の境目をまたがない
     const splits = isAnamorphic(this.videoData) ? stageOf(this.videoData).splits : null;
     const p = r * width + x;
+    // fillBlocks 1 回のブロック数の上限を、盤面のマスの数にしたもの (拡大していなければ MAX_FILL_BLOCKS のまま)
+    const maxCells = this.maxFillCells;
     let x1 = x;
     while (x1 + 1 < width && free(p + x1 + 1 - x)) x1++;
-    if (useRects && x1 - x + 1 > MAX_FILL_BLOCKS) x1 = x + MAX_FILL_BLOCKS - 1;
+    if (useRects && x1 - x + 1 > maxCells) x1 = x + maxCells - 1;
     let r1 = r;
     if (useRects) {
       while (r1 + 1 < rows && (r1 + 1) % contiguousRows !== 0 && !(splits && splits.includes(r1 + 1))
-        && (r1 + 2 - r) * (x1 - x + 1) <= MAX_FILL_BLOCKS) {
+        && (r1 + 2 - r) * (x1 - x + 1) <= maxCells) {
         const base = (r1 + 1) * width;
         let sameRun = true;
         for (let k = x; k <= x1; k++) {
@@ -938,7 +1046,7 @@ class VideoPlayer {
     if (useRects && placesVolume(this.videoData)) {
       const sliceCells = contiguousRows * width;
       const faceArea = (x1 - x + 1) * (r1 - r + 1);
-      while (r + slices * contiguousRows < rows && (slices + 1) * faceArea <= MAX_FILL_BLOCKS) {
+      while (r + slices * contiguousRows < rows && (slices + 1) * faceArea <= maxCells) {
         const offset = slices * sliceCells;
         let sameFace = true;
         for (let rr = r; rr <= r1 && sameFace; rr++) {
@@ -1011,10 +1119,13 @@ class VideoPlayer {
     }
     if (changed === 0) return "none";
     const cost = currentCostModel();
+    // 拡大していれば、マス 1 つが s2 ブロック (1 マスだけの所も、正方形を fillBlocks 1 回で置く)
+    const s2 = this.scale * this.scale;
+    const single = s2 > 1 ? cost.fillCall + cost.fillBlock * s2 : cost.setBlock;
     const estimates = {
-      rect: cost.fillCall * boxes + cost.fillBlock * boxBlocks + cost.setBlock * singles,
-      list: cost.listCall * (levels.size + Math.floor(changed / LIST_BATCH)) + cost.listBlock * changed,
-      block: cost.setBlock * changed,
+      rect: cost.fillCall * boxes + cost.fillBlock * boxBlocks * s2 + single * singles,
+      list: cost.listCall * (levels.size + Math.floor((changed * s2) / LIST_BATCH)) + cost.listBlock * changed * s2,
+      block: single * changed,
     };
     let best = "rect";
     for (const mode of ["list", "block"]) if (estimates[mode] < estimates[best]) best = mode;
@@ -1054,7 +1165,8 @@ class VideoPlayer {
             }
           }
           try {
-            this.dimension.setBlockPermutation(loc, permutation);
+            if (this.scale === 1) this.dimension.setBlockPermutation(loc, permutation);
+            else this.placeCell(q, permutation);
             board[q] = level;
           } catch (e) {
             board[q] = -1;
@@ -1105,7 +1217,8 @@ class VideoPlayer {
           warnOnce("fill-list", `fillBlocks(ListBlockVolume) failed: ${e}`);
           for (let i = 0; i < group.cells.length; i++) {
             try {
-              self.dimension.setBlockPermutation(group.locations[i], permutation);
+              if (self.scale === 1) self.dimension.setBlockPermutation(group.locations[i], permutation);
+              else self.placeCell(group.cells[i], permutation);
               board[group.cells[i]] = level;
             } catch (e2) {
               failures++;
@@ -1120,7 +1233,7 @@ class VideoPlayer {
       // 色ごとではなく、置いたブロックが BLOCKS_PER_YIELD 個たまるごとに区切る。1 tick に区切れる回数には上限
       // (MAX_YIELDS_PER_TICK) があるので、色ごとに区切ると色の多いフレーム (自動パレットで 40〜60 色) が
       // 何 tick にもまたがり、映像が遅れて音声が途切れていた (実機の録画: 128×128・10 fps で実効約 3 fps)
-      placedSinceYield += group.cells.length;
+      placedSinceYield += group.locations.length;
       group.cells = [];
       group.locations = [];
       if (placedSinceYield >= BLOCKS_PER_YIELD) {
@@ -1152,8 +1265,10 @@ class VideoPlayer {
         groups.set(level, group);
       }
       group.cells.push(p);
-      group.locations.push(cellToWorld(video, this.anchor, p, { x: 0, y: 0, z: 0 }));
-      if (group.cells.length >= LIST_BATCH) yield* flush(level, group);
+      // 拡大していれば、マスの正方形のブロックをすべて入れる (まとまりの大きさはブロックの数で数える)
+      if (this.scale > 1) scaledCellBlocks(video, this.anchor, p, group.locations);
+      else group.locations.push(cellToWorld(video, this.anchor, p, { x: 0, y: 0, z: 0 }));
+      if (group.locations.length >= LIST_BATCH) yield* flush(level, group);
     }
     for (const [level, group] of groups) yield* flush(level, group);
     const airGroup = { cells: [], locations: [] };
@@ -1367,20 +1482,25 @@ class VideoPlayer {
   }
 
   /** 目が動いていれば描き直しを始め、この tick のうちに進める (次の tick に回すと、次のフレームが遅れる)。 */
-  startViewRedraw() {
+  startViewRedraw(budget = null) {
     this.maybeStartViewRedraw();
-    if (this.viewIterator && this.advanceJob(this.viewIterator)) this.viewIterator = null;
+    if (this.viewIterator && this.advanceJob(this.viewIterator, budget)) this.viewIterator = null;
   }
 
-  /** ジェネレータを 1 tick の予算 (ブロック数と時間) まで進める。終われば true。 */
-  advanceJob(iterator) {
+  /**
+   * ジェネレータを 1 tick の予算 (ブロック数と時間) まで進める。終われば true。budget はスケジューラーが分けた予算
+   * ({ timeMs, maxYields })。無ければ 1 tick 分の全部 (以前と同じ)。
+   */
+  advanceJob(iterator, budget = null) {
+    const maxYields = budget?.maxYields ?? MAX_YIELDS_PER_TICK;
+    const timeBudget = budget?.timeMs ?? TICK_TIME_BUDGET_MS;
     const tickStart = Date.now();
     let yields = 0;
-    while (yields < MAX_YIELDS_PER_TICK) {
+    while (yields < maxYields) {
       const { done, value } = iterator.next();
       if (done) return true;
       if (value !== DECODE_YIELD) yields++;
-      if (Date.now() - tickStart > TICK_TIME_BUDGET_MS) break;
+      if (Date.now() - tickStart > timeBudget) break;
     }
     return false;
   }
@@ -1449,18 +1569,34 @@ class VideoPlayer {
     if (!this.running || !this.videoData || this.masterVolume <= 0 || this.currentAudioChunk < 0) return;
     const seconds = frameToSeconds(this.videoData, this.currentFrame);
     if (seconds - this.currentAudioChunk * AUDIO_CHUNK_SECONDS > LATE_JOIN_AUDIO_SECONDS) return;
-    const trackId = `${EVENT_NAMESPACE}.${this.audioVideoId}.chunk_${this.currentAudioChunk}`;
+    const trackId = this.trackIdOf(this.currentAudioChunk);
+    if (this.hooks?.playAudioFor) {
+      this.hooks.playAudioFor(player, trackId, this.masterVolume);
+      return;
+    }
     try {
       player.playSound(trackId, { location: player.location, volume: this.masterVolume, pitch: 1.0 });
     } catch (e) { /* 鳴らせない */ }
+  }
+
+  /** 音声のチャンクの音の ID。 */
+  trackIdOf(chunk) {
+    return `${EVENT_NAMESPACE}.${this.audioVideoId}.chunk_${chunk}`;
   }
 
   syncAudioForFrame(frameIndex) {
     if (!this.videoData || this.masterVolume <= 0) return;
     const targetChunk = Math.floor(frameToSeconds(this.videoData, frameIndex) / AUDIO_CHUNK_SECONDS);
     if (targetChunk !== this.currentAudioChunk) {
+      const previousChunk = this.currentAudioChunk;
       this.currentAudioChunk = targetChunk;
-      const trackId = `${EVENT_NAMESPACE}.${this.audioVideoId}.chunk_${targetChunk}`;
+      const trackId = this.trackIdOf(targetChunk);
+      if (this.hooks?.playAudio) {
+        // スクリーンブロックの画面: この画面の前のチャンクだけを止めて鳴らす (ほかの画面の音には触らない)
+        if (previousChunk >= 0) this.hooks.stopAudio?.(this.trackIdOf(previousChunk));
+        this.hooks.playAudio(trackId, this.masterVolume);
+        return;
+      }
       for (const p of world.getAllPlayers()) {
         try {
           p.stopMusic();
@@ -1476,15 +1612,21 @@ class VideoPlayer {
     }
   }
 
-  tick() {
+  /**
+   * 1 tick 分を進める。budget はスケジューラーが分けた予算 ({ timeMs, maxYields })。無ければ 1 tick 分の全部
+   * (スクリーンが 1 つなら、スケジューラーも全部を渡す)。
+   */
+  tick(budget = null) {
+    const maxYields = budget?.maxYields ?? MAX_YIELDS_PER_TICK;
+    const timeBudget = budget?.timeMs ?? TICK_TIME_BUDGET_MS;
     // だまし絵の描き直しの途中なら、それを先に進める (再生中は時計も進める)
     if (this.viewIterator) {
       if (this.running && this.startDelayTicks === 0 && this.chunkWaitTicks === 0) this.elapsedTicks++;
-      if (this.advanceJob(this.viewIterator)) this.viewIterator = null;
+      if (this.advanceJob(this.viewIterator, budget)) this.viewIterator = null;
       return;
     }
     if (!this.running) {
-      this.startViewRedraw();
+      this.startViewRedraw(budget);
       return;
     }
 
@@ -1505,12 +1647,14 @@ class VideoPlayer {
     if (!this.frameIterator) {
       if (this.currentFrame >= this.frameCount) {
         this.stopPlayback();
-        notify("playback_finished", this.anchor.x, this.anchor.y, this.anchor.z);
+        // スクリーンブロックの画面は、ループするか・止めるかを ScreenManager が決める
+        if (this.hooks?.onFinished) this.hooks.onFinished();
+        else notify("playback_finished", this.anchor.x, this.anchor.y, this.anchor.z);
         return;
       }
       // 動画の fps に合わせて、表示時刻が来るまで次のフレームを始めない
       if (this.currentFrame * this.ticksPerFrame >= this.elapsedTicks) {
-        this.startViewRedraw();
+        this.startViewRedraw(budget);
         return;
       }
       // 描くのが追いつかず 2 コマ以上遅れたら、途中のコマは置かずに今のコマへ飛ぶ (盤面との差で置くので画面は正しい。
@@ -1536,9 +1680,9 @@ class VideoPlayer {
     }
 
     const tickStart = Date.now();
-    // ブロックを置いた後の yield は MAX_YIELDS_PER_TICK 回まで (1 tick のブロック数の上限)。GOP の展開の yield は数えない
+    // ブロックを置いた後の yield は maxYields 回まで (1 tick のブロック数の上限)。GOP の展開の yield は数えない
     let yields = 0;
-    while (yields < MAX_YIELDS_PER_TICK) {
+    while (yields < maxYields) {
       const { done, value } = this.frameIterator.next();
       if (value !== DECODE_YIELD) yields++;
       if (done) {
@@ -1548,7 +1692,7 @@ class VideoPlayer {
         this.frameIterator = null;
         return;
       }
-      if (Date.now() - tickStart > TICK_TIME_BUDGET_MS) break;
+      if (Date.now() - tickStart > timeBudget) break;
     }
     if (this.playStats) this.playStats.frameMs += Date.now() - tickStart;
   }
@@ -1591,11 +1735,31 @@ class VideoPlayer {
       if (this.viewIterator !== null) this.viewRedrawPending = true;
     }
     this.viewIterator = null;
+    const playingChunk = this.currentAudioChunk;
     this.currentAudioChunk = -1;
     this.cancelJob();
+    if (this.hooks?.stopAudio) {
+      // スクリーンブロックの画面: 鳴らしているこの画面のチャンクだけを止める (ほかの画面の音は止めない)
+      if (playingChunk >= 0 && this.videoData) this.hooks.stopAudio(this.trackIdOf(playingChunk));
+      return;
+    }
     for (const p of world.getAllPlayers()) {
       try { p.stopMusic(); } catch (e) { /* 既に停止している */ }
     }
+  }
+
+  /**
+   * 使い終わった (スクリーンの削除・動画の切り替え) ときに呼ぶ。再生と片付けのジョブを止め、先読みもやめさせる。
+   * 置いたブロックには触らない (片付けは呼ぶ側が、作ったブロックだけを選んで行う)。
+   */
+  dispose() {
+    if (this.disposed) return;
+    this.stopPlayback();
+    this.frameIterator = null;
+    this.disposed = true;
+    this.background?.dispose();
+    this.gopCache.clear();
+    this.partialGops.clear();
   }
 
   /** 先頭から再生する。 */
@@ -1717,7 +1881,8 @@ class VideoPlayer {
             loc.z >= keepBox.z0 && loc.z <= keepBox.z1) continue;
         let placed = true;
         try {
-          self.dimension.setBlockPermutation(loc, clearPermutation);
+          if (self.scale === 1) self.dimension.setBlockPermutation(loc, clearPermutation);
+          else self.placeCell(p, clearPermutation);
         } catch (e) {
           placed = false;
           warnOnce("clear", `Failed to place blocks while clearing the screen: ${e}`);
@@ -1734,7 +1899,7 @@ class VideoPlayer {
     })());
   }
 
-  seekToFrame(targetFrame) {
+  seekToFrame(targetFrame, onDone = null) {
     if (!this.videoData || !this.ensureDecodedData()) return;
     targetFrame = Math.max(0, Math.min(targetFrame, this.frameCount - 1));
 
@@ -1754,7 +1919,7 @@ class VideoPlayer {
       startFrame = Math.floor(targetFrame / gop) * gop;
     }
 
-    notify("seeking", targetFrame);
+    this.say("seeking", targetFrame);
 
     const self = this;
     this.currentJobId = system.runJob((function* () {
@@ -1769,19 +1934,36 @@ class VideoPlayer {
       // targetFrame まで描画済みなので、再開時は次のフレームから
       self.currentFrame = targetFrame + 1;
       self.currentJobId = null;
-      notify("seek_done");
+      self.say("seek_done");
+      if (onDone) onDone();
     })());
   }
 }
 
+/**
+ * 毎 tick の描画 (screen_system.js の PlaybackScheduler)。1 tick の時間とブロック数の予算を、コマンドで置いた画面と
+ * スクリーンブロックの画面で分ける。画面が 1 つなら予算は全部 (以前と同じ)。runInterval は 1 つだけで、描くものが
+ * 無くなったら止める。ある画面の描画が例外を投げても、ほかの画面は描き続ける。
+ */
+const scheduler = new PlaybackScheduler({
+  runInterval: (callback, ticks) => system.runInterval(callback, ticks),
+  clearRun: (id) => system.clearRun(id),
+  sources: tickSources,
+  budgetMs: TICK_TIME_BUDGET_MS,
+  maxYields: MAX_YIELDS_PER_TICK,
+  onError: (source, e) => warnOnce(`tick:${source.key}`, `Screen ${source.key} failed to draw: ${e}`),
+});
+
+/** スケジューラーが毎 tick 描くもの。コマンドで置いた画面は、止めている間も毎 tick 呼ぶ (だまし絵の描き直しのため。以前と同じ)。 */
+function tickSources() {
+  const sources = [];
+  for (const [key, vp] of activePlayers) sources.push({ key: `cmd:${key}`, wantsTick: () => true, tick: (budget) => vp.tick(budget) });
+  if (screenHooks) sources.push(...screenHooks.tickSources());
+  return sources;
+}
+
 function startMainLoop() {
-  if (mainIntervalId !== null) return;
-  // 各プレイヤーが自分の fps で進むよう毎 tick 呼ぶ
-  mainIntervalId = system.runInterval(() => {
-    for (const player of activePlayers.values()) {
-      player.tick();
-    }
-  }, 1);
+  scheduler.ensureRunning();
 }
 
 /**
@@ -1966,12 +2148,36 @@ function removeLegacyTickingAreas(dimension, anchor) {
 function ensureTickingArea(dimension, anchor, videoData) {
   if (!videoData) return { added: 0, needed: 0 };
   removeLegacyTickingAreas(dimension, anchor);
+  // 前の setup (別の位置・別の大きさ) の区画。スクリーンブロックの区画 (名前が違う) は外さない
+  removeTickingAreasNamed(`${TICKING_AREA_NAME}_`);
+  return addTickingAreas(dimension, worldBoxOf(videoData, anchor), anchor.y, anchor.y, TICKING_AREA_NAME);
+}
+
+/** このパックの常時読み込みの区画のうち、名前が prefix で始まるものを外す。 */
+function removeTickingAreasNamed(prefix) {
   const manager = world.tickingAreaManager;
   try {
-    manager.removeAllTickingAreas(); // 前の setup (別の位置・別の大きさ) の区画
+    for (const area of manager.getAllTickingAreas()) {
+      if (String(area.identifier).startsWith(prefix)) manager.removeTickingArea(area.identifier);
+    }
   } catch (e) { /* 何も無い */ }
+}
 
-  const box = worldBoxOf(videoData, anchor);
+/** 名前が prefix で始まる区画が 1 つでもあるか。 */
+function hasTickingAreaNamed(prefix) {
+  try {
+    return world.tickingAreaManager.getAllTickingAreas().some((area) => String(area.identifier).startsWith(prefix));
+  } catch (e) {
+    return true;
+  }
+}
+
+/**
+ * box (x・z。y は y0〜y1) を 10x10 チャンクずつの区画 (名前は <name>_<番号>) にして登録する。このパックの枠に入る分だけ。
+ * 戻り値: { added, needed }
+ */
+function addTickingAreas(dimension, box, y0, y1, name) {
+  const manager = world.tickingAreaManager;
   const chunk0X = Math.floor(box.x0 / 16);
   const chunk0Z = Math.floor(box.z0 / 16);
   const chunk1X = Math.floor(box.x1 / 16);
@@ -1989,11 +2195,11 @@ function ensureTickingArea(dimension, anchor, videoData) {
   }
   let added = 0;
   for (const [index, [fromX, fromZ, toX, toZ]] of areas.entries()) {
-    const options = { dimension, from: { x: fromX, y: anchor.y, z: fromZ }, to: { x: toX, y: anchor.y, z: toZ } };
+    const options = { dimension, from: { x: fromX, y: y0, z: fromZ }, to: { x: toX, y: y1, z: toZ } };
     try {
       if (!manager.hasCapacity(options)) continue;
       // 戻り値の Promise は区画のチャンクがすべて読み込まれたら終わる。読み込みの完了は再生の前に isChunkLoaded で待つ
-      manager.createTickingArea(`${TICKING_AREA_NAME}_${index}`, options).catch((e) => {
+      manager.createTickingArea(`${name}_${index}`, options).catch((e) => {
         console.warn(`[${EVENT_NAMESPACE}] ticking area ${index} failed: ${e}`);
       });
       added++;
@@ -2006,11 +2212,8 @@ function ensureTickingArea(dimension, anchor, videoData) {
 
 /** 再生を始めるとき、常時読み込みの区画が無ければ (ワールドを開き直して消えたなど) 登録し直す。 */
 function ensureTickingAreaForPlayback(vp) {
-  try {
-    if (world.tickingAreaManager.getAllTickingAreas().length > 0) return;
-  } catch (e) {
-    return;
-  }
+  // スクリーンブロックの区画 (名前が違う) があっても、コマンドで置いた画面の区画が無ければ登録し直す
+  if (hasTickingAreaNamed(`${TICKING_AREA_NAME}_`)) return;
   const ticking = ensureTickingArea(vp.dimension, vp.anchor, vp.videoData);
   if (ticking.added < ticking.needed) notify("tickingarea_partial", ticking.added, ticking.needed);
 }
@@ -2064,6 +2267,40 @@ function checkPlacement(placement) {
   }
   if (placement.footprint > LARGE_SCREEN_BLOCKS) notify("setup_large", placement.footprint);
   return true;
+}
+
+/** 画面の高さ (ブロック)。床に置く平面は 1。 */
+function screenHeightOf(videoData, layout) {
+  if (isAnamorphic(videoData)) return stageOf(videoData).wallHeight + 1;
+  if (isVolume(videoData) || layout.wall) return videoData.height;
+  return 1;
+}
+
+/** コマンドで置く画面が占める箱 (両端を含む。y も)。スクリーンブロックの画面と重ならないか調べるのに使う。 */
+function commandScreenBox(videoData, anchor, sizeY = screenHeightOf(videoData, anchor)) {
+  const box = worldBoxOf(videoData, anchor);
+  return { x0: box.x0, x1: box.x1, z0: box.z0, z1: box.z1, y0: anchor.y, y1: anchor.y + Math.max(1, sizeY) - 1 };
+}
+
+/**
+ * 今あるコマンドの画面の箱 (ディメンションの ID と箱)。メモリに無ければ (開き直した後など)、保存した位置と選んだ動画から。
+ */
+function commandScreenBoxes() {
+  const boxes = [];
+  for (const vp of activePlayers.values()) {
+    if (vp.videoData) boxes.push({ dimensionId: vp.dimension.id, box: commandScreenBox(vp.videoData, vp.anchor) });
+  }
+  if (boxes.length > 0) return boxes;
+  loadSelection();
+  const anchorLoc = world.getDynamicProperty(ANCHOR_KEY);
+  const videoData = globalSelectedVideoId ? VIDEOS[globalSelectedVideoId] : null;
+  if (!anchorLoc || !videoData) return boxes;
+  const layout = storedLayout();
+  const anchor = { x: anchorLoc.x, y: anchorLoc.y, z: anchorLoc.z, facing: layout.facing, wall: layout.wall };
+  let dimensionId = world.getDynamicProperty(ANCHOR_DIMENSION_KEY);
+  if (typeof dimensionId !== "string") dimensionId = "minecraft:overworld";
+  boxes.push({ dimensionId, box: commandScreenBox(videoData, anchor) });
+  return boxes;
 }
 
 /** setup の足元から、その動画を置く位置を決める (align なら、その動画の大きさでチャンクにそろえてから)。 */
@@ -2170,6 +2407,12 @@ function setup(player, options = "") {
   const placement = placeVideo(videoData, origin, player.dimension, layout);
   if (!checkPlacement(placement)) return;
   const { anchor, shifted } = placement;
+  // スクリーンブロックの画面と重なる位置には置かない (ブロックの画面を上書きしてしまう)
+  const blocking = screenHooks?.overlapsScreen(player.dimension.id, commandScreenBox(videoData, anchor, placement.sizeY));
+  if (blocking) {
+    notify("setup_overlaps_screen", blocking);
+    return;
+  }
   if (shifted) notify("setup_shifted", anchor.y);
   world.setDynamicProperty(ORIGIN_KEY, origin);
   // 前のスクリーンの再生と片付けの仕事を止め、前の画面のうち新しい画面の外にあるマスを空気に戻す (以前は止めるだけで、
@@ -2244,6 +2487,12 @@ function startPlayback(dimension) {
       const layout = storedLayout();
       const fitted = placeVideo(videoData, origin, playbackDimension, layout);
       if (!checkPlacement(fitted)) {
+        if (previous) previous.running = false;
+        return;
+      }
+      const blocking = screenHooks?.overlapsScreen(playbackDimension.id, commandScreenBox(videoData, fitted.anchor, fitted.sizeY));
+      if (blocking) {
+        notify("setup_overlaps_screen", blocking);
         if (previous) previous.running = false;
         return;
       }
@@ -2496,6 +2745,7 @@ world.afterEvents.playerSpawn.subscribe((event) => {
   if (!event.initialSpawn) return;
   const player = event.player;
   for (const vp of activePlayers.values()) vp.playCurrentChunkFor(player);
+  screenHooks?.onPlayerSpawn(player);
   try {
     if (world.getDynamicProperty(ANCHOR_KEY) || player.getDynamicProperty(WELCOMED_KEY)) return;
     player.setDynamicProperty(WELCOMED_KEY, true);
@@ -2642,3 +2892,832 @@ system.beforeEvents.startup.subscribe((event) => {
   }
 });
 // </legacy:commands>
+
+// <legacy:screens> (旧版向けの出力では、この範囲を消す。スクリーンブロックは Script API 2.x のカスタムコンポーネントで動く)
+// ===== スクリーンブロック (screen_system.js の ScreenManager とブロックモードの描画をつなぐ) =====
+//
+// スクリーンブロック (<接頭辞>:video_screen) を置いて使うと操作画面 (screen_ui.js) が開き、動画を選ぶと、ブロックの上に
+// 壁のように画面を立てて再生する (立体の動画は、手前の面をブロックの面にそろえて奥へ)。画面はブロックの向き (置いた人が
+// 見ていた方向) に向く。スクリーンごとに動画・再生位置・音量・ループ・大きさを持ち、ほかのスクリーンの再生に影響しない。
+//
+// 建物を壊さないために:
+//   - 画面を置く範囲は、置く前にすべて調べる。空気でないブロックが 1 つでもあれば置かずに理由を出す (ワールドを変えない)
+//   - このスクリーンが置いた範囲 (ScreenSession の box と pendingClear) を保存し、削除や動画の切り替えでは、その範囲の
+//     「動画のパレットのブロック」だけを空気に戻す (プレイヤーが後から置いたほかのブロックは残す)
+//   - 読み込まれていなくて片付けられなかった範囲は、ワールドに保存して、あとで読み込まれたときに片付ける
+const SCREEN_BLOCK_ID = `${EVENT_NAMESPACE}:video_screen`;
+const SCREEN_COMPONENT_ID = `${EVENT_NAMESPACE}:screen_controller`;
+// スクリーンブロックの常時読み込みの区画の名前 (<接頭辞><スクリーン ID>_<番号>)。コマンドで置いた画面の区画と名前が違う
+const SCREEN_TICKING_PREFIX = "bvp_screen_";
+// この距離 (ブロック) より近くにいるプレイヤーにだけ、そのスクリーンの音を鳴らす (離れた所のスクリーンの音が重ならない)
+const SCREEN_AUDIO_RANGE = 48;
+// 拡大した画面の幅・高さの上限 (ブロック)
+const SCREEN_MAX_SIDE = 256;
+// 置く範囲を調べる・片付けるときに、この数のマスごとに tick を跨ぐ
+const SCREEN_SCAN_YIELD = 512;
+// 片付けられなかった範囲 (読み込まれていなかったなど) の一覧 (JSON の [{ dim, box }])
+const SCREEN_ORPHANS_KEY = `${EVENT_NAMESPACE}:screen_orphans`;
+const SCREEN_ORPHAN_RETRY_TICKS = 200;
+
+/** スクリーン ID ("s3") から、プレイヤーに見せる番号 ("3")。 */
+function screenNumber(screenId) {
+  return String(screenId).slice(1);
+}
+
+/** 失敗の結果 (screen_system.js と同じ形)。 */
+function screenFail(reason, detail = []) {
+  return { ok: false, reason, detail };
+}
+
+/** スクリーンブロックで選べる動画 (一覧に出す動画。だまし絵の背景の映像は出さない)。 */
+function isListedVideo(videoId) {
+  return typeof videoId === "string" && Object.prototype.hasOwnProperty.call(VIDEOS, videoId)
+    && LISTED_VIDEOS.some((v) => v.id === videoId);
+}
+
+/** 拡大して置ける動画か (平面で、盤面との差で置く形式。古い形式・立体・だまし絵は 1 倍だけ)。 */
+function supportsScale(videoData) {
+  const format = videoData.format;
+  return !isVolume(videoData) && !isAnamorphic(videoData) && !!videoData.chunks && !!videoData.index
+    && (format === FORMAT_V4 || format === FORMAT_V5 || format === FORMAT_V6);
+}
+
+let screenPaletteIdsCache = null;
+/**
+ * このアドオンの動画が画面に置くかもしれないブロックの ID (全部の動画のパレット)。スクリーンの片付けでは、これに当たる
+ * ブロックだけを空気に戻す。置けないブロックの代わりに置く土 (resolvePermutation) も入れる。
+ */
+function screenPaletteIds() {
+  if (screenPaletteIdsCache) return screenPaletteIdsCache;
+  const ids = new Set(["minecraft:dirt"]);
+  const add = (spec) => {
+    if (!spec || typeof spec.block !== "string") return;
+    ids.add(spec.block);
+    ids.add(BLOCK_ID_ALIASES[spec.block] ?? spec.block);
+  };
+  for (const video of Object.values(VIDEOS)) {
+    if (!video || !Array.isArray(video.level_blocks)) continue;
+    if (video.adaptive_palette) for (const gop of video.level_blocks) (Array.isArray(gop) ? gop : []).forEach(add);
+    else video.level_blocks.forEach(add);
+  }
+  ids.delete("minecraft:air");
+  screenPaletteIdsCache = ids;
+  return ids;
+}
+
+function isAirBlock(block) {
+  return typeof block.isAir === "boolean" ? block.isAir : block.typeId === "minecraft:air";
+}
+
+/**
+ * スクリーンブロックの画面の置き方。平面はブロックの 1 つ上から壁のように立て、左右の中央をブロックにそろえる。
+ * 立体は手前 (見る人の側) の面をブロックと同じ面にそろえて、奥へ置く。どちらもブロックの向きに向く。
+ * 戻り値: { anchor, box, width, height } か { error, detail }
+ */
+function screenLayoutFor(session, videoData, scale) {
+  if (isAnamorphic(videoData)) return { error: "unsupported_anamorphic" };
+  const volume = isVolume(videoData);
+  if (scale > 1 && !supportsScale(videoData)) return { error: "scale_unsupported" };
+  const s = volume ? 1 : scale;
+  const width = videoData.width * s;
+  const height = videoData.height * s;
+  if (width > SCREEN_MAX_SIDE || height > SCREEN_MAX_SIDE) return { error: "too_big", detail: [SCREEN_MAX_SIDE] };
+  // ブロックの真上に来るマス (ローカル座標)。平面は lz = 0 の面、立体は一番手前の段 (depth - 1)
+  const lz = volume ? videoData.depth - 1 : 0;
+  const centre = rotateCell(session.facing, Math.floor(width / 2), lz, { x: 0, z: 0 });
+  const anchor = {
+    x: session.position.x - centre.x, y: session.position.y + 1, z: session.position.z - centre.z,
+    facing: session.facing, wall: true, scale: s,
+  };
+  const flat = worldBoxOf(videoData, anchor);
+  const box = { x0: flat.x0, x1: flat.x1, z0: flat.z0, z1: flat.z1, y0: anchor.y, y1: anchor.y + height - 1 };
+  return { anchor, box, width, height };
+}
+
+/** その動画をこのスクリーンに置ける大きさ (倍率) の一覧 [{ scale, width, height }]。 */
+function screenScaleOptions(session, videoData) {
+  const options = [];
+  let dimension = null;
+  try {
+    dimension = world.getDimension(session.dimensionId);
+  } catch (e) { /* 高さの確かめを省く */ }
+  const range = dimension?.heightRange;
+  const maxScale = supportsScale(videoData) ? screenManager.limits.maxScale : 1;
+  for (let scale = 1; scale <= maxScale; scale++) {
+    const layout = screenLayoutFor(session, videoData, scale);
+    if (layout.error) break;
+    if (range && (layout.box.y1 >= range.max || layout.box.y0 < range.min)) break;
+    options.push({ scale, width: layout.width, height: layout.height });
+  }
+  return options;
+}
+
+/**
+ * box の中を調べる (ジェネレータ。SCREEN_SCAN_YIELD マスごとに yield)。空気でないブロックがあれば置けない。ただし、
+ * このスクリーンが前に置いた範囲 (ownedBoxes) の中の、動画のパレットのブロックは自分の画面なので置いてよい。
+ * 置けなければ { reason, detail }、置ければ null。
+ */
+function* scanScreenArea(dimension, box, ownedBoxes) {
+  const ids = screenPaletteIds();
+  const loc = { x: 0, y: 0, z: 0 };
+  let blocked = 0;
+  let first = null;
+  let n = 0;
+  for (let y = box.y0; y <= box.y1; y++) {
+    for (let x = box.x0; x <= box.x1; x++) {
+      for (let z = box.z0; z <= box.z1; z++) {
+        loc.x = x;
+        loc.y = y;
+        loc.z = z;
+        let block;
+        try {
+          block = dimension.getBlock(loc);
+        } catch (e) {
+          // 世界の外 (高さの範囲の外)
+          return { reason: "too_tall", detail: [box.y1 - box.y0 + 1] };
+        }
+        if (!block) return { reason: "not_loaded", detail: [x, y, z] };
+        if (!isAirBlock(block) && !(ids.has(block.typeId) && ownedBoxes.some((owned) => boxContains(owned, loc)))) {
+          blocked++;
+          if (!first) first = { x, y, z };
+        }
+        if (++n % SCREEN_SCAN_YIELD === 0) yield;
+      }
+    }
+  }
+  return blocked > 0 ? { reason: "blocked", detail: [first.x, first.y, first.z, blocked] } : null;
+}
+
+/**
+ * boxes の中の、動画のパレットのブロックだけを空気に戻す (ジェネレータ)。keep(loc) が true のマスは触らない。
+ * 読み込まれていないなどで片付けきれなかった箱の一覧を返す。
+ */
+function* clearScreenArea(dimension, boxes, keep = null) {
+  const ids = screenPaletteIds();
+  const air = BlockPermutation.resolve("minecraft:air");
+  const loc = { x: 0, y: 0, z: 0 };
+  const leftovers = [];
+  let n = 0;
+  for (const box of boxes) {
+    let incomplete = false;
+    for (let y = box.y0; y <= box.y1; y++) {
+      for (let x = box.x0; x <= box.x1; x++) {
+        for (let z = box.z0; z <= box.z1; z++) {
+          loc.x = x;
+          loc.y = y;
+          loc.z = z;
+          if (keep && keep(loc)) continue;
+          let block;
+          try {
+            block = dimension.getBlock(loc);
+          } catch (e) {
+            block = undefined;
+          }
+          if (!block) {
+            incomplete = true;
+          } else if (ids.has(block.typeId)) {
+            try {
+              dimension.setBlockPermutation(loc, air);
+            } catch (e) {
+              incomplete = true;
+            }
+          }
+          if (++n % SCREEN_SCAN_YIELD === 0) yield;
+        }
+      }
+    }
+    if (incomplete) leftovers.push(box);
+  }
+  return leftovers;
+}
+
+/** 片付けられなかった範囲の一覧を読む (壊れていれば空)。 */
+function readScreenOrphans() {
+  try {
+    const list = JSON.parse(world.getDynamicProperty(SCREEN_ORPHANS_KEY) ?? "[]");
+    return Array.isArray(list) ? list.filter((o) => o && typeof o.dim === "string" && Array.isArray(o.box) && o.box.length === 6
+      && o.box.every(Number.isInteger)) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeScreenOrphans(list) {
+  world.setDynamicProperty(SCREEN_ORPHANS_KEY, list.length > 0 ? JSON.stringify(list) : undefined);
+}
+
+function addScreenOrphans(dimensionId, boxes) {
+  if (boxes.length === 0) return;
+  const list = readScreenOrphans();
+  for (const box of boxes) list.push({ dim: dimensionId, box: [box.x0, box.y0, box.z0, box.x1, box.y1, box.z1] });
+  writeScreenOrphans(list);
+}
+
+/** 今のスクリーンかコマンドの画面が使っているマスか (片付け残しを片付けるとき、それらのブロックを消さないように)。 */
+function cellInUse(dimensionId, loc) {
+  for (const session of screenManager.list()) {
+    if (session.dimensionId === dimensionId && session.ownedBoxes.some((box) => boxContains(box, loc))) return true;
+  }
+  for (const { dimensionId: id, box } of commandScreenBoxes()) {
+    if (id === dimensionId && boxContains(box, loc)) return true;
+  }
+  return false;
+}
+
+let orphanJobRunning = false;
+let orphanRetryTick = -Infinity;
+/** 片付け残しを、読み込まれている所から片付ける (ワールドを開いたとき・スクリーンを使ったとき。間をあけて)。 */
+function retryScreenOrphans() {
+  if (orphanJobRunning || system.currentTick - orphanRetryTick < SCREEN_ORPHAN_RETRY_TICKS) return;
+  const list = readScreenOrphans();
+  if (list.length === 0) return;
+  orphanRetryTick = system.currentTick;
+  orphanJobRunning = true;
+  system.runJob((function* () {
+    const remaining = [];
+    try {
+      for (const orphan of list) {
+        let dimension;
+        try {
+          dimension = world.getDimension(orphan.dim);
+        } catch (e) {
+          continue;
+        }
+        const [x0, y0, z0, x1, y1, z1] = orphan.box;
+        const leftovers = yield* clearScreenArea(dimension, [{ x0, y0, z0, x1, y1, z1 }], (loc) => cellInUse(orphan.dim, loc));
+        if (leftovers.length > 0) remaining.push(orphan);
+      }
+      writeScreenOrphans(remaining);
+    } finally {
+      orphanJobRunning = false;
+    }
+  })());
+}
+
+/**
+ * ブロックモードのスクリーンのレンダラー (screen_system.js の RENDERER_CONTRACT)。描画は VideoPlayer (コマンドの画面と
+ * 同じ) に任せ、置く場所の確かめ・片付け・音声の範囲・常時読み込みをスクリーンごとに行う。
+ */
+class BlockScreenRenderer {
+  constructor(session) {
+    this.session = session;
+    this.vp = null;
+    this.prepareJob = null;
+    this.pendingPrepare = null;
+    // 最後に操作した人 (シーク・置けなかったブロックなどの知らせを出す相手)
+    this.operator = null;
+    this.tickingName = `${SCREEN_TICKING_PREFIX}${session.screenId}`;
+    this.onFinished = null;
+  }
+
+  dimension() {
+    return world.getDimension(this.session.dimensionId);
+  }
+
+  /** VideoPlayer に渡すつなぎ (このスクリーンの音量・音声・知らせ・終わり)。 */
+  hooks() {
+    return {
+      volume: this.session.volume,
+      onFinished: () => {
+        // ループしないときだけ、最後まで再生したことを操作した人に知らせる
+        if (!this.session.loop) this.tell("screen.finished", screenNumber(this.session.screenId));
+        this.onFinished?.();
+      },
+      message: (key, ...args) => this.tell(key, ...args),
+      playAudio: (trackId, volume) => this.playAudio(trackId, volume),
+      stopAudio: (trackId) => this.stopAudio(trackId),
+      playAudioFor: (player, trackId, volume) => {
+        if (this.inAudioRange(player)) this.playSoundTo(player, trackId, volume);
+      },
+    };
+  }
+
+  tell(key, ...args) {
+    if (this.operator) notifyPlayer(this.operator, key, ...args);
+  }
+
+  /** 画面の真ん中 (音を鳴らす人を決める基準)。 */
+  centre() {
+    const box = this.session.box;
+    if (!box) return this.session.position;
+    return { x: (box.x0 + box.x1) / 2, y: (box.y0 + box.y1) / 2, z: (box.z0 + box.z1) / 2 };
+  }
+
+  inAudioRange(player) {
+    try {
+      if (player.dimension?.id !== this.session.dimensionId) return false;
+      const c = this.centre();
+      const p = player.location;
+      return Math.hypot(p.x - c.x, p.y - c.y, p.z - c.z) <= SCREEN_AUDIO_RANGE;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  playSoundTo(player, trackId, volume) {
+    try {
+      player.playSound(trackId, { location: player.location, volume, pitch: 1.0 });
+    } catch (e) {
+      warnOnce(`audio:${trackId}`, `Cannot play sound ${trackId}: ${e}`);
+    }
+  }
+
+  playAudio(trackId, volume) {
+    for (const player of world.getAllPlayers()) {
+      if (this.inAudioRange(player)) this.playSoundTo(player, trackId, volume);
+    }
+  }
+
+  /** このスクリーンが鳴らしているチャンクの音だけを止める。 */
+  stopAudio(trackId) {
+    try {
+      this.dimension().runCommand(`stopsound @a ${trackId}`);
+    } catch (e) { /* 鳴っていない */ }
+  }
+
+  addTicking(vp) {
+    removeTickingAreasNamed(`${this.tickingName}_`);
+    const box = this.session.box;
+    if (!box) return;
+    const ticking = addTickingAreas(vp.dimension, box, box.y0, box.y1, this.tickingName);
+    if (ticking.added < ticking.needed) this.tell("tickingarea_partial", ticking.added, ticking.needed);
+  }
+
+  removeTicking() {
+    removeTickingAreasNamed(`${this.tickingName}_`);
+  }
+
+  /** 今の動画の VideoPlayer (ワールドを開き直した後などで無ければ作る)。動画が無い・置けなければ null。 */
+  ensurePlayer() {
+    const mediaId = this.session.mediaId;
+    if (this.vp && !this.vp.disposed && this.vp.videoId === mediaId) return this.vp;
+    if (!isListedVideo(mediaId)) return null;
+    const layout = screenLayoutFor(this.session, VIDEOS[mediaId], this.session.scale);
+    if (layout.error) return null;
+    this.vp = new VideoPlayer(layout.anchor, this.dimension(), mediaId, this.hooks());
+    return this.vp;
+  }
+
+  /** 用意の途中なら止めて、待っている Promise を「スクリーンが無い」で終わらせる。 */
+  cancelPrepare() {
+    if (this.prepareJob !== null) {
+      system.clearJob(this.prepareJob);
+      this.prepareJob = null;
+    }
+    this.finishPrepare(screenFail("no_screen"));
+  }
+
+  finishPrepare(result) {
+    const resolve = this.pendingPrepare;
+    this.pendingPrepare = null;
+    this.prepareJob = null;
+    if (resolve) resolve(result);
+  }
+
+  prepare(mediaId, { scale }) {
+    this.cancelPrepare();
+    return new Promise((resolve) => {
+      const session = this.session;
+      if (!isListedVideo(mediaId)) {
+        resolve(screenFail("no_media", [String(mediaId)]));
+        return;
+      }
+      const videoData = VIDEOS[mediaId];
+      const layout = screenLayoutFor(session, videoData, scale);
+      if (layout.error) {
+        resolve(screenFail(layout.error, layout.detail ?? []));
+        return;
+      }
+      let dimension;
+      try {
+        dimension = this.dimension();
+      } catch (e) {
+        resolve(screenFail("invalid_position"));
+        return;
+      }
+      const range = dimension.heightRange;
+      if (range && (layout.box.y1 >= range.max || layout.box.y0 < range.min)) {
+        resolve(screenFail("too_tall", [layout.height]));
+        return;
+      }
+      const other = screenManager.findOverlap(session.dimensionId, layout.box, session.screenId);
+      if (other) {
+        resolve(screenFail("overlaps_screen", [screenNumber(other.screenId)]));
+        return;
+      }
+      if (commandScreenBoxes().some(({ dimensionId, box }) => dimensionId === session.dimensionId && boxesIntersect(box, layout.box))) {
+        resolve(screenFail("overlaps_command_screen"));
+        return;
+      }
+      this.pendingPrepare = resolve;
+      const self = this;
+      this.prepareJob = system.runJob((function* () {
+        // 1. 置く範囲を調べる (ここまではワールドを変えない。置けなければ前の動画と画面のまま)
+        const problem = yield* scanScreenArea(dimension, layout.box, session.ownedBoxes);
+        if (problem) {
+          self.finishPrepare(screenFail(problem.reason, problem.detail));
+          return;
+        }
+        // 2. 前の画面を止めて、前の画面の範囲のうち新しい画面の外を片付ける (このスクリーンが置いたブロックだけ)
+        if (self.vp) self.vp.dispose();
+        self.vp = null;
+        self.removeTicking();
+        const oldBoxes = session.ownedBoxes.filter((box) => !sameBox(box, layout.box));
+        const leftovers = yield* clearScreenArea(dimension, oldBoxes, (loc) => boxContains(layout.box, loc));
+        // 3. 新しい画面を空の色で塗る (平面はパレットの先頭のブロック、立体は空気)
+        self.prepareJob = null;
+        const vp = new VideoPlayer(layout.anchor, dimension, mediaId, self.hooks());
+        self.vp = vp;
+        vp.stopAndClear(null, false, false, () => {
+          if (self.vp !== vp) return;
+          self.finishPrepare({
+            ok: true, width: layout.width, height: layout.height, box: layout.box,
+            cleared: oldBoxes.filter((box) => !leftovers.includes(box)),
+          });
+        });
+      })());
+    });
+  }
+
+  play({ fromStart, position = 0 }) {
+    const vp = this.ensurePlayer();
+    if (!vp) throw new Error(`video ${this.session.mediaId} is not in this add-on`);
+    vp.masterVolume = this.session.volume;
+    this.addTicking(vp);
+    if (fromStart) {
+      vp.restart();
+      return;
+    }
+    // ワールドを開き直した後など、まだ何も描いていない VideoPlayer は保存した位置から (直近のキーフレームから復元して描く)
+    if (!vp.running && vp.currentFrame === 0 && position > 0) {
+      vp.currentFrame = Math.min(secondsToFrame(vp.videoData, position), Math.max(0, vp.frameCount - 1));
+      vp.forceRedraw = true;
+    }
+    vp.resume();
+  }
+
+  pause() {
+    this.vp?.stopPlayback();
+    this.removeTicking();
+  }
+
+  stop() {
+    const vp = this.ensurePlayer();
+    if (vp) vp.stopAndClear(null, false);
+    this.removeTicking();
+  }
+
+  seek(seconds, { resume = false } = {}) {
+    const vp = this.ensurePlayer();
+    if (!vp) return;
+    const frame = Math.min(secondsToFrame(vp.videoData, seconds), Math.max(0, vp.frameCount - 1));
+    if (resume) {
+      // 再生中: そのフレームから描き続ける (直近のキーフレームから復元して、盤面との差で置く)
+      vp.stopPlayback();
+      vp.frameIterator = null;
+      vp.currentFrame = frame;
+      vp.forceRedraw = true;
+      this.addTicking(vp);
+      vp.resume();
+    } else {
+      vp.seekToFrame(frame);
+    }
+  }
+
+  setVolume(volume) {
+    const vp = this.vp;
+    if (!vp) return;
+    vp.masterVolume = volume;
+    // 消音にしたら、鳴っているこのスクリーンの音をすぐ止める (大きさを変えたときは次のチャンクから)
+    if (volume <= 0 && vp.currentAudioChunk >= 0) {
+      this.stopAudio(vp.trackIdOf(vp.currentAudioChunk));
+      vp.currentAudioChunk = -1;
+    }
+  }
+
+  position() {
+    const vp = this.vp;
+    if (!vp || vp.disposed || !vp.videoData) return this.session.playbackPosition;
+    return frameToSeconds(vp.videoData, Math.min(vp.currentFrame, vp.frameCount));
+  }
+
+  duration() {
+    const mediaId = this.session.mediaId;
+    if (!isListedVideo(mediaId)) return 0;
+    const vp = this.vp && !this.vp.disposed && this.vp.videoId === mediaId ? this.vp : null;
+    const videoData = VIDEOS[mediaId];
+    return frameToSeconds(videoData, vp ? vp.frameCount : videoData.frame_count);
+  }
+
+  isRunning() {
+    return !!this.vp?.running;
+  }
+
+  wantsTick() {
+    return !!this.vp && !this.vp.disposed && (this.vp.running || this.vp.viewIterator !== null);
+  }
+
+  tick(budget) {
+    this.vp?.tick(budget);
+  }
+
+  /** 止めて片付ける。clearBlocks なら、このスクリーンが置いたブロックだけを空気に戻す。片付け残しはあとで片付ける。 */
+  release({ clearBlocks = true } = {}) {
+    this.cancelPrepare();
+    if (this.vp) this.vp.dispose();
+    this.vp = null;
+    this.removeTicking();
+    const boxes = this.session.ownedBoxes;
+    if (!clearBlocks || boxes.length === 0) return Promise.resolve({ ok: true });
+    let dimension;
+    try {
+      dimension = this.dimension();
+    } catch (e) {
+      addScreenOrphans(this.session.dimensionId, boxes);
+      return Promise.resolve({ ok: true, pending: true });
+    }
+    const dimensionId = this.session.dimensionId;
+    const screenId = this.session.screenId;
+    return new Promise((resolve) => {
+      system.runJob((function* () {
+        // ほかのスクリーンとコマンドの画面のマスは消さない (重ならないように置いているが、念のため)
+        const leftovers = yield* clearScreenArea(dimension, boxes, (loc) => {
+          for (const other of screenManager.list()) {
+            if (other.screenId !== screenId && other.dimensionId === dimensionId
+              && other.ownedBoxes.some((box) => boxContains(box, loc))) return true;
+          }
+          return false;
+        });
+        addScreenOrphans(dimensionId, leftovers);
+        resolve({ ok: true, pending: leftovers.length > 0 });
+      })());
+    });
+  }
+}
+
+/** スクリーンブロックがまだその位置にあるか ("ok" / "missing" / 読み込まれていなければ "unknown")。 */
+function checkScreenMount(session) {
+  let block;
+  try {
+    block = world.getDimension(session.dimensionId).getBlock(session.position);
+  } catch (e) {
+    return "unknown";
+  }
+  if (!block) return "unknown";
+  return block.typeId === SCREEN_BLOCK_ID ? "ok" : "missing";
+}
+
+const screenManager = new ScreenManager({
+  storage: {
+    read: (key) => {
+      const value = world.getDynamicProperty(key);
+      return typeof value === "string" ? value : undefined;
+    },
+    write: (key, value) => world.setDynamicProperty(key, value),
+  },
+  createRenderer: (session) => new BlockScreenRenderer(session),
+  checkMount: checkScreenMount,
+  scheduler,
+  keyPrefix: `${EVENT_NAMESPACE}:`,
+  log: (message) => console.warn(`[${EVENT_NAMESPACE}] ${message}`),
+});
+
+/** ブロックの向き (minecraft:cardinal_direction。置いた人が見ていた方向) を 0 北・1 東・2 南・3 西 にする。 */
+function screenFacingOf(permutation) {
+  try {
+    const index = FACING_NAMES.indexOf(permutation?.getState("minecraft:cardinal_direction"));
+    return index >= 0 ? index : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+/** その位置のスクリーン (無ければ登録する)。{ ok, session } か失敗。 */
+function screenAt(dimension, location, permutation) {
+  const position = { x: location.x, y: location.y, z: location.z };
+  return screenManager.create({ dimensionId: dimension.id, position, facing: screenFacingOf(permutation) });
+}
+
+/** 操作の結果に、成功の知らせを付ける。 */
+function withNotice(result, notice, ...args) {
+  if (result && typeof result.then === "function") return result.then((value) => withNotice(value, notice, ...args));
+  if (result?.ok) return { ...result, notice, noticeArgs: args };
+  return result;
+}
+
+/** 動画を切り替えるときの倍率 (今の倍率で置けなければ、置ける中で一番大きいもの)。 */
+function scaleForMedia(session, mediaId) {
+  if (!isListedVideo(mediaId)) return 1;
+  const options = screenScaleOptions(session, VIDEOS[mediaId]);
+  if (options.length === 0) return 1;
+  return options.filter((o) => o.scale <= session.scale).pop()?.scale ?? options[0].scale;
+}
+
+/** 大きさを変える (画面を用意し直して、同じ位置から続ける)。 */
+async function changeScreenScale(screenId, scale) {
+  const session = screenManager.get(screenId);
+  if (!session || !session.mediaId) return screenFail(session ? "no_media_selected" : "no_screen");
+  const wasPlaying = session.playbackState === PLAYBACK_STATES.PLAYING;
+  const at = screenManager.rendererFor(session).position();
+  const result = await screenManager.setMedia(screenId, session.mediaId, { scale });
+  if (!result.ok) return result;
+  if (wasPlaying) {
+    const played = screenManager.play(screenId);
+    if (played.ok && at > 0) screenManager.seek(screenId, at);
+  } else if (at > 0) {
+    screenManager.seek(screenId, at);
+  }
+  return result;
+}
+
+/** 操作画面 (screen_ui.js) に渡すつなぎ。 */
+const screenUi = {
+  tr,
+  status(screenId) {
+    const session = screenManager.get(screenId);
+    if (!session) return null;
+    const renderer = screenManager.renderers.get(screenId);
+    const listed = isListedVideo(session.mediaId);
+    const entry = listed ? VIDEO_LIST.find((v) => v.id === session.mediaId) : null;
+    return {
+      screenNumber: screenNumber(screenId),
+      mediaId: session.mediaId,
+      mediaTitle: entry?.title ?? session.mediaId ?? "",
+      state: session.playbackState,
+      position: renderer ? renderer.position() : session.playbackPosition,
+      duration: listed ? frameToSeconds(VIDEOS[session.mediaId], VIDEOS[session.mediaId].frame_count) : 0,
+      volume: session.volume,
+      loop: session.loop,
+      scale: session.scale,
+      width: session.screenWidth,
+      height: session.screenHeight,
+      rendererType: session.rendererType,
+    };
+  },
+  media() {
+    return LISTED_VIDEOS.map((v) => {
+      const videoData = VIDEOS[v.id];
+      const supported = !!videoData && !isAnamorphic(videoData);
+      return {
+        id: v.id, title: v.title, width: v.width, height: v.height,
+        seconds: videoData ? frameToSeconds(videoData, videoData.frame_count) : 0,
+        supported, reason: supported ? null : "unsupported_anamorphic",
+      };
+    });
+  },
+  scaleOptions(screenId, mediaId) {
+    const session = screenManager.get(screenId);
+    return session && isListedVideo(mediaId) ? screenScaleOptions(session, VIDEOS[mediaId]) : [];
+  },
+  renderers() {
+    // このパックで使える描画方式。画像モードは別のパック (別のスクリプト) なので、ここでは選べない
+    return [{ type: "block", label: "screen.renderer.block" }];
+  },
+  act(screenId, action, ...args) {
+    const session = screenManager.get(screenId);
+    const renderer = session ? screenManager.rendererFor(session) : null;
+    if (renderer && this.player) renderer.operator = this.player;
+    const n = screenNumber(screenId);
+    switch (action) {
+      case "play":
+        // 保存した動画が、作り直したアドオンから無くなっていたとき
+        if (session?.mediaId && !isListedVideo(session.mediaId)) return screenFail("no_media", [session.mediaId]);
+        return withNotice(screenManager.play(screenId), "screen.playing", n);
+      case "pause":
+        return withNotice(screenManager.pause(screenId), "screen.paused", n);
+      case "stop":
+        return withNotice(screenManager.stop(screenId), "screen.stopped", n);
+      case "seek":
+        return screenManager.seek(screenId, args[0]);
+      case "volume":
+        return withNotice(screenManager.setVolume(screenId, args[0]), "screen.volume_set", n, `${Math.round(args[0] * 100)}%`);
+      case "loop":
+        return withNotice(screenManager.setLoop(screenId, args[0]), args[0] ? "screen.loop_set_on" : "screen.loop_set_off", n);
+      case "select": {
+        if (!session) return screenFail("no_screen");
+        const title = VIDEO_LIST.find((v) => v.id === args[0])?.title ?? String(args[0]);
+        return withNotice(screenManager.setMedia(screenId, args[0], { scale: scaleForMedia(session, args[0]) }), "screen.ready", n, title);
+      }
+      case "scale":
+        return withNotice(changeScreenScale(screenId, args[0]), "screen.scale_set", n, args[0]);
+      case "remove":
+        return screenManager.remove(screenId).then((result) => (result.ok
+          ? { ...result, notice: result.pending ? "screen.removed_pending" : "screen.removed", noticeArgs: [n] } : result));
+      default:
+        return screenFail("render_error", [String(action)]);
+    }
+  },
+  tell(player, result) {
+    if (!result) return;
+    if (result.ok) {
+      if (result.notice) notifyPlayer(player, result.notice, ...(result.noticeArgs ?? []));
+      return;
+    }
+    notifyPlayer(player, `screen.error.${result.reason}`, ...(result.detail ?? []));
+  },
+  later(callback, ticks) {
+    system.runTimeout(callback, ticks);
+  },
+};
+
+/** スクリーンの操作画面を、その人向けに開く (screenUi の act が知らせる相手もその人にする)。 */
+function openScreenMenu(player, screenId) {
+  const ui = Object.create(screenUi);
+  ui.player = player;
+  showScreenMenu(player, screenId, ui);
+}
+
+/** スクリーンブロックを使ったとき。 */
+function onScreenInteract(player, dimension, location) {
+  let block;
+  try {
+    block = dimension.getBlock(location);
+  } catch (e) {
+    return;
+  }
+  if (!block || block.typeId !== SCREEN_BLOCK_ID) return;
+  screenManager.validateMounts();
+  retryScreenOrphans();
+  const result = screenAt(dimension, location, block.permutation);
+  if (!result.ok) {
+    screenUi.tell(player, result);
+    return;
+  }
+  openScreenMenu(player, result.session.screenId);
+}
+
+/** スクリーンブロックが壊れたとき (プレイヤー・爆発など)。画面を片付けて、登録を外す。 */
+function onScreenBroken(dimensionId, location, player = null) {
+  const session = screenManager.at(dimensionId, location);
+  if (!session) return;
+  const n = screenNumber(session.screenId);
+  screenManager.remove(session.screenId).then((result) => {
+    if (player && result.ok) notifyPlayer(player, result.pending ? "screen.removed_pending" : "screen.removed", n);
+  }).catch((e) => console.warn(`[${EVENT_NAMESPACE}] failed to remove screen ${n}: ${e}`));
+}
+
+screenHooks = {
+  tickSources: () => screenManager.tickSources(),
+  overlapsScreen(dimensionId, box) {
+    const session = screenManager.findOverlap(dimensionId, box);
+    return session ? screenNumber(session.screenId) : null;
+  },
+  onPlayerSpawn(player) {
+    for (const renderer of screenManager.renderers.values()) renderer.vp?.playCurrentChunkFor(player);
+  },
+};
+
+world.afterEvents.worldLoad?.subscribe(() => {
+  screenManager.restore();
+  screenManager.validateMounts();
+  retryScreenOrphans();
+});
+
+// カスタムコンポーネントの壊れたときのイベントを取りこぼしても片付ける (爆発・プレイヤー)
+world.afterEvents.playerBreakBlock?.subscribe((event) => {
+  if (event.brokenBlockPermutation?.type?.id !== SCREEN_BLOCK_ID) return;
+  onScreenBroken(event.dimension?.id ?? event.block.dimension.id, event.block.location, event.player);
+});
+world.afterEvents.blockExplode?.subscribe((event) => {
+  if (event.explodedBlockPermutation?.type?.id !== SCREEN_BLOCK_ID) return;
+  onScreenBroken(event.dimension.id, event.block.location);
+});
+
+system.beforeEvents.startup.subscribe((event) => {
+  try {
+    event.blockComponentRegistry.registerCustomComponent(SCREEN_COMPONENT_ID, {
+      // 置いたとき: 登録だけする (画面はまだ作らない)。イベントの中ではワールドを変えないよう、次の tick で
+      onPlace(e) {
+        const dimension = e.dimension;
+        const location = { ...e.block.location };
+        system.run(() => {
+          try {
+            const block = dimension.getBlock(location);
+            if (block?.typeId === SCREEN_BLOCK_ID) screenAt(dimension, location, block.permutation);
+          } catch (err) { /* 読み込まれていない */ }
+        });
+      },
+      onPlayerInteract(e) {
+        if (!e.player) return;
+        const player = e.player;
+        const dimension = e.dimension;
+        const location = { ...e.block.location };
+        system.run(() => onScreenInteract(player, dimension, location));
+      },
+      onPlayerBreak(e) {
+        const dimensionId = e.dimension.id;
+        const location = { ...e.block.location };
+        const player = e.player;
+        system.run(() => onScreenBroken(dimensionId, location, player));
+      },
+      onBreak(e) {
+        const dimensionId = e.dimension.id;
+        const location = { ...e.block.location };
+        system.run(() => onScreenBroken(dimensionId, location));
+      },
+    });
+  } catch (e) {
+    console.warn(`[${EVENT_NAMESPACE}] the screen block component was not registered: ${e}`);
+  }
+});
+// </legacy:screens>

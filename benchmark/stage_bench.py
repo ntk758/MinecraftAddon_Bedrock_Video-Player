@@ -311,12 +311,16 @@ def git(*args):
     return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout.strip()
 
 
+# main.js が import するスクリプト (スクリーンシステム。これより古い版には無く、main.js も import しない)
+SCREEN_MODULES = ("screen_system.js", "screen_ui.js")
+
+
 def resolve_tree(ref, out_dir):
     """比べる版を { name, dir, label } にする。ref は git の版、"worktree" (作業中の木)、または main.js のあるフォルダ
     (git worktree など)。git の版は main.js と codec.js だけを git archive で取り出す (コミットしていない変更は含まれない)。"""
     if ref == "worktree":
         sha = git("rev-parse", "--short", "HEAD")
-        dirty = bool(git("status", "--porcelain", "--", "main.js", "codec.js"))
+        dirty = bool(git("status", "--porcelain", "--", "main.js", "codec.js", *SCREEN_MODULES))
         return {"name": "worktree", "dir": ROOT, "label": f"worktree ({sha}{' + uncommitted' if dirty else ''})"}
     folder = Path(ref)
     if folder.is_dir() and (folder / "main.js").is_file() and (folder / "codec.js").is_file():
@@ -327,7 +331,9 @@ def resolve_tree(ref, out_dir):
         import io
         import tarfile
 
-        archive = subprocess.run(["git", "-C", str(ROOT), "archive", "--format=tar", sha, "--", "main.js", "codec.js"],
+        # その版にあるファイルだけを取り出す (無いパスを渡すと git archive が失敗する)
+        names = git("ls-tree", "--name-only", sha, "--", "main.js", "codec.js", *SCREEN_MODULES).split()
+        archive = subprocess.run(["git", "-C", str(ROOT), "archive", "--format=tar", sha, "--", *names],
                                  capture_output=True, check=True).stdout
         dest.mkdir(parents=True, exist_ok=True)
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
@@ -363,6 +369,9 @@ def prepare_play_dir(work, tree, data_dir, namespace):
         main_text = main_text.replace(EVENT_NAMESPACE_LINE, EVENT_NAMESPACE_LINE.replace("badapple", namespace))
     (work / "main.js").write_text(main_text, encoding="utf-8", newline="\n")
     shutil.copy(tree["dir"] / "codec.js", work / "codec.js")
+    for name in SCREEN_MODULES:
+        if (tree["dir"] / name).is_file():
+            shutil.copy(tree["dir"] / name, work / name)
     for source in data_dir.iterdir():
         if source.name == "videos.js" or source.name.startswith("frames_"):
             shutil.copy(source, work / source.name)
