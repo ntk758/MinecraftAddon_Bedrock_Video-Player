@@ -125,6 +125,10 @@ def test_the_reasons_fill_in_every_language():
     (("The command failed with exit code 1.", "RuntimeError: ffmpeg がエラー終了しました (code 1): moov atom not found"),
      "hint.video_unreadable"),
     (("clip.mp4: Invalid data found when processing input",), "hint.video_unreadable"),
+    # 途中で切れた動画 (EXE の確認で、「MP4 で保存し直す」の案内が出ていた)
+    (("The command failed with exit code 1.", "error: 動画が途中で切れています: 読めたのは 2.9 秒 / 5.0 秒 (a.mp4)",
+      "Invalid data found when processing input"), "hint.video_truncated"),
+    (("input error: The video is truncated: only 2.9 of 5.0 seconds could be read",), "hint.video_truncated"),
     (("does not fit the budget of Tier 2",), "hint.budget"),
     (("The command failed with exit code 1.", "something else"), None),
 ])

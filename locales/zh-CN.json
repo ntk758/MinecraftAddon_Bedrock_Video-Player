@@ -280,6 +280,7 @@
   "wizard.mode_block_fps": "模式：这个视频适合方块模式（为了放进 Tier {tier}，图像模式会降到 {fps} fps，和方块模式差不多）。",
   "hint.ffmpeg": "可能的原因：无法启动 ffmpeg。请把 ffmpeg.exe 放在应用旁边，或安装它（winget install Gyan.FFmpeg）。",
   "hint.memory": "可能的原因：内存不足。请降低宽度、高度或 fps，分段转换较短的部分，或关闭其他应用。",
+  "hint.video_truncated": "可能的原因：视频在中途被截断（下载或复制中途停止的文件）。请重新获取完整的视频后再生成。",
   "hint.video_unreadable": "可能的原因：无法读取视频（文件损坏或格式不受支持）。请尝试重新保存为 MP4（H.264）。",
   "hint.budget": "可能的原因：图像模式的纹理超出内存预算（Tier）。请把优先改为“长度”，或缩小尺寸，或分段处理较短的部分。",
   "hint.audio": "  这个视频在附加包中将没有声音。如果应该有声音，请在视频播放器中确认文件能播放出声音。",

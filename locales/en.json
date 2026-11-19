@@ -280,6 +280,7 @@
   "wizard.mode_block_fps": "Mode: block mode suits this video (to fit Tier {tier}, image mode would drop to {fps} fps, close to block mode).",
   "hint.ffmpeg": "Likely cause: ffmpeg could not be started. Put ffmpeg.exe next to the app or install it (winget install Gyan.FFmpeg).",
   "hint.memory": "Likely cause: not enough memory. Lower the width, height or fps, convert a shorter part, or close other apps.",
+  "hint.video_truncated": "Likely cause: the video is cut off partway (a download or copy that stopped early). Get the whole file again, then build again.",
   "hint.video_unreadable": "Likely cause: the video could not be read (broken file or unsupported format). Try re-saving it as MP4 (H.264).",
   "hint.budget": "Likely cause: the image-mode textures do not fit the memory budget (Tier). Choose the length priority, a smaller size or a shorter part.",
   "hint.audio": "  The add-on will have no sound for this video. If it should have sound, check that the file plays with audio in a video player.",

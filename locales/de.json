@@ -280,6 +280,7 @@
   "wizard.mode_block_fps": "Modus: Für dieses Video passt der Blockmodus (um in Tier {tier} zu passen, fiele der Bildmodus auf {fps} fps – kaum flüssiger als der Blockmodus).",
   "hint.ffmpeg": "Mögliche Ursache: ffmpeg ließ sich nicht starten. Lege ffmpeg.exe neben die App oder installiere es (winget install Gyan.FFmpeg).",
   "hint.memory": "Mögliche Ursache: zu wenig Arbeitsspeicher. Verringere Breite, Höhe oder fps, wandle einen kürzeren Teil um oder schließe andere Apps.",
+  "hint.video_truncated": "Wahrscheinliche Ursache: Das Video bricht mittendrin ab (ein Download oder Kopiervorgang wurde vorzeitig beendet). Laden Sie die ganze Datei erneut und erstellen Sie es noch einmal.",
   "hint.video_unreadable": "Mögliche Ursache: Das Video ließ sich nicht lesen (Datei beschädigt oder Format nicht unterstützt). Speichere es als MP4 (H.264) neu.",
   "hint.budget": "Mögliche Ursache: Die Texturen des Bildmodus passen nicht ins Speicherbudget (Tier). Wähle die Priorität „Länge“, eine kleinere Größe oder einen kürzeren Teil.",
   "hint.audio": "  Dieses Video hat im Add-on keinen Ton. Wenn es Ton haben sollte, prüfe, ob die Datei in einem Videoplayer mit Ton abgespielt wird.",

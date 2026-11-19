@@ -46,6 +46,7 @@
 
 | 問題 | 原因 | 回避策 |
 |---|---|---|
+| PowerShell から `BlockVideoPlayer.exe --run-converter ...` を起動すると、プロンプトが先に戻り、変換の出力がその後に出る | EXE はウィンドウのアプリ (Windows 版の画面) なので、PowerShell やコマンドプロンプトは終わるのを待たない。出力は親のコンソールにつないで全部出す (v6.40.0 までは何も出なかった) | 終わるまで待つには `Start-Process -Wait -NoNewWindow -FilePath .\BlockVideoPlayer.exe -ArgumentList '--run-converter', ...` で起動する。終了コードも `-PassThru` で受け取れる |
 | GPU があるのに CPU で変換される | PyTorch (または torch-directml) が無い、GPU のテスト変換に失敗した、CPU 専用のディザ (Floyd-Steinberg など) を選んだ | 処理ログの `Conversion device:` の行を確かめる。DirectML は Python 3.12 まで |
 | GPU で変換しても速くならない | GPU 経路は OkLab での色合わせ・RDO などの処理が多く、変換全体は CPU と同じくらいのことがある | 時間が気になるときは CPU (`--device cpu`) も試す ([PERFORMANCE.md](PERFORMANCE.md) の変換速度) |
 | 長い動画の変換に時間がかかる | 動き探索とタイル辞書 (4 と 8 の両方を試す) で 1 フレームずつ符号化している | ログの「残り約 m:ss」を目安に待つ。急ぐときは `--tile-size 8` (3〜4 割速く、データは 0〜1% 増える) |

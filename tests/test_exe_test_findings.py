@@ -108,6 +108,25 @@ def test_person_split_stops_on_a_truncated_video(clips):
     assert len(list(person.read_frames(clips["long_audio"], 10, long_side=64))) == 30
 
 
+def _no_person(frame):
+    import numpy as np
+
+    return np.zeros(frame.shape[:2], np.float32)
+
+
+@needs_ffmpeg
+def test_person_split_leaves_no_partial_videos(clips, tmp_path):
+    """途中で切れた動画で止まったとき、途中まで書いたマスクの動画を残さない (EXE の確認で見つけた)。"""
+    from mvcodec import person
+
+    mask, background = tmp_path / "mask.mp4", tmp_path / "background.mp4"
+    with pytest.raises(person.InputError, match="truncated"):
+        person.make_person_videos(clips["truncated"], mask, background, 10, segmenter=_no_person, long_side=64)
+    assert not mask.exists() and not background.exists()
+    assert person.make_person_videos(clips["full"], mask, background, 10, segmenter=_no_person, long_side=64) == 50
+    assert mask.exists() and background.exists()
+
+
 def test_person_split_reports_a_failing_ffmpeg(tmp_path):
     """読めない入力で ffmpeg がエラー終了したら、以前のように黙って 0 コマにせず InputError。"""
     if shutil.which("ffmpeg") is None:

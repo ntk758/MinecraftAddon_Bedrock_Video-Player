@@ -1303,13 +1303,28 @@ def make_person_videos(source, mask_path, background_path, fps, duration=None, f
                 pass   # ffmpeg が先に終わっていた (BrokenPipe)。失敗は下の終了コードで知る
             # 途中で失敗したときは、背景の動画に音声を足さずに一時ファイルだけ消す
             codes.append(writer.abort() if failed and isinstance(writer, _AudioAfterWriter) else writer.wait())
-    for writer, code, path in zip(writers, codes, (mask_path, background_path)):
-        if code != 0:
-            detail = getattr(writer, "error", "")
-            raise InputError(f"ffmpeg could not write {path} (exit code {code})" + (f": {detail}" if detail else ""))
-    if count == 0:
-        raise InputError(f"could not read the video: {source}")
+        if failed:
+            _remove_outputs(mask_path, background_path)
+    try:
+        for writer, code, path in zip(writers, codes, (mask_path, background_path)):
+            if code != 0:
+                detail = getattr(writer, "error", "")
+                raise InputError(f"ffmpeg could not write {path} (exit code {code})" + (f": {detail}" if detail else ""))
+        if count == 0:
+            raise InputError(f"could not read the video: {source}")
+    except InputError:
+        _remove_outputs(mask_path, background_path)
+        raise
     return count
+
+
+def _remove_outputs(*paths):
+    """失敗したときに、途中まで書いた動画を消す (途中で切れた動画などで、短いマスクだけが残って使われないように)。"""
+    for path in paths:
+        try:
+            os.remove(path)
+        except OSError:
+            pass   # 作る前に失敗した (ファイルが無い) など
 
 
 def skipped_profiles(model, profile, ram_free, vram_free):

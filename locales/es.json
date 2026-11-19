@@ -280,6 +280,7 @@
   "wizard.mode_block_fps": "Modo: a este vídeo le conviene el modo bloques (para caber en el Tier {tier}, el modo imagen bajaría a {fps} fps, casi como el modo bloques).",
   "hint.ffmpeg": "Causa probable: no se pudo iniciar ffmpeg. Pon ffmpeg.exe junto a la aplicación o instálalo (winget install Gyan.FFmpeg).",
   "hint.memory": "Causa probable: no hay memoria suficiente. Baja el ancho, el alto o los fps, convierte una parte más corta o cierra otras aplicaciones.",
+  "hint.video_truncated": "Causa probable: el video está cortado (una descarga o copia que se detuvo antes de terminar). Vuelve a obtener el archivo completo y créalo de nuevo.",
   "hint.video_unreadable": "Causa probable: no se pudo leer el vídeo (archivo dañado o formato no compatible). Prueba a guardarlo de nuevo como MP4 (H.264).",
   "hint.budget": "Causa probable: las texturas del modo imagen no caben en el presupuesto de memoria (Tier). Elige la prioridad de duración, un tamaño menor o una parte más corta.",
   "hint.audio": "  Este vídeo no tendrá sonido en el complemento. Si debería tenerlo, comprueba que el archivo suena en un reproductor de vídeo.",
