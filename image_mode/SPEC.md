@@ -117,6 +117,7 @@ v.cell = v.frame - v.sheet * <cells_per_sheet>;
 - 時計: 主の時計 (人物が主なら fps 20、コマ数は長さ × 20 + 1) から、`v.secs = state == 1 ? math.min(v.base_frame / fps + (v.t − v.base_time), 長さ) : v.base_frame / fps`
   (繰り返すなら math.mod)。コマで刻まないので、動きは描画のたびになめらかに補間される。`v.fig = 0`。
 - 曲 (`--audio`): 主の時計の長さは曲の長さ。踊りが短ければ最後の姿勢で止まり、長ければそこで切る。壁の動画があれば主は壁の動画のまま、音声だけ曲にする。
+- 上限: 踊り・曲の長さは `mvcodec.mmd.MAX_MOTION_SECONDS` (20 分)、細かさは `image_mode.rig.MAX_VOXELS` (512 ボクセル)。超えたら作らない (ValueError)。
 
 ## スクリプトとの約束 (image_main.js)
 

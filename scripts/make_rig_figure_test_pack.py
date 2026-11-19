@@ -2,8 +2,9 @@
 
     python scripts/make_rig_figure_test_pack.py model.pmx dance.vmd rig_figure_test.mcaddon
 
-同じ MMD の人物を、作り方を変えて 5 体入れる (どれもケースなし、踊りを繰り返す)。並べて置き、同じ姿勢で見比べる。
-    /bvpimg:setup j0 → /bvpimg:start → /bvpimg:play j0 (ほかの ID も、少し離れた所で同じように)
+同じ MMD の人物を、作り方を変えて 5 体入れる (どれもケースなし、踊りを繰り返す)。画像モードのスクリーンは 1 つだけ
+(setup し直すと前のは消える) なので、同じ場所で 1 体ずつ、同じ時刻に止めて見比べる (docs/TESTING.md の 6.2)。
+    /tp @s 0.5 -60 0.5 0 0 → /bvpimg:setup j0 → /bvpimg:play j0 → /bvpimg:pause → /bvpimg:seek 20 (ほかの ID も同じように)
 - j0・j1・j2: 関節の重ね代 0・1・2 ボクセル (陰を焼き込む、bright)。ひざ・ひじ・肩を大きく曲げた所で、関節に細い
   すき間 (向こうが透ける線) が見えるか、重ねた所がちらつくかを見る (4.3)。
 - sn: 陰を焼き込まない (bright)。sw: 陰を焼き込まない (world。ゲームの光と陰を受ける)。j1 (焼き込む) と、昼と夜

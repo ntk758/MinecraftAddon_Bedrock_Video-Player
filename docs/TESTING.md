@@ -6,8 +6,8 @@
 
 ## 1. 自動テスト (Automated)
 
-`pytest -q` で全部を実行します (約 1,080 件。Windows 11 の PC で約 3 分。一番長いのは壊れた動画で止まらないことを確かめるテストの約 20 秒)。GitHub Actions ([ci.yml](../.github/workflows/ci.yml)) が `main` への push と
-プルリクエストごとに、Ubuntu・Python 3.12・Node.js 20・CPU 版 PyTorch で実行します (README の CI バッジ)。
+`pytest -q` で全部を実行します (約 1,200 件。Windows 11 の PC で約 3 分。一番長いのは壊れた動画で止まらないことを確かめるテストの約 20 秒)。GitHub Actions ([ci.yml](../.github/workflows/ci.yml)) が `main` への push と
+プルリクエストごとに、Ubuntu・Python 3.12・Node.js 22・CPU 版 PyTorch で実行します (README の CI バッジ)。
 
 | 対象 | 何を確かめるか | テスト |
 |---|---|---|

@@ -135,7 +135,9 @@ def test_all_files_present(video, tmp_path):
     assert expected <= names
     # ブロックモードのファイルは入らない
     assert not {n for n in names if n.endswith(("main.js", "codec.js", "videos.js")) and "image" not in n}
-    assert archive.read("BP/scripts/image_main.js") == (Path(convert_image_mode.IMAGE_MAIN_SCRIPT)).read_bytes()
+    # 中身はリポジトリの image_main.js。改行は LF にそろえて入れる (Windows で CRLF で取り出しても同じ。AUD2-10)
+    script = Path(convert_image_mode.IMAGE_MAIN_SCRIPT).read_text(encoding="utf-8")
+    assert archive.read("BP/scripts/image_main.js") == script.encode("utf-8")
     definitions = json.loads(archive.read("RP/sounds/sound_definitions.json"))
     assert definitions["format_version"] == "1.14.0"
     sound = definitions["sound_definitions"]["bvpimg.img.clip.chunk_0"]
