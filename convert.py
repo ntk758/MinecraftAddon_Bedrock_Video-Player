@@ -47,6 +47,7 @@ from mvcodec.encode import MAX_PALETTE_COLORS
 from mvcodec.entropy import MODE_HUFFMAN, MODE_RANGE
 from mvcodec.motion import MV_BLOCK, MV_RANGE
 from mvcodec.stream import StreamEncoder
+from mvcodec import truncation
 from mvcodec.planes import (
     LAYOUT as PLANES_LAYOUT,
     column_ranges,
@@ -122,6 +123,10 @@ def build_video_filter(width, height, fps=None, fit="pad"):
     return ",".join(filters)
 
 
+# --width / --height の上限 (ブロック)。Windows 版 (video_player_gui.py) とブラウザ版 (web/index.html) の入力欄の上限と同じ
+MAX_SCREEN_SIDE = 512
+
+
 def ffmpeg_frame_generator(video_path, width, height, fps, duration=None, ffmpeg="ffmpeg", fit="pad"):
     cmd = [ffmpeg, "-v", "error", "-i", str(video_path), "-vf", build_video_filter(width, height, fps, fit)]
     if duration is not None:
@@ -142,11 +147,13 @@ def ffmpeg_frame_generator(video_path, width, height, fps, duration=None, ffmpeg
     reader.start()
     frame_size = width * height * 3
     completed = False
+    frames = 0
     try:
         while True:
             raw = proc.stdout.read(frame_size)
             if len(raw) < frame_size:
                 break
+            frames += 1
             yield np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3))
         completed = True
     finally:
@@ -159,6 +166,11 @@ def ffmpeg_frame_generator(video_path, width, height, fps, duration=None, ffmpeg
         stderr = bytes(stderr_tail).decode("utf-8", errors="replace")
     if completed and returncode != 0:
         raise RuntimeError(f"ffmpeg がエラー終了しました (code {returncode}): {stderr.strip()}")
+    if completed:
+        # 末尾の欠けた動画は ffmpeg が 0 で終わるので、読めた長さとエラーの文で見つける (mvcodec/truncation.py)
+        truncation.check_complete(video_path, frames, fps,
+                                  truncation.expected_seconds(truncation.probe_duration(video_path, ffmpeg), duration=duration),
+                                  stderr)
 
 
 def to_rgb(img):
@@ -654,6 +666,11 @@ def parse_args(argv=None):
 
     if args.width < 1 or args.height < 1:
         parser.error("--width / --height は 1 以上にしてください")
+    if args.width > MAX_SCREEN_SIDE or args.height > MAX_SCREEN_SIDE:
+        # Windows 版・ブラウザ版の画面の上限と同じ。9999 などは、置けない大きさのアドオンを黙って作っていた (外部テストの NG5)
+        parser.error(f"--width / --height は {MAX_SCREEN_SIDE} 以下にしてください")
+    if args.threads < 1:
+        parser.error("--threads は 1 以上にしてください")
     if not 0 < args.fps <= 20:
         parser.error("--fps は 0 より大きく 20 以下にしてください")
     if args.duration is not None and not args.duration > 0:

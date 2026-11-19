@@ -1819,24 +1819,71 @@ class PackBuilderApp(tk.Tk):
         self.log.configure(state="disabled")
 
 
-def run_converter_mode(argv: list[str]) -> int:
-    """EXE 版の変換モード。GUI から `BlockVideoPlayer.exe --run-converter ...` として起動される。"""
-    if sys.stdout is None:  # windowed EXE で標準出力が無い場合
+def _attach_parent_console() -> bool:
+    """コマンドプロンプトなどからウィンドウ版の EXE を起動したとき、親のコンソールに出力をつなぐ。
+
+    ウィンドウ版の EXE には標準出力が無く (sys.stdout が None)、以前は何も出さずに捨てていたので、`--run-converter --help`
+    が何も表示しなかった (外部テストの NG1)。GUI から起動したときはパイプがあるので、ここには来ない。"""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+
+        if not ctypes.windll.kernel32.AttachConsole(-1):  # ATTACH_PARENT_PROCESS
+            return False
+        console = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+    except (OSError, AttributeError):
+        return False
+    sys.stdout = console
+    sys.stderr = console
+    return True
+
+
+def _prepare_output_streams() -> None:
+    """標準出力・標準エラーが無ければ (ウィンドウ版の EXE)、親のコンソールか、無ければ捨てる先につなぐ。"""
+    if sys.stdout is None and not _attach_parent_console():
         sys.stdout = open(os.devnull, "w", encoding="utf-8")
     if sys.stderr is None:
         sys.stderr = sys.stdout
+
+
+def _run_without_crash_dialog(entry, argv: list[str]) -> int:
+    """entry(argv) を実行する。想定外の例外は、理由を標準エラーに書いて終了コード 1 で返す。
+
+    ウィンドウ版の EXE で例外が外まで出ると、PyInstaller が「Unhandled exception in script」のダイアログを出し、閉じるまで
+    プロセスが終わらなかった (外部テストの NG2。GUI から起動した変換も、ダイアログで止まっていた)。
+    引数の間違い (argparse の SystemExit) は、そのまま終了コード 2 で終わる。"""
+    import traceback
+
+    try:
+        return entry(argv)
+    except KeyboardInterrupt:
+        return 130
+    except Exception as error:  # noqa: BLE001 (何が起きても、ダイアログを出さずに終わる)
+        traceback.print_exc(file=sys.stderr)
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+
+def run_converter_mode(argv: list[str]) -> int:
+    """EXE 版の変換モード。GUI から `BlockVideoPlayer.exe --run-converter ...` として起動される。"""
+    _prepare_output_streams()
     import convert
 
-    return convert.main(argv)
+    return _run_without_crash_dialog(convert.main, argv)
+
+
+def run_person_mode(argv: list[str]) -> int:
+    """EXE 版の人物の切り抜きモード (`BlockVideoPlayer.exe --run-person-split ...`)。"""
+    _prepare_output_streams()
+    from mvcodec.person import main as person_main
+
+    return _run_without_crash_dialog(person_main, argv)
 
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == RUN_CONVERTER_FLAG:
         sys.exit(run_converter_mode(sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == RUN_PERSON_FLAG:
-        if sys.stdout is None:  # windowed EXE で標準出力が無い場合
-            sys.stdout = open(os.devnull, "w", encoding="utf-8")
-            sys.stderr = sys.stdout
-        from mvcodec.person import main as person_main
-        sys.exit(person_main(sys.argv[2:]))
+        sys.exit(run_person_mode(sys.argv[2:]))
     PackBuilderApp().mainloop()

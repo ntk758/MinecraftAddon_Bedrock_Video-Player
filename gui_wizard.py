@@ -112,7 +112,8 @@ FAILURE_HINTS = (
                                re.I)),
     ("hint.memory", re.compile(r"MemoryError|out of memory|Unable to allocate|bad_alloc|空きの RAM", re.I)),
     ("hint.video_unreadable", re.compile(r"Invalid data found when processing input|moov atom not found|"
-                                         r"Error opening input|could not read the video|ffmpeg がエラー終了しました", re.I)),
+                                         r"Error opening input|could not read the video|ffmpeg がエラー終了しました|"
+                                         r"The video is truncated|動画が途中で切れています", re.I)),
     ("hint.budget", re.compile(r"\bbudget\b|予算", re.I)),
 )
 
