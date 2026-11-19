@@ -41,6 +41,15 @@ audio_chunks     音声のチャンク数 (0 なら無音)
 audio_chunk_seconds  チャンクの秒数 (既定 4)
 methods          ["a", "c"] など
 memory           {"texels": 全シートの画素数, "bytes": texels * 4}
+views            (立体だけ) 向きの数。マス = コマ × views (コマ f・向き k はマス f * views + k)。cells にマスの数
+loop             (立体だけ) true なら終わりで頭へ戻る (スクリプトもクライアントも)
+glass            (ガラスケースの立体だけ) {"box": [幅, 奥行き, 高さ] ブロック, "master": "figure" か "wall_video",
+                 "figure": {frames, fps, loop, per_sheet, sheets, sheet_width, sheet_height, texture_paths, quads,
+                            rig: {animation, seconds, bones} (骨で動かす MMD の人物だけ)},
+                 "case": {texture_path, texture_size, uv: {部品: [x, y, 幅, 高さ]}, frame, frame_texel} (--case のとき),
+                 "wall_video": {frame_count, fps, width, height, cols, rows, cells_per_sheet, sheets, gutter,
+                                sheet_width, sheet_height, texture_paths, plane: [幅, 高さ, 下端] ブロック} (--case-video のとき)}
+                 トップの fps・frame_count・audio_* は主 (master) の時計。width・height は壁の動画 (無ければ人物のシート) の大きさ
 ```
 
 ## 名前
@@ -76,6 +85,39 @@ v.cell = v.frame - v.sheet * <cells_per_sheet>;
   `RP/materials/entity.material` に `"bvp_uv_anim:entity_alphatest": {"+defines": ["USE_UV_ANIM"]}`
   (Microsoft Learn「Improving performance and resource usage」の手順。同じ Learn が自作マテリアルは将来削除されうると書いているので、壊れるリスクをコメントに書く)。
 - 状態が 0 (停止) のときは、方式 A は全ボーンを隠し、方式 C も板を隠す (part_visibility で `q.property('<ns>:state') != 0`)。
+- 立体 (views ≥ 2、方式 A だけ): `v.rel = q.body_y_rotation - q.rotation_to_camera(1)` を 0〜360 にし、`v.view = math.mod(math.round(v.rel / (360 / views)), views)`、
+  `v.slot = v.frame * views + v.view` からシートとマスを求める。geometry はマスのボーンの親にボーン `root` を置き、アニメーション
+  `animation.<ns>.screen_<id>_a.face` が `root` を `[0, v.face, 0]` (`v.face = -v.rel`) 回してカメラへ向ける。マテリアルは `entity_alphatest`。
+
+## ガラスケースの立体 (glass。image_mode/planes.py・glass.py・glass_rp.py)
+
+- 人物: ボクセルの外に出ている面を、軸ごとの境目の平面の板 (厚み 0 の直方体の east・north・up の面の 1 つだけに UV) にする。
+  ボーンはコマごとに `f<n>`、テクスチャ `Texture.fig_<n>` はシート 1 枚に `per_sheet` コマ。マテリアルは `entity_alphatest` (両面)。
+  UV の向き (FaceMapping) は uv_size がいつも正になるよう、画像を反転してシートに置く。向きの既定 (1, -1, 1, -1) は実機で決めた (DECISIONS.md の A19。east の面は -x を向く)。
+- ケース: geometry `geometry.<ns>.screen_<id>_a_case` のボーン `case_back`・`case_front`・`case_left`・`case_right`・`case_floor`
+  (内向きの面)・`case_frame`。マテリアルは `entity` (client_entity の `opaque`)。手前の壁は part_visibility で隠す:
+  `v.rel = q.body_y_rotation - q.rotation_to_camera(1)`、`v.flat = q.distance_from_camera * math.cos(q.rotation_to_camera(0))`、
+  カメラの位置 `v.cam_x = v.flat * math.sin(v.rel)`・`v.cam_y = -v.flat * math.cos(v.rel)` (ボクセルの向き。A18 と同じ符号)。
+  奥の壁は `v.cam_y < 奥行き/2` のときだけ、手前は `v.cam_y > -奥行き/2`、左は `v.cam_x > -幅/2`、右は `v.cam_x < 幅/2`。
+- 壁の動画: geometry `..._wall` のボーン `c<i>` (方式 a のマス)、テクスチャ `Texture.vid_<n>`。奥の壁と同じ条件で見せる。
+- 時計: 主が壁の動画なら、`v.secs` (主の時刻、終わりで止まる) から `v.fig = math.mod(math.floor(v.secs * 人物の fps + 0.0001), コマ数)`
+  (浮き彫りの人物は math.min で最後に止める)。主が人物なら `v.fig = v.frame`。`v.fsheet = math.floor(v.fig / per_sheet)`。
+- スクリプト: `setup` の `wall` は使わず、目の前の床に置く (`bvpimg.case_not_on_wall` で知らせる)。それ以外は今までの動画と同じ。
+
+### 骨で動かす MMD の人物 (figure.rig。image_mode/rig.py・rig_anim.py)
+
+- geometry: 部品ごとのボーン `b<PMX のボーンの番号>` (親は残したボーンの親、pivot は初期姿勢のボーンの位置で全体の座標)。
+  踊りで動かないボーンは親にまとめてあり、geometry には入らない。移動のあるボーン (センターなど) は、移動だけを受け持つ
+  親のボーン `m<番号>` (板なし、pivot は同じ) を持つ。テクスチャは 1 枚 (`Texture.fig_0`)、part_visibility は `{"*": state != 0}`。
+- アニメーション: `RP/animations/screen_<id>_a.animation.json` の `animation.<ns>.screen_<id>_a.dance`。client_entity の
+  `animations: {"dance": …}`、`scripts.animate: ["dance"]`。`loop: true`、`anim_time_update` は時計 `v.secs` (秒) で、
+  繰り返すなら `math.mod(v.secs, 長さ)`、繰り返さないなら `math.clamp(v.secs, 0, 長さ − 0.001)`。キーは 30 Hz の時刻に置く。
+- 回転: `b<番号>` の `rotation` (a, b, c) 度。ボクセルの軸 (x 右・y 奥・z 上) で R = Ry(c) · Rz(−b) · Rx(a)、子はローカル (DECISIONS.md の A20)。
+- 移動: `m<番号>` の `position`。geometry の軸の移動そのまま (`POSITION_SIGNS` = (1, 1, 1)。実機で確かめた。DECISIONS.md の A21)。
+- 時計: 主の時計 (人物が主なら fps 20、コマ数は長さ × 20 + 1) から、`v.secs = state == 1 ? math.min(v.base_frame / fps + (v.t − v.base_time), 長さ) : v.base_frame / fps`
+  (繰り返すなら math.mod)。コマで刻まないので、動きは描画のたびになめらかに補間される。`v.fig = 0`。
+- 曲 (`--audio`): 主の時計の長さは曲の長さ。踊りが短ければ最後の姿勢で止まり、長ければそこで切る。壁の動画があれば主は壁の動画のまま、音声だけ曲にする。
+- 上限: 踊り・曲の長さは `mvcodec.mmd.MAX_MOTION_SECONDS` (20 分)、細かさは `image_mode.rig.MAX_VOXELS` (512 ボクセル)。超えたら作らない (ValueError)。
 
 ## スクリプトとの約束 (image_main.js)
 

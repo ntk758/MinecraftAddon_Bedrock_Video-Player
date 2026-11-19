@@ -321,7 +321,10 @@ function setup(player, args) {
   const video = currentVideo();
   if (!video || !player) return;
   if (!video.methods.includes(state.method)) state.method = video.methods[0];
-  const placed = options.wall ? placeOnWall(player) : placeInFront(player, video, options.face);
+  // ガラスケースの立体 (video.glass) は床に立てるもので、壁には貼らない (wall を付けても目の前に置く)
+  const onWall = options.wall && !video.glass;
+  if (options.wall && video.glass) notify("case_not_on_wall");
+  const placed = onWall ? placeOnWall(player) : placeInFront(player, video, options.face);
   if (!placed) {
     notify("wall_not_found");
     return;
@@ -329,7 +332,7 @@ function setup(player, args) {
   state.location = placed.location;
   state.rotation = placed.rotation;
   // ブロックの格子にそろえる (横はブロックの中心、下端はブロックの面)。壁に貼るときは、もともとそろっている
-  if (options.align && !options.wall) {
+  if (options.align && !onWall) {
     const at = state.location;
     state.location = { x: Math.floor(at.x) + 0.5, y: Math.floor(at.y), z: Math.floor(at.z) + 0.5 };
   }
@@ -647,6 +650,12 @@ system.runInterval(() => {
   if (++ticksSinceSave >= SAVE_INTERVAL) {
     ticksSinceSave = 0;
     saveState();
+  }
+  if (video.loop && state.playMs / 1000 >= video.frame_count / video.fps) {
+    // 繰り返す動画 (角度で絵を切り替える立体。音声なし): 頭へ戻し、すぐ frame と seq を書き直す
+    state.playMs %= (video.frame_count / video.fps) * 1000;
+    syncScreen();
+    return;
   }
   if (state.playMs / 1000 >= video.frame_count / video.fps) {
     // 最後のコマで止める (もう一度 start で最初から)

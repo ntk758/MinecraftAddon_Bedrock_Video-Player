@@ -149,3 +149,88 @@ def test_lighting_snap_and_png_options_reach_the_image_addon(tmp_path):
     with zipfile.ZipFile(result) as archive:
         controller = archive.read("RP/render_controllers/screen_clip_a.render_controllers.json")
     assert b"ignore_lighting" not in controller
+
+
+# --- MMD のモデルを、画像モードのガラスケースの人物にもする ---
+
+def doll_files(tmp_path):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from mmd_fixture import write_doll
+
+    keys = [("左腕", 0, (0, 0, 0), (0, 0, 0, 1)), ("左腕", 30, (0, 0, 0), (0, 0, 0.7071068, 0.7071068))]
+    return write_doll(tmp_path, keys)
+
+
+def videos_in(archive):
+    text = archive.read("BP/scripts/image_videos.js").decode("utf-8")
+    return json.loads("[" + text.split("IMAGE_VIDEOS = [", 1)[1].rsplit("];", 1)[0] + "]")
+
+
+def test_a_glass_figure_alone_builds_an_image_addon(tmp_path):
+    """動画が無くても、ガラスケースにする MMD のモデルだけで画像モードのアドオンを作る (ffmpeg を使わない)。"""
+    pmx, vmd = doll_files(tmp_path)
+    app = fake_app()
+    entries = [{"file_path": str(pmx), "video_id": "doll", "motion": str(vmd),
+                "glass": {"audio": None, "case_image": None}},
+               {"file_path": str(tmp_path / "walk.vox"), "video_id": "walk"}]
+    result = gui.PackBuilderApp._build_image_pack(app, entries, tmp_path / "P.mcaddon", "P", "movie", 128, 72, None,
+                                                  "ffmpeg")
+    assert result == tmp_path / "P_image.mcaddon"
+    messages = drain(app)
+    assert any("Building a glass-case figure" in m and "doll" in m for m in messages)
+    assert any("walk" in m for m in messages)  # .vox は今までどおり使わない
+    with zipfile.ZipFile(result) as archive:
+        names = set(archive.namelist())
+        [video] = videos_in(archive)
+    assert "RP/animations/screen_doll_a.animation.json" in names
+    assert "RP/models/entity/screen_doll_a_case.geo.json" in names  # 画面からはいつもケース付き
+    assert video["id"] == "doll" and video["glass"]["figure"]["rig"]["bones"] >= 2
+
+
+@needs_ffmpeg
+def test_videos_and_a_glass_figure_share_one_image_addon(tmp_path):
+    video = make_video(tmp_path / "clip.mp4")
+    pmx, vmd = doll_files(tmp_path)
+    picture = tmp_path / "stage.png"
+    from PIL import Image
+    Image.new("RGB", (32, 18), (10, 120, 200)).save(picture)
+    app = fake_app()
+    entries = [{"file_path": str(video), "video_id": "clip"},
+               {"file_path": str(pmx), "video_id": "doll", "motion": str(vmd),
+                "glass": {"audio": None, "case_image": str(picture)}}]
+    result = gui.PackBuilderApp._build_image_pack(app, entries, tmp_path / "P.mcaddon", "P", "movie", 128, 72, None,
+                                                  "ffmpeg")
+    with zipfile.ZipFile(result) as archive:
+        names = set(archive.namelist())
+        videos = {v["id"]: v for v in videos_in(archive)}
+        sounds = json.loads(archive.read("RP/sounds/sound_definitions.json"))["sound_definitions"]
+    assert set(videos) == {"clip", "doll"}
+    assert "glass" not in videos["clip"] and "rig" in videos["doll"]["glass"]["figure"]
+    # どちらのエンティティ・テクスチャも入り、音は動画の分
+    assert {"BP/entities/screen_clip_a.json", "BP/entities/screen_doll_a.json",
+            "RP/textures/bvp_image/doll/fig_0.png", "RP/textures/bvp_image/doll/case.png"} <= names
+    assert any(key.startswith("movie_img.img.clip.") for key in sounds)
+    report = json.loads(result.with_suffix(".report.json").read_text(encoding="utf-8"))
+    assert {v["id"] for v in report["memory"]["per_video"]} == {"clip", "doll"}
+
+
+def test_adding_a_mmd_model_asks_about_the_glass_case(tmp_path, monkeypatch):
+    model = tmp_path / "miku.pmx"
+    answers = iter([str(tmp_path / "song.wav"), ""])  # 曲は選び、絵はキャンセル
+    shown = []
+    monkeypatch.setattr(gui.messagebox, "askyesno", lambda *_a, **_k: True)
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **_k: shown.append(a))
+    monkeypatch.setattr(gui.filedialog, "askopenfilename", lambda **_k: next(answers))
+    state = {"on": False}
+    app = SimpleNamespace(tr=Translator("en"), mmd_glass={},
+                          image_mode_var=SimpleNamespace(get=lambda: state["on"], set=lambda v: state.update(on=v)))
+    gui.PackBuilderApp._ask_mmd_glass(app, model)
+    assert app.mmd_glass == {str(model): {"audio": str(tmp_path / "song.wav"), "case_image": None}}
+    assert state["on"] is True and shown  # 画像モードのアドオンも作るようにして、知らせる
+    # 「いいえ」なら、前の選択も消す
+    monkeypatch.setattr(gui.messagebox, "askyesno", lambda *_a, **_k: False)
+    gui.PackBuilderApp._ask_mmd_glass(app, model)
+    assert app.mmd_glass == {}

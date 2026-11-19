@@ -36,6 +36,9 @@ BONE_AFTER_PHYSICS = 0x1000
 BONE_EXTERNAL_PARENT = 0x2000
 # 体全体を動かすボーン (その場で踊らせるとき、これの前後左右の移動を打ち消す)
 CENTRE_BONE = "センター"
+# 踊り (と曲) の長さの上限 (秒)。VMD に遠いフレームのキーが 1 つあるだけで、何十億コマもの姿勢を計算しようとして
+# 終わらなかった (2026-11-19 の監査 AUD2-03)。普通の曲と踊りは長くても 10 分ほど
+MAX_MOTION_SECONDS = 20 * 60
 
 
 class _Reader:
@@ -44,11 +47,25 @@ class _Reader:
         self.pos = 0
 
     def take(self, n):
+        # 長さが負の数だと、読む位置が戻って同じ所を読み続ける (壊れたファイルで固まった。2026-11-19 の監査 AUD2-01)
+        if n < 0:
+            raise ValueError(f"PMX / VMD ファイルが壊れています (長さが負の数です: {n})")
         chunk = self.data[self.pos:self.pos + n]
         if len(chunk) < n:
             raise ValueError("PMX / VMD ファイルが途中で終わっています")
         self.pos += n
         return chunk
+
+    def remaining(self):
+        return len(self.data) - self.pos
+
+    def count(self, min_size, what, unsigned=False):
+        """要素の数 (int)。1 つが少なくとも min_size バイトなので、残りに入りきらない数は壊れたファイルとして断る
+        (大きな配列を作ってからファイルの終わりに気づく、を防ぐ)。"""
+        n = self.unpack("I" if unsigned else "i")[0]
+        if n < 0 or n * min_size > self.remaining():
+            raise ValueError(f"PMX / VMD ファイルが壊れています ({what}の数が {n} です)")
+        return n
 
     def unpack(self, fmt):
         size = struct.calcsize(fmt)
@@ -91,10 +108,14 @@ def read_pmx(path):
     if version < 2.0:
         raise ValueError(f"未対応の PMX の版です: {version}")
     globals_count = r.byte()
+    if globals_count < 8:  # PMX 2.0 は 8 個 (文字コード・追加 UV・6 つの番号の大きさ)
+        raise ValueError(f"PMX ファイルが壊れています (全体の設定が {globals_count} 個しかありません)")
     header = list(r.take(globals_count))
+    if header[0] not in (0, 1) or header[1] > 4 or any(size not in (1, 2, 4) for size in header[2:8]):
+        raise ValueError(f"PMX ファイルが壊れています (全体の設定: {header[:8]})")
     encoding = "utf-16-le" if header[0] == 0 else "utf-8"
     extra_uv = header[1]
-    vertex_size, texture_size, material_size, bone_size = header[2], header[3], header[4], header[5]
+    vertex_size, texture_size, bone_size = header[2], header[3], header[5]
 
     def text():
         n = r.int()
@@ -111,7 +132,8 @@ def read_pmx(path):
     for _ in range(4):  # 名前 (日・英)、コメント (日・英)
         text()
 
-    count = r.int()
+    # 頂点 1 つは少なくとも 8 個の float・追加 UV・重みの種類・ボーン 1 つ・エッジ倍率
+    count = r.count(32 + 16 * extra_uv + 1 + bone_size + 4, "頂点")
     positions = np.zeros((count, 3), np.float32)
     uvs = np.zeros((count, 2), np.float32)
     indices = np.zeros((count, 4), np.int32)
@@ -142,17 +164,21 @@ def read_pmx(path):
         r.take(4)  # エッジ倍率
     weights_sum = weights.sum(axis=1, keepdims=True)
     weights = np.where(weights_sum > 0, weights / np.maximum(weights_sum, 1e-9), weights)
-    indices[indices < 0] = 0
     model.positions, model.uvs, model.bone_indices, model.bone_weights = positions, uvs, indices, weights
 
-    count = r.int()
+    count = r.count(vertex_size, "面の頂点")
+    if count % 3:
+        raise ValueError(f"PMX ファイルが壊れています (面の頂点の数 {count} が 3 の倍数ではありません)")
     faces = np.array([index(vertex_size, unsigned=vertex_size < 4) for _ in range(count)], np.int64)
+    if len(faces) and (faces.min() < 0 or faces.max() >= len(positions)):
+        raise ValueError(f"PMX ファイルが壊れています (面の頂点の番号が 0〜{len(positions) - 1} の外です)")
     model.faces = faces.reshape(-1, 3)
 
-    count = r.int()
+    count = r.count(4, "テクスチャ")
     model.textures = [text() for _ in range(count)]
 
-    count = r.int()
+    # 材質 1 つは少なくとも 名前 2 つ・色・係数など 65 バイト・テクスチャ 2 つ・印 3 バイト・メモ・面の数
+    count = r.count(84 + 2 * texture_size, "材質")
     for _ in range(count):
         name = text()
         text()
@@ -170,7 +196,8 @@ def read_pmx(path):
         face_count = r.int()
         model.materials.append({"name": name, "diffuse": diffuse, "texture": texture, "face_count": face_count})
 
-    count = r.int()
+    # ボーン 1 つは少なくとも 名前 2 つ・位置・親・変形階層・印・先 (ボーンか位置)
+    count = r.count(26 + bone_size + min(bone_size, 12), "ボーン")
     for _ in range(count):
         name = text()
         text()
@@ -198,7 +225,7 @@ def read_pmx(path):
             loops = r.int()
             limit = r.float()
             links = []
-            for _ in range(r.int()):
+            for _ in range(r.count(bone_size + 1, "IK のリンク")):
                 link = index(bone_size)
                 lower = upper = None
                 if r.byte():
@@ -207,6 +234,10 @@ def read_pmx(path):
             ik = {"target": target, "loops": loops, "limit": limit, "links": links}
         model.bones.append({"name": name, "position": position, "parent": parent, "layer": layer, "flags": flags,
                             "append_parent": append_parent, "append_ratio": append_ratio, "ik": ik})
+    if not model.bones:
+        raise ValueError("PMX ファイルが壊れています (ボーンがありません)")
+    # 頂点のボーンの番号: 使わない枠 (-1) と、範囲の外の番号 (壊れたファイル) は最初のボーンにする
+    model.bone_indices[(model.bone_indices < 0) | (model.bone_indices >= len(model.bones))] = 0
     return model
 
 
@@ -223,14 +254,21 @@ def read_vmd(path):
         raise ValueError(f"VMD ファイルではありません: {path}")
     r.take(20 if b"0002" in signature else 10)  # モデル名
     tracks = {}
-    for _ in range(r.unpack("I")[0]):
+    # キー 1 つは 名前 15・フレーム 4・位置と回転 28・補間 64 バイト
+    for _ in range(r.count(15 + 4 + 28 + 64, "ボーンのキー", unsigned=True)):
         raw_name = r.take(15)
         name = raw_name.split(b"\0", 1)[0].decode("shift_jis", errors="replace")
         frame = r.unpack("I")[0]
         values = r.unpack("7f")
         interpolation = r.take(64)
-        tracks.setdefault(name, []).append(
-            (frame, np.array(values[0:3], np.float64), np.array(values[3:7], np.float64), interpolation))
+        position = np.array(values[0:3], np.float64)
+        rotation = np.array(values[3:7], np.float64)
+        # 壊れた値 (NaN・無限大、長さ 0 の回転) は初期姿勢にする (そのままだと姿勢の計算が NaN になる。AUD2-05)
+        if not np.isfinite(position).all():
+            position = np.zeros(3)
+        if not np.isfinite(rotation).all() or not rotation.any():
+            rotation = np.array([0.0, 0.0, 0.0, 1.0])
+        tracks.setdefault(name, []).append((frame, position, rotation, interpolation))
     for keys in tracks.values():
         keys.sort(key=lambda key: key[0])
     return tracks
@@ -327,6 +365,14 @@ class Poser:
         # 変形の順: 物理後か → 変形階層 → 番号
         self.order = sorted(range(self.count), key=lambda i: (bool(bones[i]["flags"] & BONE_AFTER_PHYSICS),
                                                               bones[i]["layer"], i))
+        # 親が自分・親子が輪のボーンは、IK で子をたどる所 (_update_subtree) が終わらない (2026-11-19 の監査 AUD2-02)
+        for i in range(self.count):
+            p, steps = self.parent[i], 0
+            while p >= 0:
+                if p == i or steps > self.count:
+                    raise ValueError(f"PMX ファイルが壊れています (ボーンの親子が輪になっています: {bones[i]['name']})")
+                p = self.parent[p]
+                steps += 1
         self.children = [[] for _ in range(self.count)]
         for i, p in enumerate(self.parent):
             if p >= 0:
@@ -390,10 +436,13 @@ class Poser:
         if not (0 <= target < self.count):
             return
         goal = g_pos[ik_bone].copy()
-        links = [link for link in ik["links"] if 0 <= link["bone"] < self.count]
+        # (リンク, X 軸だけの角度の制限か)。制限は踊りの間変わらないので、繰り返しの外で 1 回だけ調べる (速さのため)
+        links = [(link, link["lower"] is not None and bool(np.allclose(link["lower"][1:], 0))
+                  and bool(np.allclose(link["upper"][1:], 0)))
+                 for link in ik["links"] if 0 <= link["bone"] < self.count]
         limit = ik["limit"] if ik["limit"] > 0 else math.pi
         for _ in range(max(1, min(ik["loops"], 40))):
-            for link in links:
+            for link, x_axis_only in links:
                 j = link["bone"]
                 effector = g_pos[target]
                 to_effector = effector - g_pos[j]
@@ -411,20 +460,20 @@ class Poser:
                 if angle < 1e-5:
                     continue
                 angle = min(angle, limit)
-                axis = np.cross(a, b)
+                # 外積 (np.cross と同じ式・同じ順の計算なので、結果は 1 ビットも変わらない。np.cross は 3 要素でも遅い)
+                axis = np.array([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]])
                 if np.linalg.norm(axis) < 1e-8:
                     continue
                 axis /= np.linalg.norm(axis)
-                if link["lower"] is not None:
+                if x_axis_only:
                     # 角度の制限 (膝など、X 軸だけ曲がるボーン): X 軸まわりに直し、範囲に収める
                     lower, upper = link["lower"], link["upper"]
-                    if np.allclose(lower[1:], 0) and np.allclose(upper[1:], 0):
-                        sign = 1.0 if axis[0] >= 0 else -1.0
-                        current = 2 * math.atan2(local_rot[j][0], local_rot[j][3])
-                        wanted = float(np.clip(current + sign * angle, min(lower[0], upper[0]), max(lower[0], upper[0])))
-                        local_rot[j] = np.array([math.sin(wanted / 2), 0.0, 0.0, math.cos(wanted / 2)])
-                        self._update_subtree(j, local_rot, local_pos, g_rot, g_pos)
-                        continue
+                    sign = 1.0 if axis[0] >= 0 else -1.0
+                    current = 2 * math.atan2(local_rot[j][0], local_rot[j][3])
+                    wanted = float(np.clip(current + sign * angle, min(lower[0], upper[0]), max(lower[0], upper[0])))
+                    local_rot[j] = np.array([math.sin(wanted / 2), 0.0, 0.0, math.cos(wanted / 2)])
+                    self._update_subtree(j, local_rot, local_pos, g_rot, g_pos)
+                    continue
                 delta = _axis_angle(axis, angle)
                 local_rot[j] = _quat_mul(local_rot[j], delta)
                 local_rot[j] /= np.linalg.norm(local_rot[j])
@@ -491,7 +540,8 @@ class _Materials:
                     try:
                         with Image.open(path) as image:
                             cache[path] = np.asarray(image.convert("RGBA"))
-                    except (OSError, ValueError):
+                    except (OSError, ValueError, Image.DecompressionBombError):
+                        # 読めない・大きすぎる (Pillow が断る) テクスチャは材質の色にする
                         cache[path] = None
                 texture = cache[path]
             diffuse = material["diffuse"]
@@ -579,6 +629,9 @@ def mmd_to_vox(pmx_path, vmd_path, output, height=56, fps=10, duration=None, max
     materials = _Materials(model, Path(pmx_path).parent)
     last_key = max((keys[-1][0] for keys in tracks.values()), default=0)
     seconds = last_key / 30 if duration is None else min(duration, last_key / 30)
+    if seconds > MAX_MOTION_SECONDS:
+        raise ValueError(f"踊りが長すぎます: 最後のキーが {last_key / 30 / 60:.0f} 分の所にあります "
+                         f"(上限 {MAX_MOTION_SECONDS // 60} 分)。長さ (秒) を決めて作ってください")
     frames = max(1, int(seconds * fps) + 1)
 
     # 大きさ: 初期姿勢の高さを height ブロックにし、全フレームの動きが収まる範囲にする

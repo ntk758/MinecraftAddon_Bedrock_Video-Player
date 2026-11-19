@@ -194,8 +194,11 @@ def pack_sheets(frames: Iterable[np.ndarray], width: int, height: int, max_sheet
 
     iterator = iter(frames)
     first: list[np.ndarray] = []
+    channels = None  # 3 (RGB) か 4 (RGBA。インポスターの透明な背景)。最初のコマに合わせ、全部のコマで同じにする
     for frame in iterator:
-        first.append(_check_frame(frame, width, height))
+        frame = _check_frame(frame, width, height, channels)
+        channels = frame.shape[2]
+        first.append(frame)
         if len(first) == full_cells:
             break
     if not first:
@@ -207,23 +210,23 @@ def pack_sheets(frames: Iterable[np.ndarray], width: int, height: int, max_sheet
         # 読み終わった (full_cells に達していない) = 1 シートに収まる: コマの数に合わせた小さいシートにする (行はなるべく少なく、列は最大)
         cols = min(max_cols, count)
         rows = math.ceil(count / cols)
-        sheet = _blank_sheet(cols, rows, width, height, gutter)
+        sheet = _blank_sheet(cols, rows, width, height, gutter, channels)
         for index, frame in enumerate(first):
             _put_cell(sheet, frame, index, cols, width, height, gutter)
-        sheets.append(Image.fromarray(sheet, "RGB"))
+        sheets.append(Image.fromarray(sheet, _MODES[channels]))
         return sheets, _layout(sheet, cols, rows, count, 1, count, width, height, gutter)
 
     # 2 枚以上: 最大の格子のシートを同じ大きさで作る。ここまでで読んだ 1 枚ぶんの先頭 + 続き
     cols, rows = max_cols, max_rows
     pending = first  # 先頭の full_cells 枚 (続きは iterator にある)
-    sheet = _blank_sheet(cols, rows, width, height, gutter)
+    sheet = _blank_sheet(cols, rows, width, height, gutter, channels)
     in_sheet = 0
     count = 0
 
     def flush() -> None:
         nonlocal sheet, in_sheet
-        sheets.append(Image.fromarray(sheet, "RGB"))
-        sheet = _blank_sheet(cols, rows, width, height, gutter)
+        sheets.append(Image.fromarray(sheet, _MODES[channels]))
+        sheet = _blank_sheet(cols, rows, width, height, gutter, channels)
         in_sheet = 0
 
     def add(frame: np.ndarray) -> None:
@@ -237,9 +240,9 @@ def pack_sheets(frames: Iterable[np.ndarray], width: int, height: int, max_sheet
     for frame in pending:
         add(frame)
     for frame in iterator:
-        add(_check_frame(frame, width, height))
+        add(_check_frame(frame, width, height, channels))
     if in_sheet:
-        sheets.append(Image.fromarray(sheet, "RGB"))
+        sheets.append(Image.fromarray(sheet, _MODES[channels]))
     return sheets, _layout(np.asarray(sheets[0]), cols, rows, full_cells, len(sheets), count, width, height, gutter)
 
 
@@ -253,15 +256,22 @@ def cells_in_order(sheets: list[Image.Image], layout: dict, slots: list[int]) ->
         yield np.asarray(sheets[sheet].crop((x, y, x + width, y + height)), dtype=np.uint8)
 
 
-def _check_frame(frame: np.ndarray, width: int, height: int) -> np.ndarray:
+_MODES = {3: "RGB", 4: "RGBA"}
+
+
+def _check_frame(frame: np.ndarray, width: int, height: int, channels: int | None = None) -> np.ndarray:
+    """コマは (height, width, 3) か (height, width, 4) の uint8。channels を渡したら、その数にそろっていること。"""
     frame = np.asarray(frame)
-    if frame.shape != (height, width, 3) or frame.dtype != np.uint8:
-        raise ValueError(f"コマは {height}x{width}x3 の uint8 にしてください: {frame.shape} {frame.dtype}")
+    allowed = (channels,) if channels else (3, 4)
+    if (frame.dtype != np.uint8 or frame.ndim != 3 or frame.shape[:2] != (height, width)
+            or frame.shape[2] not in allowed):
+        want = "x".join(str(n) for n in (height, width)) + "x" + "|".join(str(c) for c in allowed)
+        raise ValueError(f"コマは {want} の uint8 にしてください: {frame.shape} {frame.dtype}")
     return frame
 
 
-def _blank_sheet(cols: int, rows: int, width: int, height: int, gutter: int) -> np.ndarray:
-    return np.zeros((rows * (height + gutter) - gutter, cols * (width + gutter) - gutter, 3), dtype=np.uint8)
+def _blank_sheet(cols: int, rows: int, width: int, height: int, gutter: int, channels: int = 3) -> np.ndarray:
+    return np.zeros((rows * (height + gutter) - gutter, cols * (width + gutter) - gutter, channels), dtype=np.uint8)
 
 
 def _layout(sheet: np.ndarray, cols: int, rows: int, cells: int, sheets: int, frame_count: int,

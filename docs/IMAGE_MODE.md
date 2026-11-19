@@ -18,6 +18,72 @@ Windows 版の画面とブラウザ版では、「画像モードのアドオン
 ゲーム内: `/bvpimg:setup [動画ID]` → `/bvpimg:start`。ほかに `play <動画ID>`・`pause`・`resume`・`stop`・`seek <秒>`・`volume <0〜100>`・`stats`・`list` (`/scriptevent bvpimg:<操作>` でも可)。
 **時計**を使うか `remote` で、ブロックモードと同じリモコンが開きます (ブロックモードのリモコンはコンパス)。`setup` には `face` (向きを東西南北にそろえる)・`wall` (見ているブロックの横の面に貼る)・`align` (ブロックの格子にそろえる) を付けられます。メッセージは 10 言語です。
 
+## 角度で絵を切り替える立体 (試作)
+
+入力に `.vox` (MagicaVoxel の立体・立体アニメ) を渡すと、立体をまわりの 8 方向 (`--views`、45 度ごと) から描いた絵にして、見る人の角度に一番近い絵を、その人のほうへ向けた板に映します。歩いて回り込むと、正面・横・後ろの絵に切り替わり、立体が立っているように見えます。見る人ごとに自分の角度の絵が出るので、マルチプレイでも全員にそう見えます。
+
+```bash
+python scripts/make_demo_dancer.py dancer.vox
+python convert_image_mode.py dancer.vox -o dancer_image.mcaddon --height 128 --figure-blocks 6
+```
+
+- 1 マスの高さは `--height` (画素)、幅は立体のどの向きでも入るように決まります。`--figure-blocks` はゲームの中の高さ (ブロック)、`--fps` の既定は 10 です。
+- 背景は透明 (アルファテスト) で、面の明るさは Minecraft のブロックと同じ割合 (上 1.0・横 0.8 / 0.6・下 0.5) を描くときに付けます。光は立体に固定なので、回り込んでも光の向きは変わりません。
+- 音声は無く、終わりまで行くと頭へ戻って繰り返します。`/bvpimg:setup <ID>` → `/bvpimg:start` はほかの動画と同じです。
+- 限界: 向きの境目 (45 度ごと) で絵がぱっと切り替わる。上下の角度は見ないので、真上・真下からは平らな絵に見える。テクスチャが向きの数だけ増える (`dancer` の 40 コマ × 8 方向で 15 MiB)。方式 a だけ・PNG だけ・`--dedup` と `--priority` は使えません。動画と同じアドオンには入れられません。
+- PC (Windows 11、Minecraft 1.26.63) の実機で、正面・45 度ごと・後ろから、向きに合った絵がこちらを向いて映ること、踊りが繰り返すことを確かめました (2026-11-17)。スマートフォン・マルチプレイは未確認です。ブラウザ版・Windows 版の画面にはまだ出していません。
+- 角度の求め方と符号の決め方は DECISIONS.md の A18、作り方は `image_mode/impostor.py`。
+
+## ガラスケースの立体 (試作)
+
+立体を「ボクセルの外に出ている面」の板にして置きます (設計: [research/glass_case.md](research/glass_case.md))。板はゲームが見る人ごとに描くので、回り込んでも、上や斜め下から見ても、本物の立方体と同じ形に見えます。角度ごとの絵 (上の節) のように絵が切り替わることはありません。周りにケースを置くと、手前の壁は透けて、奥の壁だけが背景として見えます。
+
+```bash
+python convert_image_mode.py dancer.vox -o dancer_case.mcaddon --case --case-image back=bg.png --figure-blocks 6
+python convert_image_mode.py dancer.vox -o show.mcaddon --case --case-video mv.mp4      # 奥の壁で動画 (音声付き)
+python convert_image_mode.py mv.mp4 -o relief.mcaddon --lift relief --case --end 20      # 動画を浮き彫りにして置く
+```
+
+| オプション | 内容 |
+|---|---|
+| `--solid planes` | 面の板にする。`--case`・`--case-image`・`--case-video`・`--case-frame`・`--lift` を付けると自動で planes (既定の views は上の節の角度ごとの絵) |
+| `--plane-split rect\|tile8\|tile16` | 板の分け方。`rect` (既定) は平面ごとに 1 枚。`tile8` は透明な所とテクスチャが減るが、板が十数倍に増える |
+| `--case` / `--case-margin` / `--case-frame` | 床と 4 枚の壁 (人物との間は既定 0.5 ブロック) / 12 本の縁 |
+| `--case-image SIDE=PATH` | 壁と床の絵。SIDE は `back`・`front`・`left`・`right`・`floor`・`all`。渡さない所は暗い色 |
+| `--case-video VIDEO` | 奥の壁の内側で動画を流す。音声もこの動画。大きさは `--width`・`--height`、fps は `--case-video-fps` (既定 30)。人物は同じ時計で自分の fps (`--fps`、既定 10) で繰り返す |
+| `--lift relief\|extrude\|inflate` | 入力の動画を、ブロックモードと同じ方法で浮き彫りの立体にする (`--lift-size` 既定 128x72、`--depth` 既定 16、`--depth-video`・`--mask-video`)。正面から斜めまでは立体、横からは薄く、後ろからは平ら |
+| `--max-figure-frames` | 人物のコマ数の上限 (既定 240) |
+| `--face-mapping N,E,UU,UV` | 板の UV の向き (試験用。既定は実機で決めた `1,-1,1,-1`) |
+
+- `/bvpimg:setup <ID>` で、目の前の床にケースを立てます (`face`・`align` も使えます。`wall` を付けても壁には貼らず、目の前に置きます)。
+- 大きさの目安 (変換ツールで測った値): 踊る人物 (高さ 128 ボクセル・40 コマ) で板 7,715 枚・テクスチャ 31.5 MiB。動画の浮き彫り (128x72・奥行き 16) で 1 コマ板 126 枚・約 0.56 MiB (`tile8` なら 1,900 枚・約 0.39 MiB)。
+- PC (Windows 11、Minecraft v26.65) の実機で、人物が前・横・後ろ・斜め上から立方体に見えること、ケースの手前の壁だけが消えて残りの壁の絵が鏡写しにならないことを確かめました (2026-11-18)。板の UV の向きは、`python scripts/make_planes_test_pack.py planes_test.mcaddon` の試験用のアドオンの 16 通りから選びました (DECISIONS.md の A19)。スマートフォン・マルチプレイ・重さ (fps と読み込み時間)・遠くからの見え方は未確認です。
+- 限界: 入力はボクセル (`.vox`)、動画の浮き彫り、MMD のモデル (下の節)。光の向きは立体に固定。透明は「あり・なし」の 2 段。`.vox` は音声なしで繰り返し再生。
+
+### MMD の人物を骨で動かす (試作)
+
+MMD のモデル (`.pmx`) を入力にすると、人物を初期姿勢で 1 回だけボクセルにしてボーンごとの部品に分け、踊り (`.vmd`) はボーンのアニメーションにします (設計: [research/glass_case_practical.md](research/glass_case_practical.md))。コマごとに板を持たないので、1 曲を通してもテクスチャは 1〜2 MiB で、動きは描画のたびになめらかに補間されます。
+
+```bash
+python convert_image_mode.py model.pmx --motion dance.vmd --audio song.wav --case --case-image back=stage.png -o show.mcaddon
+python convert_image_mode.py model.pmx --motion dance.vmd --case --case-video mv.mp4 --priority quality -o show.mcaddon
+```
+
+| オプション | 内容 |
+|---|---|
+| `--motion VMD` | 踊り。無ければ動かない人物 |
+| `--audio FILE` | 曲 (20 分まで)。曲の長さだけ再生し、踊りが短ければ最後の姿勢で止まる (長ければそこで切る)。`--case-video` と一緒なら、壁の動画の音声の代わりに鳴らす |
+| `--figure-voxels N` | 細かさ (初期姿勢の高さのボクセル数、1〜512、既定 128)。大きさは `--figure-blocks` (既定 6 ブロック)。メモリは細かさの 3 乗で増える |
+| `--joint-overlap N` | 関節で隣の部品に重ねるボクセルの数 (既定 1)。重ねるのはウェイトが 2 本のボーンに分かれている所だけ |
+| `--figure-loop` | 踊りを繰り返す |
+| `--priority` | `--case-video` があるとき、人物とケースの絵を除いた予算 (`--target-tier`) に壁の動画が収まるよう、壁の動画の fps・大きさ・長さを下げる |
+
+- 踊りで動かないボーン (物理の髪・スカートなど) は親にまとめます。IK・付与・センターの移動は、変換ツールが解いた姿勢を焼き込みます。その場で踊らせます (センターの前後左右の移動を消す。上下は残す)。ケースは、踊りの間に人物が通る範囲に合わせます。
+- ボーンの回転の向きと順番 (DECISIONS.md の A20)、移動の向き (A21) は PC の実機で決めました。関節のすき間・陰・1 曲を通したときの同期 (絵が音より 0.04〜0.09 秒早いまま、ずれは増えない)・fps (人物ありでも無しと同じ)・ワールドを開くまでの秒数 (2.7 秒) も PC の実機で確かめました。スマートフォンと 2 人で見たときは、まだ確かめていません (docs/TESTING.md の 6)。
+- 踊りと曲は 20 分まで (VMD に遠いフレームのキーが 1 つあるだけで、何十億コマもの姿勢を計算しようとして終わらなかったため)。踊りの最後のキーが 20 分より後なら、曲 (`--audio`) を付けると曲の長さで作ります。壊れた PMX・VMD (途中で切れている、数や番号が範囲の外、ボーンの親子が輪になっている) は、理由を出して作りません。VMD の NaN・無限大の値は初期姿勢にします。
+- MMD のモデル・踊り・曲には作者の利用規約があります。規約で許された範囲で使ってください。作ったアドオンを人に配れるかも規約しだいです。
+- Windows 版の画面: 動画リストに MMD のモデルを足し、踊りを選んだ後の「ガラスケースの人物にもしますか」で「はい」を選ぶと、画像モードのアドオンにケース付きで入ります (曲と奥の壁の絵も選べる)。普通の動画と同じアドオンに入り、動画の予算は人物とケースのテクスチャを引いた残りで決めます。細かさ・重ね代などは既定のまま (128 ボクセル・重ね代 1・高さ 6 ブロック) です。ブラウザ版にはまだありません。
+
 ## 明るさ・縮め方・シートの詰め方
 
 | オプション | 既定 | 内容 |
