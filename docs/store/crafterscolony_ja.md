@@ -8,7 +8,7 @@ MP4 を入れるだけで、本物のブロックでできた巨大スクリー�
 
 ✅ チート不要 ✅ 実験的機能も不要 ✅ 変換ツールは無料・インストール不要
 
-【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\genres\genre_mountain.gif】
+![ゲーム内で録画 (Windows 11): 左から元の映像・ブロックモード・画像モード](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/genres/genre_mountain.gif)
 ゲーム内で録画 (Windows 11): 左から元の映像・ブロックモード・画像モード
 
 ⚡ 自分の動画を 3 ステップで
@@ -48,10 +48,10 @@ MP4 のほか、写真 (止まったブロックアートに)・その場でカ�
 🌐 10 言語対応: メッセージとリモコンは各プレイヤーのゲームの言語で表示
 🛡 実験的機能のオンは不要: 安定版の Script API だけを使っています
 
-【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\genres\genre_sunset.gif】
+![海の夕日: 元の映像・ブロックモード・画像モード](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/genres/genre_sunset.gif)
 海の夕日: 元の映像・ブロックモード・画像モード
 
-【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\genres\genre_fire.gif】
+![炎: 元の映像・ブロックモード・画像モード](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/genres/genre_fire.gif)
 炎: 元の映像・ブロックモード・画像モード
 
 導入方法と遊び方
@@ -75,7 +75,7 @@ waves	カラフルな波の模様を、明るさを奥行きにした 3D レリ�
 bounce	MagicaVoxel の立体アニメ: しま模様のボールが床で跳ねる
 dancer	だまし絵: 踊る女の子 (自作) を、見ている人の目に合わせて床と後ろの壁に描きます。後ろの壁には見本アニメが流れます。前を歩いたり飛んだりしても、立って見えます
 
-【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\curseforge\gif_cat_ja.gif】
+![曲付きの自作アニメをブロックで (お試し版の screen)](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/curseforge/gif_cat_ja.gif)
 曲付きの自作アニメをブロックで (お試し版の screen)
 
 平面スクリーンは足もとから東と北へ広がります。3D ホログラムは自分の 2 ブロック北に、自分を中心にして立ちます (高さの上限を超えるときは自動で下にずらします)。dancer の舞台は北側に約 118 × 51 ブロック、後ろの壁の高さ 84 ブロックで作られます。
@@ -97,7 +97,7 @@ dancer	だまし絵: 踊る女の子 (自作) を、見ている人の目に合�
 
 これまでの /scriptevent badapple:setup などのコマンドも、そのまま使えます (こちらはチートをオンにする必要があります)。サーバーでは、オペレーターの権限が必要です。
 ほかのプレイヤーがいるワールド (Realms・サーバー・マルチプレイ) では、リモコン (コンパス・時計) を使えるのはオペレーターだけ、ビデオスクリーンを操作できるのは置いた人とオペレーターだけです。ひとりで遊ぶときは制限はありません (v6.41.1 から)。
-【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\curseforge\gif_moon_ja.gif】
+![月世界旅行を 3D レリーフにしたもの](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/curseforge/gif_moon_ja.gif)
 月世界旅行を 3D レリーフにしたもの
 
 自分の動画でアドオンを作る
@@ -118,10 +118,10 @@ BlockVideoPlayer-…-windows-x64.zip を解凍して BlockVideoPlayer.exe を起
 
 画面の「再生負荷の目安」が「重い」と出たら、幅・高さ・FPS を下げると、ゲームの中でなめらかに再生できます。
 
-【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\genres\genre_night.gif】
+![夜景: 元の映像・ブロックモード・画像モード](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/genres/genre_night.gif)
 夜景: 元の映像・ブロックモード・画像モード
 
-【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\curseforge\gif_neon_ja.gif】
+![ネオンの街 (Tears of Steel) をブロックにしたもの](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/curseforge/gif_neon_ja.gif)
 ネオンの街 (Tears of Steel) をブロックにしたもの
 
 注意事項
