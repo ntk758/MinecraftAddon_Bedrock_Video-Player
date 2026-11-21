@@ -1,6 +1,6 @@
 # Block & Image Video Player
 
-**Watch videos in Minecraft Bedrock — made of real blocks, or as smooth 30 fps textures (new image mode), with synced sound.** Flat screens, walk-around 3D holograms, and a trompe-l'oeil dancer that is repainted for your eye as you move. **No cheats and no experimental toggles needed.** Converting your own video is free and runs in your browser.
+**Watch videos in Minecraft Bedrock — made of real blocks, or as smooth 30 fps textures (image mode), with synced sound.** Flat screens, walk-around 3D holograms, and a trompe-l'oeil dancer that is repainted for your eye as you move. **New in v6.41: the Video Screen block** — place it, use it and pick a video; no commands needed, and up to 16 screens can play their own videos. **No cheats and no experimental toggles needed.** Converting your own video is free and runs in your browser.
 
 This download is the **showcase with 5 demo clips** (an original animated short, three 3D holograms and a dancing trompe-l'oeil figure). To play **your own** video, convert it first with the free web converter or Windows app (see below) — it is not an in-game video player for files on your device.
 
@@ -16,9 +16,17 @@ This download is the **showcase with 5 demo clips** (an original animated short,
 4. Type **`/badapple:start`**.
 5. To pause, seek, change the volume or switch videos, open the remote with **`/badapple:remote`** (or use a compass if you have one).
 
+**Or skip the commands: use a Video Screen block (new in v6.41).**
+
+1. In the creative inventory, open the *Items* tab and take a **Video Screen**. Place it on open ground, facing the way you want the screen to face.
+2. Use the block (right-click on PC, long-press on a phone, the *Use* button on a controller) and choose a video. The screen stands up above the block and starts playing.
+3. Use the block again to pause, stop, seek, switch videos, or change the volume, loop and size (1× to 4× for flat videos). Breaking the block removes its screen.
+
+Up to 16 Video Screens can be placed and 4 can play at the same time, each with its own video, position and volume. **A Video Screen never replaces blocks:** if something is in the way, it doesn't place the screen and tells you where. Tested in game on a Windows 11 PC; phones, consoles and multiplayer sound are not tested yet.
+
 **Needs Minecraft Bedrock 1.26.10 (shown as 26.10 on MCPEDL) or newer.** For 1.21.80 to 1.26.0, make your add-on in the [web converter](https://ntk758.github.io/MinecraftAddon_Bedrock_Video-Player/) with *Minecraft version: 1.21.80 to 1.26.0*, or use [v6.31.0 from GitHub](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/tag/v6.31.0). Both need cheats and use `/scriptevent badapple:setup`.
 
-The commands are for the world's operators (the host in single player). On a Realm or server, ask an operator to run `setup`; anyone can use the remote.
+The commands are for the world's operators (the host in single player). **When other players are in the world** (a Realm, a server or a multiplayer world), the remote (compass or clock) can only be used by operators, and a Video Screen can only be used by the player who placed it and by operators. Playing alone, nothing changes.
 
 **Showcase videos** (switch with `/badapple:play <id>` or *Choose from the list* in the remote; `/badapple:list` shows the IDs):
 
@@ -46,6 +54,7 @@ For bigger screens, faster conversion and the AI person cutout, use the free **W
 
 ## ✨ What makes it different
 
+- **Video Screen blocks (new)** — place a block, use it and pick a video. Up to 16 screens, 4 playing at once, each with its own video, volume and loop. A screen never replaces your builds, and sound plays only to players within 48 blocks of it.
 - **Real blocks, measured colours** — up to 221 real blocks (concrete, terracotta, wool, wood, stone, ores and more), with colours measured from the game's textures. The best 24–127 are picked for each scene.
 - **3D holograms you can walk around** — reliefs (brightness as depth), extruded silhouettes, rounded "inflated" shapes and MagicaVoxel animations.
 - **Trompe-l'oeil** — the figure is painted onto a floor and back wall exactly as your eye sees it and repainted as you move, so it looks solid from the front, above and the side. A video can play on the back wall. It looks right for one viewer at a time.
@@ -72,14 +81,14 @@ For bigger screens, faster conversion and the AI person cutout, use the free **W
 
 The old `/scriptevent badapple:...` commands still work (they need cheats). `badapple` is the showcase's prefix; add-ons you make use the prefix you choose.
 
-## 🖼 Image mode (new): smooth video as a texture
+## 🖼 Image mode: smooth video as a texture
 
-The Windows app can also make an **image mode** add-on: instead of placing blocks, the video plays as a texture on a thin panel, so it is smooth (up to 30 fps) and sharp (up to 512×288 pixels).
+The Windows app can also make an **image mode** add-on: instead of placing blocks, the video plays as a texture on a thin panel, so it is smooth (up to 30 fps) and sharp (up to 512×288 pixels). The picture keeps its brightness at night and in dark places, and the sound stays in time even when the server slows down.
 
 - Same controls as block mode: `/<prefix>:setup` with `wall`, `face` and `align`, `start`, `play <id>`, `volume`, `seek`, `stats`, and a remote you open with a **clock** (block mode keeps the compass, so both can be installed together).
 - Long videos don't fit in the game's texture memory. When converting, choose what to keep: **picture quality** (lower fps), **smoothness** (smaller picture) or **length**, and whether it should also run on phones and consoles.
 - Put block mode and image mode in **one `.mcaddon`**, or make them separately.
-- Not real blocks: you can't walk through or build on the picture, and there are no 3D modes yet. Tested in game on PC (Windows 11).
+- Not real blocks: you can't walk through or build on the picture, and there are no 3D modes yet. Video Screen blocks don't play image mode videos yet. Tested in game on PC (Windows 11).
 
 ![Sunset sea: source, block mode and image mode](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/genres/genre_sunset.gif)
 
@@ -126,6 +135,8 @@ The Windows app can also make an **image mode** add-on: instead of placing block
 
 - **Java Edition?** No, Bedrock only.
 - **Phones and consoles?** It uses only the stable Script API, so it should work on every Bedrock platform, but so far it has only been tested on PC. Start with a small screen, and please tell us in the comments how it runs on your device.
+- **"You can't use this" on a server?** With other players in the world, the remote is for operators only, and a Video Screen is for the player who placed it and operators. Ask an operator, or play in your own world.
+- **Where is the Video Screen?** In the creative inventory's *Items* tab. It is a block-mode feature; the showcase and add-ons made with v6.41.0 or later have it.
 - **The video IDs don't show up as suggestions after `/badapple:play`.** This seems to be a Minecraft limitation. Use `/badapple:list` to see the IDs.
 - **Can I convert videos I don't own?** Only convert videos you have the right to use. The showcase's pictures and music were made from scratch.
 
