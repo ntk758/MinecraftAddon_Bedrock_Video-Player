@@ -623,6 +623,38 @@ This list covers milestones up to v6.9. For the current plan see [TODO.md](TODO.
 
 詳細は [TODO.md](TODO.md) を参照してください。
 
+### 🧭 今後の機能の構想 (2026-11 の案) / Feature ideas (Nov 2026)
+2026-11-22 に出した機能案を、今のコード (v6.41.2) と照らし合わせて整理したものです。**まだ計画で、着手はしていません。** [TODO.md](TODO.md) の「進め方の決まり」(信頼性 → 実機での確認 → 使いやすさ → … → 独自機能 → 利用者を増やす) に従い、TODO.md の **P0 が片付いてから** 下の順に進めます。正式な優先度と状態は TODO.md に移してから管理します。
+Ideas from 2026-11-22, checked against v6.41.2. Not started; they come after the P0 items in TODO.md and will be moved there before work begins.
+
+前提 (調べて分かったこと):
+- **ベータ API は使わない。** Realms では「試験的な機能」を有効にできないので、ベータ API を 1 つでも使うと Realms で動かなくなる。今と同じく安定版の `@minecraft/server` / `@minecraft/server-ui` だけで作る。
+- **ゲームの中からネットワークには出ない。** `@minecraft/server-net` は BDS 専用 (ゲーム本体・Realms では動かない)。外から映像を送るときは、ゲーム側の `/connect` (WebSocket) を使う。
+
+すでにあるもの (新しく作らない): コンパスのリモコン・10 言語・サンプル入りのアドオン・画質のプリセット・`bench` / `stats`・スクリーンブロック (16 個 / 同時 4 再生、スクリーンごとのループ)・Blue Noise ディザ・ガラスのパレット。
+
+| 段階 | 機能 | 今の状態 | 中身 |
+|---|---|---|---|
+| **A. すぐ遊べる** | 劇場キット | 新規 | 暗い部屋・スクリーン・座席の `.mcstructure` を同梱し、読み込むだけで上映会場ができる |
+| | 端末ごとの推奨 | 一部 (プリセットはある) | `stats` の結果から「この端末なら幅・fps はここまで」と勧める。画像モードは TODO の P2-3 (Tier 別のサブパック) とまとめる |
+| | 遠いスクリーンを止める | 新規 | 近くに誰もいないスクリーンは描画を止め、戻ったら今の位置から描き直す |
+| **B. 作る人向け** | スクリーンをコマンドで操作 | 新規 (リモコン画面だけ) | `/<接頭辞>:screen <番号> play\|pause\|stop\|seek\|select\|loop` を足し、コマンドブロックとレッドストーンから動かせるようにする (マップ作り向け) |
+| | プレイリスト | 一部 (ループはある) | スクリーンごとに動画の並び・続けて再生・全体のループ |
+| | 字幕 | 未実装 (TODO の P3-2) | 変換ツールで `.srt` を読み、actionbar に時間を合わせて出す |
+| | サイネージ | 新規 | 画像のスライドショーを流し続ける (サーバーのロビー向け) |
+| **C. 見せる** | プレビューの動画を書き出す | 一部 (`scripts/make_demo_video.py`) | ゲーム内と同じ規則で復元した MP4 を、変換ツールの画面から書き出す。縦 9:16 (Shorts・TikTok) と、任意の小さなクレジット |
+| | 撮影用のカメラ | 新規 | `/camera` でスクリーンのまわりを自動で回り、録画しやすくする |
+| | 音のビジュアライザ | 新規 | 変換ツールで音の大きさ・帯域を先に計算して映像にし、ゲーム内では普通の動画として流す (ゲーム内で音は解析しない) |
+| | 1 コマを建築として保存 | 新規 | 好きなフレームをピクセルアートの `.mcstructure` に |
+| | パレットの追加 | 一部 (ガラスはある) | サバイバルで手に入るブロックだけ・光るブロック中心 (夜でも見える) |
+| **D. 他に無いもの** | 分岐する動画 | 新規 | 再生の後にフォームで選び、選んだ動画へ進む。B のコマンドを使う |
+| | 複数人の同期 | 計画あり (スクリーンシステムの Phase 3) | 距離での音量の減衰・操作の権限・途中で入った人の音 |
+| | ビデオウォール | 新規 | 並べたスクリーンで 1 本の動画を分けて映す |
+| | ライブ (PC 限定・試験的) | 新規・**先に計測** | 外の PC アプリが WebSocket サーバーになり、`/connect` で入ったゲームにコマンドで映像を流す。チート・「暗号化された WebSocket を要求」の解除が要る。**1 秒に流せるコマンドの数を先に測り**、使える解像度と fps が出なければやめる |
+
+**見送り: URL からの取り込み** (スクリーンシステムの Phase 5)。YouTube の利用規約は、明示的に許された場合を除いてダウンロードを禁じているので、配布するツールには入れない。代わりに、手元のファイルのドラッグ＆ドロップと、使う区間の切り出しを楽にする。
+**Dropped: importing from URLs** — YouTube's Terms of Service forbid downloading; instead make drag-and-drop and trimming of local files easier.
+
 ## 📝 謝辞 (Acknowledgments)
 - Original Java Datapack idea inspired by [umbreonben/mc-cushion-bad-apple](https://github.com/umbreonben/mc-cushion-bad-apple).
 - Video processing powered by **FFmpeg**.
