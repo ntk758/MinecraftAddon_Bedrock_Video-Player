@@ -21,7 +21,7 @@ body:
     id: version
     attributes:
       label: アドオン / ツールの版 / Add-on or tool version
-      placeholder: v6.41.0
+      placeholder: v6.41.1
     validations:
       required: true
   - type: input
