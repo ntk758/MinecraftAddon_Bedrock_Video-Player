@@ -60,8 +60,59 @@ const dynamicProperties = {};
 let scriptEventHandler = null;
 let itemUseHandler = null;
 
+// setup の確認で描いた枠の粒・落とした物 (手順書の本など)
+export const particles = [];
+export const droppedItems = [];
+
+// ItemStack と本 (ItemBookComponent)。手順書の本の確かめ用
+export class ItemStack {
+  constructor(typeId, amount = 1) {
+    this.typeId = typeId;
+    this.amount = amount;
+    this.nameTag = undefined;
+    this.lore = [];
+    this.book = typeId === "minecraft:writable_book" ? { pages: [], signed: null } : null;
+  }
+  getComponent(name) {
+    if (name !== "minecraft:book" || !this.book) return undefined;
+    const book = this.book;
+    return {
+      setContents(pages) {
+        if (pages.length > 50) throw new Error("BookError: too many pages");
+        for (const page of pages) if (JSON.stringify(page).length > 256) throw new Error("BookPageContentError");
+        book.pages = pages;
+      },
+      signBook(title, author) { book.signed = { title, author }; },
+    };
+  }
+  setLore(lines) { this.lore = lines; }
+}
+
+/** 持ち物 (36 マス)。options.inventoryFull で満杯にできる。 */
+function makeContainer() {
+  const slots = new Array(36).fill(undefined);
+  return {
+    size: 36,
+    slots,
+    getItem(i) { return slots[i]; },
+    addItem(item) {
+      if (options.inventoryFull) return item;
+      const i = slots.findIndex((x) => x === undefined);
+      if (i < 0) return item;
+      slots[i] = item;
+      return undefined;
+    },
+  };
+}
+
 export const dimension = {
   id: "overworld",
+  spawnParticle(effectName, location) {
+    particles.push({ effectName, ...location });
+  },
+  spawnItem(item, location) {
+    droppedItems.push({ typeId: item.typeId, ...location });
+  },
   heightRange: { min: -64, max: 320 },
   getBlock(location) {
     if (options.unloadedZ !== undefined && location.z >= options.unloadedZ) return undefined;
@@ -133,6 +184,12 @@ export const player = {
   name: "Steve",
   // PlayerPermissionLevel (0 Visitor・1 Member・2 Operator)。1 人目はワールドを作った人 (オペレーター)
   playerPermissionLevel: 2,
+  // 持ち物 (minecraft:inventory)。人ごとに別の入れ物
+  getComponent(name) {
+    if (name !== "minecraft:inventory") return undefined;
+    if (!this.inventory) this.inventory = makeContainer();
+    return { container: this.inventory };
+  },
   // プレイヤーとして実行したコマンド (stopsound @s など)。commands に "<名前>: <コマンド>" として残す
   runCommand(command) {
     commands.push(`${this.name}: ${command}`);

@@ -19,7 +19,7 @@ from test_playback_control import drive, scene  # noqa: E402,F401 (scene はフ�
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node が必要")
 
-ACTIONS = {"setup", "start", "play", "stop", "list", "remote", "render", "bench", "stats"}
+ACTIONS = {"setup", "start", "play", "stop", "list", "remote", "guide", "render", "bench", "stats"}
 
 
 def test_manifest_uses_script_api_2():

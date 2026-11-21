@@ -6,7 +6,7 @@
 // <legacy:imports> (ブラウザ版の旧版向けの出力 (legacy_target.py) はこの範囲を 1.x の書き方に置き換える)
 import {
   world, system, BlockPermutation, BlockVolume, ListBlockVolume, CommandPermissionLevel, CustomCommandParamType,
-  CustomCommandStatus,
+  CustomCommandStatus, ItemStack,
 } from "@minecraft/server";
 // </legacy:imports>
 import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
@@ -75,6 +75,17 @@ const AUDIO_CHUNK_SECONDS = 10;
 const LATE_JOIN_AUDIO_SECONDS = 1;
 // ワールドに入ったときの案内を出したプレイヤーの印 (プレイヤーごとに 1 回)
 const WELCOMED_KEY = `${EVENT_NAMESPACE}:welcomed`;
+// 手順書の本を渡したプレイヤーの印 (最初の setup で 1 回だけ渡す。guide でいつでももう 1 冊もらえる)
+const GUIDE_GIVEN_KEY = `${EVENT_NAMESPACE}:guide_given`;
+// setup の確認 (置く前に枠を見せる) で、枠を描き直す間隔 (tick) と、一度に出す粒の数の上限
+const PREVIEW_PARTICLE = "minecraft:villager_happy";
+const PREVIEW_REDRAW_TICKS = 10;
+const PREVIEW_MAX_PARTICLES = 240;
+// チャットを閉じる途中などでフォームを出せなかったとき、出し直す回数 (1 秒おき)
+const PREVIEW_BUSY_RETRIES = 10;
+// 天井に貼るとき、頭の上で天井を探す高さと、天井が無いときに置く高さ (足元から)
+const CEILING_SCAN_BLOCKS = 24;
+const CEILING_DEFAULT_GAP = 4;
 
 // 1 tick あたりのブロック設置上限。超えた分は次の tick へ持ち越す
 const MAX_BLOCKS_PER_TICK = 4000;
@@ -212,7 +223,7 @@ function resolvePermutation(spec) {
 // 盤面は向きに関係なく「ローカル座標」(x は見ている人の右、z は見ている人の側 (手前)) で並べ、置くときに回す。
 // 北向き (setup の既定) ではローカル座標とワールド座標が同じ
 const FACING_NAMES = ["north", "east", "south", "west"];
-const DEFAULT_LAYOUT = { facing: 0, wall: false };
+const DEFAULT_LAYOUT = { facing: 0, wall: false, ceiling: false };
 
 /** ローカルのマス (lx, lz) の anchor からのずれを out.x / out.z に書く。マスの中心で回すので並びは崩れない。 */
 function rotateCell(facing, lx, lz, out) {
@@ -282,7 +293,8 @@ function cellToWorld(videoData, anchor, p, loc) {
       lz = 0;
     } else {
       loc.y = anchor.y;
-      lz = row;
+      // 天井に貼った平面は下から見上げるので、行の並びを逆にする (見上げた人の頭の後ろ側が画面の上になる。左右はそのまま)
+      lz = anchor.ceiling ? height - 1 - row : row;
     }
   }
   rotateCell(anchor.facing ?? 0, lx, lz, loc);
@@ -423,7 +435,7 @@ class VideoPlayer {
   constructor(anchor, dimension, videoId, hooks = null) {
     // 保存した anchor (x・y・z だけ) にも、setup で決めた向きを付ける
     const layout = anchor.facing === undefined ? storedLayout() : anchor;
-    this.anchor = { x: anchor.x, y: anchor.y, z: anchor.z, facing: layout.facing, wall: layout.wall };
+    this.anchor = { x: anchor.x, y: anchor.y, z: anchor.z, facing: layout.facing, wall: layout.wall, ceiling: !!layout.ceiling };
     // 拡大 (スクリーンブロックの平面だけ)。1 マスを scale×scale のブロックで置く
     this.scale = anchor.scale > 1 ? anchor.scale : 1;
     if (this.scale > 1) this.anchor.scale = this.scale;
@@ -2243,6 +2255,11 @@ function anchorForVideo(videoData, origin, dimension, layout = DEFAULT_LAYOUT) {
     offsetX = -Math.floor(videoData.width / 2);
     offsetZ = -sizeZ - 2;
     sizeY = videoData.height;
+  } else if (layout.ceiling) {
+    // 天井に貼る平面は、頭の真上に前後左右の中央をそろえる
+    offsetX = -Math.floor(sizeX / 2);
+    offsetZ = -Math.floor(sizeZ / 2);
+    sizeY = 1;
   } else {
     offsetX = 0;
     offsetZ = -sizeZ;
@@ -2250,7 +2267,9 @@ function anchorForVideo(videoData, origin, dimension, layout = DEFAULT_LAYOUT) {
   }
   // 足元のマスはローカル座標で (-offsetX, -offsetZ)。向きに合わせて回したとき、そのマスが足元に来るよう anchor を決める
   const feet = rotateCell(layout.facing, -offsetX, -offsetZ, { x: 0, z: 0 });
-  const anchor = { x: origin.x - feet.x, y: origin.y, z: origin.z - feet.z, facing: layout.facing, wall: layout.wall };
+  const ceiling = !!layout.ceiling && !isVolume(videoData) && !isAnamorphic(videoData) && !layout.wall;
+  const baseY = ceiling ? ceilingYAbove(dimension, origin) : origin.y;
+  const anchor = { x: origin.x - feet.x, y: baseY, z: origin.z - feet.z, facing: layout.facing, wall: layout.wall, ceiling };
   const fittedY = fitToBuildHeight(dimension, anchor.y, sizeY);
   const shifted = fittedY !== anchor.y;
   anchor.y = fittedY;
@@ -2300,7 +2319,7 @@ function commandScreenBoxes() {
   const videoData = globalSelectedVideoId ? VIDEOS[globalSelectedVideoId] : null;
   if (!anchorLoc || !videoData) return boxes;
   const layout = storedLayout();
-  const anchor = { x: anchorLoc.x, y: anchorLoc.y, z: anchorLoc.z, facing: layout.facing, wall: layout.wall };
+  const anchor = { x: anchorLoc.x, y: anchorLoc.y, z: anchorLoc.z, facing: layout.facing, wall: layout.wall, ceiling: !!layout.ceiling };
   let dimensionId = world.getDynamicProperty(ANCHOR_DIMENSION_KEY);
   if (typeof dimensionId !== "string") dimensionId = "minecraft:overworld";
   boxes.push({ dimensionId, box: commandScreenBox(videoData, anchor) });
@@ -2318,10 +2337,27 @@ function storedLayout() {
   try {
     const value = JSON.parse(world.getDynamicProperty(LAYOUT_KEY) ?? "null");
     if (value && FACING_NAMES[value.facing] !== undefined) {
-      return { facing: value.facing, wall: !!value.wall, align: !!value.align };
+      return { facing: value.facing, wall: !!value.wall, ceiling: !!value.ceiling, align: !!value.align };
     }
   } catch (e) { /* 壊れた値は無視する */ }
   return DEFAULT_LAYOUT;
+}
+
+/**
+ * 天井に貼る高さ: 足元 origin の真上で、頭より上にある最初のブロック (それを画面に置き換える)。CEILING_SCAN_BLOCKS 以内に
+ * 無ければ足元から CEILING_DEFAULT_GAP 上。画面を置いた後に決め直しても、見つかるのは画面そのものなので同じ高さになる。
+ */
+function ceilingYAbove(dimension, origin) {
+  for (let dy = 2; dy <= CEILING_SCAN_BLOCKS; dy++) {
+    let block;
+    try {
+      block = dimension.getBlock({ x: origin.x, y: origin.y + dy, z: origin.z });
+    } catch (e) {
+      break; // 世界の高さの外
+    }
+    if (block && !block.isAir) return origin.y + dy;
+  }
+  return origin.y + CEILING_DEFAULT_GAP;
 }
 
 /** プレイヤーが見ている方向を 4 方向 (0 北・1 東・2 南・3 西) にまるめる。 */
@@ -2395,14 +2431,114 @@ function setup(player, options = "") {
   }
   const videoData = VIDEOS[globalSelectedVideoId];
   const words = options.toLowerCase().split(/\s+/);
-  const wall = words.includes("wall");
+  // ceiling (天井に貼る) は wall と一緒には使えない。両方あれば天井
+  const ceiling = words.includes("ceiling");
+  const wall = words.includes("wall") && !ceiling;
   const align = words.includes("align");
-  const layout = { facing: wall || words.includes("face") ? facingOf(player) : 0, wall, align };
-  world.setDynamicProperty(LAYOUT_KEY, JSON.stringify(layout));
-  if (layout.facing !== 0 || wall) notify(wall ? "setup_wall" : "setup_facing", tr(`facing_${FACING_NAMES[layout.facing]}`));
+  const layout = { facing: wall || ceiling || words.includes("face") ? facingOf(player) : 0, wall, ceiling, align };
+  if (ceiling && (isVolume(videoData) || isAnamorphic(videoData))) notifyPlayer(player, "setup_ceiling_flat_only");
   const loc = player.location;
   // 保存するのは足元そのもの。チャンクにそろえる (align) ときは、動画ごとに大きさが違うので、置くたびにそろえ直す
   const origin = { x: Math.floor(loc.x), y: Math.floor(loc.y), z: Math.floor(loc.z) };
+  // now を付けると確認せずにすぐ置く (以前の版と同じ)。付けなければ、先に枠を見せて確定・向きの変更・中止を選ばせる
+  if (words.includes("now")) commitSetup(player, videoData, origin, layout);
+  else previewSetup(player, origin, layout, 0);
+}
+
+/**
+ * 置く前の確認。置く範囲の枠を粒 (パーティクル) で描き、フォームで「ここに置く」「向きを変える」「やめる」を選ばせる。
+ * まだブロックは触らない。向きを変えると 90 度回して描き直し、もう一度聞く。
+ */
+function previewSetup(player, origin, layout, busyTries) {
+  if (!globalSelectedVideoId) {
+    notify("no_video_selected");
+    return;
+  }
+  const videoData = VIDEOS[globalSelectedVideoId];
+  const dimension = player.dimension;
+  const placement = placeVideo(videoData, origin, dimension, layout);
+  if (!checkPlacement(placement)) return;
+  const box = commandScreenBox(videoData, placement.anchor, placement.sizeY);
+  const blocking = screenHooks?.overlapsScreen(dimension.id, box);
+  if (blocking) {
+    notify("setup_overlaps_screen", blocking);
+    return;
+  }
+  drawPreviewOutline(dimension, box);
+  const redraw = system.runInterval(() => drawPreviewOutline(dimension, box), PREVIEW_REDRAW_TICKS);
+  const where = layout.ceiling ? "preview_where_ceiling" : layout.wall || isVolume(videoData) || isAnamorphic(videoData)
+    ? "preview_where_wall" : "preview_where_floor";
+  const form = new ActionFormData()
+    .title(tr("preview_title"))
+    .body(textLines(
+      tr("preview_size", box.x1 - box.x0 + 1, box.y1 - box.y0 + 1, box.z1 - box.z0 + 1),
+      tr(where, tr(`facing_${FACING_NAMES[layout.facing]}`)),
+      tr("preview_replace"),
+    ))
+    .button(tr("preview_confirm"), "textures/items/emerald")
+    .button(tr("preview_rotate"), "textures/items/item_frame")
+    .button(tr("preview_cancel"), "textures/blocks/barrier");
+  form.show(player).then((response) => {
+    system.clearRun(redraw);
+    if (response.canceled) {
+      // チャットを閉じている途中などで出せなかったときは、少し待って出し直す
+      if (response.cancelationReason === "UserBusy" && busyTries < PREVIEW_BUSY_RETRIES) {
+        system.runTimeout(() => previewSetup(player, origin, layout, busyTries + 1), 20);
+        return;
+      }
+      notifyPlayer(player, "preview_canceled", EVENT_PREFIX);
+      return;
+    }
+    if (response.selection === 0) {
+      const current = VIDEOS[globalSelectedVideoId];
+      if (current) commitSetup(player, current, origin, layout);
+    } else if (response.selection === 1) {
+      previewSetup(player, origin, { ...layout, facing: (layout.facing + 1) % 4 }, 0);
+    } else {
+      notifyPlayer(player, "preview_canceled", EVENT_PREFIX);
+    }
+  }).catch((e) => {
+    system.clearRun(redraw);
+    warnOnce("preview", `Setup preview failed: ${e}`);
+  });
+}
+
+/** 箱 box (両端を含むブロックの範囲) の 12 本の辺に粒を並べる。多すぎるときは間隔を空ける。 */
+function drawPreviewOutline(dimension, box) {
+  if (typeof dimension.spawnParticle !== "function") return;
+  const x0 = box.x0;
+  const x1 = box.x1 + 1;
+  const y0 = box.y0;
+  const y1 = box.y1 + 1;
+  const z0 = box.z0;
+  const z1 = box.z1 + 1;
+  const total = 4 * ((x1 - x0) + (y1 - y0) + (z1 - z0));
+  const step = Math.max(1, Math.ceil(total / PREVIEW_MAX_PARTICLES));
+  const edges = [];
+  for (const y of [y0, y1]) for (const z of [z0, z1]) edges.push([{ x: x0, y, z }, { x: x1, y, z }]);
+  for (const x of [x0, x1]) for (const z of [z0, z1]) edges.push([{ x, y: y0, z }, { x, y: y1, z }]);
+  for (const x of [x0, x1]) for (const y of [y0, y1]) edges.push([{ x, y, z: z0 }, { x, y, z: z1 }]);
+  for (const [a, b] of edges) {
+    const length = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y), Math.abs(b.z - a.z));
+    for (let i = 0; i <= length; i += step) {
+      const t = length === 0 ? 0 : i / length;
+      try {
+        dimension.spawnParticle(PREVIEW_PARTICLE, { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t });
+      } catch (e) {
+        // 読み込まれていないチャンクなど。その辺は飛ばす
+        break;
+      }
+    }
+  }
+}
+
+/** setup の確定: 向きを保存し、前の画面を片付けて、新しい位置にプレイヤー (再生役) を作る。 */
+function commitSetup(player, videoData, origin, layout) {
+  world.setDynamicProperty(LAYOUT_KEY, JSON.stringify(layout));
+  const facingName = tr(`facing_${FACING_NAMES[layout.facing]}`);
+  if (layout.ceiling) notify("setup_ceiling", facingName);
+  else if (layout.facing !== 0 || layout.wall) notify(layout.wall ? "setup_wall" : "setup_facing", facingName);
+  const align = layout.align;
   if (align) {
     const aligned = alignOriginToChunks(videoData, origin, player.dimension, layout);
     notify("setup_aligned", aligned.dx, aligned.dz, aligned.before, aligned.after);
@@ -2451,10 +2587,72 @@ function setup(player, options = "") {
   startMainLoop();
 
   notify("setup_done", EVENT_PREFIX);
+  // 最初の setup で、コマンドを書いた手順書の本 (とリモコンのコンパス) を渡す。チャットは流れて消えるので
+  if (!player.getDynamicProperty?.(GUIDE_GIVEN_KEY)) giveGuide(player);
   // 置いた画面の見方 (床に置いた平面は足元からは見えない。立体は近すぎると全体が見えない)
   if (isAnamorphic(videoData)) return;
   if (isVolume(videoData)) notify("setup_view_volume");
+  else if (anchor.ceiling) notify("setup_view_ceiling");
   else if (!layout.wall) notify("setup_view_floor", EVENT_PREFIX);
+}
+
+// 手順書の本のページ (ページごとに翻訳のキー。%1 はコマンドの接頭辞)
+const GUIDE_PAGES = ["guide_page_start", "guide_page_play", "guide_page_place", "guide_page_more"];
+
+/** 本 (書き込める本に手順を書いたもの) を作る。本のページを書けない版では、紙に説明 (lore) を付けて代わりにする。 */
+function makeGuideItem() {
+  try {
+    const item = new ItemStack("minecraft:writable_book", 1);
+    const book = item.getComponent("minecraft:book");
+    if (book && typeof book.setContents === "function") {
+      // 翻訳の文は改行を持てないので、題名と本文を別のキーにして、間に改行を入れる
+      book.setContents(GUIDE_PAGES.map((key) => ({ rawtext: [tr("guide_title"), { text: "\n\n" }, tr(key, `/${EVENT_PREFIX}`)] })));
+      try {
+        if (typeof book.signBook === "function") book.signBook("Video Player Guide", "Video Player");
+      } catch (e) { /* 署名できなくても、書き込める本のまま渡す */ }
+      return item;
+    }
+  } catch (e) {
+    warnOnce("guide_book", `Cannot write the guide book: ${e}`);
+  }
+  const paper = new ItemStack("minecraft:paper", 1);
+  paper.nameTag = "Video Player Guide";
+  const p = `/${EVENT_PREFIX}`;
+  paper.setLore([`${p}setup wall`, `${p}setup ceiling`, `${p}setup now`, `${p}start  ${p}stop`, `${p}list  ${p}play <id>`, `${p}remote  ${p}guide`]);
+  return paper;
+}
+
+/** プレイヤーに手順書を渡す。リモコン (コンパス) を持っていなければそれも渡す。持ちきれなければ足元に落とす。 */
+function giveGuide(player) {
+  let container;
+  try {
+    container = player.getComponent("minecraft:inventory")?.container;
+  } catch (e) { /* 抜けた */ }
+  if (!container) return false;
+  const items = [makeGuideItem()];
+  let hasRemote = false;
+  for (let i = 0; i < container.size; i++) {
+    if (container.getItem(i)?.typeId === REMOTE_CONTROL_ITEM) {
+      hasRemote = true;
+      break;
+    }
+  }
+  if (!hasRemote) items.push(new ItemStack(REMOTE_CONTROL_ITEM, 1));
+  let dropped = false;
+  for (const item of items) {
+    const left = container.addItem(item);
+    if (left) {
+      dropped = true;
+      try {
+        player.dimension.spawnItem(left, player.location);
+      } catch (e) { /* 落とせなかった */ }
+    }
+  }
+  try {
+    player.setDynamicProperty(GUIDE_GIVEN_KEY, true);
+  } catch (e) { /* 抜けた */ }
+  notifyPlayer(player, dropped ? "guide_dropped" : "guide_given", EVENT_PREFIX);
+  return true;
 }
 
 function getPlaybackDimension(fallbackDimension) {
@@ -2823,6 +3021,9 @@ function runAction(action, message, player) {
     case "remote":
       if (player) showRemoteControlGUI(player);
       break;
+    case "guide":
+      if (player) giveGuide(player);
+      break;
     case "list":
       if (LISTED_VIDEOS.length === 0) {
         notify("no_videos");
@@ -2876,12 +3077,13 @@ function addSlider(form, label, minimum, maximum, step, value) {
  * [操作, 説明, 引数] の一覧。引数は "video" (動画 ID の候補) か "text" (setup face などの文字) か無し。
  */
 const CUSTOM_COMMANDS = [
-  ["setup", "Place the screen (options: face, wall, align)", "text"],
+  ["setup", "Place the screen (options: face, wall, ceiling, align, now)", "text"],
   ["start", "Play the selected video from the start", null],
   ["play", "Play a video (by video ID)", "video"],
   ["stop", "Stop and clear the screen", null],
   ["list", "List the videos", null],
   ["remote", "Open the remote control", null],
+  ["guide", "Get the guide book", null],
   ["render", "Set the render mode (auto, rect, list, block)", "text"],
   ["bench", "Measure the block placement speed", null],
   ["stats", "Show playback statistics", null],

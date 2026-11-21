@@ -69,7 +69,7 @@ if (args.frames) {
   }
 }
 
-fireScriptEvent(`${ns}:setup`);
+fireScriptEvent(`${ns}:setup`, "now");
 const anchor = getAnchor(`${ns}:anchor`);
 // 舞台の内側の座標の目の位置 → プレイヤーの足元 (main.js の viewerEye の逆)
 function placeEye(eye) {
