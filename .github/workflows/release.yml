@@ -78,6 +78,15 @@ jobs:
           if (-not (Test-Path smoke.js) -or (Get-Item smoke.js).Length -eq 0) { throw "smoke.js was not written" }
           Get-Item smoke.js | Format-List Name, Length
 
+      # GUI と同じアドオンの組み立てを EXE で行う。上の変換だけでは組み立てを通らないので、v6.41.0 では
+      # screen_system.js・screen_ui.js が EXE に入っていないことに気づかなかった (#195)
+      - name: Build an add-on with the EXE
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\BlockVideoPlayer\BlockVideoPlayer.exe -Wait -PassThru -NoNewWindow `
+            -ArgumentList '--self-check'
+          if ($p.ExitCode -ne 0) { throw "EXE self-check exited with $($p.ExitCode)" }
+
       - name: Zip
         shell: pwsh
         # TAG はスクリプトに埋め込まず、環境変数として読む (前の段階で版と同じことを確かめてあるが、念のため)

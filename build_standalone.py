@@ -7,6 +7,24 @@ import subprocess
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(APP_DIR))
+
+
+def bundled_data() -> list[tuple[Path, str]]:
+    """EXE に入れるデータファイル (元の場所, EXE の中の置き場所)。
+
+    アドオンを組み立てるときに読むファイルは、組み立てる側 (pack_builder・convert_image_mode) の一覧から作る。
+    v6.41.0 では手で書いた一覧に screen_system.js・screen_ui.js を足し忘れ、EXE の GUI で .mcaddon を作れなかった (#195)。"""
+    import convert_image_mode
+    import pack_builder
+
+    files = [(APP_DIR / name, ".") for name in pack_builder.ADDON_SCRIPTS]
+    files.append((pack_builder.MANIFEST, "."))
+    # 画像モード (convert_image_mode.py、GUI が import する) のスクリプト。IMAGE_MAIN_SCRIPT の場所に置く
+    files.append((convert_image_mode.IMAGE_MAIN_SCRIPT, convert_image_mode.IMAGE_MAIN_SCRIPT.parent.relative_to(APP_DIR).as_posix()))
+    # GUI の翻訳ファイル
+    files.append((APP_DIR / "locales", "locales"))
+    return files
 
 def build_standalone_exe():
     print("==================================================")
@@ -36,16 +54,13 @@ def build_standalone_exe():
         # 変換器は EXE 内で `--run-converter` として import 実行されるため、モジュールとして同梱する
         "--hidden-import", "convert",
         "--collect-submodules", "mvcodec",
-        "--add-data", f"{APP_DIR / 'main.js'}{os.pathsep}.",
-        "--add-data", f"{APP_DIR / 'codec.js'}{os.pathsep}.",
-        "--add-data", f"{APP_DIR / 'manifest.json'}{os.pathsep}.",
-        # 画像モード (convert_image_mode.py、GUI が import する) のスクリプト。IMAGE_MAIN_SCRIPT の場所に置く
         "--hidden-import", "convert_image_mode",
-        "--add-data", f"{APP_DIR / 'image_mode' / 'image_main.js'}{os.pathsep}image_mode",
-        # GUI の翻訳ファイル
-        "--add-data", f"{APP_DIR / 'locales'}{os.pathsep}locales",
-        str(main_gui)
     ]
+    for source, target in bundled_data():
+        if not source.exists():
+            raise FileNotFoundError(f"{source} が見つかりません。")
+        cmd += ["--add-data", f"{source}{os.pathsep}{target}"]
+    cmd.append(str(main_gui))
     # DirectML (AMD / Intel GPU) 版 PyTorch がビルド環境にあれば DLL ごと同梱する
     try:
         import torch_directml  # noqa: F401

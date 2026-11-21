@@ -49,6 +49,8 @@ CONVERTER = APP_DIR / "convert.py"
 RUN_CONVERTER_FLAG = "--run-converter"
 # EXE で人物の切り抜きだけを行う (mvcodec/person.py のコマンドライン。scripts/make_person_videos.py と同じ)
 RUN_PERSON_FLAG = "--run-person-split"
+# EXE に、アドオンを組み立てるときに読むファイルがそろっているかを確かめる (リリースのワークフローが EXE を作った後に実行する)
+SELF_CHECK_FLAG = "--self-check"
 
 
 def subprocess_kwargs() -> dict:
@@ -1881,7 +1883,40 @@ def run_person_mode(argv: list[str]) -> int:
     return _run_without_crash_dialog(person_main, argv)
 
 
+def self_check(argv: list[str]) -> int:
+    """GUI と同じ組み立て (ブロックモード・旧版向け・画像モードのスクリプト・GUI の翻訳) を、ファイルに書かずに一通り行う。
+
+    v6.41.0 の EXE は screen_system.js・screen_ui.js が入っておらず、GUI では .mcaddon を作れなかった (#195)。
+    変換だけを試す `--run-converter` では、組み立て (pack_builder) を通らないので見つからなかった。"""
+    del argv
+    import convert_image_mode
+    import legacy_target
+    from gui_i18n import LOCALES
+    from pack_builder import build_addon_bytes
+
+    video = {"id": "check", "title": "check", "thumbnail": None, "sounds": [],
+             "frames_js": 'export const FRAME_DATA = {"frame_count":1,"width":1,"height":1};'}
+    build_addon_bytes([video], "Self check", "selfcheck")
+    main_text = legacy_target.main_text(MAIN_SCRIPT.read_text(encoding="utf-8"))
+    manifest_text = legacy_target.manifest_text(MANIFEST.read_text(encoding="utf-8"))
+    build_addon_bytes([video], "Self check", "selfcheck", main_text=main_text, manifest_text=manifest_text,
+                      lang_transform=legacy_target.lang_text)
+    convert_image_mode.IMAGE_MAIN_SCRIPT.read_text(encoding="utf-8")
+    if not LOCALES:
+        raise FileNotFoundError("locales")
+    print(f"self-check ok (v{version_text()})")
+    return 0
+
+
+def run_self_check_mode(argv: list[str]) -> int:
+    """`BlockVideoPlayer.exe --self-check`。足りないファイルがあれば、理由を書いて終了コード 1。"""
+    _prepare_output_streams()
+    return _run_without_crash_dialog(self_check, argv)
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == SELF_CHECK_FLAG:
+        sys.exit(run_self_check_mode(sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == RUN_CONVERTER_FLAG:
         sys.exit(run_converter_mode(sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == RUN_PERSON_FLAG:
