@@ -348,7 +348,7 @@
   "web.assembling": "Assembling the add-on…",
   "web.done": "Done: {size} KB",
   "web.error": "Error: {error}",
-  "web.usage_note": "To learn how many people use it, this page counts page opens and finished add-ons with GoatCounter. No cookies are used, and no file names or videos are sent.",
+  "web.usage_note": "To learn how many people use it, this page counts with GoatCounter: page opens (with the display language), and add-on builds started, finished and failed (for finished ones, the kind of add-on and the display language). Only these counts are sent: no cookies, no file names and no videos.",
   "web.usage_optout": "Don't send usage counts",
   "web.preview_title": "4. Preview",
   "web.preview_note": "How the add-on looks in Minecraft, drawn with the same rules as the game (3D is seen from above at an angle). Check it before you import.",

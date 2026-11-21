@@ -4,7 +4,7 @@
 
 | 問題 | 原因 | 回避策 |
 |---|---|---|
-| スクリーンブロックは実機で確かめていない (2026-11-19 の時点) | モックの Minecraft での自動テストまで ([TESTING.md](TESTING.md) の 7 章) | 動かないときはコンテンツログのエラーを Issue で知らせてください。コマンドの `setup` の画面は今までどおり使えます |
+| スクリーンブロックは、作者の PC (Windows 11、Minecraft v26.65) の実機でだけ確かめた。2 人での音・スマートフォン・ゲーム機・マルチプレイは未確認 | 確かめた項目は [TESTING.md](TESTING.md) の 7 章 | 動かないときはコンテンツログのエラーを Issue で知らせてください。コマンドの `setup` の画面は今までどおり使えます |
 | スクリーンブロックで、画面の範囲にパレットと同じブロック (コンクリート・羊毛など) を置くと、削除のときに一緒に消える | 画面のブロックかどうかを、置いた範囲とブロックの種類で見分けている | 画面の範囲には建てない。範囲の外のブロックは消さない |
 | 近くにある 2 つのスクリーンの音が重なる | 画面から 48 ブロック以内の人には、どのスクリーンの音も鳴る (距離での音量の減衰は未実装) | 片方の音量を 0 にする |
 | `/badapple:play` の後ろで動画 ID が入力の候補に出ない (v6.32.0 からの短いコマンド。実機で確認) | 動画 ID はコマンドの enum として登録している (Microsoft の公式の例と同じ書き方) が、今の Minecraft はスクリプトのコマンドの enum を候補に出さないとみられる (Minecraft のフィードバックサイトにも同じ報告がある。公式の説明は無い)。入力した ID が正しいかの確認はされる | `/badapple:list` で動画 ID を確かめてから入力する。Minecraft が候補を出すようになれば、作り直さなくても出る |
@@ -49,6 +49,7 @@
 
 | 問題 | 原因 | 回避策 |
 |---|---|---|
+| **v6.41.0 の Windows 版 (EXE) の画面では、どの動画でも .mcaddon を作れない** (「[Errno 2] No such file or directory: ...\_internal\screen_system.js」で止まる。#195) | v6.41.0 の EXE にスクリーンブロックのスクリプトが入っていなかった | **v6.41.1 で修正**。[最新のリリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の Windows 版を使う。v6.41.0 のままなら、[ブラウザ版](https://ntk758.github.io/MinecraftAddon_Bedrock_Video-Player/) かコマンドライン (`BlockVideoPlayer.exe --run-converter ...`) では作れる |
 | PowerShell から `BlockVideoPlayer.exe --run-converter ...` を起動すると、プロンプトが先に戻り、変換の出力がその後に出る | EXE はウィンドウのアプリ (Windows 版の画面) なので、PowerShell やコマンドプロンプトは終わるのを待たない。出力は親のコンソールにつないで全部出す (v6.40.0 までは何も出なかった) | 終わるまで待つには `Start-Process -Wait -NoNewWindow -FilePath .\BlockVideoPlayer.exe -ArgumentList '--run-converter', ...` で起動する。終了コードも `-PassThru` で受け取れる |
 | GPU があるのに CPU で変換される | PyTorch (または torch-directml) が無い、GPU のテスト変換に失敗した、CPU 専用のディザ (Floyd-Steinberg など) を選んだ | 処理ログの `Conversion device:` の行を確かめる。DirectML は Python 3.12 まで |
 | GPU で変換しても速くならない | GPU 経路は OkLab での色合わせ・RDO などの処理が多く、変換全体は CPU と同じくらいのことがある | 時間が気になるときは CPU (`--device cpu`) も試す ([PERFORMANCE.md](PERFORMANCE.md) の変換速度) |

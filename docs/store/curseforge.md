@@ -95,6 +95,7 @@ The Windows app can also make an **image mode** add-on: instead of placing block
 ## 🖥 Windows app (faster, bigger, smaller add-ons)
 
 - Download `BlockVideoPlayer-…-windows-x64.zip` from the [GitHub releases](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest), unzip and run `BlockVideoPlayer.exe` (no Python needed).
+- **Use v6.41.1 or later.** The v6.41.0 Windows app cannot build any add-on (fixed in v6.41.1). If you are stuck on v6.41.0, use the web converter.
 - Install FFmpeg with `winget install Gyan.FFmpeg`, or put `ffmpeg.exe` next to the EXE.
 - A first-run guide checks your PC, suggests settings for your video and tells you how to play the result.
 - Uses NVIDIA, AMD or Intel GPUs when available, and the CPU otherwise.

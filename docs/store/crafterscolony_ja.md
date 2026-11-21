@@ -90,7 +90,7 @@ Windows 版 (速く、アドオンも小さい):
 
 https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest
 
-BlockVideoPlayer-…-windows-x64.zip を解凍して BlockVideoPlayer.exe を起動します (Python は不要。FFmpeg は別に必要です。入れ方はリンク先に書いてあります)。GPU で速く変換できます。ダンス動画の人物を AI で切り抜いて 3D やだまし絵にすることもできます。
+BlockVideoPlayer-…-windows-x64.zip を解凍して BlockVideoPlayer.exe を起動します (Python は不要。FFmpeg は別に必要です。入れ方はリンク先に書いてあります)。v6.41.1 以降を使ってください (v6.41.0 の Windows 版はアドオンを作れません。v6.41.1 で直しました。v6.41.0 のままならブラウザ版で作れます)。GPU で速く変換できます。ダンス動画の人物を AI で切り抜いて 3D やだまし絵にすることもできます。
 
 画面の「再生負荷の目安」が「重い」と出たら、幅・高さ・FPS を下げると、ゲームの中でなめらかに再生できます。
 

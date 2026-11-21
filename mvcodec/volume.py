@@ -362,23 +362,56 @@ def _read_chunks(data, start, end):
 
 
 class _Reader:
-    def __init__(self, content):
+    """チャンクの中身を読む。中身より先を読もうとしたら、struct.error ではなく理由を書いた ValueError (#211)。"""
+
+    def __init__(self, content, chunk_id="?"):
         self.content = content
+        self.chunk_id = chunk_id
         self.pos = 0
 
+    def _broken(self, what):
+        return ValueError(f".vox が壊れています (チャンク {self.chunk_id!r} の{what}が中身の大きさ "
+                          f"{len(self.content)} バイトを超えています)")
+
     def int32(self):
+        if self.pos + 4 > len(self.content):
+            raise self._broken("数")
         value = struct.unpack_from("<i", self.content, self.pos)[0]
         self.pos += 4
         return value
 
+    def count(self):
+        """後に続く要素の数。負の数や、残りのバイトに入りきらない数は壊れている。"""
+        value = self.int32()
+        if value < 0 or value * 4 > len(self.content) - self.pos:
+            raise self._broken(f"要素の数 {value} ")
+        return value
+
     def string(self):
         length = self.int32()
+        if length < 0 or self.pos + length > len(self.content):
+            raise self._broken(f"文字列の長さ {length} ")
         value = self.content[self.pos:self.pos + length].decode("utf-8", errors="replace")
         self.pos += length
         return value
 
     def dict(self):
-        return {self.string(): self.string() for _ in range(self.int32())}
+        return {self.string(): self.string() for _ in range(self.count())}
+
+
+def _ints(value, count, what):
+    """属性の文字列 ("12" や "0 0 0") を count 個の整数にする。数でなければ理由を書いて断る (#211)。"""
+    parts = str(value).split()
+    try:
+        if len(parts) != count:
+            raise ValueError
+        return [int(part) for part in parts]
+    except ValueError:
+        raise ValueError(f".vox が壊れています ({what} の値 {value!r} が {count} 個の整数ではありません)") from None
+
+
+def _frame_number(item):
+    return _ints(item.get("_f", "0"), 1, "キーフレームの番号 _f")[0]
 
 
 # .vox の 1 ファイルのアニメーションのフレーム数の上限 (20 fps で 83 分。MagicaVoxel のアニメはふつう数百まで)
@@ -400,7 +433,7 @@ def _keyed(frames, frame):
     """キーフレームのうち _f が frame 以下で一番新しいもの (無ければ最初のもの)。"""
     best = frames[0]
     for item in frames:
-        if int(best.get("_f", 0)) <= int(item.get("_f", 0)) <= frame:
+        if _frame_number(best) <= _frame_number(item) <= frame:
             best = item
     return best
 
@@ -416,6 +449,18 @@ def parse_vox(data):
     """
     if data[:4] != b"VOX ":
         raise ValueError("MagicaVoxel の .vox ファイルではありません")
+    try:
+        return _parse_vox(data)
+    except struct.error as exc:
+        # 下の確かめから漏れた読みすぎも、struct の生のメッセージではなく理由にする (#211)
+        raise ValueError(f".vox が壊れています (チャンクの中身が短すぎます: {exc})") from None
+
+
+# MagicaVoxel のモデルは 1 辺 256 まで。それより大きい SIZE は壊れている (大きな配列を作って固まらないよう)
+MAX_VOX_MODEL_SIDE = 256
+
+
+def _parse_vox(data):
     main = next(_read_chunks(data, 8, len(data)), None)
     if main is None or main[0] != "MAIN":
         raise ValueError(".vox に MAIN チャンクがありません")
@@ -424,8 +469,15 @@ def parse_vox(data):
     size = None
     for chunk_id, content, _children in _read_chunks(data, *main[2]):
         if chunk_id == "SIZE":
+            if len(content) < 12:
+                raise ValueError(f".vox が壊れています (SIZE の中身が {len(content)} バイトしかありません)")
             size = struct.unpack_from("<iii", content, 0)
+            if not all(1 <= side <= MAX_VOX_MODEL_SIDE for side in size):
+                raise ValueError(f".vox が壊れています (SIZE の大きさ {size[0]}×{size[1]}×{size[2]} が "
+                                 f"1〜{MAX_VOX_MODEL_SIDE} の外です)")
         elif chunk_id == "XYZI":
+            if len(content) < 4:
+                raise ValueError(f".vox が壊れています (XYZI の中身が {len(content)} バイトしかありません)")
             count = struct.unpack_from("<i", content, 0)[0]
             # 数と中身の大きさが合わなければ壊れている (少ない数では黙ってボクセルを落とし、-1 は残り全部になっていた。#161)
             if count < 0 or len(content) != 4 + count * 4:
@@ -435,35 +487,37 @@ def parse_vox(data):
             voxels = np.frombuffer(content, dtype=np.uint8, count=count * 4, offset=4).reshape(count, 4)
             models.append((size, voxels.copy()))
         elif chunk_id == "RGBA":
+            if len(content) < 256 * 4:
+                raise ValueError(f".vox が壊れています (RGBA のパレットが {len(content)} バイトしかありません。1024 バイト要ります)")
             palette = np.frombuffer(content, dtype=np.uint8, count=256 * 4).reshape(256, 4).copy()
         elif chunk_id == "nTRN":
-            r = _Reader(content)
+            r = _Reader(content, chunk_id)
             node_id, attrs, child = r.int32(), r.dict(), r.int32()
             r.int32()  # reserved
             layer = r.int32()
-            frames = [r.dict() for _ in range(r.int32())] or [{}]
+            frames = [r.dict() for _ in range(r.count())] or [{}]
             nodes[node_id] = ("trn", attrs, child, layer, frames)
         elif chunk_id == "nGRP":
-            r = _Reader(content)
+            r = _Reader(content, chunk_id)
             node_id, attrs = r.int32(), r.dict()
-            nodes[node_id] = ("grp", attrs, [r.int32() for _ in range(r.int32())])
+            nodes[node_id] = ("grp", attrs, [r.int32() for _ in range(r.count())])
         elif chunk_id == "nSHP":
-            r = _Reader(content)
+            r = _Reader(content, chunk_id)
             node_id, attrs = r.int32(), r.dict()
             shapes = []
-            for _ in range(r.int32()):
+            for _ in range(r.count()):
                 model_id = r.int32()
                 shapes.append({"model": model_id, **r.dict()})
             nodes[node_id] = ("shp", attrs, shapes)
         elif chunk_id == "LAYR":
-            r = _Reader(content)
+            r = _Reader(content, chunk_id)
             layer_id, attrs = r.int32(), r.dict()
             if attrs.get("_hidden") == "1":
                 hidden_layers.add(layer_id)
         elif chunk_id == "META":
-            value = _Reader(content).dict().get("_anim_range")
+            value = _Reader(content, chunk_id).dict().get("_anim_range")
             if value:
-                anim_range = tuple(int(v) for v in value.split()[:2])
+                anim_range = tuple(_ints(" ".join(value.split()[:2]), 2, "アニメーションの範囲 _anim_range"))
     if palette is None:
         palette = _default_palette_rgba()
     if not models:
@@ -519,7 +573,7 @@ def _evaluate_scene(models, nodes, hidden_layers, anim_range):
     keys = set()
     for node in nodes.values():
         items = node[4] if node[0] == "trn" else node[2] if node[0] == "shp" else []
-        keys.update(int(item.get("_f", 0)) for item in items)
+        keys.update(_frame_number(item) for item in items)
     if anim_range is not None:
         first, last = anim_range
     else:
@@ -539,8 +593,8 @@ def _evaluate_scene(models, nodes, hidden_layers, anim_range):
             if layer in hidden_layers:
                 return
             key = _keyed(frames, frame)
-            local_r = _rotation_matrix(int(key["_r"])) if "_r" in key else np.eye(3, dtype=np.int64)
-            local_t = np.array([int(v) for v in key.get("_t", "0 0 0").split()], dtype=np.int64)
+            local_r = _rotation_matrix(_ints(key["_r"], 1, "回転 _r")[0]) if "_r" in key else np.eye(3, dtype=np.int64)
+            local_t = np.array(_ints(key.get("_t", "0 0 0"), 3, "位置 _t"), dtype=np.int64)
             collect(child, frame, rotation @ local_r, rotation @ local_t + translation, out)
         elif node[0] == "grp":
             for child in node[2]:

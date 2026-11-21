@@ -77,6 +77,20 @@ def manifest_description(namespace: str = "badapple") -> str:
             f"/{namespace}:start. The remote: /{namespace}:remote or a compass.")
 
 
+# パックに入れる変更の要約に載せる版の数と、すべての版の変更点の場所
+CHANGELOG_RECENT_VERSIONS = 10
+CHANGELOG_URL = "https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/blob/main/CHANGELOG.md"
+
+
 def changelog_markdown(pack_name: str) -> str:
-    notes = "\n".join(f"- {note}" for note in RELEASE_NOTES)
-    return f"# {pack_name} — 変更履歴\n\n## v{version_text()}\n\n{notes}\n"
+    """パックに入れる CHANGELOG.md。最近の版の 1 行の要約と、すべての版の変更点 (リポジトリの CHANGELOG.md) の場所。
+
+    以前は RELEASE_NOTES を全部、今の版の見出しの下に並べていて、版番号の無い古い行まで今の版の変更に見えた (#216)。
+    """
+    recent = [note for note in RELEASE_NOTES if note.startswith("v")][:CHANGELOG_RECENT_VERSIONS]
+    notes = "\n".join(f"- {note}" for note in recent)
+    return (f"# {pack_name} — 変更の要約\n\n"
+            f"このパックの版: v{version_text()}\n\n"
+            f"最近の {len(recent)} 版の要約です。すべての版の変更点は {CHANGELOG_URL} にあります。\n"
+            f"Summary of the latest versions. Full history: {CHANGELOG_URL}\n\n"
+            f"## 最近の版 / Recent versions\n\n{notes}\n")

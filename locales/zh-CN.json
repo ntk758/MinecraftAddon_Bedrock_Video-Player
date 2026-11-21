@@ -348,7 +348,7 @@
   "web.assembling": "正在组装附加包…",
   "web.done": "完成：{size} KB",
   "web.error": "错误：{error}",
-  "web.usage_note": "为了解有多少人在使用，本页面通过 GoatCounter 统计页面打开次数和附加包生成完成的次数。不使用 Cookie，也不会发送文件名或视频。",
+  "web.usage_note": "为了解有多少人在使用，本页面通过 GoatCounter 统计：页面打开次数（附带界面语言），以及开始、完成和失败的附加包生成次数（完成时附带附加包类型和界面语言）。只发送这些计数：不使用 Cookie，也不会发送文件名或视频。",
   "web.usage_optout": "不发送使用统计",
   "web.preview_title": "4. 成品预览",
   "web.preview_note": "按照与游戏相同的规则绘制的 Minecraft 中的效果（立体为斜上方视角）。导入前即可确认。",
