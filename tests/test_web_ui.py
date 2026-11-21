@@ -268,7 +268,10 @@ def test_hero_sample_is_real_converter_output_that_decodes():
 
 
 def test_page_states_only_what_the_code_does():
-    """プライバシーの欄に書いたこと (変換の本体を jsDelivr から読む) が、実際の worker.js と合っている"""
+    """プライバシーの欄に書いたこと (変換の本体はこのサイトから読む) が、実際の worker.js と合っている"""
     from gui_i18n import LOCALES
-    assert "jsDelivr" in LOCALES["en"]["web.privacy_loads_2"]
-    assert "cdn.jsdelivr.net/pyodide" in (WEB / "worker.js").read_text(encoding="utf-8")
+    assert "this site" in LOCALES["en"]["web.privacy_loads_2"] and "jsDelivr" not in LOCALES["en"]["web.privacy_loads_2"]
+    worker = (WEB / "worker.js").read_text(encoding="utf-8")
+    # サイトに置いた Pyodide を先に使う (CDN は、サイトに無いときだけ。#175)
+    assert worker.index('importScripts(`${PYODIDE_URL}pyodide.js`)') < worker.index("cdn.jsdelivr.net/pyodide")
+    assert 'let PYODIDE_URL = "pyodide/";' in worker

@@ -205,11 +205,24 @@ def test_non_finite_vmd_values_become_the_rest_pose(tmp_path):
 
 
 def test_valid_vmd_values_are_kept_exactly(tmp_path):
-    keys = [("センター", 0, (0.25, -1.5, 3.0), (0.1, 0.2, 0.3, 0.9)), ("センター", 30, (0, 0, 0), (0, 0, 0, 1))]
+    rotation = np.array([0.1, 0.2, 0.3, math.sqrt(1 - 0.14)], np.float32)  # 長さ 1 (MMD の書く値)
+    keys = [("センター", 0, (0.25, -1.5, 3.0), tuple(rotation.tolist())), ("センター", 30, (0, 0, 0), (0, 0, 0, 1))]
     _pmx, vmd = _doll(tmp_path, keys)
     first = mmd.read_vmd(vmd)["センター"][0]
     assert first[1].tolist() == [0.25, -1.5, 3.0]
-    assert np.allclose(first[2], np.array([0.1, 0.2, 0.3, 0.9], np.float32), atol=0)
+    assert np.allclose(first[2], rotation, atol=0)
+
+
+def test_vmd_rotations_are_normalized(tmp_path):
+    """長さが 1 でない回転は向きだけを使う (2 倍の長さで人物が消えていた。#202)。"""
+    keys = [("センター", 0, (0, 0, 0), (0.2, 0.4, 0.6, 1.8)), ("センター", 30, (0, 0, 0), (0, 0, 0, 2))]
+    pmx, vmd = _doll(tmp_path, keys)
+    tracks = mmd.read_vmd(vmd)
+    for _frame, _position, rotation, _curve in tracks["センター"]:
+        assert abs(np.linalg.norm(rotation) - 1) < 1e-9
+    assert np.allclose(tracks["センター"][1][2], [0, 0, 0, 1])
+    frames, _size = mmd.mmd_to_vox(pmx, vmd, tmp_path / "out.vox", height=16, fps=5, duration=1)
+    assert frames == 6
 
 
 # --- AUD2-06・07: --figure-voxels と --views の上限 ---

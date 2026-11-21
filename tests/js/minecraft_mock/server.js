@@ -129,6 +129,15 @@ export const dimension = {
 // 立つ位置 (テストで高さの調整を確かめるため書き換えられるようにする)
 export const player = {
   typeId: "minecraft:player",
+  id: "-1001",
+  name: "Steve",
+  // PlayerPermissionLevel (0 Visitor・1 Member・2 Operator)。1 人目はワールドを作った人 (オペレーター)
+  playerPermissionLevel: 2,
+  // プレイヤーとして実行したコマンド (stopsound @s など)。commands に "<名前>: <コマンド>" として残す
+  runCommand(command) {
+    commands.push(`${this.name}: ${command}`);
+    return { successCount: 1 };
+  },
   location: { x: 0, y: 64, z: 100 },
   dimension,
   // 見ている方向 (setup face / wall の確認用。既定は北)
@@ -153,6 +162,10 @@ export const player = {
 // 2 人目 (複数人の確かめ用)。鳴らした音は "p2:<音の ID>" として sounds に残す。立つ位置は画面から離れた所
 export const secondPlayer = {
   ...player,
+  id: "-1002",
+  name: "Alex",
+  // 2 人目は普通のメンバー (テストで変えられる)
+  playerPermissionLevel: 1,
   location: { x: 200, y: 64, z: 300 },
   viewDirection: { x: 0, y: 0, z: -1 },
   playSound(id) {
@@ -211,7 +224,7 @@ export function forgetTicking() {
 
 // スクリーンブロックなどのブロックの状態 ("x,y,z" -> { 状態名: 値 })
 export const blockStates = new Map();
-const worldEventHandlers = { playerBreakBlock: [], blockExplode: [], worldLoad: [] };
+const worldEventHandlers = { playerBreakBlock: [], playerPlaceBlock: [], blockExplode: [], worldLoad: [] };
 
 /** その位置のブロック (getBlock の戻り値)。board に無ければ空気。 */
 function blockAt(location) {
@@ -238,6 +251,7 @@ export const world = {
     itemUse: { subscribe: (handler) => { itemUseHandler = handler; } },
     playerSpawn: { subscribe: (handler) => { playerSpawnHandlers.push(handler); } },
     playerBreakBlock: { subscribe: (handler) => { worldEventHandlers.playerBreakBlock.push(handler); } },
+    playerPlaceBlock: { subscribe: (handler) => { worldEventHandlers.playerPlaceBlock.push(handler); } },
     blockExplode: { subscribe: (handler) => { worldEventHandlers.blockExplode.push(handler); } },
     worldLoad: { subscribe: (handler) => { worldEventHandlers.worldLoad.push(handler); } },
   },
@@ -385,8 +399,8 @@ export function runCustomCommand(name, ...args) {
   }
 }
 
-export function useItem(typeId) {
-  itemUseHandler({ itemStack: { typeId }, source: player });
+export function useItem(typeId, who = player) {
+  itemUseHandler({ itemStack: { typeId }, source: who });
 }
 
 export function tick() {
@@ -416,11 +430,13 @@ function componentOf(typeId) {
 }
 
 /** プレイヤーがブロックを置いたように、board に置いて onPlace を送る。facing は置いた人が見ていた方向。 */
-export function placeBlock(location, typeId, facing = "north") {
+export function placeBlock(location, typeId, facing = "north", who = player) {
   const key = `${location.x},${location.y},${location.z}`;
   board.set(key, typeId);
   blockStates.set(key, { "minecraft:cardinal_direction": facing });
   componentOf(typeId)?.onPlace?.({ block: blockAt(location), dimension, previousBlock: { type: { id: "minecraft:air" } } }, { params: {} });
+  // ワールドのイベント (置いた人が分かる)。who が null なら送らない (コマンドなどで置いたとき)
+  if (who) for (const handler of worldEventHandlers.playerPlaceBlock) handler({ block: blockAt(location), dimension, player: who });
 }
 
 /** プレイヤーがブロックを使う (右クリック)。 */

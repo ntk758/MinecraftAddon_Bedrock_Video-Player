@@ -11,7 +11,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +35,9 @@ from pack_builder import (  # noqa: F401 (stable_pack_uuid などは以前から
     stable_pack_uuid,
     vox_thumbnail_png,
 )
+from mvcodec import truncation
+from mvcodec.fileio import work_dir
+from mvcodec.limits import MAX_ID_LENGTH, shorten_id
 from mvcodec.stage import stage_geometry
 from pack_metadata import PACK_VERSION, RELEASE_NOTES, version_text  # noqa: F401 (PACK_VERSION はテストが使う)
 
@@ -51,6 +53,86 @@ RUN_CONVERTER_FLAG = "--run-converter"
 RUN_PERSON_FLAG = "--run-person-split"
 # EXE に、アドオンを組み立てるときに読むファイルがそろっているかを確かめる (リリースのワークフローが EXE を作った後に実行する)
 SELF_CHECK_FLAG = "--self-check"
+
+
+class BuildCancelled(Exception):
+    """作っている途中で、中止のボタンかウィンドウを閉じて止めた。"""
+
+
+def planned_video_ids(entries: list[dict], mode: str, anamorphic: bool, stage_background: str | None,
+                      pair_flat: bool) -> list[str]:
+    """アドオンに入る動画 ID (_build_pack が足す、立体と平面のセットの <ID>_flat と、だまし絵の背景の <ID>_bg も)。
+
+    作り終えてから重なりに気づくと、変換の時間がすべて無駄になる (#185) ので、作り始める前に確かめる。"""
+    ids = []
+    for entry in entries:
+        video_id = str(entry["video_id"])
+        ids.append(video_id)
+        suffix = Path(entry["file_path"]).suffix.lower()
+        is_vox = suffix in (VOX_SUFFIX, PMX_SUFFIX)
+        three_d = is_vox or mode != "screen"
+        background = entry.get("stage_background", stage_background) or (mode in PERSON_MODES and not is_vox)
+        if pair_flat and mode != "screen" and not is_vox:
+            ids.append(f"{video_id}{FLAT_PAIR_SUFFIX}")
+        if entry.get("anamorphic", anamorphic) and three_d and background:
+            ids.append(f"{video_id}_bg")
+    return ids
+
+
+def id_problems(ids: list[str]) -> list[tuple[str, str]]:
+    """[(翻訳のキー, 当てはまる ID の並び)]。重なる ID と、長すぎる ID。"""
+    problems = []
+    duplicates = sorted({video_id for video_id in ids if ids.count(video_id) > 1})
+    if duplicates:
+        problems.append(("error.id_conflict", ", ".join(duplicates)))
+    too_long = sorted({video_id for video_id in ids if len(video_id) > MAX_ID_LENGTH})
+    if too_long:
+        problems.append(("error.id_too_long", ", ".join(too_long)))
+    return problems
+
+
+def kill_process_tree(process: subprocess.Popen) -> None:
+    """子プロセスを、その子 (変換器が起動した ffmpeg など) ごと止める。"""
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, timeout=15,
+                           check=False, **subprocess_kwargs())
+        if process.poll() is None:
+            process.kill()
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _cancelled(app) -> bool:
+    event = getattr(app, "cancel_event", None)
+    return event is not None and event.is_set()
+
+
+def _check_cancel(app) -> None:
+    """中止されていれば BuildCancelled (テストの代わりのオブジェクトには cancel_event が無いので、そのときは何もしない)。"""
+    if _cancelled(app):
+        raise BuildCancelled()
+
+
+def _track(app, process) -> None:
+    """中止のときに止める子プロセスとして覚える。"""
+    lock = getattr(app, "process_lock", None)
+    if lock is None:
+        return
+    with lock:
+        app.active_processes.add(process)
+    if _cancelled(app):
+        kill_process_tree(process)
+
+
+def _untrack(app, process) -> None:
+    lock = getattr(app, "process_lock", None)
+    if lock is None:
+        return
+    with lock:
+        app.active_processes.discard(process)
 
 
 def subprocess_kwargs() -> dict:
@@ -560,6 +642,12 @@ class PackBuilderApp(tk.Tk):
         self.columnconfigure(0, weight=1)
         self.messages = queue.Queue()
         self.building = False
+        # 作っている途中の中止 (中止のボタン・ウィンドウを閉じる)。動いている子プロセス (ffmpeg・変換器・人物の切り抜き)
+        self.cancel_event = threading.Event()
+        self.active_processes: set = set()
+        self.process_lock = threading.Lock()
+        self.closed_while_building = False
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.output_var = tk.StringVar(value=str(default_output_path()))
         self.pack_name_var = tk.StringVar(value="Block & Image Video Player")
@@ -929,7 +1017,11 @@ class PackBuilderApp(tk.Tk):
         build_bar = ttk.Frame(self)
         build_bar.grid(row=7, column=0, pady=6)
         self.build_button = ttk.Button(build_bar, text=tr("build.button"), command=self._start_build)
-        self.build_button.grid(row=0, column=0, padx=(0, 12))
+        self.build_button.grid(row=0, column=0, padx=(0, 4))
+        # 作っている間だけ押せる (以前は止める方法が無く、閉じても裏で最後まで作っていた。#196)
+        self.cancel_button = ttk.Button(build_bar, text=tr("build.cancel_button"), command=self._cancel_build,
+                                        state="normal" if self.building else "disabled")
+        self.cancel_button.grid(row=0, column=1, padx=(0, 12))
         # できたアドオン: 保存先を開く・Minecraft に読み込む・再生のしかた (作り終わるまで押せない)
         after_state = "normal" if self.last_output else "disabled"
         self.after_buttons = [
@@ -939,7 +1031,7 @@ class PackBuilderApp(tk.Tk):
             ttk.Button(build_bar, text=tr("after.preview"), command=self.open_preview,
                        state="normal" if self.last_previews else "disabled"),
         ]
-        for column, button in enumerate(self.after_buttons, start=1):
+        for column, button in enumerate(self.after_buttons, start=2):
             button.grid(row=0, column=column, padx=3)
         self.progress = ttk.Progressbar(self, mode="indeterminate")
         self.progress.grid(row=8, column=0, sticky="ew", padx=10, pady=4)
@@ -1013,7 +1105,8 @@ class PackBuilderApp(tk.Tk):
         p = Path(path)
         # ブラウザ版 (web/app.js) と同じ規則: 使えない文字の並びを _ 1 つにし、前後の _ を取る。何も残らなければ video
         # (日本語だけのファイル名が「______」になり、コマンドで打ちにくかった)
-        video_id = re.sub(r"[^a-z0-9_]+", "_", p.stem.lower()).strip("_") or "video"
+        # 長いファイル名は切る (動画 ID は MAX_ID_LENGTH 文字まで。_flat・_bg・番号を足しても収まるように。#186)
+        video_id = shorten_id(re.sub(r"[^a-z0-9_]+", "_", p.stem.lower()).strip("_") or "video")
         existing_ids = self._video_ids()
         if video_id in existing_ids:
             suffix = 2
@@ -1226,6 +1319,13 @@ class PackBuilderApp(tk.Tk):
 
         pack_name = self.pack_name_var.get().strip()
         namespace = self.namespace_var.get().strip()
+        problems = id_problems(planned_video_ids(video_entries, mode, self.anamorphic_var.get(),
+                                                 self.stage_background_var.get().strip() or None,
+                                                 self.pair_flat_var.get()))
+        if problems:
+            messagebox.showerror(self.tr("error.settings_title"),
+                                 "\n".join(self.tr(key, ids=ids, max=MAX_ID_LENGTH) for key, ids in problems))
+            return
 
         if not pack_name:
             messagebox.showerror(self.tr("error.pack_name_title"), self.tr("error.pack_name"))
@@ -1236,9 +1336,11 @@ class PackBuilderApp(tk.Tk):
             return
 
         self.building = True
+        self.cancel_event.clear()
         self.building_previews = []
         self.building_output = output
         self.build_button.configure(state="disabled")
+        self.cancel_button.configure(state="normal")
         self.language_box.configure(state="disabled")
         self.progress.start(12)
         threading.Thread(
@@ -1357,11 +1459,13 @@ class PackBuilderApp(tk.Tk):
         出力はすべて person_log (_split_person が作る) に書く。子プロセスが最後に出す「stats <JSON>」の行は、そのまま
         流さずに、終了コード 0 のとき 1〜2 行のまとめと (条件に当てはまれば) 注意にして流す (person_summary_lines)。"""
         command = [*person_command(), *argv]
+        _check_cancel(self)
         self.messages.put("$ " + subprocess.list2cmdline(command))
         process = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             encoding="utf-8", errors="replace", **subprocess_kwargs(),
         )
+        _track(self, process)
         tail: list[str] = []
         last_download = -1
         stats = None
@@ -1396,7 +1500,9 @@ class PackBuilderApp(tk.Tk):
                 elif "W:onnxruntime" not in line:
                     self.messages.put("  " + line)
             code = process.wait()
+            _untrack(self, process)
             write_log(f"exit code {code}")
+        _check_cancel(self)
         if code == 0 and isinstance(stats, dict):
             for text in person_summary_lines(self.tr, stats, log):
                 self.messages.put(text)
@@ -1451,15 +1557,22 @@ class PackBuilderApp(tk.Tk):
                 "thumbnail": None, "sounds": sounds, "hidden": True}
 
     def _run(self, command: list[str]) -> None:
+        _check_cancel(self)
         self.messages.put("$ " + subprocess.list2cmdline(command))
         process = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             encoding="utf-8", errors="replace", **subprocess_kwargs(),
         )
-        assert process.stdout is not None
-        for line in process.stdout:
-            self.messages.put(line.rstrip())
-        if process.wait() != 0:
+        _track(self, process)
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                self.messages.put(line.rstrip())
+            process.wait()
+        finally:
+            _untrack(self, process)
+        _check_cancel(self)
+        if process.returncode != 0:
             raise RuntimeError(self.tr("build.cmd_failed", code=signed_exit_code(process.returncode)))
 
     def _build_pack(
@@ -1480,137 +1593,169 @@ class PackBuilderApp(tk.Tk):
                 if not required.is_file():
                     raise RuntimeError(self.tr("build.missing_file", path=required))
 
-            with tempfile.TemporaryDirectory(prefix="block-video-player-") as temp_dir:
+            with work_dir("block-video-player-") as temp_dir:
                 temp = Path(temp_dir)
                 videos = []
                 total_videos = len(video_entries)
+                failures = []
                 for vi, entry in enumerate(video_entries, 1):
-                    video = Path(entry["file_path"])
+                    _check_cancel(self)
                     video_id = entry["video_id"]
-                    thumb_sec = entry["thumb_sec"]
+                    checkpoint = len(videos)
+                    try:
+                        video = Path(entry["file_path"])
+                        video_id = entry["video_id"]
+                        thumb_sec = entry["thumb_sec"]
 
-                    self.messages.put(self.tr("build.processing", index=vi, total=total_videos, id=video_id))
+                        self.messages.put(self.tr("build.processing", index=vi, total=total_videos, id=video_id))
 
-                    generated_data = temp / f"frames_{video_id}.js"
-                    thumbnail = temp / f"thumb_{video_id}.png"
+                        generated_data = temp / f"frames_{video_id}.js"
+                        thumbnail = temp / f"thumb_{video_id}.png"
 
-                    if video.suffix.lower() == PMX_SUFFIX:
-                        # MMD: モデルと踊りから立体のアニメ (.vox) を作り、あとは .vox と同じに変換する
-                        on_stage = entry.get("anamorphic", anamorphic)
-                        extreme = entry.get("mmd_extreme", mmd_extreme)
-                        mmd_height = min(height, mmd_height_limit(on_stage, extreme))
-                        if extreme and on_stage:
-                            self.messages.put(self.tr("build.mmd_extreme_stage", height=mmd_height,
-                                                      ms=f"{mmd_stage_frame_ms(mmd_height):.0f}",
-                                                      fps=mmd_stage_max_fps(mmd_height)))
-                        elif extreme:
-                            self.messages.put(self.tr("build.mmd_extreme", height=mmd_height))
-                        video = self._mmd_to_vox(video, entry.get("motion"), temp / f"mmd_{video_id}.vox",
-                                                 mmd_height, fps, duration)
-                    is_vox = video.suffix.lower() == VOX_SUFFIX
-                    # サムネイル生成 (.vox は立体を正面から見た画像)
-                    if is_vox:
-                        self.messages.put(self.tr("build.vox_preview"))
-                        write_vox_thumbnail(video, thumbnail, palette=palette)
-                    else:
-                        self.messages.put(self.tr("build.thumbnail", sec=thumb_sec))
-                        self._run([
-                            ffmpeg, "-y", "-ss", str(thumb_sec), "-i", str(video), "-frames:v", "1", "-update", "1",
-                            "-vf", "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black",
-                            str(thumbnail),
-                        ])
-                    if not thumbnail.is_file() or thumbnail.stat().st_size == 0:
-                        raise RuntimeError(self.tr("build.thumbnail_failed", id=video_id))
+                        if video.suffix.lower() == PMX_SUFFIX:
+                            # MMD: モデルと踊りから立体のアニメ (.vox) を作り、あとは .vox と同じに変換する
+                            on_stage = entry.get("anamorphic", anamorphic)
+                            extreme = entry.get("mmd_extreme", mmd_extreme)
+                            mmd_height = min(height, mmd_height_limit(on_stage, extreme))
+                            if extreme and on_stage:
+                                self.messages.put(self.tr("build.mmd_extreme_stage", height=mmd_height,
+                                                          ms=f"{mmd_stage_frame_ms(mmd_height):.0f}",
+                                                          fps=mmd_stage_max_fps(mmd_height)))
+                            elif extreme:
+                                self.messages.put(self.tr("build.mmd_extreme", height=mmd_height))
+                            video = self._mmd_to_vox(video, entry.get("motion"), temp / f"mmd_{video_id}.vox",
+                                                     mmd_height, fps, duration)
+                        is_vox = video.suffix.lower() == VOX_SUFFIX
+                        # サムネイル生成 (.vox は立体を正面から見た画像)
+                        if is_vox:
+                            self.messages.put(self.tr("build.vox_preview"))
+                            write_vox_thumbnail(video, thumbnail, palette=palette)
+                        else:
+                            self.messages.put(self.tr("build.thumbnail", sec=thumb_sec))
+                            self._run([
+                                ffmpeg, "-y", "-ss", str(thumb_sec), "-i", str(video), "-frames:v", "1", "-update", "1",
+                                "-vf", "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black",
+                                str(thumbnail),
+                            ])
+                        if not thumbnail.is_file() or thumbnail.stat().st_size == 0:
+                            raise RuntimeError(self.tr("build.thumbnail_failed", id=video_id))
 
-                    # だまし絵と背景の映像は、動画ごとの指定 (サンプルを作るスクリプト用) があればそれを使う
-                    video_anamorphic = entry.get("anamorphic", anamorphic)
-                    video_background = entry.get("stage_background", stage_background)
+                        # だまし絵と背景の映像は、動画ごとの指定 (サンプルを作るスクリプト用) があればそれを使う
+                        video_anamorphic = entry.get("anamorphic", anamorphic)
+                        video_background = entry.get("stage_background", stage_background)
 
-                    # だまし絵にする、動画から作る立体は縮める (舞台と背景の映像が立体に比例して広がり、重くなる)
-                    video_width, video_height = width, height
-                    if video_anamorphic and mode != "screen" and not is_vox:
-                        video_width, video_height = stage_figure_size(width, height)
-                        if (video_width, video_height) != (width, height):
-                            self.messages.put(self.tr("build.stage_size", width=video_width, height=video_height,
-                                                      max=STAGE_MAX_SIDE))
-                    # 人物を切り抜く: 人物の範囲の動画を立体の形に使い、だまし絵なら人物を消した映像を背景にする
-                    mask_video = None
-                    if mode in PERSON_MODES and not is_vox:
-                        mask_video, person_background = self._split_person(
-                            video, temp / f"person_{video_id}", video_width, video_height, fps, duration, ffmpeg,
-                            PERSON_MODES[mode])
-                        if video_anamorphic and not video_background:
-                            video_background = str(person_background)
-                    # だまし絵の背景の映像 (立体のときだけ。人物の動画 ID + "_bg" の、一覧に出さない平面の動画にする)
-                    three_d = is_vox or mode != "screen"
-                    background_id = f"{video_id}_bg" if video_anamorphic and three_d and video_background else None
-                    # 背景の映像があれば、その音声を鳴らす (人物の動画の音声は入れない)
-                    sounds = [] if is_vox or background_id else self._extract_audio(
-                        ffmpeg, video, temp / "sounds" / video_id, duration)
+                        # だまし絵にする、動画から作る立体は縮める (舞台と背景の映像が立体に比例して広がり、重くなる)
+                        video_width, video_height = width, height
+                        if video_anamorphic and mode != "screen" and not is_vox:
+                            video_width, video_height = stage_figure_size(width, height)
+                            if (video_width, video_height) != (width, height):
+                                self.messages.put(self.tr("build.stage_size", width=video_width, height=video_height,
+                                                          max=STAGE_MAX_SIDE))
+                        # 人物を切り抜く: 人物の範囲の動画を立体の形に使い、だまし絵なら人物を消した映像を背景にする
+                        mask_video = None
+                        if mode in PERSON_MODES and not is_vox:
+                            mask_video, person_background = self._split_person(
+                                video, temp / f"person_{video_id}", video_width, video_height, fps, duration, ffmpeg,
+                                PERSON_MODES[mode])
+                            if video_anamorphic and not video_background:
+                                video_background = str(person_background)
+                        # だまし絵の背景の映像 (立体のときだけ。人物の動画 ID + "_bg" の、一覧に出さない平面の動画にする)
+                        three_d = is_vox or mode != "screen"
+                        background_id = f"{video_id}_bg" if video_anamorphic and three_d and video_background else None
+                        # 背景の映像があれば、その音声を鳴らす (人物の動画の音声は入れない)
+                        sounds = [] if is_vox or background_id else self._extract_audio(
+                            ffmpeg, video, temp / "sounds" / video_id, duration)
 
-                    # ブロックデータ変換
-                    self.messages.put(self.tr("build.converting"))
-                    argv = build_converter_args(
-                        video, generated_data, ffmpeg, video_width, video_height, fps, palette, dither_method,
-                        self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
-                        self.tr.language, mode, depth, video_anamorphic,
-                    )
-                    argv += PackBuilderApp._flat_areas_args(self)
-                    if background_id:
-                        argv += ["--stage-background", background_id]
-                    if mask_video:
-                        argv += ["--mask-video", str(mask_video)]
-                    weight_mask = PackBuilderApp._palette_weight_mask(self, video, video_id, mask_video, is_vox, palette, temp,
-                                                            video_width, video_height, fps, duration, ffmpeg)
-                    if weight_mask:
-                        argv += ["--palette-weight-mask", str(weight_mask), "--palette-weight", str(PALETTE_AI_WEIGHT)]
-                    self._run([*converter_command(), *argv])
-                    frames_js = generated_data.read_text(encoding="utf-8")
-                    # 立体版と平面版をセットにする (動画・画像を立体にするときだけ。.vox と MMD には元の平面の映像が無い)
-                    pair = pair_flat and mode != "screen" and not is_vox
-                    videos.append({
-                        "id": video_id, "title": PAIR_TITLE_3D.format(title=video.stem) if pair else video.stem,
-                        "frames_js": frames_js, "thumbnail": thumbnail.read_bytes(), "sounds": sounds,
-                        "width": video_width, "height": video_height,
-                    })
-                    if pair:
-                        flat_id = f"{video_id}{FLAT_PAIR_SUFFIX}"
-                        self.messages.put(self.tr("build.pair_flat", id=flat_id))
-                        flat_data = temp / f"frames_{flat_id}.js"
-                        self._run([*converter_command(), *build_converter_args(
-                            video, flat_data, ffmpeg, width, height, fps, palette, flat_pair_dither(dither_method),
+                        # ブロックデータ変換
+                        self.messages.put(self.tr("build.converting"))
+                        argv = build_converter_args(
+                            video, generated_data, ffmpeg, video_width, video_height, fps, palette, dither_method,
                             self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
-                            self.tr.language, "screen", depth, False,
-                        ), *PackBuilderApp._flat_areas_args(self)])
-                        # 音声は立体版 (だまし絵なら背景の映像) のものを鳴らし、2 回入れない
+                            self.tr.language, mode, depth, video_anamorphic,
+                        )
+                        argv += PackBuilderApp._flat_areas_args(self)
+                        if background_id:
+                            argv += ["--stage-background", background_id]
+                        if mask_video:
+                            argv += ["--mask-video", str(mask_video)]
+                        weight_mask = PackBuilderApp._palette_weight_mask(self, video, video_id, mask_video, is_vox, palette, temp,
+                                                                video_width, video_height, fps, duration, ffmpeg)
+                        if weight_mask:
+                            argv += ["--palette-weight-mask", str(weight_mask), "--palette-weight", str(PALETTE_AI_WEIGHT)]
+                        self._run([*converter_command(), *argv])
+                        frames_js = generated_data.read_text(encoding="utf-8")
+                        if sounds:
+                            dims = frame_data_dims(frames_js)
+                            if dims.get("frame_count") and fps:
+                                chunk_files = sorted((temp / "sounds" / video_id).glob("chunk_*.ogg"),
+                                                     key=lambda f: int(f.stem.split("_")[1]))
+                                truncation.check_audio_length(
+                                    truncation.audio_seconds(chunk_files, AUDIO_CHUNK_SECONDS, ffmpeg),
+                                    dims["frame_count"] / fps, lambda text: self.messages.put("  " + text))
+                        # 立体版と平面版をセットにする (動画・画像を立体にするときだけ。.vox と MMD には元の平面の映像が無い)
+                        pair = pair_flat and mode != "screen" and not is_vox
                         videos.append({
-                            "id": flat_id, "title": PAIR_TITLE_2D.format(title=video.stem),
-                            "frames_js": flat_data.read_text(encoding="utf-8"), "thumbnail": thumbnail.read_bytes(),
-                            "sounds": [], "audio_from": background_id or video_id, "width": width, "height": height,
+                            "id": video_id, "title": PAIR_TITLE_3D.format(title=video.stem) if pair else video.stem,
+                            "frames_js": frames_js, "thumbnail": thumbnail.read_bytes(), "sounds": sounds,
+                            "width": video_width, "height": video_height,
                         })
-                    if background_id:
-                        videos.append(self._convert_stage_background(
-                            Path(video_background), background_id, frames_js, temp, ffmpeg, fps, palette,
-                            dither_method, device, duration,
-                        ))
+                        if pair:
+                            flat_id = f"{video_id}{FLAT_PAIR_SUFFIX}"
+                            self.messages.put(self.tr("build.pair_flat", id=flat_id))
+                            flat_data = temp / f"frames_{flat_id}.js"
+                            self._run([*converter_command(), *build_converter_args(
+                                video, flat_data, ffmpeg, width, height, fps, palette, flat_pair_dither(dither_method),
+                                self.keyframe_interval_var.get(), device, self.perceptual_var.get(), duration,
+                                self.tr.language, "screen", depth, False,
+                            ), *PackBuilderApp._flat_areas_args(self)])
+                            # 音声は立体版 (だまし絵なら背景の映像) のものを鳴らし、2 回入れない
+                            videos.append({
+                                "id": flat_id, "title": PAIR_TITLE_2D.format(title=video.stem),
+                                "frames_js": flat_data.read_text(encoding="utf-8"), "thumbnail": thumbnail.read_bytes(),
+                                "sounds": [], "audio_from": background_id or video_id, "width": width, "height": height,
+                            })
+                        if background_id:
+                            videos.append(self._convert_stage_background(
+                                Path(video_background), background_id, frames_js, temp, ffmpeg, fps, palette,
+                                dither_method, device, duration,
+                            ))
+                    except BuildCancelled:
+                        raise
+                    except Exception as failure:  # noqa: BLE001 (1 本の失敗で、ほかの動画を捨てない。#197)
+                        del videos[checkpoint:]
+                        failures.append((video_id, failure))
+                        self.messages.put(self.tr("build.video_failed", id=video_id, error=str(failure)))
+                if failures and not videos:
+                    # 全部だめなら、最初の失敗をそのまま伝える (よくある失敗の 1 行の説明が出るように)
+                    raise failures[0][1]
 
                 self.messages.put(self.tr("build.videos_index"))
                 video_index_entries = build_addon(output, videos, pack_name, namespace, addon_language)
                 self.building_previews = self._write_previews(output, videos)
 
             if image_mode:
-                # 別ファイルなので、失敗してもブロックモードのアドオンはそのまま
-                image_output = self._build_image_pack(video_entries, output, pack_name, namespace, width, height,
+                # 別ファイルなので、失敗してもブロックモードのアドオンはそのまま。作れなかった動画は入れない
+                _check_cancel(self)
+                failed_ids = {video_id for video_id, _ in failures}
+                image_entries = [entry for entry in video_entries if entry["video_id"] not in failed_ids]
+                image_output = self._build_image_pack(image_entries, output, pack_name, namespace, width, height,
                                                       duration, ffmpeg)
                 if image_output and self.image_combine_var.get():
                     self._combine_image_pack(output, image_output)
             video_names = ", ".join(e["id"] for e in video_index_entries)
-            self.messages.put((
-                "success",
-                self.tr("build.success", output=output, videos=video_names, count=total_videos, ns=namespace),
-            ))
+            text = self.tr("build.success", output=output, videos=video_names, count=total_videos - len(failures),
+                           ns=namespace)
+            if failures:
+                text += "\n" + self.tr("build.some_failed", count=len(failures),
+                                       ids=", ".join(video_id for video_id, _ in failures))
+            self.messages.put(("success", text))
+        except BuildCancelled:
+            self.messages.put(("cancelled", self.tr("build.cancelled")))
         except Exception as error:
-            self.messages.put(("error", str(error)))
+            if _cancelled(self):
+                self.messages.put(("cancelled", self.tr("build.cancelled")))
+            else:
+                self.messages.put(("error", str(error)))
 
     def _combine_image_pack(self, output: Path, image_output: Path) -> None:
         """画像モードのアドオンをブロックモードのファイルに入れ、別のファイルは消す。失敗しても別ファイルのまま残す。"""
@@ -1675,7 +1820,8 @@ class PackBuilderApp(tk.Tk):
             *(["--end", str(duration)] if duration else []),
         ], allow_no_inputs=bool(figures))
         try:
-            report = image_mode.build(args, log=lambda _text: None, figures=figures or None)
+            report = image_mode.build(args, log=lambda text: self.messages.put("  " + text) if text.startswith("注意") else None,
+                                      figures=figures or None)
         except Exception as failure:  # noqa: BLE001 (別のアドオンなので、どんな失敗でもブロックモードを止めない)
             self.messages.put(self.tr("build.image_failed", output=image_output, error=str(failure)))
             return None
@@ -1691,6 +1837,27 @@ class PackBuilderApp(tk.Tk):
         return image_output
 
 
+    def _cancel_build(self) -> None:
+        """作っている途中で止める。動いている子プロセスを止め、作る側 (_build_pack) は次の区切りで止まる。"""
+        if not self.building or self.cancel_event.is_set():
+            return
+        self.cancel_event.set()
+        self._append_log(self.tr("build.cancelling"))
+        self.cancel_button.configure(state="disabled")
+        with self.process_lock:
+            processes = list(self.active_processes)
+        for process in processes:
+            kill_process_tree(process)
+
+    def _on_close(self) -> None:
+        """作っている途中なら、中止して閉じるかを聞く (聞かずに閉じると、裏で最後まで作り続けていた。#196)。"""
+        if self.building:
+            if not messagebox.askyesno(self.tr("dialog.close_building_title"), self.tr("dialog.close_building")):
+                return
+            self._cancel_build()
+            self.closed_while_building = True
+        self.destroy()
+
     def _drain_messages(self) -> None:
         try:
             while True:
@@ -1699,8 +1866,15 @@ class PackBuilderApp(tk.Tk):
                     self.building = False
                     self.progress.stop()
                     self.build_button.configure(state="normal")
+                    if getattr(self, "cancel_button", None) is not None:
+                        self.cancel_button.configure(state="disabled")
                     self.language_box.configure(state="readonly")
                     kind, text = message
+                    if kind == "cancelled":
+                        self._append_log(text)
+                        if self.wizard is not None:
+                            self.wizard.build_finished(self.last_output, False)
+                        continue
                     ok = kind == "success"
                     if ok:
                         self.last_output = self.building_output
@@ -1921,4 +2095,9 @@ if __name__ == "__main__":
         sys.exit(run_converter_mode(sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == RUN_PERSON_FLAG:
         sys.exit(run_person_mode(sys.argv[2:]))
-    PackBuilderApp().mainloop()
+    app = PackBuilderApp()
+    app.mainloop()
+    if app.closed_while_building:
+        # 作る側のスレッドが残っていても、プロセスを終える (ウィンドウの無いまま動き続けていた。#196)。
+        # 残った作業フォルダは、次に作るときに片付ける (mvcodec/fileio.py)
+        os._exit(0)

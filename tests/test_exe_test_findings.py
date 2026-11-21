@@ -48,7 +48,10 @@ def test_expected_seconds_follow_the_requested_range():
     assert truncation.expected_seconds(10.0, start=2, end=6) == 4.0
     assert truncation.expected_seconds(10.0, start=8, end=20) == 2.0
     assert truncation.expected_seconds(None) is None
-    truncation.check_complete("v.mp4", 0, 10, None, "partial file")
+    # 長さが分からなくても、ファイルの終わりが欠けた文があれば止める (#156)
+    with pytest.raises(truncation.TruncatedVideoError):
+        truncation.check_complete("v.mp4", 0, 10, None, "partial file")
+    truncation.check_complete("v.mp4", 0, 10, None, "")
 
 
 # --- 実際の動画 (ffmpeg) ---

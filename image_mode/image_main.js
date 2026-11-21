@@ -624,11 +624,32 @@ function showLibrary(player) {
   }).catch(() => { /* 開けなかった */ });
 }
 
+// プレイヤーの権限 (PlayerPermissionLevel.Operator)。enum を import すると、無い版の Script API で読み込めないので数で比べる
+const OPERATOR_PERMISSION_LEVEL = 2;
+
+/** オペレーターか。ワールドに 1 人だけなら誰でもよい。playerPermissionLevel の無い版では誰でも (前と同じ)。 */
+function isOperator(player) {
+  try {
+    if (world.getAllPlayers().length <= 1) return true;
+    const level = player.playerPermissionLevel;
+    return level === undefined || level === OPERATOR_PERMISSION_LEVEL;
+  } catch (e) {
+    return false;
+  }
+}
+
 world.afterEvents.itemUse?.subscribe((event) => {
   if (event.itemStack?.typeId !== REMOTE_ITEM) return;
   if (!loaded) {
     state = loadState();
     loaded = true;
+  }
+  // 時計のリモコンはコマンドと同じ操作 (スクリーンを目の前に置き直す・止める) なので、オペレーターだけ (#198)
+  if (!isOperator(event.source)) {
+    try {
+      event.source.sendMessage(tr("remote_operator_only"));
+    } catch (e) { /* 抜けた */ }
+    return;
   }
   showRemote(event.source);
 });

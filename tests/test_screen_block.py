@@ -167,10 +167,12 @@ def test_three_screens_play_pause_and_stop_independently(scene, tmp_path):
     assert screen_record(out, "end", "s3")["state"] == "paused"
     assert len(messages_with(out, "bvp.screen.finished")) == 1
     # 音: 止めたスクリーンの音だけを止める。B の音を止めたのは、B が最後まで再生したときの 1 回だけ (A の停止では止めない)
-    stops = [cmd for cmd in out["commands"] if cmd.startswith("stopsound")]
-    assert "stopsound @a badapple.a.chunk_0" in stops and "stopsound @a badapple.c.chunk_0" in stops
-    assert stops.count("stopsound @a badapple.b.chunk_0") == 1
-    assert stops.index("stopsound @a badapple.b.chunk_0") > stops.index("stopsound @a badapple.a.chunk_0")
+    # (止めるのは、その画面の音を鳴らした人の分だけ。#201)
+    stops = [cmd for cmd in out["commands"] if "stopsound" in cmd]
+    assert "Steve: stopsound @s badapple.a.chunk_0" in stops and "Steve: stopsound @s badapple.c.chunk_0" in stops
+    assert stops.count("Steve: stopsound @s badapple.b.chunk_0") == 1
+    assert stops.index("Steve: stopsound @s badapple.b.chunk_0") > stops.index("Steve: stopsound @s badapple.a.chunk_0")
+    assert not any("@a" in cmd for cmd in stops)
     assert {"badapple.a.chunk_0", "badapple.b.chunk_0", "badapple.c.chunk_0"} <= set(out["sounds"])
     # 描画のタイマーは 1 つだけ
     assert out["intervalCounts"]["three"] == 1
@@ -485,3 +487,88 @@ def test_the_area_stays_loaded_until_drawing_ends(scene, tmp_path, action):
     added = [i for i, c in enumerate(out["commands"]) if c.startswith("tickingarea add") and "bvp_screen_s1_" in c]
     removed = [i for i, c in enumerate(out["commands"]) if c.startswith("tickingarea remove bvp_screen_s1_")]
     assert added and removed and max(removed) > max(added)
+
+
+# --- 2026-11 の外部の監査 (muse) ---
+
+def test_only_the_owner_and_operators_control_a_screen(scene, tmp_path):
+    """ほかの人のスクリーンは操作できない (来た人が消せた。#198)。オペレーターはどれでも操作できる。"""
+    path, _ = scene
+    alex_block = {"x": 40, "y": 64, "z": 90}
+    steps = [{"placeScreen": BLOCK}, {"useScreen": BLOCK, "ui": choose_video()},
+             {"runUntil": "bvp.screen.playing", "max": 200},
+             {"secondPlayer": "join"}, {"run": 2},
+             # メンバーの Alex は Steve のスクリーンを開けない
+             {"useScreen": BLOCK, "by": 2}, {"run": 5}, {"tickMark": "refused"},
+             # Alex が置いたスクリーンは Alex が使える。オペレーターの Steve も使える
+             {"placeScreen": alex_block, "by": 2}, {"useScreen": alex_block, "by": 2, "ui": choose_video()},
+             {"runUntil": "bvp.screen.playing", "count": 2, "max": 200},
+             {"useScreen": alex_block, "ui": [{"selection": STOP}]}, {"run": 3},
+             # リモコン (コマンドの画面の操作) はオペレーターだけ
+             {"ui": [], "by": 2}, {"run": 2}, {"dp": "end"}]
+    out = drive(tmp_path / "addon", {"a": path}, steps)
+    assert out["errors"] == []
+    refused = [m for m in out["messages"] if "bvp.screen.not_yours" in m]
+    assert len(refused) == 1 and '"to":"player2"' in refused[0] and "Steve" in refused[0]
+    # 断ったので、Alex に操作画面を出していない (Steve のスクリーンは消えていない)
+    alex_forms = [json.dumps(form["title"]) for form in out["forms"] if form.get("to") == "player2"]
+    assert alex_forms and not [title for title in alex_forms if '"text": "1"' in title], alex_forms
+    assert screen_record(out, "end", "s1") is not None
+    assert screen_record(out, "end", "s1")["owner"] == ["-1001", "Steve"]
+    assert screen_record(out, "end", "s2")["owner"] == ["-1002", "Alex"]
+    assert screen_record(out, "end", "s2")["state"] == "stopped"
+    remote = [m for m in out["messages"] if "bvp.remote_operator_only" in m]
+    assert len(remote) == 1 and '"to":"player2"' in remote[0]
+
+
+def test_screens_without_an_owner_are_for_operators(scene, tmp_path):
+    """v6.41.0 で置いた (持ち主の無い) スクリーンは、ほかの人がいるときはオペレーターだけが操作できる。"""
+    path, _ = scene
+    old = {"v": 1, "id": "s1", "media": None, "renderer": "block", "mount": "block", "dim": "overworld",
+           "pos": [0, 64, 90], "facing": 0, "state": "idle", "at": 0, "volume": 1, "loop": False, "scale": 1,
+           "w": 0, "h": 0, "created": 0, "box": None, "pending": []}
+    steps = [{"setDp": {"badapple:screens": json.dumps({"v": 1, "next": 2, "ids": ["s1"]}),
+                        "badapple:screen.s1": json.dumps(old)}},
+             {"setBlock": {**BLOCK, "id": "badapple:video_screen"}},
+             {"secondPlayer": "join"}, {"run": 2},
+             {"useScreen": BLOCK, "by": 2, "ui": choose_video()}, {"run": 5},
+             {"useScreen": BLOCK, "ui": choose_video()}, {"runUntil": "bvp.screen.playing", "max": 200}]
+    out = drive(tmp_path / "addon", {"a": path}, steps)
+    assert out["errors"] == []
+    assert len(messages_with(out, "bvp.screen.operator_only")) == 1
+    assert len(messages_with(out, "bvp.screen.playing")) == 1
+
+
+def test_long_media_ids_survive_a_reload_and_broken_records_are_cleaned(scene, tmp_path):
+    """前の版で作った長い動画 ID (129 文字以上) も読み戻し、読み戻せない記録の置いたブロックは片付けに回す (#199)。"""
+    path, _ = scene
+    record = {"v": 1, "id": "s1", "media": "m" * 200, "renderer": "block", "mount": "block", "dim": "overworld",
+              "pos": [0, 64, 90], "facing": 0, "state": "paused", "at": 0, "volume": 1, "loop": False, "scale": 1,
+              "w": 24, "h": 16, "created": 0, "box": None, "pending": []}
+    broken = {**record, "id": "s2", "pos": [40, 64, 90], "media": "m" * 300, "box": [30, 64, 80, 33, 66, 80]}
+    steps = [{"setDp": {"badapple:screens": json.dumps({"v": 1, "next": 3, "ids": ["s1", "s2"]}),
+                        "badapple:screen.s1": json.dumps(record), "badapple:screen.s2": json.dumps(broken)}},
+             {"setBlock": {**BLOCK, "id": "badapple:video_screen"}},
+             # 壊れた記録のスクリーンが置いた動画のブロック (持ち主の無い壁として残っていた)
+             {"setBlock": {"x": 31, "y": 65, "z": 80, "id": "minecraft:white_concrete"}},
+             {"worldLoad": True}, {"run": 300}, {"dp": "end"}]
+    out = drive(tmp_path / "addon", {"a": path}, steps)
+    assert out["errors"] == []
+    assert json.loads(out["dps"]["end"]["badapple:screens"])["ids"] == ["s1"]
+    # 片付けに回して、読み込まれていたので片付けた
+    assert world_of(out).get((31, 65, 80), "minecraft:air") == "minecraft:air"
+
+
+def test_stopping_one_screen_keeps_the_same_video_on_another(scene, tmp_path):
+    """同じ動画を 2 つのスクリーンで流しているとき、1 つを止めても、もう 1 つの音を止めない (#201)。"""
+    path, _ = scene
+    a, b = BLOCK, {"x": 30, "y": 64, "z": 90}
+    steps = [{"placeScreen": a}, {"placeScreen": b},
+             {"useScreen": a, "ui": choose_video()}, {"runUntil": "bvp.screen.playing", "max": 200},
+             {"useScreen": b, "ui": choose_video()}, {"runUntil": "bvp.screen.playing", "count": 2, "max": 200},
+             {"run": 5}, {"tickMark": "stop_a"},
+             {"useScreen": a, "ui": [{"selection": STOP}]}, {"run": 3}]
+    out = drive(tmp_path / "addon", {"a": path}, steps)
+    assert out["errors"] == []
+    assert "badapple.a.chunk_0" in out["sounds"]
+    assert not [cmd for cmd in out["commands"] if "stopsound" in cmd and "badapple.a.chunk_0" in cmd]

@@ -575,3 +575,8 @@ progress::-moz-progress-bar { background: var(--electric); border-radius: 3px; }
   .js .hero-title, .js .hero-side, .js .stage-figure { opacity: 1; }
   .spinner { animation: spin 1.4s linear infinite !important; }
 }
+
+/* コマを取り出す <video> (requestVideoFrameCallback が届くようにページに置く。見えない大きさ) */
+.frame-source { position: fixed; left: 0; top: 0; width: 2px; height: 2px; opacity: 0.01; pointer-events: none; }
+/* 作っている間だけ出す中止のボタン */
+.button-cancel { width: 100%; margin-top: 8px; }

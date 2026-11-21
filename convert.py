@@ -7,6 +7,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -35,6 +36,8 @@ from mvcodec.color import (
 from conversion_profiles import DEFAULT_PROFILE, PROFILES
 from gui_i18n import LOCALES, Translator, detect_system_language
 from mvcodec.device import DEVICE_CHOICES, detect_gpu, empty_cache, squared_distances
+from mvcodec.fileio import write_text_atomic
+from mvcodec.limits import MAX_ID_LENGTH
 from mvcodec.dither_motion import DitherAligner
 from mvcodec.block_rdo import AUTO_BUDGET, BLOCK_ERROR_CAP, MODES as BLOCK_MODES, BlockRDO
 # 条件付き更新のしきい値 (RGB の距離)。前のブロックの色がこれ以内しか悪くならなければ変えない
@@ -112,6 +115,9 @@ def build_video_filter(width, height, fps=None, fit="pad"):
     filters = []
     if fps is not None:
         filters.append(f"fps={fps}")
+    # 画素の縦横比 (SAR) が 1:1 でない動画 (アナモルフィック) は、表示の大きさに直してから収める。直さないと横に
+    # 縮んだまま変換していた (#166)。SAR の情報が無い動画では sar は 1 なので、何も変わらない
+    filters.append("scale=iw*sar:ih,setsar=1")
     if fit == "cover":
         filters.append(f"scale={width}:{height}:force_original_aspect_ratio=increase")
         filters.append(f"crop={width}:{height}")
@@ -134,17 +140,9 @@ def ffmpeg_frame_generator(video_path, width, height, fps, duration=None, ffmpeg
     cmd.extend(["-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **_subprocess_kwargs())
-    # stderr は別のスレッドで読み続ける (読まないと、壊れた動画で ffmpeg がエラーを書き続けてパイプが詰まり、
-    # ffmpeg とこちらが待ち合って止まる)。エラーの表示には最後の 8 KB だけ使う
-    stderr_tail = bytearray()
-
-    def drain_stderr():
-        for chunk in iter(lambda: proc.stderr.read(4096), b""):
-            stderr_tail.extend(chunk)
-            del stderr_tail[:-8192]
-
-    reader = threading.Thread(target=drain_stderr, daemon=True)
-    reader.start()
+    # stderr は別のスレッドで読み続ける (読まないと、壊れた動画でパイプが詰まって止まる)。表示には最後の 8 KB、
+    # 途中で切れたかの判定にはデコードのエラーの行も使う (mvcodec/truncation.py)
+    collector = truncation.StderrCollector(proc.stderr).start()
     frame_size = width * height * 3
     completed = False
     frames = 0
@@ -161,16 +159,28 @@ def ffmpeg_frame_generator(video_path, width, height, fps, duration=None, ffmpeg
             proc.kill()
         proc.stdout.close()
         returncode = proc.wait()
-        reader.join(timeout=5)
+        collector.join(timeout=5)
         proc.stderr.close()
-        stderr = bytes(stderr_tail).decode("utf-8", errors="replace")
     if completed and returncode != 0:
-        raise RuntimeError(f"ffmpeg がエラー終了しました (code {returncode}): {stderr.strip()}")
+        raise RuntimeError(f"ffmpeg がエラー終了しました (code {returncode}): {collector.text.strip()}")
     if completed:
+        expected = truncation.expected_seconds(truncation.probe_duration(video_path, ffmpeg), duration=duration)
+        if frames == 0 and expected is not None and expected * fps < 1:
+            # fps 0.1 で 3 秒の動画など。「No input frames.」より先に、理由を出す (#168)
+            raise ValueError(f"--fps {fps:g} では、{expected:.1f} 秒の動画から 1 コマも作れません (1 コマに {1 / fps:g} 秒要ります) / "
+                             f"--fps {fps:g} cannot make even one frame from a {expected:.1f} s video")
         # 末尾の欠けた動画は ffmpeg が 0 で終わるので、読めた長さとエラーの文で見つける (mvcodec/truncation.py)
-        truncation.check_complete(video_path, frames, fps,
-                                  truncation.expected_seconds(truncation.probe_duration(video_path, ffmpeg), duration=duration),
-                                  stderr)
+        truncation.check_complete(video_path, frames, fps, expected, collector.for_check, warn=_warn_once)
+
+
+# 同じ注意を、2 回目の読み込み (変換は動画を 2 回読む) で繰り返さない
+_WARNED = set()
+
+
+def _warn_once(message):
+    if message not in _WARNED:
+        _WARNED.add(message)
+        print(message, flush=True)
 
 
 def to_rgb(img):
@@ -664,6 +674,10 @@ def parse_args(argv=None):
     parser.set_defaults(**PROFILES[known.profile])
     args = parser.parse_args(argv)
 
+    # nan・inf はどの比べ方も通ってしまう (nan < 0 も nan > 20 も偽) ので、先に断る (#189 ほか)
+    for name, value in vars(args).items():
+        if isinstance(value, float) and not math.isfinite(value):
+            parser.error(f"--{name.replace('_', '-')} は有限の数にしてください (nan・inf は使えません)")
     if args.width < 1 or args.height < 1:
         parser.error("--width / --height は 1 以上にしてください")
     if args.width > MAX_SCREEN_SIDE or args.height > MAX_SCREEN_SIDE:
@@ -673,9 +687,10 @@ def parse_args(argv=None):
         parser.error("--threads は 1 以上にしてください")
     if not 0 < args.fps <= 20:
         parser.error("--fps は 0 より大きく 20 以下にしてください")
-    if args.duration is not None and not args.duration > 0:
-        # 0 以下は ffmpeg が分かりにくいエラーで止まるか、コマが 1 つも無くなる
-        parser.error("--duration は 0 より大きくしてください (最後までなら付けない)")
+    if args.duration is not None and not 0 < args.duration <= MAX_DURATION_SECONDS:
+        # 0 以下は ffmpeg が分かりにくいエラーで止まるか、コマが 1 つも無くなる。とても大きい値は、連番の画像でコマ数の
+        # 計算があふれていた (#189)
+        parser.error(f"--duration は 0 より大きく {MAX_DURATION_SECONDS} 秒以下にしてください (最後までなら付けない)")
     if not 0 <= args.extrude_threshold <= 1:
         # 範囲の外では、どの画素も立体にならない (空のアドオンを黙って作る) か、全部の画素が立体になる
         parser.error("--extrude-threshold は 0〜1 にしてください")
@@ -701,10 +716,33 @@ def parse_args(argv=None):
     color_limit = MAX_PALETTE_COLORS - (1 if args.mode in ("relief", "extrude", "inflate", "vox") else 0)
     if args.palette_colors != "auto" and args.palette_colors > color_limit:
         parser.error(f"--palette-colors は {color_limit} 以下にしてください (このモードの上限)")
-    if args.temporal_hysteresis < 0:
-        parser.error("--temporal-hysteresis は 0 以上にしてください")
-    if args.depth_hysteresis < 0:
-        parser.error("--depth-hysteresis は 0 以上にしてください")
+    # 範囲の外の値は、黙って切り詰められるか、効かなくなっていた (#163)。どれも理由を書いて断る
+    if not 0 <= args.temporal_hysteresis <= MAX_RGB_DISTANCE:
+        # RGB の距離の最大 (黒と白) より大きいと、どの色も変わらない (止まった絵になる)
+        parser.error(f"--temporal-hysteresis は 0〜{MAX_RGB_DISTANCE} にしてください")
+    if not 0 <= args.depth_hysteresis <= args.depth:
+        # 奥行き (段数) 以上では、最初のコマの奥行きのまま変わらない
+        parser.error(f"--depth-hysteresis は 0〜--depth ({args.depth}) にしてください")
+    if args.thickness is not None and not 1 <= args.thickness <= args.depth:
+        parser.error(f"--thickness は 1〜--depth ({args.depth}) にしてください (既定は奥行き全体)")
+    if not 0 <= args.scene_threshold < 1:
+        # 変化の割合 (0〜1) なので、1 以上ではキーフレームの他は全部省く (止まった絵になる)
+        parser.error("--scene-threshold は 0 以上 1 未満にしてください")
+    if args.rdo_block_cap < 0:
+        parser.error("--rdo-block-cap は 0 以上にしてください (0 で上限なし)")
+    if not 1 <= args.palette_weight <= MAX_PALETTE_WEIGHT:
+        # 1 以下は効かない。大きすぎると、重み付けのために画素を何 GB も並べていた (1e6 で 5.7 GiB。#181)
+        parser.error(f"--palette-weight は 1〜{MAX_PALETTE_WEIGHT} にしてください (1 で重み付けなし)")
+    if args.stage_background is not None and not (SAFE_NAME.fullmatch(args.stage_background)
+                                                   and len(args.stage_background) <= MAX_ID_LENGTH):
+        parser.error(f"--stage-background は動画 ID (小文字の英数字と _、{MAX_ID_LENGTH} 文字以内) にしてください")
+    # 出力を入力と同じファイルにすると、変換の後に元の動画を上書きして消していた (#158)
+    output = _resolved(args.output)
+    for option, value in (("--input-video", args.input_video), ("--input-vox", args.input_vox),
+                          ("--mask-video", args.mask_video), ("--depth-video", args.depth_video),
+                          ("--palette-weight-mask", args.palette_weight_mask)):
+        if value and _resolved(value) == output:
+            parser.error(f"--output が {option} と同じファイルです。別のファイルにしてください (元のファイルを上書きします)")
     if args.block_rdo != "auto" and args.block_rdo < 0:
         parser.error("--block-rdo は 0 以上か auto にしてください")
     if args.rdo_budget < 0:
@@ -713,6 +751,23 @@ def parse_args(argv=None):
         parser.error("--volume-encoding planes は relief / extrude / inflate で、--hollow なし、"
                      "--depth 127 以下 (relief は 128 以下) のときだけ使えます")
     return args
+
+
+# --duration の上限 (秒、24 時間)
+MAX_DURATION_SECONDS = 86400
+# RGB の距離の最大 (黒と白、√(3×255²) を切り上げ)。--temporal-hysteresis の上限
+MAX_RGB_DISTANCE = 442
+# --palette-weight の上限 (マスクの中の画素をこの倍まで数える)
+MAX_PALETTE_WEIGHT = 32
+# 動画 ID に使える文字 (pack_builder.SAFE_NAME と同じ)
+SAFE_NAME = re.compile(r"[a-z0-9_]+")
+
+
+def _resolved(path):
+    try:
+        return Path(path).resolve()
+    except OSError:
+        return Path(path).absolute()
 
 
 def palette_colors(text):
@@ -846,10 +901,8 @@ def build_frame_data(args, width, height, gop_boundaries, palettes, adaptive, en
 
 def write_frame_data(args, frame_data):
     out_path = Path(args.output)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        f"export const FRAME_DATA = {json.dumps(frame_data, ensure_ascii=False)};\n", encoding="utf-8"
-    )
+    # 書き終えてから置き換える (書いている途中で止まっても、前の出力を壊さない。#164)
+    write_text_atomic(out_path, f"export const FRAME_DATA = {json.dumps(frame_data, ensure_ascii=False)};\n")
     return out_path
 
 

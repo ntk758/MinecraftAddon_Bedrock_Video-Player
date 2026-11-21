@@ -2759,9 +2759,32 @@ world.afterEvents.playerSpawn.subscribe((event) => {
   notifyPlayer(player, "welcome", EVENT_PREFIX);
 });
 
+// プレイヤーの権限 (PlayerPermissionLevel.Operator)。enum を import すると、無い版の Script API で読み込めないので数で比べる
+const OPERATOR_PERMISSION_LEVEL = 2;
+
+/**
+ * オペレーターか (コマンドの画面・ほかの人のスクリーンを操作できる)。ワールドに 1 人だけなら誰でもよい (ひとりで遊ぶとき)。
+ * playerPermissionLevel の無い版の Script API では、今までどおり誰でも操作できる。
+ * 以前はリモコンとスクリーンの操作画面に権限の確かめが無く、来た人がほかの人のスクリーンを消せた (#198)。
+ */
+function isOperator(player) {
+  try {
+    if (world.getAllPlayers().length <= 1) return true;
+    const level = player.playerPermissionLevel;
+    return level === undefined || level === OPERATOR_PERMISSION_LEVEL;
+  } catch (e) {
+    return false;
+  }
+}
+
 world.afterEvents.itemUse.subscribe((event) => {
   loadSelection();
   if (event.itemStack.typeId === REMOTE_CONTROL_ITEM) {
+    // リモコンはコマンドと同じ操作 (コマンドの画面を置き直す・消す) なので、オペレーターだけ
+    if (!isOperator(event.source)) {
+      notifyPlayer(event.source, "remote_operator_only");
+      return;
+    }
     showRemoteControlGUI(event.source);
   }
 });
@@ -3205,6 +3228,9 @@ class BlockScreenRenderer {
     // いま常時読み込みに入れてある範囲 (loadBox。同じ範囲なら入れ直さない)
     this.tickingKey = null;
     this.onFinished = null;
+    // 今のチャンクの音を鳴らしたプレイヤー (ID)。止めるときは、この人たちの分だけを止める (stopAudio)
+    this.audioListeners = new Set();
+    this.audioTrack = null;
   }
 
   dimension() {
@@ -3258,6 +3284,11 @@ class BlockScreenRenderer {
   playSoundTo(player, trackId, volume) {
     try {
       player.playSound(trackId, { location: player.location, volume, pitch: 1.0 });
+      if (this.audioTrack !== trackId) {
+        this.audioTrack = trackId;
+        this.audioListeners = new Set();
+      }
+      this.audioListeners.add(player.id);
     } catch (e) {
       warnOnce(`audio:${trackId}`, `Cannot play sound ${trackId}: ${e}`);
     }
@@ -3269,11 +3300,36 @@ class BlockScreenRenderer {
     }
   }
 
-  /** このスクリーンが鳴らしているチャンクの音だけを止める。 */
+  /**
+   * このスクリーンが鳴らしているチャンクの音を、鳴らした人の分だけ止める。音の ID は動画ごとなので、全員に stopsound すると、
+   * 同じ動画を流しているほかのスクリーンの音も消えていた (#201)。ほかのスクリーンが同じ音をその人に鳴らしていれば止めない。
+   */
   stopAudio(trackId) {
-    try {
-      this.dimension().runCommand(`stopsound @a ${trackId}`);
-    } catch (e) { /* 鳴っていない */ }
+    const listeners = this.audioTrack === trackId ? this.audioListeners : new Set();
+    this.audioListeners = new Set();
+    this.audioTrack = null;
+    if (listeners.size === 0) return;
+    for (const player of world.getAllPlayers()) {
+      let id;
+      try {
+        id = player.id;
+      } catch (e) {
+        continue;
+      }
+      if (!listeners.has(id) || this.sharedWithAnotherScreen(id, trackId)) continue;
+      try {
+        player.runCommand(`stopsound @s ${trackId}`);
+      } catch (e) { /* 抜けた・鳴っていない */ }
+    }
+  }
+
+  /** ほかのスクリーンが、同じ音 (同じ動画の同じチャンク) をこの人に鳴らしているか。 */
+  sharedWithAnotherScreen(playerId, trackId) {
+    for (const renderer of screenManager.renderers.values()) {
+      if (renderer === this || renderer.audioTrack !== trackId || !renderer.audioListeners.has(playerId)) continue;
+      if (renderer.vp?.running) return true;
+    }
+    return false;
   }
 
   addTicking(vp) {
@@ -3602,6 +3658,8 @@ const screenManager = new ScreenManager({
   scheduler,
   keyPrefix: `${EVENT_NAMESPACE}:`,
   log: (message) => console.warn(`[${EVENT_NAMESPACE}] ${message}`),
+  // 壊れて読み戻せなかったスクリーンのブロックは、片付け残しとして近づいたときに片付ける (#199)
+  onDropped: (dimensionId, boxes) => addScreenOrphans(dimensionId, boxes),
 });
 
 /** ブロックの向き (minecraft:cardinal_direction。置いた人が見ていた方向) を 0 北・1 東・2 南・3 西 にする。 */
@@ -3765,8 +3823,45 @@ function onScreenInteract(player, dimension, location) {
     screenUi.tell(player, result);
     return;
   }
-  openScreenMenu(player, result.session.screenId);
+  const session = result.session;
+  if (!canControlScreen(player, session)) {
+    const n = screenNumber(session.screenId);
+    if (session.ownerName) notifyPlayer(player, "screen.not_yours", n, session.ownerName);
+    else notifyPlayer(player, "screen.operator_only", n);
+    return;
+  }
+  openScreenMenu(player, session.screenId);
 }
+
+/** そのスクリーンを操作できるか: 持ち主 (置いた人) とオペレーター。持ち主の分からない (v6.41.0 で置いた) ものはオペレーターだけ。 */
+function canControlScreen(player, session) {
+  if (isOperator(player)) return true;
+  try {
+    return Boolean(session.ownerId) && session.ownerId === player.id;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** 置いた人を持ち主にする (ブロックの onPlace には置いた人が無いので、ワールドのイベントで)。 */
+world.afterEvents.playerPlaceBlock?.subscribe((event) => {
+  const { block, player } = event;
+  let location, dimension, permutation;
+  try {
+    if (block.typeId !== SCREEN_BLOCK_ID) return;
+    location = { ...block.location };
+    dimension = block.dimension ?? event.dimension;
+    permutation = block.permutation;
+  } catch (e) {
+    return;
+  }
+  system.run(() => {
+    try {
+      const result = screenAt(dimension, location, permutation);
+      if (result.ok) screenManager.setOwner(result.session.screenId, player.id, player.name);
+    } catch (e) { /* 抜けた・読み込まれていない */ }
+  });
+});
 
 /** スクリーンブロックが壊れたとき (プレイヤー・爆発など)。画面を片付けて、登録を外す。 */
 function onScreenBroken(dimensionId, location, player = null) {

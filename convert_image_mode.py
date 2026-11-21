@@ -8,9 +8,9 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import math
 import re
 import sys
-import tempfile
 import uuid
 import zipfile
 from pathlib import Path
@@ -19,6 +19,8 @@ import numpy as np
 from PIL import Image
 
 from image_mode.dedup import DEFAULT_NEAR_THRESHOLD, MODES as DEDUP_MODES, FrameDeduper, should_use, slot_intervals
+from mvcodec.fileio import work_dir
+from mvcodec.limits import MAX_ID_LENGTH, clean_title, pack_name_problem, shorten_id
 from mvcodec.resources import use_utf8_for_pipes
 from image_mode import atlas, budget, impostor
 from gui_i18n import LOCALES, addon_lang_files
@@ -42,6 +44,13 @@ DEFAULT_PACK_NAME = "Block & Image Video Player (Image)"
 MIN_ENGINE_VERSION = [1, 26, 10]
 ID_PATTERN = re.compile(r"^[a-z0-9_]+$")
 NAMESPACE_PATTERN = re.compile(r"^[a-z0-9_]+$")
+# 引数の上限 (#165・#182・#191)。1 コマ・シートの一辺 (画素)、1 枚のマスの数、スクリーンの幅 (ブロック)、音声の区切り (秒)
+MAX_FRAME_SIDE = 4096
+MAX_SHEET_SIDE = 4096
+MAX_CELLS_LIMIT = 1024
+MAX_SCREEN_BLOCKS = 256
+MIN_AUDIO_CHUNK_SECONDS = 0.5
+MAX_AUDIO_CHUNK_SECONDS = 60
 
 # ゲーム内のメッセージ (RP/texts/*.lang) は locales/*.json の "imgaddon.*" (10 言語)。スクリプトは rawtext の translate で
 # "bvpimg.<名前>" を使う。%1 〜 は translate の with の引数。名前空間 (--namespace) を変えてもキーは bvpimg. のまま
@@ -80,7 +89,8 @@ def screen_blocks(width: int, height: int, screen_width: float) -> list:
 
 def default_id(path: Path, used: set[str]) -> str:
     """ファイル名から動画 ID ([a-z0-9_]+) を作る。使えない文字は _ にし、重なったら番号を付ける。"""
-    base = re.sub(r"[^a-z0-9_]+", "_", path.stem.lower()).strip("_") or "video"
+    # 長いファイル名は切る (210 文字のファイル名がそのまま 210 文字の ID になっていた。#186)
+    base = shorten_id(re.sub(r"[^a-z0-9_]+", "_", path.stem.lower()).strip("_") or "video")
     candidate, number = base, 2
     while candidate in used:
         candidate = f"{base}_{number}"
@@ -238,6 +248,8 @@ def build_files(sources: list[dict], *, width: int, height: int, methods: list[s
     for source in sources:
         if not ID_PATTERN.match(source["id"]):
             raise ConvertError(f"動画 ID は小文字の英数字と _ だけにしてください: {source['id']}")
+        if len(source["id"]) > MAX_ID_LENGTH:
+            raise ConvertError(f"動画 ID は {MAX_ID_LENGTH} 文字以内にしてください: {source['id']}")
         if source["id"] in used:
             raise ConvertError(f"動画 ID が重なっています: {source['id']}")
         used.add(source["id"])
@@ -438,6 +450,8 @@ def build_glass_files(entries: list[dict], *, namespace: str, pack_name: str, ma
         video_id = entry["id"]
         if not ID_PATTERN.match(video_id):
             raise ConvertError(f"動画 ID は小文字の英数字と _ だけにしてください: {video_id}")
+        if len(video_id) > MAX_ID_LENGTH:
+            raise ConvertError(f"動画 ID は {MAX_ID_LENGTH} 文字以内にしてください: {video_id}")
         if entry.get("lighting") and entry["lighting"] not in LIGHTING_MODES:
             raise ConvertError(f"lighting は {', '.join(LIGHTING_MODES)} のどれか: {entry['lighting']}")
         figure = entry["figure"]
@@ -654,11 +668,13 @@ def build(args: argparse.Namespace, log=print, figures: list[dict] | None = None
         video_id = args.ids[index] if args.ids else default_id(path, used)
         if not ID_PATTERN.match(video_id):
             raise ConvertError(f"動画 ID は小文字の英数字と _ だけにしてください: {video_id}")
+        if len(video_id) > MAX_ID_LENGTH:
+            raise ConvertError(f"動画 ID は {MAX_ID_LENGTH} 文字以内にしてください: {video_id}")
         if video_id in used:
             raise ConvertError(f"動画 ID が重なっています: {video_id}")
         used.add(video_id)
         ids.append(video_id)
-    titles = args.titles or [p.stem for p in inputs]
+    titles = [clean_title(title) for title in (args.titles or [p.stem for p in inputs])]
     if figures:
         return _build_with_figures(args, inputs, ids, titles, figures, log)
     if wants_glass(args):
@@ -684,14 +700,14 @@ def build(args: argparse.Namespace, log=print, figures: list[dict] | None = None
     pack_name = args.pack_name or titles[0]
     ffmpeg = args.ffmpeg
 
-    with tempfile.TemporaryDirectory(prefix="bvp-image-") as temp:
+    with work_dir("bvp-image-") as temp:
         sources = [{
             "id": video_id, "title": title, "fps": args.fps,
             "frames": atlas.read_frames(path, args.width, args.height, args.fps, args.start, end,
-                                        args.fit, ffmpeg),
+                                        args.fit, ffmpeg, warn=log),
             "audio": (lambda seconds, path=path, video_id=video_id, end=end: atlas.extract_audio_chunks(
                 path, Path(temp) / video_id, args.audio_chunk_seconds, args.start, end, ffmpeg,
-                max_seconds=seconds)),
+                max_seconds=seconds, warn=log)),
         } for path, video_id, title, end in zip(inputs, ids, titles, ends)]
         files, report = build_files(
             sources, width=args.width, height=args.height, methods=methods, namespace=args.namespace,
@@ -797,7 +813,7 @@ def _build_glass(args: argparse.Namespace, inputs: list[Path], ids: list[str], t
     for extra in (args.depth_video, args.mask_video):
         if extra and not Path(extra).is_file():
             raise ConvertError(f"動画が見つかりません: {extra}")
-    with tempfile.TemporaryDirectory(prefix="bvp-glass-") as temp:
+    with work_dir("bvp-glass-") as temp:
         entries = []
         for path, video_id, title in zip(inputs, ids, titles):
             audio = None
@@ -974,7 +990,7 @@ def _build_with_figures(args: argparse.Namespace, inputs: list[Path], ids: list[
               "max_cells": args.max_cells, "audio_chunk_seconds": args.audio_chunk_seconds,
               "allow_over_budget": args.allow_over_budget, "log": log, "lighting": args.lighting,
               "png_optimize": args.png_optimize}
-    with tempfile.TemporaryDirectory(prefix="bvp-image-") as temp:
+    with work_dir("bvp-image-") as temp:
         entries = []
         reserved = 0
         for figure in figures:
@@ -999,10 +1015,10 @@ def _build_with_figures(args: argparse.Namespace, inputs: list[Path], ids: list[
             sources = [{
                 "id": video_id, "title": title, "fps": args.fps,
                 "frames": atlas.read_frames(path, args.width, args.height, args.fps, args.start, end, args.fit,
-                                            args.ffmpeg),
+                                            args.ffmpeg, warn=log),
                 "audio": (lambda seconds, path=path, video_id=video_id, end=end: atlas.extract_audio_chunks(
                     path, Path(temp) / video_id, args.audio_chunk_seconds, args.start, end, args.ffmpeg,
-                    max_seconds=seconds)),
+                    max_seconds=seconds, warn=log)),
             } for path, video_id, title, end in zip(inputs, ids, titles, ends)]
             methods = ["a", "c"] if args.method == "both" else [args.method]
             parts.insert(0, build_files(sources, width=args.width, height=args.height, methods=methods,
@@ -1054,9 +1070,14 @@ def _write_output(args: argparse.Namespace, files: dict, report: dict, log=print
               "plan": getattr(args, "plan", None),
               **{key: value for key, value in report.items() if key not in ("namespace", "pack_name")}}
     report_path = Path(args.report) if args.report else output.with_suffix(".report.json")
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     log(f"出力: {output} ({output.stat().st_size / 1024 / 1024:.1f} MiB)")
+    try:
+        # アドオンと同じく、書き終えてから置き換える (書きかけのレポートを残さない)
+        write_file_atomic(report_path, (json.dumps(report, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    except OSError as error:
+        # アドオンはできている。レポートが書けないだけで「失敗」にしない (#192)
+        log(f"注意: アドオンはできましたが、レポートを書けませんでした ({report_path}): {error}")
+        return report
     log(f"レポート: {report_path}")
     return report
 
@@ -1091,24 +1112,41 @@ def _non_negative_int(text: str) -> int:
     return value
 
 
-def _positive_float(text: str) -> float:
+def _finite_float(text: str) -> float:
+    """数 (nan・inf は断る。どの比べ方も通ってしまい、後で ffmpeg や予算の分かりにくいエラーになっていた。#190)。"""
     try:
         value = float(text)
     except ValueError:
         raise argparse.ArgumentTypeError("数を指定してください") from None
+    if not math.isfinite(value):
+        raise argparse.ArgumentTypeError("有限の数を指定してください (nan・inf は使えません)")
+    return value
+
+
+def _positive_float(text: str) -> float:
+    value = _finite_float(text)
     if value <= 0:
         raise argparse.ArgumentTypeError("0 より大きくしてください")
     return value
 
 
 def _non_negative_float(text: str) -> float:
-    try:
-        value = float(text)
-    except ValueError:
-        raise argparse.ArgumentTypeError("数を指定してください") from None
+    value = _finite_float(text)
     if value < 0:
         raise argparse.ArgumentTypeError("0 以上にしてください")
     return value
+
+
+def _bounded_float(low: float, high: float, low_open: bool = False):
+    """low〜high の数 (low_open なら low は含まない)。"""
+    def parse(text: str) -> float:
+        value = _finite_float(text)
+        if value > high or value < low or (low_open and value == low):
+            if low_open:
+                raise argparse.ArgumentTypeError(f"{low:g} より大きく {high:g} 以下にしてください")
+            raise argparse.ArgumentTypeError(f"{low:g}〜{high:g} にしてください")
+        return value
+    return parse
 
 
 def _bounded_int(low: int, high: int):
@@ -1160,26 +1198,32 @@ def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
     parser.add_argument("--ids", nargs="+", default=None, metavar="ID",
                         help="動画 ID ([a-z0-9_]+、動画と同じ数)。既定はファイル名から作る")
     parser.add_argument("--titles", nargs="+", default=None, metavar="TITLE", help="表示名 (動画と同じ数)。既定はファイル名")
-    parser.add_argument("--width", type=_positive_int, default=256, help="1 コマの横の画素数 (既定 256)")
-    parser.add_argument("--height", type=_positive_int, default=144, help="1 コマの縦の画素数 (既定 144)")
+    # 上限: 大きすぎる組み合わせで、予算を確かめる前に 3 GB のシートを作ろうとしていた (#182)
+    parser.add_argument("--width", type=_bounded_int(1, MAX_FRAME_SIDE), default=256,
+                        help=f"1 コマの横の画素数 (既定 256、{MAX_FRAME_SIDE} まで)")
+    parser.add_argument("--height", type=_bounded_int(1, MAX_FRAME_SIDE), default=144,
+                        help=f"1 コマの縦の画素数 (既定 144、{MAX_FRAME_SIDE} まで)")
     parser.add_argument("--fps", type=_fps, default=None, help="再生の fps (1〜60、既定は動画 30・立体 (.vox) 10)")
-    parser.add_argument("--start", type=float, default=None, help="開始位置 (秒)")
-    parser.add_argument("--end", type=float, default=None, help="終了位置 (秒)")
+    parser.add_argument("--start", type=_non_negative_float, default=None, help="開始位置 (秒)")
+    parser.add_argument("--end", type=_positive_float, default=None, help="終了位置 (秒)")
     parser.add_argument("--fit", default="pad", choices=["pad", "cover"],
                         help="縦横比の合わせ方。pad は全体を入れて余白を黒、cover は画面を埋めて中央で切る (既定 pad)")
-    parser.add_argument("--max-cells", type=_positive_int, default=atlas.MAX_CELLS,
+    parser.add_argument("--max-cells", type=_bounded_int(1, MAX_CELLS_LIMIT), default=atlas.MAX_CELLS,
                         help=f"シート 1 枚のマスの数の上限 (既定 {atlas.MAX_CELLS}。方式 a のボーンの数になる)")
-    parser.add_argument("--max-sheet", type=_positive_int, default=2048, help="シート 1 枚の一辺の最大画素数 (既定 2048)")
+    parser.add_argument("--max-sheet", type=_bounded_int(1, MAX_SHEET_SIDE), default=2048,
+                        help=f"シート 1 枚の一辺の最大画素数 (既定 2048、{MAX_SHEET_SIDE} まで)")
     parser.add_argument("--gutter", type=_non_negative_int, default=1,
                         help="マスの間の画素数。端の画素を繰り返して埋め、にじみを防ぐ (既定 1)")
-    parser.add_argument("--screen-width", type=_positive_float, default=16,
+    parser.add_argument("--screen-width", type=_bounded_float(0, MAX_SCREEN_BLOCKS, low_open=True), default=16,
                         help="スクリーンの幅 (ブロック数、既定 16)。高さは縦横比から決まる")
     parser.add_argument("--method", default="a", choices=["a", "c", "both"],
                         help="a=アトラス+ボーンの切り替え (安全)、c=uv_anim の自作マテリアル (軽いが将来壊れうる)、both=両方 (既定は a。実機の確認で a に決めた)")
     parser.add_argument("--namespace", type=_namespace, default=DEFAULT_NAMESPACE,
                         help=f"名前空間 (小文字の英数字と _。既定 {DEFAULT_NAMESPACE})")
     parser.add_argument("--pack-name", default=None, help="パック名 (既定は最初の動画の表示名)")
-    parser.add_argument("--audio-chunk-seconds", type=_positive_float, default=4, help="音声を区切る秒数 (既定 4)")
+    # 小さすぎると音声のファイルが何万にもなり、大きすぎるとチャンクに分ける意味が無くなる (1e9 は ffmpeg が読めない。#191)
+    parser.add_argument("--audio-chunk-seconds", type=_bounded_float(MIN_AUDIO_CHUNK_SECONDS, MAX_AUDIO_CHUNK_SECONDS), default=4,
+                        help=f"音声を区切る秒数 (既定 4、{MIN_AUDIO_CHUNK_SECONDS:g}〜{MAX_AUDIO_CHUNK_SECONDS:g})")
     parser.add_argument("--priority", default="none", choices=["none", *budget.PRIORITIES],
                         help="テクスチャが予算 (--target-tier) を超えるとき何を守るか: quality=画質 (fps を下げる)、"
                              "smooth=なめらかさ (コマを小さくする)、length=長さ (両方を少しずつ下げる)。"
@@ -1207,12 +1251,12 @@ def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
                         help="同じ絵のコマを 1 マスにまとめてテクスチャを減らす。exact: まったく同じコマ (アニメの 2 コマ打ち・止め絵)、"
                              "near: すぐ前のコマとの差が --near-threshold 以下のものも。off (既定): まとめない "
                              "(Minecraft での確認がまだなので既定は off)")
-    parser.add_argument("--near-threshold", type=float, default=DEFAULT_NEAR_THRESHOLD,
+    parser.add_argument("--near-threshold", type=_bounded_float(0, 255), default=DEFAULT_NEAR_THRESHOLD,
                         help=f"--dedup near で同じとみなす画素ごとの差の平均 (0〜255、既定 {DEFAULT_NEAR_THRESHOLD})")
     parser.add_argument("--views", type=_bounded_int(1, MAX_VIEWS), default=impostor.DEFAULT_VIEWS,
                         help=f"立体 (.vox) を何方向から描くか (試作。1〜{MAX_VIEWS}、既定 8 = 45 度ごと。"
                              "テクスチャは向きの数だけ増える)")
-    parser.add_argument("--figure-blocks", type=_positive_float, default=6,
+    parser.add_argument("--figure-blocks", type=_bounded_float(0, MAX_SCREEN_BLOCKS, low_open=True), default=6,
                         help="立体 (.vox) の高さ (ブロック数、既定 6)")
     glass_group = parser.add_argument_group(
         "ガラスケースの立体 (試作。docs/research/glass_case.md)",
@@ -1246,7 +1290,7 @@ def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
     glass_group.add_argument("--depth-video", default=None,
                              help="relief の奥行きに使う深度動画 (明るいほど手前。scripts/make_depth_video.py で作れる)")
     glass_group.add_argument("--mask-video", default=None, help="extrude・inflate で立体にする範囲の動画 (明るい所)")
-    glass_group.add_argument("--lift-threshold", type=float, default=0.5,
+    glass_group.add_argument("--lift-threshold", type=_finite_float, default=0.5,
                              help="extrude・inflate で立体にする明るさのしきい値 (0〜1、既定 0.5)")
     glass_group.add_argument("--lift-invert", action="store_true", help="extrude・inflate で暗い所を立体にする")
     glass_group.add_argument("--motion", default=None, metavar="VMD",
@@ -1286,9 +1330,15 @@ def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
         parser.error("--start は 0 以上にしてください")
     if args.end is not None and args.end <= (args.start or 0):
         parser.error("--end は --start より後にしてください")
+    if args.pack_name is not None and pack_name_problem(args.pack_name):
+        # 改行などの制御文字が manifest の名前と UUID の元に入っていた (#187)
+        parser.error(f"--pack-name: {pack_name_problem(args.pack_name)}")
     if args.output is None:
         first = Path(args.inputs[0])
         args.output = str(first.with_name(first.stem + "_image.mcaddon"))
+    if args.report is not None and Path(args.report).is_dir():
+        # アドオンを書いた後でレポートが書けずに止まり、できたアドオンを「失敗」と伝えていた (#192)
+        parser.error(f"--report がフォルダです。ファイルのパスにしてください: {args.report}")
     return args
 
 
@@ -1299,7 +1349,8 @@ def main(argv=None) -> int:
     args = parse_args(argv)
     try:
         build(args)
-    except (ConvertError, RuntimeError, ValueError) as error:
+    except (ConvertError, RuntimeError, ValueError, OSError) as error:
+        # OSError (書けない場所・ディスクがいっぱいなど) も、理由を 1 行で出す (Python のトレースバックを出していた。#192)
         print(f"エラー: {error}", file=sys.stderr)
         return 1
     return 0

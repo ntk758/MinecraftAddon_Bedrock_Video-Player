@@ -194,7 +194,14 @@ def read_pmx(path):
             r.take(1)
         text()  # メモ
         face_count = r.int()
+        # 面の頂点の数なので 0 以上の 3 の倍数 (違えば壊れている。黙って割り当てがずれ、色が変わっていた。#184)
+        if face_count < 0 or face_count % 3:
+            raise ValueError(f"PMX ファイルが壊れています (材質 {name!r} の面の頂点の数 {face_count} が 3 の倍数ではありません)")
         model.materials.append({"name": name, "diffuse": diffuse, "texture": texture, "face_count": face_count})
+    used = sum(material["face_count"] for material in model.materials)
+    if used > len(model.faces) * 3:
+        raise ValueError(f"PMX ファイルが壊れています (材質の面の頂点の数の合計 {used} が、面の頂点の数 {len(model.faces) * 3} "
+                         "より多い)")
 
     # ボーン 1 つは少なくとも 名前 2 つ・位置・親・変形階層・印・先 (ボーンか位置)
     count = r.count(26 + bone_size + min(bone_size, 12), "ボーン")
@@ -245,6 +252,10 @@ def read_pmx(path):
 # VMD
 # ---------------------------------------------------------------------------
 
+# VMD の回転 (四元数) の長さが 1 からこれ以上ずれていたら、長さ 1 に直す
+VMD_ROTATION_NORM_TOLERANCE = 1e-4
+
+
 def read_vmd(path):
     """VMD のボーンのキーフレームを読む。{ボーン名: [(フレーム, 位置 (3,), 回転 (x, y, z, w), 補間 (64 バイト))…]}"""
     data = Path(path).read_bytes()
@@ -268,6 +279,10 @@ def read_vmd(path):
             position = np.zeros(3)
         if not np.isfinite(rotation).all() or not rotation.any():
             rotation = np.array([0.0, 0.0, 0.0, 1.0])
+        elif abs(np.linalg.norm(rotation) - 1.0) > VMD_ROTATION_NORM_TOLERANCE:
+            # 長さが 1 でない回転は、姿勢をゆがめる (2 倍で人物が消えた)。向きだけを使う (#202)。
+            # MMD の書いた値 (float32 の丸めで 1 にごく近い) はそのまま
+            rotation = rotation / np.linalg.norm(rotation)
         tracks.setdefault(name, []).append((frame, position, rotation, interpolation))
     for keys in tracks.values():
         keys.sort(key=lambda key: key[0])

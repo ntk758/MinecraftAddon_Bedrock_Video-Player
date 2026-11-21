@@ -26,7 +26,6 @@ import json
 import math
 import os
 import subprocess
-import threading
 import time
 import urllib.error
 import urllib.request
@@ -40,6 +39,11 @@ from mvcodec import truncation
 
 # DeepLabV3 (Pascal VOC の 21 種類) の「人」の番号
 PERSON_CLASS = 15
+# コマンドラインの引数の範囲 (fps は Minecraft の上限、ブロックモードの convert.py と同じ)
+MAX_FPS = 20
+MAX_DURATION_SECONDS = 86400
+MIN_LONG_SIDE = 16
+MAX_LONG_SIDE = 4096
 # 切り抜きの計算に使う画像の短い辺 (大きいほど細かいが遅い)。アニメの MV で、320 では全身が小さく映る場面の人物を
 # 見落とし、形も丸くつぶれた。520 で形が締まり、小さい人物も一部拾える (CPU で 1 枚約 0.2 秒、320 の 2 倍)
 SEGMENT_SHORT_SIDE = 520
@@ -999,23 +1003,18 @@ ANALYSIS_LONG_SIDE = ANALYSIS_LONG_SIDE_DEFAULT
 def read_frames(path, fps, duration=None, ffmpeg="ffmpeg", long_side=ANALYSIS_LONG_SIDE):
     """動画を、元の縦横比のまま長い辺 long_side 以下 (幅・高さは偶数) の RGB のフレームとして順に読む。
     大きさは ffmpeg が書く PPM の見出しから読む (回転した動画も ffmpeg が向きを直す)。"""
-    scale = (f"scale='if(gte(iw,ih),min({long_side},iw),-2)':'if(gte(iw,ih),-2,min({long_side},ih))'"
+    # 画素の縦横比 (SAR) が 1:1 でない動画は、表示の大きさに直してから縮める (convert.py と同じ。#166)
+    scale = ("scale=iw*sar:ih,setsar=1,"
+             f"scale='if(gte(iw,ih),min({long_side},iw),-2)':'if(gte(iw,ih),-2,min({long_side},ih))'"
              ",scale=trunc(iw/2)*2:trunc(ih/2)*2")
     cmd = [ffmpeg, "-v", "error", "-i", str(path), "-vf", f"fps={fps},{scale}"]
     if duration is not None:
         cmd += ["-t", str(duration)]
     cmd += ["-f", "image2pipe", "-c:v", "ppm", "-"]
     proc = _start_ffmpeg(cmd, ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    # stderr は別のスレッドで読み続ける (読まないと、壊れた動画でパイプが詰まって止まる)。最後の 8 KB だけ使う
-    stderr_tail = bytearray()
-
-    def drain_stderr():
-        for chunk in iter(lambda: proc.stderr.read(4096), b""):
-            stderr_tail.extend(chunk)
-            del stderr_tail[:-8192]
-
-    reader = threading.Thread(target=drain_stderr, daemon=True)
-    reader.start()
+    # stderr は別のスレッドで読み続ける (読まないと、壊れた動画でパイプが詰まって止まる)。表示には最後の 8 KB、
+    # 途中で切れたかの判定にはデコードのエラーの行も使う (最後の 8 KB だけでは見落としていた。#177)
+    collector = truncation.StderrCollector(proc.stderr).start()
     frames = 0
     completed = False
     try:
@@ -1040,19 +1039,30 @@ def read_frames(path, fps, duration=None, ffmpeg="ffmpeg", long_side=ANALYSIS_LO
             proc.kill()
         proc.stdout.close()
         returncode = proc.wait()
-        reader.join(timeout=5)
+        collector.join(timeout=5)
         proc.stderr.close()
     if not completed:
         return
-    stderr = bytes(stderr_tail).decode("utf-8", errors="replace")
+    stderr = collector.text
     if returncode != 0:
         raise InputError(f"could not read the video: {path} (ffmpeg code {returncode}): {stderr.strip()[-500:]}")
     # 末尾の欠けた動画は ffmpeg が 0 で終わるので、読めた長さとエラーの文で見つける (mvcodec/truncation.py)
     try:
         truncation.check_complete(path, frames, fps,
-                                  truncation.expected_seconds(truncation.probe_duration(path, ffmpeg), duration=duration), stderr)
+                                  truncation.expected_seconds(truncation.probe_duration(path, ffmpeg), duration=duration),
+                                  collector.for_check, warn=_warn_once)
     except truncation.TruncatedVideoError as error:
         raise InputError(str(error)) from error
+
+
+# 同じ注意を、2 回目の読み込みで繰り返さない
+_WARNED = set()
+
+
+def _warn_once(message):
+    if message not in _WARNED:
+        _WARNED.add(message)
+        print(message, flush=True)
 
 
 def _read_token(stream):
@@ -1415,6 +1425,17 @@ def main(argv=None):
     parser.add_argument("--stats", default=None, metavar="PATH",
                         help="統計 (JSON) を書くファイル。フォルダなら、その中に person-stats-<日時>.json を作る")
     args = parser.parse_args(argv)
+    # ブロックモード (convert.py) と同じ範囲。120 fps で推論が 12 倍になり、0・負は ffmpeg のエラー (終了コード 4) に
+    # なっていた (#183)。--long-side の 0・負・とても大きい値は、黙って既定や元の大きさになっていた (#163)
+    for option, value in (("--fps", args.fps), ("--duration", args.duration), ("--salient-slow-ms", args.salient_slow_ms)):
+        if value is not None and not math.isfinite(value):
+            parser.error(f"{option} は有限の数にしてください (nan・inf は使えません)")
+    if not 0 < args.fps <= MAX_FPS:
+        parser.error(f"--fps は 0 より大きく {MAX_FPS} 以下にしてください")
+    if args.duration is not None and not 0 < args.duration <= MAX_DURATION_SECONDS:
+        parser.error(f"--duration は 0 より大きく {MAX_DURATION_SECONDS} 秒以下にしてください (最後までなら付けない)")
+    if args.long_side is not None and not MIN_LONG_SIDE <= args.long_side <= MAX_LONG_SIDE:
+        parser.error(f"--long-side は {MIN_LONG_SIDE}〜{MAX_LONG_SIDE} にしてください (付けなければ段階に合わせる)")
     started = time.perf_counter()
     profile = args.profile
     # 始めたときの空きメモリ。GUI が測った値 (--free-ram・--free-vram) があればそれを使う。VRAM は測るのに約 2.6 秒かかるので、

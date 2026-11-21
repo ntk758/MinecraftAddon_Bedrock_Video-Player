@@ -173,7 +173,7 @@
     </div>
   </section>
 
-  <!-- 端末から出るもの・出ないもの。書くのは実際の動きだけ (Pyodide は jsDelivr から読む: web/worker.js。利用数は web/usage.js) -->
+  <!-- 端末から出るもの・出ないもの。書くのは実際の動きだけ (Pyodide はこのサイトに置いたものを読む: web/worker.js・scripts/fetch_pyodide.py。利用数は web/usage.js) -->
   <section class="section section-alt" id="privacy" aria-labelledby="privacyTitle">
     <div class="wrap">
       <header class="section-head">
@@ -193,7 +193,7 @@
           <h3><i data-lucide="cloud-download" class="icon" aria-hidden="true"></i><span data-i18n="web.privacy_loads">Downloaded to your device</span></h3>
           <ul>
             <li data-i18n="web.privacy_loads_1">This page and its scripts</li>
-            <li data-i18n="web.privacy_loads_2">The converter itself: Python for the browser, about 20 MB on the first visit, from the jsDelivr CDN</li>
+            <li data-i18n="web.privacy_loads_2">The converter itself: Python for the browser, about 30 MB on the first visit, from this site (a fixed, checked version; nothing is loaded from other sites)</li>
           </ul>
         </div>
         <div class="ledger-col">
@@ -294,7 +294,7 @@
                 <div class="setting-body fields">
                   <label class="field"><span class="field-label"><span data-i18n="settings.fps">FPS</span><button type="button" class="tip" data-i18n-title="web.tip_fps" title="Frames per second."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span>
                     <span class="range-pair"><input type="range" class="range" data-sync="fps" min="1" max="20" step="1" aria-hidden="true" tabindex="-1"><input type="number" id="fps" value="10" min="1" max="20"></span></label>
-                  <label class="field"><span class="field-label"><span data-i18n="web.max_length">Length to convert (s)</span><button type="button" class="tip" data-i18n-title="web.tip_duration" title="Empty converts the whole video."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span> <input type="number" id="duration" min="0.1" step="0.1" placeholder="Whole video" data-i18n-placeholder="web.full_length"></label>
+                  <label class="field"><span class="field-label"><span data-i18n="web.max_length">Length to convert (s)</span><button type="button" class="tip" data-i18n-title="web.tip_duration" title="Empty converts the whole video."><i data-lucide="info" class="icon" aria-hidden="true"></i></button></span> <input type="number" id="duration" min="0.1" max="86400" step="0.1" placeholder="Whole video" data-i18n-placeholder="web.full_length"></label>
                 </div>
               </div>
 
@@ -407,6 +407,7 @@
               <span class="build-icon" aria-hidden="true"><span class="spinner"></span><i data-lucide="check" class="icon check" aria-hidden="true"></i></span>
               <span data-i18n="build.button">Create .mcaddon</span>
             </button>
+            <button type="button" id="cancelBuild" class="button button-ghost button-cancel" hidden><span data-i18n="web.cancel">Cancel</span></button>
             <div class="progress-wrap">
               <div class="progress-meta"><span id="buildActivity" class="activity" aria-live="polite"></span><span id="progressText" class="progress-number"></span></div>
               <progress id="progress" max="1" value="0"></progress>
