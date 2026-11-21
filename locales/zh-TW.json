@@ -546,7 +546,7 @@
   "web.privacy_stays_3": "產生的附加元件：在記憶體中產生，由瀏覽器儲存",
   "web.privacy_loads": "下載到你的裝置",
   "web.privacy_loads_1": "本頁面及其指令碼",
-  "web.privacy_loads_2": "轉換器本體：瀏覽器版 Python，首次造訪時從 jsDelivr CDN 下載約 20 MB",
+  "web.privacy_loads_2": "轉換程式本身:瀏覽器版 Python,首次造訪約 30 MB,從本站載入(固定並驗證過的版本,不從其他網站載入)",
   "web.privacy_sent": "從你的裝置送出",
   "web.privacy_sent_none": "沒有。",
   "web.perf_windows": "取得 Windows 版",
@@ -647,5 +647,18 @@
   "addon.remote_operator_only": "§c有其他玩家時,只有管理員可以使用遙控器",
   "addon.screen.not_yours": "§c螢幕 %1 屬於 %2。只有放置者和管理員可以操作",
   "addon.screen.operator_only": "§c只有管理員可以操作螢幕 %1",
-  "imgaddon.remote_operator_only": "§c有其他玩家時,只有管理員可以使用遙控器"
+  "imgaddon.remote_operator_only": "§c有其他玩家時,只有管理員可以使用遙控器",
+  "web.cannot_open_timeout": "{name}:載入沒有完成(影片已損壞,或此瀏覽器無法讀取)",
+  "web.seek_stalled": "無法讀取 {time} 秒之後的影格。影片被截斷或已損壞",
+  "web.video_short": "注意:畫面在 {readable} 秒結束(檔案長 {duration} 秒)。影片被截斷,或音訊較長。使用前 {readable} 秒",
+  "web.invalid_settings": "部分設定超出範圍:{fields}",
+  "web.invalid_settings_python": "設定的值無效(原因見記錄)",
+  "web.memory_limit": "影格太多,瀏覽器記憶體放不下(約 {mb} MB,上限 {limit} MB)。請縮短長度、減小尺寸或 fps,或使用 Windows 版",
+  "web.busy_locked": "產生期間不能新增或移除影片",
+  "web.cancel": "取消",
+  "web.cancelled": "已取消",
+  "web.worker_crashed": "轉換執行緒已停止({error})。再次產生會重新載入 Python",
+  "web.worker_silent": "轉換執行緒已 {seconds} 秒沒有回應。如果卡住了,請按「取消」",
+  "web.skipped_file": "無法產生 {title},已略過:{error}",
+  "web.skipped_summary": "{count} 個檔案無法產生,未包含:{titles}"
 }

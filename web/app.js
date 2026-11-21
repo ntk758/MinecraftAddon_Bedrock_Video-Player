@@ -26,6 +26,21 @@ const QUALITY_PRESETS = {
 // コマのデータがこれより大きくなりそうなら注意を出す (MB)。ブラウザのタブが使えるメモリと、Pyodide (32bit の
 // WebAssembly) に同じデータを写すことを考えて決めた目安
 const MEMORY_WARNING_MB = 1000;
+// これより大きくなりそうなら作らない (MB)。コマは画面・worker・Pyodide のメモリに写るので、ここを超えると 32bit の
+// WebAssembly のメモリ (4 GB) に入らず、worker が黙って止まる (#174)
+const MEMORY_LIMIT_MB = 1500;
+// 動画を開くとき・1 コマへシークするときに、これだけ待っても終わらなければ止める (ms)。途中で切れた mp4 などで、
+// 何も出さずに止まったままになっていた (#170・#179)
+const METADATA_TIMEOUT_MS = 30000;
+const SEEK_TIMEOUT_MS = 15000;
+// 映像の終わりの見分け: 表示されたコマの時刻が、シークした時刻よりこれ以上前のまま最後まで進まなければ、映像はそこで
+// 終わっている (ファイルの長さより短い)。足りない所を最後のコマで埋めずに、そこまでにする (#170)
+const VIDEO_END_TOLERANCE = 0.5;
+// worker からこれだけ何も来なければ、止まっているかもしれないと知らせる (ms)
+const WORKER_SILENT_MS = 90000;
+// 動画 ID の長さ (mvcodec/limits.py の MAX_ID_LENGTH と DEFAULT_ID_LENGTH と同じ)
+const MAX_ID_LENGTH = 64;
+const DEFAULT_ID_LENGTH = 48;
 
 const $ = (id) => document.getElementById(id);
 const t = (key, params) => I18n.t(key, params); // 翻訳 (web/i18n.js、locales/*.json)
@@ -35,6 +50,19 @@ const isVox = (file) => /\.vox$/i.test(file.name);
 const isImage = (file) => /^image\//.test(file.type) || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name);
 let worker = null;
 let lastDownloadUrl = null;
+// 作っている間 (動画の一覧は変えられない)・中止を押した
+let building = false;
+let cancelRequested = false;
+let workerBusy = false;
+let lastWorkerMessage = 0;
+let silentWarned = false;
+
+/** 中止を押したときの例外 (作るのをやめる)。 */
+class BuildCancelled extends Error {}
+
+function checkCancel() {
+  if (cancelRequested) throw new BuildCancelled(t("web.cancelled"));
+}
 
 function log(text) {
   const el = $("log");
@@ -43,9 +71,11 @@ function log(text) {
   UI.activity(text); // 作っている間の「いまの処理」の 1 行 (web/ui.js)
 }
 
-function safeId(name, used) {
+function safeId(name, used, limit = DEFAULT_ID_LENGTH) {
   let base = name.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "video";
   if (/^[0-9]/.test(base)) base = "v_" + base;
+  // 長いファイル名は切る (アドオンのスクリプトが長い ID を保存から読み戻せなかった。#186・#199)
+  base = base.slice(0, limit).replace(/_+$/, "") || "video";
   let id = base;
   for (let n = 2; used.has(id); n++) id = `${base}_${n}`;
   used.add(id);
@@ -54,27 +84,36 @@ function safeId(name, used) {
 
 function loadVideoElement(url, name = "") {
   return new Promise((resolve, reject) => {
+    // 読み込みが終わらない (細工した mp4 など) ときは、待ち続けずに知らせる (#179)
+    const timer = setTimeout(() => {
+      video.removeAttribute("src");
+      reject(new Error(t("web.cannot_open_timeout", { name })));
+    }, METADATA_TIMEOUT_MS);
+    const done = (value) => { clearTimeout(timer); resolve(value); };
+    const fail = (error) => { clearTimeout(timer); reject(error); };
     const video = document.createElement("video");
     video.muted = true;
     video.preload = "auto";
     video.playsInline = true;
     video.src = url;
     video.onloadedmetadata = () => {
-      if (Number.isFinite(video.duration)) { resolve(video); return; }
+      if (Number.isFinite(video.duration)) { done(video); return; }
       // MediaRecorder の WebM (カメラの録画) は長さが入っていない (Infinity)。最後へ飛ぶと本当の長さが分かる
       video.ontimeupdate = () => {
         video.ontimeupdate = null;
-        if (!Number.isFinite(video.duration)) { reject(new Error(t("web.cannot_open", { name }))); return; }
-        video.onseeked = () => resolve(video);
+        if (!Number.isFinite(video.duration)) { fail(new Error(t("web.cannot_open", { name }))); return; }
+        video.onseeked = () => done(video);
         video.currentTime = 0;
       };
       video.currentTime = 1e101;
     };
-    video.onerror = () => reject(new Error(t("web.cannot_open", { name })));
+    video.onerror = () => fail(new Error(t("web.cannot_open", { name })));
   });
 }
 
 async function addFiles(fileList) {
+  // 作っている間は一覧を変えない (足した動画は今のアドオンに入らず、外しても作るのは止まらなかった。#188)
+  if (building) { UI.toast(t("web.busy_locked"), "file"); return; }
   const hadVideo = videos.some((v) => !v.vox);
   const before = videos.length;
   const used = new Set(videos.map((v) => v.id));
@@ -140,15 +179,17 @@ function renderList() {
     const input = document.createElement("input");
     input.value = v.id;
     input.title = t("web.video_id");
-    input.onchange = () => { v.id = safeId(input.value, new Set(videos.filter((o) => o !== v).map((o) => o.id))); input.value = v.id; };
+    input.onchange = () => { v.id = safeId(input.value, new Set(videos.filter((o) => o !== v).map((o) => o.id)), MAX_ID_LENGTH); input.value = v.id; };
+    input.disabled = building;
     list.append(UI.fileCard(v, input, () => removeVideo(v)));
   }
-  $("build").disabled = videos.length === 0;
+  $("build").disabled = videos.length === 0 || building;
   updateLoadHint();
 }
 
-/** 一覧から外す (作り終えたアドオンには関係しない)。 */
+/** 一覧から外す (作り終えたアドオンには関係しない)。作っている間は外さない (#188)。 */
 function removeVideo(v) {
+  if (building) { UI.toast(t("web.busy_locked"), "file"); renderList(); return; }
   const index = videos.indexOf(v);
   if (index < 0) return;
   videos.splice(index, 1);
@@ -196,6 +237,16 @@ function updateLoadHint() {
   const mb = Math.round((seconds * s.fps * s.width * s.height * 3) / 1e6);
   if (mb >= MEMORY_WARNING_MB) hint += "\n" + t("web.memory_warning", { mb: mb.toLocaleString(I18n.language) });
   $("loadHint").textContent = hint;
+  // 設定の要約 (web/ui.js) も直す。プリセット・縦横比を合わせるボタンは入力の event を出さないので、要約の高さが
+  // 前の値のままだった (#206)
+  UI.refresh?.();
+}
+
+/** 作る前に見積もるコマのデータの大きさ (MB)。 */
+function frameMemoryMb(s) {
+  const seconds = videos.filter((v) => !v.vox && Number.isFinite(v.duration))
+    .reduce((sum, v) => sum + Math.min(v.duration, durationLimit(s)), 0);
+  return Math.round((seconds * s.fps * s.width * s.height * 3) / 1e6);
 }
 
 function drawLetterboxed(ctx, source, srcW, srcH, w, h) {
@@ -206,9 +257,38 @@ function drawLetterboxed(ctx, source, srcW, srcH, w, h) {
   ctx.drawImage(source, Math.floor((w - dw) / 2), Math.floor((h - dh) / 2), dw, dh);
 }
 
+/**
+ * time 秒へシークして、表示されたコマの時刻 (秒。分からなければ null) を返す。SEEK_TIMEOUT_MS 待っても終わらなければ
+ * 止める (途中で切れた mp4 は、切れた所より後へのシークが終わらず、何も出さずに止まっていた。#170)。
+ */
 function seek(video, time) {
-  return new Promise((resolve) => {
-    video.onseeked = () => resolve();
+  return new Promise((resolve, reject) => {
+    let frameTime = null;
+    let seeked = false;
+    let finished = false;
+    const finish = (error) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      clearTimeout(frameTimer);
+      if (error) reject(error);
+      else resolve(frameTime);
+    };
+    const timer = setTimeout(() => finish(new Error(t("web.seek_stalled", { time: time.toFixed(1) }))), SEEK_TIMEOUT_MS);
+    let frameTimer = null;
+    // 表示されたコマの時刻 (requestVideoFrameCallback。ページに置いた <video> だけで届く)。届かなくても 1 秒で進む
+    if (video.requestVideoFrameCallback) {
+      video.requestVideoFrameCallback((_now, metadata) => {
+        frameTime = metadata.mediaTime;
+        if (seeked) finish();
+      });
+    }
+    video.onseeked = () => {
+      seeked = true;
+      if (frameTime !== null || !video.requestVideoFrameCallback) finish();
+      else frameTimer = setTimeout(() => finish(), 1000);
+    };
+    video.onerror = () => finish(new Error(t("web.seek_stalled", { time: time.toFixed(1) })));
     video.currentTime = time;
   });
 }
@@ -246,16 +326,36 @@ async function thumbnailPng(source, srcW, srcH) {
 // 動画のコマを PPM (P6) にして返す (convert.py が Pillow で読める一番簡単な形式)
 async function extractFrames(v, s, onProgress) {
   const video = await loadVideoElement(v.url);
+  // 表示されたコマの時刻を知るため、ページに (見えない大きさで) 置く (requestVideoFrameCallback が届くように)
+  video.className = "frame-source";
+  document.body.append(video);
+  try {
+    return await extractFramesFrom(video, v, s, onProgress);
+  } finally {
+    video.remove();
+  }
+}
+
+async function extractFramesFrom(video, v, s, onProgress) {
   const canvas = document.createElement("canvas");
   canvas.width = s.width;
   canvas.height = s.height;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  const length = Math.min(video.duration, durationLimit(s));
+  let length = Math.min(video.duration, durationLimit(s));
   const count = Math.max(1, Math.floor(length * s.fps));
   const header = new TextEncoder().encode(`P6\n${s.width} ${s.height}\n255\n`);
   const frames = [];
+  // 表示されたコマの時刻。最後に進んだ時刻と、そのコマのままになった最初のコマの番号
+  let lastFrameTime = -1;
+  let stuckFrom = -1;
   for (let i = 0; i < count; i++) {
-    await seek(video, Math.min(video.duration - 0.001, i / s.fps + 0.001));
+    checkCancel();
+    const target = Math.min(video.duration - 0.001, i / s.fps + 0.001);
+    const frameTime = await seek(video, target);
+    if (frameTime !== null) {
+      if (frameTime > lastFrameTime + 1e-3) { lastFrameTime = frameTime; stuckFrom = -1; }
+      else if (stuckFrom < 0 && target - frameTime > VIDEO_END_TOLERANCE) stuckFrom = i;
+    }
     drawLetterboxed(ctx, video, video.videoWidth, video.videoHeight, s.width, s.height);
     const rgba = ctx.getImageData(0, 0, s.width, s.height).data;
     const ppm = new Uint8Array(header.length + s.width * s.height * 3);
@@ -267,6 +367,15 @@ async function extractFrames(v, s, onProgress) {
     }
     frames.push(ppm);
     if (i % 10 === 0) onProgress(i / count);
+  }
+  if (stuckFrom > 0) {
+    // 最後まで同じコマのまま: 映像はファイルの長さより前に終わっている (途中で切れた動画か、音声の方が長い動画)。
+    // 以前は最後のコマを繰り返して長さを埋め、何も知らせなかった (#170)
+    // 最後の本当のコマ (時刻 lastFrameTime) までを残す。止まったと分かった所 (stuckFrom) までには、最後のコマを
+    // 繰り返したコマ (VIDEO_END_TOLERANCE 秒分) も入っている
+    frames.length = Math.min(stuckFrom, Math.floor(lastFrameTime * s.fps + 1e-6) + 1);
+    length = Math.min(length, frames.length / s.fps);
+    log("  " + t("web.video_short", { readable: length.toFixed(1), duration: video.duration.toFixed(1) }));
   }
   // サムネイル (最初の動画のものがパックのアイコンになる): 1 秒目か中ほど
   await seek(video, Math.min(1, video.duration / 2));
@@ -400,7 +509,17 @@ async function extractAudio(v, length, imageChunks = false) {
 function startWorker() {
   if (worker) return worker;
   worker = new Worker("worker.js");
+  // worker が落ちた (読み込めない・メモリが足りない) ときは、黙って止まったままにしない (#172)。次に作るときは新しく起動する
+  worker.onerror = (event) => {
+    event.preventDefault();
+    const message = event.message || "worker.js";
+    worker = null;
+    if (building) failed(t("web.worker_crashed", { error: message }));
+    else UI.engine("error");
+  };
+  worker.onmessageerror = () => { if (building) failed(t("web.worker_crashed", { error: "message" })); };
   worker.onmessage = (event) => {
+    lastWorkerMessage = Date.now();
     const msg = event.data;
     // worker の文はキーで受け取ってここで翻訳する (Python の出力はそのまま)
     if (msg.type === "log") { UI.workerLog(msg); log(msg.key ? (msg.indent || "") + t(msg.key, msg.params) : msg.text); }
@@ -434,8 +553,12 @@ function finish(msg) {
     log("  " + t("web.image_howto", { ns: s.namespace + IMAGE_NAMESPACE_SUFFIX }));
   }
   $("progress").value = 1;
-  $("build").disabled = false;
+  endBuild();
   log(t("web.done", { size: (blob.size / 1024).toFixed(0) }));
+  if (msg.skipped && msg.skipped.length) {
+    // 作れなかった動画は飛ばした (1 本の失敗で、ほかの動画を捨てていた。#204)
+    log(t("web.skipped_summary", { count: msg.skipped.length, titles: msg.skipped.map((item) => item.title).join(", ") }));
+  }
   UI.buildDone({ name: link.download, size: blob.size, imageName: msg.imageAddon ? $("imageDownload").download : "",
                  imageSize: msg.imageAddon ? msg.imageAddon.byteLength : 0 });
   window.lastResult = msg; // テスト用
@@ -451,12 +574,62 @@ function finish(msg) {
   }
 }
 
+/**
+ * Python のトレースバックを、最後の 1 行 (例外の文) にする。全文はログに残す (画面の赤い枠に Python の中身を
+ * そのまま出していた。#173)。argparse の範囲の外の値 (SystemExit) は、ログの上の行に理由がある。
+ */
+function errorSummary(text) {
+  const value = String(text ?? "");
+  if (!/Traceback \(most recent call last\)/.test(value)) return value;
+  const lines = value.split("\n").map((line) => line.trim()).filter(Boolean);
+  const last = lines[lines.length - 1] || value;
+  if (/^SystemExit\b/.test(last)) return t("web.invalid_settings_python");
+  return last.replace(/^[A-Za-z_.]*(Error|Exception): /, "");
+}
+
 function failed(text) {
-  log(t("web.error", { error: text }));
-  UI.buildFailed(text);
-  $("build").disabled = false;
+  const summary = errorSummary(text);
+  if (summary !== String(text)) log(String(text));
+  log(t("web.error", { error: summary }));
+  UI.buildFailed(summary);
+  endBuild();
   if (lastBuild) Usage.event("build-error");
   lastBuild = null;
+}
+
+/** 作り終えた・止めた: 一覧と設定を元どおり変えられるようにする。 */
+function endBuild() {
+  building = false;
+  workerBusy = false;
+  cancelRequested = false;
+  $("build").disabled = videos.length === 0;
+  $("files").disabled = false;
+  $("cancelBuild").hidden = true;
+  renderList();
+}
+
+/** 中止: 取り出している途中なら次のコマで止め、worker で変換している途中なら worker を止めて起動し直す (#188)。 */
+function cancelBuild() {
+  if (!building) return;
+  cancelRequested = true;
+  $("cancelBuild").disabled = true;
+  if (workerBusy && worker) {
+    worker.terminate();
+    worker = null;
+    failed(t("web.cancelled"));
+    startWorker(); // Python を読み込み直しておく (次に作るとき待たないように)
+  }
+}
+
+/** 入力欄の値が範囲 (min・max) の外なら、その欄の名前の一覧。作り始める前に断る (#173)。 */
+function invalidFields() {
+  const names = [];
+  for (const el of document.querySelectorAll(".studio input[type=number], .studio input[type=text][pattern]")) {
+    if (el.disabled || el.closest("[hidden]") || el.checkValidity()) continue;
+    const label = el.closest("label")?.querySelector(".field-label")?.textContent.trim() || el.id;
+    names.push(label);
+  }
+  return names;
 }
 
 // 利用数で数える、作成中のアドオンの種類と画面の言語 (完成・失敗したときに送る)
@@ -493,7 +666,25 @@ async function build() {
     failed(t("error.namespace"));
     return;
   }
+  // 範囲の外の値は、コマを取り出す前に断る (取り出した後の Python で止まるか、そのまま使われていた。#173)
+  const invalid = invalidFields();
+  if (invalid.length) {
+    failed(t("web.invalid_settings", { fields: invalid.join(", ") }));
+    return;
+  }
+  const mb = frameMemoryMb(s);
+  if (mb > MEMORY_LIMIT_MB) {
+    failed(t("web.memory_limit", { mb: mb.toLocaleString(I18n.language), limit: MEMORY_LIMIT_MB.toLocaleString(I18n.language) }));
+    return;
+  }
   buildSettings = s;
+  building = true;
+  cancelRequested = false;
+  workerBusy = false;
+  $("files").disabled = true;
+  $("cancelBuild").hidden = false;
+  $("cancelBuild").disabled = false;
+  renderList();
   $("build").disabled = true;
   $("download").hidden = true;
   $("imageDownload").hidden = true;
@@ -505,6 +696,7 @@ async function build() {
   Usage.event("build-start");
   const background = await extractBackground(s);
   const jobs = [];
+  const skipped = [];
   for (const [n, v] of videos.entries()) {
     if (v.mmd) {
       // MMD: モデルのフォルダのファイルと踊りを渡し、worker が Python (mvcodec/mmd.py) で .vox の立体にする
@@ -527,12 +719,21 @@ async function build() {
       continue;
     }
     log(t("web.extracting", { index: n + 1, total: videos.length, title: v.title }));
-    const { frames, thumbnail, length } = await extractFrames(v, s, (f) => { $("progress").value = (n + f * 0.4) / videos.length; });
-    log("  " + t("web.frames", { count: frames.length }));
-    v.imageSounds = null;
-    const sounds = await extractAudio(v, length, s.imageMode);
-    jobs.push({ id: v.id, title: v.title, frames, thumbnail, sounds, imageSounds: v.imageSounds });
+    try {
+      const { frames, thumbnail, length } = await extractFrames(v, s, (f) => { $("progress").value = (n + f * 0.4) / videos.length; });
+      log("  " + t("web.frames", { count: frames.length }));
+      v.imageSounds = null;
+      const sounds = await extractAudio(v, length, s.imageMode);
+      jobs.push({ id: v.id, title: v.title, frames, thumbnail, sounds, imageSounds: v.imageSounds });
+    } catch (e) {
+      if (e instanceof BuildCancelled) throw e;
+      // 1 本が読めなくても、ほかの動画は作る (#204)
+      skipped.push({ id: v.id, title: v.title, error: e.message || String(e) });
+      log("  " + t("web.skipped_file", { title: v.title, error: e.message || String(e) }));
+    }
   }
+  checkCancel();
+  if (jobs.length === 0) throw new Error(skipped.length ? skipped[0].error : t("web.cannot_open", { name: "" }));
   const transfer = [];
   for (const job of jobs) {
     for (const f of job.frames) transfer.push(f.buffer);
@@ -547,9 +748,19 @@ async function build() {
     for (const [, , bytes] of background.sounds) transfer.push(bytes.buffer);
   }
   UI.handedOver();
-  w.postMessage({ type: "build", settings: s, jobs, background, lang: I18n.language },
+  workerBusy = true;
+  lastWorkerMessage = Date.now();
+  silentWarned = false;
+  w.postMessage({ type: "build", settings: s, jobs, background, lang: I18n.language, skipped },
     transfer);
 }
+
+// worker から長く何も来ないときは、中止できることを知らせる (止まっているのか、時間がかかっているのかが分からなかった)
+setInterval(() => {
+  if (!workerBusy || silentWarned || Date.now() - lastWorkerMessage < WORKER_SILENT_MS) return;
+  silentWarned = true;
+  log(t("web.worker_silent", { seconds: Math.round(WORKER_SILENT_MS / 1000) }));
+}, 5000);
 
 $("files").addEventListener("change", (e) => addFiles(e.target.files));
 Camera.onRecorded((file) => addFiles([file]));
@@ -574,7 +785,8 @@ function applyPreset() {
 $("preset").addEventListener("change", applyPreset);
 // 幅・高さ・fps を手で変えたら、プリセットの表示を「—」にする
 for (const id of ["width", "height", "fps"]) $(id).addEventListener("input", () => { $("preset").value = ""; });
-$("build").addEventListener("click", () => build().catch((e) => failed(e.message)));
+$("build").addEventListener("click", () => build().catch((e) => failed(e instanceof BuildCancelled ? t("web.cancelled") : e.message)));
+$("cancelBuild").addEventListener("click", cancelBuild);
 for (const id of ["width", "height", "fps", "mode", "duration"]) $(id).addEventListener("change", updateLoadHint);
 // 利用者が長さを書き換えたら、動画を追加しても上書きしない。空にしたら、また動画の長さを入れる
 $("duration").addEventListener("change", () => { durationEdited = $("duration").value.trim() !== ""; if (!durationEdited) fillDuration(); });
@@ -610,6 +822,47 @@ function setupUsage() {
   $("usageOptOut").checked = Usage.optedOut;
   $("usageOptOut").addEventListener("change", (e) => Usage.setOptOut(e.target.checked));
 }
+
+// 設定を覚える (読み込み直すと、すべての設定が既定に戻っていた。#205)。動画は覚えない (ファイルはページに残せない)
+const SETTINGS_KEY = "bvp.settings";
+const SAVED_FIELDS = ["preset", "width", "height", "fps", "mode", "depth", "anamorphic", "pairFlat", "imageMode", "imageLighting",
+  "imagePngOptimize", "palette", "dither", "keyframe", "perceptual", "flatAreas", "packName", "namespace", "target"];
+
+function saveSettings() {
+  const values = {};
+  for (const id of SAVED_FIELDS) {
+    const el = $(id);
+    if (el) values[id] = el.type === "checkbox" ? el.checked : el.value;
+  }
+  if (durationEdited) values.duration = $("duration").value;
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(values));
+  } catch (e) { /* 保存できないブラウザ (プライベートモードなど) では覚えない */ }
+}
+
+function restoreSettings() {
+  let values = null;
+  try {
+    values = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
+  } catch (e) {
+    values = null;
+  }
+  if (!values || typeof values !== "object") return;
+  for (const id of SAVED_FIELDS) {
+    const el = $(id);
+    if (!el || !(id in values)) continue;
+    if (el.type === "checkbox") el.checked = Boolean(values[id]);
+    else if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === String(values[id]))) continue;
+    else el.value = String(values[id]);
+  }
+  if (typeof values.duration === "string" && values.duration.trim() !== "") {
+    $("duration").value = values.duration;
+    durationEdited = true;
+  }
+}
+
+restoreSettings();
+for (const id of [...SAVED_FIELDS, "duration"]) $(id)?.addEventListener("change", saveSettings);
 
 I18n.onChange(() => { updateLoadHint(); renderHowto(); renderList(); Preview.refreshText(); Mmd.refreshText(); });
 I18n.init().then(() => {

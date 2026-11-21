@@ -180,6 +180,9 @@ def test_length_defaults_to_the_whole_video():
     """変換する長さは既定で最後まで (上限なし)。以前は 60 秒で何も言わずに切れていた"""
     html = (WEB / "index.html").read_text(encoding="utf-8")
     field = re.search(r'<input[^>]*id="duration"[^>]*>', html).group(0)
-    assert "value=" not in field and "max=" not in field
+    assert "value=" not in field
+    # 上限は範囲の外を断るためのもの (24 時間。作る前に断る。#173)。黙って切る短い上限ではない
+    limit = re.search(r'max="([0-9.]+)"', field)
+    assert limit is None or float(limit.group(1)) >= 86400
     app = (WEB / "app.js").read_text(encoding="utf-8")
     assert "Math.min(video.duration, durationLimit(s))" in app

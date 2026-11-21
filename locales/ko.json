@@ -546,7 +546,7 @@
   "web.privacy_stays_3": "완성된 애드온: 메모리에서 만들어 브라우저가 저장합니다",
   "web.privacy_loads": "기기로 내려받는 것",
   "web.privacy_loads_1": "이 페이지와 스크립트",
-  "web.privacy_loads_2": "변환기 본체: 브라우저용 Python, 첫 방문 때 jsDelivr CDN에서 약 20 MB",
+  "web.privacy_loads_2": "변환 본체: 브라우저용 Python. 처음 한 번만 약 30 MB를 이 사이트에서 불러옵니다 (버전을 정해 확인한 파일이며, 다른 사이트에서는 불러오지 않습니다)",
   "web.privacy_sent": "기기에서 보내는 것",
   "web.privacy_sent_none": "없습니다.",
   "web.perf_windows": "Windows 앱 받기",
@@ -647,5 +647,18 @@
   "addon.remote_operator_only": "§c다른 플레이어가 있을 때는 오퍼레이터만 리모컨을 쓸 수 있습니다",
   "addon.screen.not_yours": "§c스크린 %1은 %2 님의 것입니다. 놓은 사람과 오퍼레이터만 조작할 수 있습니다",
   "addon.screen.operator_only": "§c스크린 %1은 오퍼레이터만 조작할 수 있습니다",
-  "imgaddon.remote_operator_only": "§c다른 플레이어가 있을 때는 오퍼레이터만 리모컨을 쓸 수 있습니다"
+  "imgaddon.remote_operator_only": "§c다른 플레이어가 있을 때는 오퍼레이터만 리모컨을 쓸 수 있습니다",
+  "web.cannot_open_timeout": "{name}: 불러오기가 끝나지 않습니다 (손상되었거나 이 브라우저에서 읽을 수 없는 동영상입니다)",
+  "web.seek_stalled": "{time}초 이후의 프레임을 읽을 수 없습니다. 동영상이 중간에 잘렸거나 손상되었습니다",
+  "web.video_short": "주의: 영상은 {readable}초에서 끝납니다 (파일 길이 {duration}초). 중간에 잘렸거나 소리가 더 긴 동영상입니다. {readable}초까지 사용합니다",
+  "web.invalid_settings": "설정 값이 범위를 벗어났습니다: {fields}",
+  "web.invalid_settings_python": "설정 값이 올바르지 않습니다 (이유는 로그에 있습니다)",
+  "web.memory_limit": "프레임이 너무 많아 브라우저 메모리에 들어가지 않습니다 (약 {mb} MB, 한도 {limit} MB). 길이·크기·fps를 줄이거나 Windows 버전을 사용하세요",
+  "web.busy_locked": "만드는 동안에는 동영상을 추가하거나 뺄 수 없습니다",
+  "web.cancel": "중지",
+  "web.cancelled": "중지했습니다",
+  "web.worker_crashed": "변환 스레드가 멈췄습니다 ({error}). 다시 만들면 Python을 다시 불러옵니다",
+  "web.worker_silent": "변환 스레드가 {seconds}초 동안 응답하지 않습니다. 멈춘 것 같으면 [중지]를 누르세요",
+  "web.skipped_file": "{title}는 만들 수 없어 건너뛰었습니다: {error}",
+  "web.skipped_summary": "{count}개는 만들 수 없어 넣지 않았습니다: {titles}"
 }

@@ -546,7 +546,7 @@
   "web.privacy_stays_3": "El complemento terminado: se crea en memoria y lo guarda tu navegador",
   "web.privacy_loads": "Se descarga a tu dispositivo",
   "web.privacy_loads_1": "Esta página y sus scripts",
-  "web.privacy_loads_2": "El conversor en sí: Python para el navegador, unos 20 MB en la primera visita, desde la CDN jsDelivr",
+  "web.privacy_loads_2": "El conversor en sí: Python para el navegador, unos 30 MB en la primera visita, desde este sitio (una versión fija y verificada; no se carga nada de otros sitios)",
   "web.privacy_sent": "Se envía desde tu dispositivo",
   "web.privacy_sent_none": "Nada.",
   "web.perf_windows": "Obtener la app de Windows",
@@ -647,5 +647,18 @@
   "addon.remote_operator_only": "§cSolo los operadores pueden usar el mando mientras haya otros jugadores en el mundo",
   "addon.screen.not_yours": "§cLa pantalla %1 pertenece a %2. Solo quien la colocó y los operadores pueden controlarla",
   "addon.screen.operator_only": "§cSolo los operadores pueden controlar la pantalla %1",
-  "imgaddon.remote_operator_only": "§cSolo los operadores pueden usar el mando mientras haya otros jugadores en el mundo"
+  "imgaddon.remote_operator_only": "§cSolo los operadores pueden usar el mando mientras haya otros jugadores en el mundo",
+  "web.cannot_open_timeout": "{name}: la carga no terminó (el video está dañado o este navegador no puede leerlo)",
+  "web.seek_stalled": "No se pueden leer los fotogramas después de {time} s. El video está cortado o dañado",
+  "web.video_short": "Nota: el video termina en {readable} s (el archivo dura {duration} s). Está cortado o su audio es más largo. Se usan los primeros {readable} s",
+  "web.invalid_settings": "Algunos ajustes están fuera de rango: {fields}",
+  "web.invalid_settings_python": "Un ajuste no es válido (el motivo está en el registro)",
+  "web.memory_limit": "Demasiados fotogramas para la memoria del navegador (unos {mb} MB, límite {limit} MB). Reduce la duración, el tamaño o los fps, o usa la versión de Windows",
+  "web.busy_locked": "No se pueden añadir ni quitar videos mientras se crea",
+  "web.cancel": "Cancelar",
+  "web.cancelled": "Cancelado",
+  "web.worker_crashed": "El hilo de conversión se detuvo ({error}). Al volver a crear se recarga Python",
+  "web.worker_silent": "Sin respuesta del hilo de conversión durante {seconds} s. Si parece bloqueado, pulsa Cancelar",
+  "web.skipped_file": "Se omitió {title} (no se pudo crear): {error}",
+  "web.skipped_summary": "{count} archivo(s) no se pudieron crear y se omitieron: {titles}"
 }

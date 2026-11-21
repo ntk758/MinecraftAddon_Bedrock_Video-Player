@@ -5,6 +5,7 @@ pack_builder.py など)、ゲーム内の翻訳 (locales)、アドオンの中�
 その一覧を files.json に書く。GitHub Pages のワークフロー (.github/workflows/pages.yml) と、手元での確認に使う:
 
     python scripts/build_web.py --out web_dist
+    python scripts/fetch_pyodide.py --out web_dist/pyodide   # Pyodide もサイトに置く (無ければ worker が CDN から読む)
     python -m http.server --directory web_dist 8000   # http://localhost:8000/
 
 --goatcounter <コード> (既定は環境変数 BVP_GOATCOUNTER_CODE) を付けると、config.js に GoatCounter のコードを書き、

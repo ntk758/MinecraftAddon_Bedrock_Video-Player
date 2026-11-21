@@ -4,7 +4,16 @@
 "use strict";
 
 const PYODIDE_VERSION = "0.26.4";
-importScripts(`https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/pyodide.js`);
+// Pyodide は、公開したサイトに置いたもの (scripts/fetch_pyodide.py が SHA-256 を確かめて pyodide/ に置く) を使う。
+// 以前は CDN から読み込んでいて、「動画は端末から出ない」ことが CDN の中身に頼っていた (#175)。
+// サイトに無いとき (手元で scripts/build_web.py だけを実行したとき) だけ、CDN から読み込む
+let PYODIDE_URL = "pyodide/";
+try {
+  importScripts(`${PYODIDE_URL}pyodide.js`);
+} catch (e) {
+  PYODIDE_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
+  importScripts(`${PYODIDE_URL}pyodide.js`);
+}
 
 const post = (type, extra, transfer = []) => self.postMessage({ type, ...extra }, transfer);
 const log = (text) => post("log", { text });
@@ -13,7 +22,8 @@ const say = (key, params, indent = "") => post("log", { key, params, indent });
 
 async function setup() {
   say("web.loading_python");
-  const pyodide = await loadPyodide({ stdout: log, stderr: log });
+  if (PYODIDE_URL.startsWith("https:")) log(`Pyodide: ${PYODIDE_URL} (not hosted with this site)`);
+  const pyodide = await loadPyodide({ indexURL: PYODIDE_URL, stdout: log, stderr: log });
   await pyodide.loadPackage(["numpy", "pillow"]);
   // files.json は scripts/build_web.py が作る (サイトに置いた Python のソースと翻訳の一覧)
   // 公開した版を更新したときに古いソースを使わないよう、毎回サーバーに確かめる
@@ -182,15 +192,39 @@ cim.zip_bytes(_files)
   }
 }
 
+/** 作業フォルダのコマ (.ppm) と立体 (.vox) を消す。失敗した前の作成のコマが残り、次の作成に混ざっていた (#171・#203)。 */
+function clearWorkDir(pyodide, dir) {
+  let names = [];
+  try { names = pyodide.FS.readdir(dir); } catch (e) { return; }
+  for (const name of names) if (/\.(ppm|vox)$/.test(name)) pyodide.FS.unlink(`${dir}/${name}`);
+}
+
+/** Python のトレースバックは最後の 1 行にする (全文はログへ。#173)。 */
+function errorText(e) {
+  const text = String(e && e.message ? e.message : e);
+  if (!/Traceback \(most recent call last\)/.test(text)) return text;
+  log(text);
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  return (lines[lines.length - 1] || text).replace(/^[A-Za-z_.]*(Error|Exception): /, "");
+}
+
 self.onmessage = async (event) => {
   const { settings: s, jobs, background, lang } = event.data;
+  // 画面の側で読めずに飛ばした動画 (コマを取り出せなかった) と、ここで作れなかった動画 (#204)
+  const skipped = [...(event.data.skipped ?? [])];
   try {
     const pyodide = await ready;
     const videos = [];
     for (const [n, job] of jobs.entries()) {
       const dir = `/work/${job.id}`;
       try { pyodide.FS.mkdirTree(dir); } catch (e) { /* 既にある */ }
-      job.frames.forEach((ppm, i) => pyodide.FS.writeFile(`${dir}/frame_${String(i).padStart(6, "0")}.ppm`, ppm));
+      clearWorkDir(pyodide, dir);
+      const before = videos.length;
+      try {
+      job.frames.forEach((ppm, i) => {
+        pyodide.FS.writeFile(`${dir}/frame_${String(i).padStart(6, "0")}.ppm`, ppm);
+        job.frames[i] = null; // 写したコマは手放す (メモリに 2 つ持たない。#174)
+      });
       say("web.converting", { index: n + 1, total: jobs.length, title: job.title });
       post("progress", { value: (n + 0.4) / jobs.length });
       const out = `/work/frames_${job.id}.js`;
@@ -229,14 +263,24 @@ self.onmessage = async (event) => {
         flat = { id: flatId, title: `${job.title} (2D)`, frames_js: pyodide.FS.readFile(flatOut, { encoding: "utf8" }),
                  thumbnail: job.thumbnail, sounds: [], audio_from: backgroundId || job.id, width: s.width, height: s.height };
       }
-      for (const name of pyodide.FS.readdir(dir)) if (/\.(ppm|vox)$/.test(name)) pyodide.FS.unlink(`${dir}/${name}`);
+      clearWorkDir(pyodide, dir);
       const framesJs = pyodide.FS.readFile(out, { encoding: "utf8" });
       videos.push({ id: job.id, title: pair ? `${job.title} (3D)` : job.title, frames_js: framesJs,
                     thumbnail: job.thumbnail, sounds: job.sounds, width: figureSize(s)[0], height: figureSize(s)[1] });
       if (flat) videos.push(flat);
       if (backgroundId) videos.push(convertBackground(pyodide, s, background, backgroundId, framesJs, lang));
+      } catch (e) {
+        // 1 本が作れなくても、ほかの動画は作る (1 本の失敗で全部を捨てていた。#204)
+        videos.length = before;
+        const error = errorText(e);
+        skipped.push({ id: job.id, title: job.title, error });
+        say("web.skipped_file", { title: job.title, error }, "  ");
+      } finally {
+        clearWorkDir(pyodide, dir);
+      }
       post("progress", { value: (n + 0.95) / jobs.length });
     }
+    if (videos.length === 0) throw new Error(skipped.length ? skipped[0].error : "no videos");
     say("web.assembling");
     pyodide.globals.set("js_videos", pyodide.toPy(videos));
     pyodide.globals.set("pack_name", s.packName);
@@ -299,8 +343,8 @@ if build_target != "latest":
     // 画像モードのアドオンは別ファイルなので、失敗してもブロックモードのアドオンはそのまま出す
     const imageAddon = s.imageMode ? buildImageAddon(pyodide, s, jobs) : null;
     const transfer = imageAddon ? [addon.buffer, imageAddon.buffer] : [addon.buffer];
-    post("done", { addon, previews, imageAddon }, transfer);
+    post("done", { addon, previews, imageAddon, skipped }, transfer);
   } catch (e) {
-    post("error", { text: String(e && e.message ? e.message : e) });
+    post("error", { text: errorText(e) });
   }
 };

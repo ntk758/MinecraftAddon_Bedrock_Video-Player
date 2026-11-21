@@ -546,7 +546,7 @@
   "web.privacy_stays_3": "Das fertige Add-on: Es entsteht im Speicher und wird von deinem Browser gesichert",
   "web.privacy_loads": "Wird auf dein Gerät geladen",
   "web.privacy_loads_1": "Diese Seite und ihre Skripte",
-  "web.privacy_loads_2": "Der Konverter selbst: Python für den Browser, beim ersten Besuch etwa 20 MB, vom jsDelivr-CDN",
+  "web.privacy_loads_2": "Der Konverter selbst: Python für den Browser, beim ersten Besuch etwa 30 MB, von dieser Website (eine feste, geprüfte Version; nichts wird von anderen Websites geladen)",
   "web.privacy_sent": "Wird von deinem Gerät gesendet",
   "web.privacy_sent_none": "Nichts.",
   "web.perf_windows": "Windows-App holen",
@@ -647,5 +647,18 @@
   "addon.remote_operator_only": "§cNur Operatoren können die Fernbedienung benutzen, solange andere Spieler in der Welt sind",
   "addon.screen.not_yours": "§cBildschirm %1 gehört %2. Nur wer ihn platziert hat und Operatoren können ihn steuern",
   "addon.screen.operator_only": "§cNur Operatoren können Bildschirm %1 steuern",
-  "imgaddon.remote_operator_only": "§cNur Operatoren können die Fernbedienung benutzen, solange andere Spieler in der Welt sind"
+  "imgaddon.remote_operator_only": "§cNur Operatoren können die Fernbedienung benutzen, solange andere Spieler in der Welt sind",
+  "web.cannot_open_timeout": "{name}: Das Laden wurde nicht beendet (das Video ist beschädigt oder dieser Browser kann es nicht lesen)",
+  "web.seek_stalled": "Bilder nach {time} s können nicht gelesen werden. Das Video ist abgeschnitten oder beschädigt",
+  "web.video_short": "Hinweis: Das Video endet bei {readable} s (die Datei ist {duration} s lang). Es ist abgeschnitten oder der Ton ist länger. Es werden die ersten {readable} s verwendet",
+  "web.invalid_settings": "Einige Einstellungen liegen außerhalb des Bereichs: {fields}",
+  "web.invalid_settings_python": "Eine Einstellung ist ungültig (Grund im Protokoll)",
+  "web.memory_limit": "Zu viele Bilder für den Browserspeicher (etwa {mb} MB, Grenze {limit} MB). Verringere Länge, Größe oder fps oder nutze die Windows-Version",
+  "web.busy_locked": "Während der Erstellung können keine Videos hinzugefügt oder entfernt werden",
+  "web.cancel": "Abbrechen",
+  "web.cancelled": "Abgebrochen",
+  "web.worker_crashed": "Der Konvertierungs-Thread wurde beendet ({error}). Beim nächsten Erstellen wird Python neu geladen",
+  "web.worker_silent": "Seit {seconds} s keine Antwort vom Konvertierungs-Thread. Wenn er hängt, drücke Abbrechen",
+  "web.skipped_file": "{title} übersprungen (konnte nicht erstellt werden): {error}",
+  "web.skipped_summary": "{count} Datei(en) konnten nicht erstellt werden und fehlen: {titles}"
 }

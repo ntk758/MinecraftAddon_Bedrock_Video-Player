@@ -546,7 +546,7 @@
   "web.privacy_stays_3": "L'add-on terminé : il est créé en mémoire et enregistré par votre navigateur",
   "web.privacy_loads": "Téléchargé sur votre appareil",
   "web.privacy_loads_1": "Cette page et ses scripts",
-  "web.privacy_loads_2": "Le convertisseur lui-même : Python pour le navigateur, environ 20 Mo à la première visite, depuis le CDN jsDelivr",
+  "web.privacy_loads_2": "Le convertisseur lui-même : Python pour le navigateur, environ 30 Mo à la première visite, depuis ce site (une version fixe et vérifiée ; rien n'est chargé depuis d'autres sites)",
   "web.privacy_sent": "Envoyé depuis votre appareil",
   "web.privacy_sent_none": "Rien.",
   "web.perf_windows": "Obtenir l'application Windows",
@@ -647,5 +647,18 @@
   "addon.remote_operator_only": "§cSeuls les opérateurs peuvent utiliser la télécommande lorsque d'autres joueurs sont dans le monde",
   "addon.screen.not_yours": "§cL'écran %1 appartient à %2. Seuls la personne qui l'a posé et les opérateurs peuvent le contrôler",
   "addon.screen.operator_only": "§cSeuls les opérateurs peuvent contrôler l'écran %1",
-  "imgaddon.remote_operator_only": "§cSeuls les opérateurs peuvent utiliser la télécommande lorsque d'autres joueurs sont dans le monde"
+  "imgaddon.remote_operator_only": "§cSeuls les opérateurs peuvent utiliser la télécommande lorsque d'autres joueurs sont dans le monde",
+  "web.cannot_open_timeout": "{name} : le chargement ne s'est pas terminé (la vidéo est endommagée ou ce navigateur ne peut pas la lire)",
+  "web.seek_stalled": "Les images après {time} s ne peuvent pas être lues. La vidéo est tronquée ou endommagée",
+  "web.video_short": "Remarque : la vidéo se termine à {readable} s (le fichier dure {duration} s). Elle est tronquée ou son audio est plus long. Les {readable} premières secondes sont utilisées",
+  "web.invalid_settings": "Certains réglages sont hors limites : {fields}",
+  "web.invalid_settings_python": "Un réglage n'est pas valide (la raison est dans le journal)",
+  "web.memory_limit": "Trop d'images pour la mémoire du navigateur (environ {mb} Mo, limite {limit} Mo). Réduisez la durée, la taille ou les fps, ou utilisez la version Windows",
+  "web.busy_locked": "Impossible d'ajouter ou de retirer des vidéos pendant la création",
+  "web.cancel": "Annuler",
+  "web.cancelled": "Annulé",
+  "web.worker_crashed": "Le fil de conversion s'est arrêté ({error}). Une nouvelle création recharge Python",
+  "web.worker_silent": "Aucune réponse du fil de conversion depuis {seconds} s. S'il semble bloqué, appuyez sur Annuler",
+  "web.skipped_file": "{title} ignoré (création impossible) : {error}",
+  "web.skipped_summary": "{count} fichier(s) n'ont pas pu être créés et ont été omis : {titles}"
 }

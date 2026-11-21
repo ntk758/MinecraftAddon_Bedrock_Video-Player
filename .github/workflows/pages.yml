@@ -15,8 +15,15 @@ on:
       - 'locales/**'
       - 'main.js'
       - 'codec.js'
+      - 'screen_system.js'
+      - 'screen_ui.js'
+      - 'legacy_target.py'
+      - 'conversion_profiles.py'
+      - 'convert_image_mode.py'
+      - 'image_mode/**'
       - 'manifest.json'
       - 'scripts/build_web.py'
+      - 'scripts/fetch_pyodide.py'
   workflow_dispatch:
 
 permissions:
@@ -47,6 +54,10 @@ jobs:
         env:
           BVP_GOATCOUNTER_CODE: ${{ vars.GOATCOUNTER_CODE || 'nakat' }}
         run: python scripts/build_web.py --out web_dist
+
+      # Pyodide (ブラウザの中の Python) もサイトに置く。SHA-256 を確かめる (CDN から読み込まない。#175)
+      - name: Put Pyodide on the site
+        run: python scripts/fetch_pyodide.py --out web_dist/pyodide
 
       - uses: actions/configure-pages@v5
 
