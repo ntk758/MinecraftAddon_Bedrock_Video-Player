@@ -8,6 +8,9 @@ MP4 を入れるだけで、本物のブロックでできた巨大スクリー�
 
 ✅ チート不要 ✅ 実験的機能も不要 ✅ 変換ツールは無料・インストール不要
 
+【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\genres\genre_mountain.gif】
+ゲーム内で録画 (Windows 11): 左から元の映像・ブロックモード・画像モード
+
 ⚡ 自分の動画を 3 ステップで
 ① 無料の ブラウザ版の変換ツール を開く
 
@@ -45,6 +48,12 @@ MP4 のほか、写真 (止まったブロックアートに)・その場でカ�
 🌐 10 言語対応: メッセージとリモコンは各プレイヤーのゲームの言語で表示
 🛡 実験的機能のオンは不要: 安定版の Script API だけを使っています
 
+【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\genres\genre_sunset.gif】
+海の夕日: 元の映像・ブロックモード・画像モード
+
+【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\genres\genre_fire.gif】
+炎: 元の映像・ブロックモード・画像モード
+
 導入方法と遊び方
 ダウンロードした .mcaddon を開いて Minecraft に読み込みます (ダブルクリック、またはスマホでは Minecraft で開く)。
 ワールドの設定で、ビヘイビアーパックとリソースパックの両方 を有効にします (同じ名前のパックです)。チートはオフのままで大丈夫です。
@@ -66,6 +75,9 @@ waves	カラフルな波の模様を、明るさを奥行きにした 3D レリ�
 bounce	MagicaVoxel の立体アニメ: しま模様のボールが床で跳ねる
 dancer	だまし絵: 踊る女の子 (自作) を、見ている人の目に合わせて床と後ろの壁に描きます。後ろの壁には見本アニメが流れます。前を歩いたり飛んだりしても、立って見えます
 
+【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\curseforge\gif_cat_ja.gif】
+曲付きの自作アニメをブロックで (お試し版の screen)
+
 平面スクリーンは足もとから東と北へ広がります。3D ホログラムは自分の 2 ブロック北に、自分を中心にして立ちます (高さの上限を超えるときは自動で下にずらします)。dancer の舞台は北側に約 118 × 51 ブロック、後ろの壁の高さ 84 ブロックで作られます。
 
 コマンド一覧
@@ -85,6 +97,9 @@ dancer	だまし絵: 踊る女の子 (自作) を、見ている人の目に合�
 
 これまでの /scriptevent badapple:setup などのコマンドも、そのまま使えます (こちらはチートをオンにする必要があります)。サーバーでは、オペレーターの権限が必要です。
 ほかのプレイヤーがいるワールド (Realms・サーバー・マルチプレイ) では、リモコン (コンパス・時計) を使えるのはオペレーターだけ、ビデオスクリーンを操作できるのは置いた人とオペレーターだけです。ひとりで遊ぶときは制限はありません (v6.41.1 から)。
+【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\curseforge\gif_moon_ja.gif】
+月世界旅行を 3D レリーフにしたもの
+
 自分の動画でアドオンを作る
 
 変換ツールは無料で、どれも作者が公開しているものです。作ったアドオンのコマンドは、/badapple: の部分が変換ツールで決めた名前 (接頭辞) になります。
@@ -102,6 +117,12 @@ https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest
 BlockVideoPlayer-…-windows-x64.zip を解凍して BlockVideoPlayer.exe を起動します (Python は不要。FFmpeg は別に必要です。入れ方はリンク先に書いてあります)。v6.41.1 以降を使ってください (v6.41.0 の Windows 版はアドオンを作れません。v6.41.1 で直しました。v6.41.0 のままならブラウザ版で作れます)。GPU で速く変換できます。ダンス動画の人物を AI で切り抜いて 3D やだまし絵にすることもできます。
 
 画面の「再生負荷の目安」が「重い」と出たら、幅・高さ・FPS を下げると、ゲームの中でなめらかに再生できます。
+
+【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\genres\genre_night.gif】
+夜景: 元の映像・ブロックモード・画像モード
+
+【GIF をここに入れる: D:\MinecraftAddon_Bedrock_Video-Player\docs\images\curseforge\gif_neon_ja.gif】
+ネオンの街 (Tears of Steel) をブロックにしたもの
 
 注意事項
 Minecraft 1.26.10 以降 が必要です。1.21.80〜1.26.0 では、ブラウザ版の設定の「Minecraft の版」で古い版を選んで、自分でアドオンを作ってください (チートをオンにして /scriptevent のコマンドで操作します)。
@@ -134,9 +155,10 @@ https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/issues
 画像の出典
 3 枚並びの映像 (元の映像・ブロックモード・画像モード): Wikimedia Commons の CC0 の映像。山の風景 Mt Hood Aerial View (Pastelitodepapa)、海の夕日 Ocean surface waves 06 と炎 Fire 10 (Mostafameraji)、夜景 Raindrops against the window in the night city, Las Palmas (slavikfi)。一覧は https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/blob/main/docs/images/genres/CREDITS.md
 3D ホログラムの映像: 月世界旅行 (ジョルジュ・メリエス, 1902 年, パブリックドメイン)
+実写の映像 (ネオンの街): Tears of Steel © Blender Foundation | mango.blender.org (CC BY 3.0)
 猫のアニメと曲: このアドオンのために自作したもの
 
-3 枚並びの GIF は、Windows 11 のゲーム内で録画したものです。猫と月の動く画像は、変換したブロックの色からゲームの外で描いた再現画像なので、ゲーム内では光や質感が少し違って見えます。
+3 枚並びの GIF は、Windows 11 のゲーム内で録画したものです。猫・月・ネオンの街の動く画像は、変換したブロックの色からゲームの外で描いた再現画像なので、ゲーム内では光や質感が少し違って見えます。
 
 更新履歴
 v6.41.2: 変換ツールの修正 (壊れた .vox で理由を出す、画像モードで範囲の外のボクセルがある .vox を変換できる)。アドオンのスクリプトは v6.41.1 と同じです。
