@@ -643,5 +643,9 @@
   "build.video_failed": "{id} は作れなかったので飛ばします: {error}",
   "build.some_failed": "{count} 本は作れなかったので入れていません: {ids}",
   "error.id_conflict": "動画 ID が重なっています: {ids} (立体と平面のセットの「_flat」・だまし絵の背景の「_bg」を足した名前も含みます)。ID を変えてください。",
-  "error.id_too_long": "動画 ID は {max} 文字以内にしてください: {ids}"
+  "error.id_too_long": "動画 ID は {max} 文字以内にしてください: {ids}",
+  "addon.remote_operator_only": "§cリモコンはオペレーターだけが使えます (ほかのプレイヤーがいるとき)",
+  "addon.screen.not_yours": "§cスクリーン %1 は %2 さんのものです。操作できるのは置いた人とオペレーターです",
+  "addon.screen.operator_only": "§cスクリーン %1 を操作できるのはオペレーターだけです",
+  "imgaddon.remote_operator_only": "§cリモコンはオペレーターだけが使えます (ほかのプレイヤーがいるとき)"
 }

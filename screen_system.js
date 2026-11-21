@@ -94,6 +94,10 @@ function boxFromArray(value) {
  * owned は、このスクリーンが作ったかもしれないブロックの範囲 (今の画面と、片付け終わっていない前の画面)。
  * 削除や動画の切り替えでは、この範囲の外のブロックには触らない。
  */
+// 保存から読み戻せる動画 ID の長さ。変換器は 64 文字までしか作らない (mvcodec/limits.py) が、前の版で作った長い ID の
+// アドオンも読み戻せるように、余裕を持たせる (128 文字では開き直したときにスクリーンが消えていた。#199)
+export const MAX_MEDIA_LENGTH = 256;
+
 export class ScreenSession {
   constructor(fields) {
     this.screenId = fields.screenId;
@@ -111,6 +115,10 @@ export class ScreenSession {
     this.screenWidth = fields.screenWidth ?? 0;
     this.screenHeight = fields.screenHeight ?? 0;
     this.creationTime = fields.creationTime ?? 0;
+    // 置いた人 (プレイヤーの ID と名前)。操作できるのは持ち主とオペレーター (main.js の canControlScreen)。
+    // v6.41.0 で置いたスクリーンには無い (null)
+    this.ownerId = fields.ownerId ?? null;
+    this.ownerName = fields.ownerName ?? null;
     // 今の画面の範囲 (無ければ null) と、前の画面のうち片付け終わっていない範囲
     this.box = fields.box ?? null;
     this.pendingClear = fields.pendingClear ?? [];
@@ -147,6 +155,7 @@ export class ScreenSession {
       created: this.creationTime,
       box: this.box ? boxToArray(this.box) : null,
       pending: this.pendingClear.map(boxToArray),
+      owner: this.ownerId ? [this.ownerId, this.ownerName ?? ""] : null,
     };
   }
 
@@ -157,7 +166,9 @@ export class ScreenSession {
   static fromJSON(value, limits = DEFAULT_LIMITS) {
     if (!value || typeof value !== "object" || value.v !== STORAGE_VERSION) return null;
     if (typeof value.id !== "string" || !SCREEN_ID.test(value.id)) return null;
-    if (value.media !== null && (typeof value.media !== "string" || value.media.length === 0 || value.media.length > 128)) return null;
+    if (value.media !== null && (typeof value.media !== "string" || value.media.length === 0 || value.media.length > MAX_MEDIA_LENGTH)) {
+      return null;
+    }
     if (!Object.values(RENDERER_TYPES).includes(value.renderer)) return null;
     if (!Object.values(MOUNT_TYPES).includes(value.mount)) return null;
     if (typeof value.dim !== "string" || value.dim.length === 0 || value.dim.length > 64) return null;
@@ -175,6 +186,10 @@ export class ScreenSession {
     if (!Array.isArray(value.pending)) return null;
     const pendingClear = value.pending.map(boxFromArray);
     if (pendingClear.some((b) => !b)) return null;
+    // 持ち主は v6.41.0 の保存には無い (undefined)
+    const owner = value.owner ?? null;
+    if (owner !== null && !(Array.isArray(owner) && owner.length === 2 && owner.every((s) => typeof s === "string" && s.length <= 64)
+                            && owner[0].length > 0)) return null;
     let state = value.state;
     if (state === PLAYBACK_STATES.PLAYING) state = PLAYBACK_STATES.PAUSED;
     if (!value.media) state = PLAYBACK_STATES.IDLE;
@@ -183,6 +198,7 @@ export class ScreenSession {
       position: { x: value.pos[0], y: value.pos[1], z: value.pos[2] }, facing: value.facing, playbackState: state,
       playbackPosition: value.at, volume: value.volume, loop: value.loop, scale: value.scale, screenWidth: value.w,
       screenHeight: value.h, creationTime: value.created, box, pendingClear,
+      ownerId: owner ? owner[0] : null, ownerName: owner ? owner[1] : null,
     });
   }
 }
@@ -357,7 +373,9 @@ function fail(reason, detail = []) {
  */
 export class ScreenManager {
   constructor({ storage, createRenderer, checkMount = () => "ok", scheduler = null, now = () => Date.now(),
-                limits = DEFAULT_LIMITS, keyPrefix = "bvp:", log = () => {} }) {
+                limits = DEFAULT_LIMITS, keyPrefix = "bvp:", log = () => {}, onDropped = () => {} }) {
+    // 読み戻せなかった (壊れた) 記録の、ブロックを置いたかもしれない範囲 (dimensionId, boxes)。main.js が片付け残しに入れる
+    this.onDropped = onDropped;
     this.storage = storage;
     this.createRenderer = createRenderer;
     this.checkMount = checkMount;
@@ -406,6 +424,14 @@ export class ScreenManager {
       if (!session || session.screenId !== id || !this.registry.register(session).ok) {
         dropped++;
         this.log(`dropped a broken or duplicate screen record: ${id}`);
+        // 置いたブロックは残る。持ち主の無いブロックの壁が、その場所に次の画面を置くのをずっと断っていた (#199)。
+        // 範囲が読めれば片付けに回す
+        const boxes = typeof id === "string" ? this.salvageBoxes(id) : null;
+        if (boxes && boxes.boxes.length > 0) {
+          try {
+            this.onDropped(boxes.dimensionId, boxes.boxes);
+          } catch (e) { /* 片付けられなくても、読み込みは続ける */ }
+        }
         continue;
       }
       restored++;
@@ -422,6 +448,22 @@ export class ScreenManager {
     }
     if (dropped > 0) this.saveIndex();
     return { restored, dropped };
+  }
+
+  /** 壊れた記録から、ブロックを置いたかもしれない範囲 ({ dimensionId, boxes }) を読めるだけ読む。読めなければ null。 */
+  salvageBoxes(id) {
+    let value;
+    try {
+      value = JSON.parse(this.storage.read(this.sessionKey(id)) ?? "null");
+    } catch (e) {
+      return null;
+    }
+    if (!value || typeof value !== "object" || typeof value.dim !== "string" || value.dim.length === 0 || value.dim.length > 64) {
+      return null;
+    }
+    const boxes = [value.box, ...(Array.isArray(value.pending) ? value.pending : [])]
+      .filter((b) => b !== null && b !== undefined).map(boxFromArray).filter((b) => b);
+    return { dimensionId: value.dim, boxes };
   }
 
   saveIndex() {
@@ -458,6 +500,17 @@ export class ScreenManager {
     this.save(session);
     this.saveIndex();
     return { ok: true, session };
+  }
+
+  /** 持ち主 (置いた人) を決める。もう持ち主がいれば変えない。 */
+  setOwner(screenId, ownerId, ownerName) {
+    const session = this.get(screenId);
+    if (!session || typeof ownerId !== "string" || ownerId.length === 0) return false;
+    if (session.ownerId) return session.ownerId === ownerId;
+    session.ownerId = ownerId.slice(0, 64);
+    session.ownerName = String(ownerName ?? "").slice(0, 64);
+    this.save(session);
+    return true;
   }
 
   get(screenId) {

@@ -34,7 +34,7 @@ import {
   runCustomCommand, sounds, spawnPlayer, stats, tick as mockTick, uiResponses, useItem,
   // スクリーンブロックの手順 (テストが上の行を書き換えて名前を足すので、上の並びは変えない)
   activeIntervals, breakBlock, explodeBlock, fireWorldLoad, getDynamicProperties, interactBlock, placeBlock, restartScripts,
-  setBlockSilently, world,
+  secondPlayer, setBlockSilently, world,
 } from "@minecraft/server";
 
 const steps = JSON.parse(process.argv[2]);
@@ -93,11 +93,11 @@ for (const step of steps) {
       const seen = () => messages.filter((m) => JSON.stringify(m).includes(step.runUntil)).length;
       for (let n = 0; n < (step.max ?? 2000) && seen() < (step.count ?? 1); n++) await run(1);
     } else if (step.tickMark) tickMarks[step.tickMark] = ticks; else if (step.placeScreen) {
-      placeBlock(step.placeScreen, SCREEN_BLOCK, step.facing ?? "north");
+      placeBlock(step.placeScreen, SCREEN_BLOCK, step.facing ?? "north", step.by === 2 ? secondPlayer : player);
       await run(1);
     } else if (step.useScreen) {
       uiResponses.push(...(step.ui ?? []));
-      interactBlock(step.useScreen);
+      interactBlock(step.useScreen, step.by === 2 ? secondPlayer : player);
       await run(step.wait ?? 3);
     } else if (step.breakScreen) {
       breakBlock(step.breakScreen);
@@ -132,7 +132,7 @@ for (const step of steps) {
       for (let n = 0; n < 20000 && !messages.some((m) => JSON.stringify(m).includes(step.until)); n++) tick();
     } else if (step.ui) {
       uiResponses.push(...step.ui);
-      useItem("minecraft:compass");
+      useItem("minecraft:compass", step.by === 2 ? secondPlayer : player);
       for (let i = 0; i < 10; i++) await Promise.resolve();
     } else if ("failZ" in step) options.failZ = step.failZ ?? undefined;
     else if ("unloadedZ" in step) options.unloadedZ = step.unloadedZ ?? undefined;

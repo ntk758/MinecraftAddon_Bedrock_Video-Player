@@ -643,5 +643,9 @@
   "build.video_failed": "Se omitió {id} (no se pudo crear): {error}",
   "build.some_failed": "{count} archivo(s) no se pudieron crear y se omitieron: {ids}",
   "error.id_conflict": "Los ID de video coinciden: {ids} (incluidos los nombres con _flat de los pares 3D/2D y _bg de los fondos de escenario). Cambia los ID.",
-  "error.id_too_long": "Los ID de video deben tener como máximo {max} caracteres: {ids}"
+  "error.id_too_long": "Los ID de video deben tener como máximo {max} caracteres: {ids}",
+  "addon.remote_operator_only": "§cSolo los operadores pueden usar el mando mientras haya otros jugadores en el mundo",
+  "addon.screen.not_yours": "§cLa pantalla %1 pertenece a %2. Solo quien la colocó y los operadores pueden controlarla",
+  "addon.screen.operator_only": "§cSolo los operadores pueden controlar la pantalla %1",
+  "imgaddon.remote_operator_only": "§cSolo los operadores pueden usar el mando mientras haya otros jugadores en el mundo"
 }

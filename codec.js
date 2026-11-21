@@ -904,6 +904,8 @@ const S_RUN_LEN = 6;
 const S_RUN_LEVEL = 7;
 // 入れ物を開くとき、出力 (v5 のバイト列) をこのバイト数作るごとに yield する
 const OUTPUT_BYTES_PER_YIELD = 32768;
+// 1 個のストリームの記号の数の上限 (変換器の出力はずっと小さい。壊れたデータで巨大な配列を作らない)
+const MAX_STREAM_SYMBOLS = 1 << 27;
 
 /**
  * 1 個のストリーム (正準ハフマン符号) を記号の Uint8Array に戻す。cursor.pos を次のストリームの先頭へ進める。
@@ -911,6 +913,8 @@ const OUTPUT_BYTES_PER_YIELD = 32768;
  */
 function* decodeHuffmanStreamJob(buf, cursor, symbolsPerYield) {
   const count = readVarint(buf, cursor);
+  // 壊れた・書き換えたデータの数をそのまま使うと、とても大きな配列を作ろうとして止まる (#200)
+  if (count > MAX_STREAM_SYMBOLS) throw new Error(`corrupt GOP: ${count} symbols in one stream`);
   const out = new Uint8Array(count);
   if (count === 0) return out;
   const alphabet = readVarint(buf, cursor);
@@ -1332,8 +1336,11 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
     const span = 2 * video.mv_range + 1;
     const mbCols = Math.ceil(width / block);
     const count = readVarint(bytes, cursor, end);
+    // 数は画面のマクロブロックの数まで。壊れたデータの大きな数で、入力を読まずに回り続けていた (#200)
+    if (count > mbCols * Math.ceil(height / block)) throw new Error(`corrupt frame: ${count} motion vectors`);
     let mb = -1;
     for (let k = 0; k < count; k++) {
+      if (cursor.pos >= end) throw new Error("corrupt frame: motion vectors run past the frame");
       mb += readVarint(bytes, cursor, end) + 1;
       const packed = readVarint(bytes, cursor, end);
       const dx = (packed % span) - video.mv_range;
@@ -1356,6 +1363,7 @@ export function decodeFrameInto(bytes, start, end, board, out, video, tiles = nu
     const count = readVarint(bytes, cursor, end);
     let tileIndex = -1;
     for (let k = 0; k < count; k++) {
+      if (cursor.pos >= end) throw new Error("corrupt frame: tiles run past the frame");
       tileIndex += readVarint(bytes, cursor, end) + 1;
       tiles.apply(out, tileIndex, readVarint(bytes, cursor, end));
     }
@@ -1391,8 +1399,11 @@ function decodeMotion3d(bytes, cursor, end, board, out, video, tiles = null) {
   const bricksX = Math.ceil(width / block);
   const bricksY = Math.ceil(height / block);
   const count = readVarint(bytes, cursor, end);
+  // 数は立体のブリックの数まで (壊れたデータで回り続けない。#200)
+  if (count > bricksX * bricksY * Math.ceil(depth / block)) throw new Error(`corrupt frame: ${count} motion vectors`);
   let brick = -1;
   for (let k = 0; k < count; k++) {
+    if (cursor.pos >= end) throw new Error("corrupt frame: motion vectors run past the frame");
     brick += readVarint(bytes, cursor, end) + 1;
     const packed = readVarint(bytes, cursor, end);
     const dx = (packed % span) - range;

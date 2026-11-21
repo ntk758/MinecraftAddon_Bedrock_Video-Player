@@ -643,5 +643,9 @@
   "build.video_failed": "無法產生 {id},已略過:{error}",
   "build.some_failed": "{count} 個檔案無法產生,未包含:{ids}",
   "error.id_conflict": "影片 ID 重複:{ids}(包括立體/平面組合的 _flat 和錯視背景的 _bg 名稱)。請修改 ID。",
-  "error.id_too_long": "影片 ID 最多 {max} 個字元:{ids}"
+  "error.id_too_long": "影片 ID 最多 {max} 個字元:{ids}",
+  "addon.remote_operator_only": "§c有其他玩家時,只有管理員可以使用遙控器",
+  "addon.screen.not_yours": "§c螢幕 %1 屬於 %2。只有放置者和管理員可以操作",
+  "addon.screen.operator_only": "§c只有管理員可以操作螢幕 %1",
+  "imgaddon.remote_operator_only": "§c有其他玩家時,只有管理員可以使用遙控器"
 }

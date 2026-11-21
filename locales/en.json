@@ -643,5 +643,9 @@
   "build.video_failed": "Skipped {id} (could not be made): {error}",
   "build.some_failed": "{count} file(s) could not be made and were left out: {ids}",
   "error.id_conflict": "Video IDs collide: {ids} (including the names with _flat for 3D/2D pairs and _bg for stage backgrounds). Please change the IDs.",
-  "error.id_too_long": "Video IDs must be at most {max} characters: {ids}"
+  "error.id_too_long": "Video IDs must be at most {max} characters: {ids}",
+  "addon.remote_operator_only": "§cOnly operators can use the remote while other players are in the world",
+  "addon.screen.not_yours": "§cScreen %1 belongs to %2. Only the player who placed it and operators can control it",
+  "addon.screen.operator_only": "§cOnly operators can control screen %1",
+  "imgaddon.remote_operator_only": "§cOnly operators can use the remote while other players are in the world"
 }

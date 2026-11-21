@@ -579,3 +579,53 @@ test("the manager's tick sources follow its renderers", async () => {
   for (let i = 0; i < 3; i++) sys.tick();
   assert.equal(scheduler.running, false, "the interval is freed when nothing plays");
 });
+
+// --- 2026-11 の外部の監査 (muse) ---
+
+/** 保存先と onDropped だけを渡した ScreenManager (保存の名前は既定の bvp:)。 */
+function plain(storage, extra = {}) {
+  return new ScreenManager({ storage, createRenderer: fakeRendererFactory([]), now: () => 1700000000000, ...extra });
+}
+
+test("the owner is saved and restored, and older records without one still load", () => {
+  const storage = memoryStorage();
+  const first = plain(storage);
+  const { session } = first.create({ dimensionId: OVERWORLD, position: at(0) });
+  assert.equal(first.setOwner(session.screenId, "-1001", "Steve"), true);
+  // もう持ち主がいれば変えない
+  assert.equal(first.setOwner(session.screenId, "-1002", "Alex"), false);
+  const again = plain(storage).get(session.screenId);
+  assert.equal(again.ownerId, "-1001");
+  assert.equal(again.ownerName, "Steve");
+  const old = JSON.parse(storage.data[`bvp:screen.${session.screenId}`]);
+  delete old.owner;
+  storage.data[`bvp:screen.${session.screenId}`] = JSON.stringify(old);
+  const restored = plain(storage).get(session.screenId);
+  assert.ok(restored);
+  assert.equal(restored.ownerId, null);
+  assert.equal(ScreenSession.fromJSON({ ...old, owner: ["", "x"] }), null);
+  assert.equal(ScreenSession.fromJSON({ ...old, owner: "Steve" }), null);
+});
+
+test("long media ids from older add-ons are restored", () => {
+  const storage = memoryStorage();
+  const first = plain(storage);
+  const { session } = first.create({ dimensionId: OVERWORLD, position: at(0) });
+  const record = { ...session.toJSON(), media: "m".repeat(200), state: PLAYBACK_STATES.PAUSED };
+  storage.data[`bvp:screen.${session.screenId}`] = JSON.stringify(record);
+  assert.equal(plain(storage).get(session.screenId).mediaId, "m".repeat(200));
+});
+
+test("a record that cannot be restored hands its areas to onDropped", () => {
+  const storage = memoryStorage();
+  const first = plain(storage);
+  const { session } = first.create({ dimensionId: OVERWORLD, position: at(0) });
+  const record = { ...session.toJSON(), media: "m".repeat(300), box: [0, 65, 0, 3, 66, 0], pending: [[10, 65, 0, 12, 66, 0]] };
+  storage.data[`bvp:screen.${session.screenId}`] = JSON.stringify(record);
+  const dropped = [];
+  const second = plain(storage, { onDropped: (dimensionId, boxes) => dropped.push([dimensionId, boxes]) });
+  assert.equal(second.get(session.screenId), null);
+  assert.equal(dropped.length, 1);
+  assert.equal(dropped[0][0], OVERWORLD);
+  assert.deepEqual(dropped[0][1].map((b) => [b.x0, b.x1]), [[0, 3], [10, 12]]);
+});

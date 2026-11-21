@@ -44,7 +44,9 @@ class RecordingForm {
     return this;
   }
 
-  show() {
+  show(player) {
+    // 2 人目に見せたフォームには印を付ける (誰に見せたかを確かめるテスト用)
+    if (player?.name === "Alex") this.record.to = "player2";
     forms.push(this.record);
     return Promise.resolve(uiResponses.shift() ?? { canceled: true });
   }

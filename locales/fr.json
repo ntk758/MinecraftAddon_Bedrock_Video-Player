@@ -643,5 +643,9 @@
   "build.video_failed": "{id} ignoré (création impossible) : {error}",
   "build.some_failed": "{count} fichier(s) n'ont pas pu être créés et ont été omis : {ids}",
   "error.id_conflict": "Des identifiants de vidéo se chevauchent : {ids} (y compris les noms avec _flat pour les paires 3D/2D et _bg pour les arrière-plans de scène). Modifiez les identifiants.",
-  "error.id_too_long": "Les identifiants de vidéo doivent faire au plus {max} caractères : {ids}"
+  "error.id_too_long": "Les identifiants de vidéo doivent faire au plus {max} caractères : {ids}",
+  "addon.remote_operator_only": "§cSeuls les opérateurs peuvent utiliser la télécommande lorsque d'autres joueurs sont dans le monde",
+  "addon.screen.not_yours": "§cL'écran %1 appartient à %2. Seuls la personne qui l'a posé et les opérateurs peuvent le contrôler",
+  "addon.screen.operator_only": "§cSeuls les opérateurs peuvent contrôler l'écran %1",
+  "imgaddon.remote_operator_only": "§cSeuls les opérateurs peuvent utiliser la télécommande lorsque d'autres joueurs sont dans le monde"
 }

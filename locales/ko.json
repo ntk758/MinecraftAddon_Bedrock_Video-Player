@@ -643,5 +643,9 @@
   "build.video_failed": "{id}는 만들 수 없어 건너뜁니다: {error}",
   "build.some_failed": "{count}개는 만들 수 없어 넣지 않았습니다: {ids}",
   "error.id_conflict": "동영상 ID가 겹칩니다: {ids} (입체·평면 세트의 _flat, 착시 배경의 _bg를 붙인 이름 포함). ID를 바꿔 주세요.",
-  "error.id_too_long": "동영상 ID는 {max}자 이내로 해 주세요: {ids}"
+  "error.id_too_long": "동영상 ID는 {max}자 이내로 해 주세요: {ids}",
+  "addon.remote_operator_only": "§c다른 플레이어가 있을 때는 오퍼레이터만 리모컨을 쓸 수 있습니다",
+  "addon.screen.not_yours": "§c스크린 %1은 %2 님의 것입니다. 놓은 사람과 오퍼레이터만 조작할 수 있습니다",
+  "addon.screen.operator_only": "§c스크린 %1은 오퍼레이터만 조작할 수 있습니다",
+  "imgaddon.remote_operator_only": "§c다른 플레이어가 있을 때는 오퍼레이터만 리모컨을 쓸 수 있습니다"
 }

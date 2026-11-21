@@ -643,5 +643,9 @@
   "build.video_failed": "{id} ignorado (não foi possível criar): {error}",
   "build.some_failed": "{count} arquivo(s) não puderam ser criados e ficaram de fora: {ids}",
   "error.id_conflict": "IDs de vídeo repetidos: {ids} (incluindo os nomes com _flat dos pares 3D/2D e _bg dos fundos de palco). Altere os IDs.",
-  "error.id_too_long": "Os IDs de vídeo devem ter no máximo {max} caracteres: {ids}"
+  "error.id_too_long": "Os IDs de vídeo devem ter no máximo {max} caracteres: {ids}",
+  "addon.remote_operator_only": "§cSomente operadores podem usar o controle enquanto houver outros jogadores no mundo",
+  "addon.screen.not_yours": "§cA tela %1 pertence a %2. Só quem a colocou e os operadores podem controlá-la",
+  "addon.screen.operator_only": "§cSomente operadores podem controlar a tela %1",
+  "imgaddon.remote_operator_only": "§cSomente operadores podem usar o controle enquanto houver outros jogadores no mundo"
 }

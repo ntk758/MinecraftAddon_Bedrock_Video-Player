@@ -643,5 +643,9 @@
   "build.video_failed": "{id} übersprungen (konnte nicht erstellt werden): {error}",
   "build.some_failed": "{count} Datei(en) konnten nicht erstellt werden und fehlen: {ids}",
   "error.id_conflict": "Video-IDs überschneiden sich: {ids} (einschließlich der Namen mit _flat für 3D/2D-Paare und _bg für Bühnenhintergründe). Bitte ändere die IDs.",
-  "error.id_too_long": "Video-IDs dürfen höchstens {max} Zeichen haben: {ids}"
+  "error.id_too_long": "Video-IDs dürfen höchstens {max} Zeichen haben: {ids}",
+  "addon.remote_operator_only": "§cNur Operatoren können die Fernbedienung benutzen, solange andere Spieler in der Welt sind",
+  "addon.screen.not_yours": "§cBildschirm %1 gehört %2. Nur wer ihn platziert hat und Operatoren können ihn steuern",
+  "addon.screen.operator_only": "§cNur Operatoren können Bildschirm %1 steuern",
+  "imgaddon.remote_operator_only": "§cNur Operatoren können die Fernbedienung benutzen, solange andere Spieler in der Welt sind"
 }

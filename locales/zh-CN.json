@@ -643,5 +643,9 @@
   "build.video_failed": "无法生成 {id},已跳过:{error}",
   "build.some_failed": "{count} 个文件无法生成,未包含:{ids}",
   "error.id_conflict": "视频 ID 重复:{ids}(包括立体/平面组合的 _flat 和错视背景的 _bg 名称)。请修改 ID。",
-  "error.id_too_long": "视频 ID 最多 {max} 个字符:{ids}"
+  "error.id_too_long": "视频 ID 最多 {max} 个字符:{ids}",
+  "addon.remote_operator_only": "§c有其他玩家时,只有管理员可以使用遥控器",
+  "addon.screen.not_yours": "§c屏幕 %1 属于 %2。只有放置者和管理员可以操作",
+  "addon.screen.operator_only": "§c只有管理员可以操作屏幕 %1",
+  "imgaddon.remote_operator_only": "§c有其他玩家时,只有管理员可以使用遥控器"
 }
