@@ -217,8 +217,14 @@ def test_the_display_aspect_is_used(clips):
 
 @needs_ffmpeg
 def test_an_fps_that_makes_no_frame_is_explained(clips):
-    with pytest.raises(ValueError, match="1 コマも作れません"):
-        list(convert.ffmpeg_frame_generator(clips["sar2"], 16, 9, 0.1))
+    # ffmpeg の版によって、fps 0.1 でも最初の 1 コマを出すもの (Windows の choco 版) と
+    # 1 コマも出さないもの (9.0・Ubuntu) がある。出さないときは理由を説明すること (#168)
+    try:
+        frames = list(convert.ffmpeg_frame_generator(clips["sar2"], 16, 9, 0.1))
+    except ValueError as exc:
+        assert "1 コマも作れません" in str(exc)
+    else:
+        assert len(frames) == 1
 
 
 # --- .vox ---
