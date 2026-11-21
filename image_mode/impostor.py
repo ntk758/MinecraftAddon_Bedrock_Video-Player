@@ -35,6 +35,9 @@ def dense_frames(frames: list, palettes: list) -> tuple[list[np.ndarray], list[n
     for _size, voxels in frames:
         volume = np.zeros((sx, sy, sz), np.uint8)
         if len(voxels):
+            # SIZE の外の座標のボクセルは落とす (ブロックモードの vox_to_volume と同じ。以前は IndexError で止まった。#212)
+            keep = (voxels[:, 0] < sx) & (voxels[:, 1] < sy) & (voxels[:, 2] < sz)
+            voxels = voxels[keep]
             volume[voxels[:, 0], voxels[:, 1], voxels[:, 2]] = voxels[:, 3]
         volumes.append(volume)
     rgbs = [np.asarray(palette, np.uint8)[:, :3] for palette in palettes]

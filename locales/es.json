@@ -348,7 +348,7 @@
   "web.assembling": "Montando el complemento…",
   "web.done": "Terminado: {size} KB",
   "web.error": "Error: {error}",
-  "web.usage_note": "Para saber cuántas personas la usan, esta página cuenta con GoatCounter las veces que se abre y los complementos terminados. No usa cookies ni envía nombres de archivo ni vídeos.",
+  "web.usage_note": "Para saber cuántas personas la usan, esta página cuenta con GoatCounter: las veces que se abre (con el idioma de la interfaz) y los complementos iniciados, terminados y fallidos (en los terminados, el tipo de complemento y el idioma). Solo se envían estos recuentos: sin cookies, sin nombres de archivo y sin vídeos.",
   "web.usage_optout": "No enviar estadísticas de uso",
   "web.preview_title": "4. Vista previa",
   "web.preview_note": "Cómo se ve el complemento en Minecraft, dibujado con las mismas reglas que el juego (el 3D se ve desde arriba en diagonal). Compruébalo antes de importarlo.",

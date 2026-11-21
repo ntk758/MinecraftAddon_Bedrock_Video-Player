@@ -348,7 +348,7 @@
   "web.assembling": "正在組裝附加元件…",
   "web.done": "完成：{size} KB",
   "web.error": "錯誤：{error}",
-  "web.usage_note": "為了解有多少人在使用，本頁面透過 GoatCounter 計算頁面開啟次數與附加元件建立完成的次數。不使用 Cookie，也不會傳送檔名或影片。",
+  "web.usage_note": "為了解有多少人在使用，本頁面透過 GoatCounter 計算：頁面開啟次數（附帶介面語言），以及開始、完成和失敗的附加元件建立次數（完成時附帶附加元件類型和介面語言）。只傳送這些計數：不使用 Cookie，也不會傳送檔名或影片。",
   "web.usage_optout": "不傳送使用統計",
   "web.preview_title": "4. 成品預覽",
   "web.preview_note": "依照與遊戲相同的規則繪製的 Minecraft 中的樣子（立體為斜上方視角）。匯入前即可確認。",

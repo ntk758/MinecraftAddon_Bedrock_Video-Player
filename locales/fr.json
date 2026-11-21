@@ -348,7 +348,7 @@
   "web.assembling": "Assemblage du module…",
   "web.done": "Terminé : {size} Ko",
   "web.error": "Erreur : {error}",
-  "web.usage_note": "Pour savoir combien de personnes l'utilisent, cette page compte avec GoatCounter les ouvertures de la page et les modules terminés. Aucun cookie n'est utilisé, et aucun nom de fichier ni aucune vidéo n'est envoyé.",
+  "web.usage_note": "Pour savoir combien de personnes l'utilisent, cette page compte avec GoatCounter : les ouvertures de la page (avec la langue d'affichage) et les modules commencés, terminés et échoués (pour les modules terminés, leur type et la langue d'affichage). Seuls ces comptages sont envoyés : aucun cookie, aucun nom de fichier et aucune vidéo.",
   "web.usage_optout": "Ne pas envoyer les statistiques d'utilisation",
   "web.preview_title": "4. Aperçu",
   "web.preview_note": "L'apparence du module dans Minecraft, dessinée avec les mêmes règles que le jeu (la 3D est vue de haut, en biais). Vérifiez-la avant l'importation.",
