@@ -634,5 +634,14 @@
   "addon.screen.error.invalid_type": "§cDiese Art von Bildschirm wird nicht unterstützt",
   "addon.screen.error.render_error": "§cBeim Bildschirm ist ein Fehler aufgetreten: %1",
   "addon.screen.error.renderer_unavailable": "§eDiese Darstellung gehört zu einem anderen Paket und kann hier nicht benutzt werden",
-  "addon.screen.finished": "§aBildschirm %1: fertig abgespielt"
+  "addon.screen.finished": "§aBildschirm %1: fertig abgespielt",
+  "build.cancel_button": "Abbrechen",
+  "build.cancelling": "Wird abgebrochen…",
+  "build.cancelled": "Abgebrochen. Es wurde kein Add-on erstellt.",
+  "dialog.close_building_title": "Erstellung läuft",
+  "dialog.close_building": "Ein Add-on wird gerade erstellt. Abbrechen und schließen?",
+  "build.video_failed": "{id} übersprungen (konnte nicht erstellt werden): {error}",
+  "build.some_failed": "{count} Datei(en) konnten nicht erstellt werden und fehlen: {ids}",
+  "error.id_conflict": "Video-IDs überschneiden sich: {ids} (einschließlich der Namen mit _flat für 3D/2D-Paare und _bg für Bühnenhintergründe). Bitte ändere die IDs.",
+  "error.id_too_long": "Video-IDs dürfen höchstens {max} Zeichen haben: {ids}"
 }

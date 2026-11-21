@@ -634,5 +634,14 @@
   "addon.screen.error.invalid_type": "§cEste tipo de pantalla no es compatible",
   "addon.screen.error.render_error": "§cLa pantalla tuvo un error: %1",
   "addon.screen.error.renderer_unavailable": "§eEse modo de dibujo está en otro paquete y esta pantalla no puede usarlo",
-  "addon.screen.finished": "§aPantalla %1: reproducción terminada"
+  "addon.screen.finished": "§aPantalla %1: reproducción terminada",
+  "build.cancel_button": "Cancelar",
+  "build.cancelling": "Cancelando…",
+  "build.cancelled": "Cancelado. No se creó ningún complemento.",
+  "dialog.close_building_title": "Creación en curso",
+  "dialog.close_building": "Se está creando un complemento. ¿Cancelar y cerrar?",
+  "build.video_failed": "Se omitió {id} (no se pudo crear): {error}",
+  "build.some_failed": "{count} archivo(s) no se pudieron crear y se omitieron: {ids}",
+  "error.id_conflict": "Los ID de video coinciden: {ids} (incluidos los nombres con _flat de los pares 3D/2D y _bg de los fondos de escenario). Cambia los ID.",
+  "error.id_too_long": "Los ID de video deben tener como máximo {max} caracteres: {ids}"
 }

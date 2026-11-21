@@ -53,7 +53,8 @@ def build_video_filter(width: int, height: int, fps: float, fit: str = "pad",
     if fit not in ("pad", "cover"):
         raise ValueError(f"fit は pad か cover にしてください: {fit}")
     flags = ":flags=area" if is_downscale(width, height, source_size, fit) else ""
-    filters = [f"fps={fps:g}"]
+    # 画素の縦横比 (SAR) が 1:1 でない動画は、表示の大きさに直してから収める (convert.py と同じ。#166)
+    filters = [f"fps={fps:g}", "scale=iw*sar:ih,setsar=1"]
     if fit == "cover":
         filters.append(f"scale={width}:{height}:force_original_aspect_ratio=increase{flags}")
         filters.append(f"crop={width}:{height}")
@@ -84,7 +85,12 @@ def parse_video_size(ffmpeg_stderr: str) -> tuple[int, int] | None:
         if "Video:" in line:
             match = re.search(r"\b(\d{2,5})x(\d{2,5})\b", line)
             if match:
-                return int(match.group(1)), int(match.group(2))
+                width, height = int(match.group(1)), int(match.group(2))
+                # 画素の縦横比 (SAR) があれば、表示の幅にする (build_video_filter が SAR を直してから縮めるので)
+                sar = re.search(r"\[SAR (\d+):(\d+)", line)
+                if sar and int(sar.group(1)) > 0 and int(sar.group(2)) > 0:
+                    width = max(1, round(width * int(sar.group(1)) / int(sar.group(2))))
+                return width, height
     return None
 
 
@@ -104,12 +110,16 @@ def probe_duration(path, ffmpeg: str = "ffmpeg") -> float | None:
 
 
 def read_frames(path, width: int, height: int, fps: float, start: float | None = None, end: float | None = None,
-                fit: str = "pad", ffmpeg: str = "ffmpeg") -> Iterator[np.ndarray]:
-    """動画を width × height・fps に直して、H×W×3 (uint8) のコマを 1 枚ずつ返す。start / end は秒。"""
+                fit: str = "pad", ffmpeg: str = "ffmpeg", warn=None) -> Iterator[np.ndarray]:
+    """動画を width × height・fps に直して、H×W×3 (uint8) のコマを 1 枚ずつ返す。start / end は秒。
+    warn (1 行の文を受け取る関数) があれば、映像が短い・壊れた所があるなどの注意を渡す (mvcodec/truncation.py)。"""
     cmd = [ffmpeg, "-v", "error", *_trim_args(start, end), "-i", str(path), "-an",
            "-vf", build_video_filter(width, height, fps, fit, probe_size(path, ffmpeg)),
            "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **_subprocess_kwargs())
+    # stderr は別のスレッドで読み続ける。最後にまとめて読んでいたので、エラーを多く書く壊れた動画でパイプが詰まり、
+    # ffmpeg とこちらが待ち合って止まっていた (#160)
+    collector = truncation.StderrCollector(proc.stderr).start()
     frame_size = width * height * 3
     completed = False
     frames = 0
@@ -125,15 +135,16 @@ def read_frames(path, width: int, height: int, fps: float, start: float | None =
         if not completed:
             proc.kill()
         proc.stdout.close()
-        stderr = proc.stderr.read().decode("utf-8", errors="replace")
-        proc.stderr.close()
         returncode = proc.wait()
+        collector.join(timeout=5)
+        proc.stderr.close()
     if completed and returncode != 0:
-        raise RuntimeError(f"ffmpeg がエラー終了しました (code {returncode}): {stderr.strip()}")
+        raise RuntimeError(f"ffmpeg がエラー終了しました (code {returncode}): {collector.text.strip()}")
     if completed:
         # 末尾の欠けた動画は ffmpeg が 0 で終わるので、読めた長さとエラーの文で見つける (mvcodec/truncation.py)
         truncation.check_complete(path, frames, fps,
-                                  truncation.expected_seconds(probe_duration(path, ffmpeg), start=start, end=end), stderr)
+                                  truncation.expected_seconds(probe_duration(path, ffmpeg), start=start, end=end),
+                                  collector.for_check, warn=warn)
 
 
 # 1 枚のマスの数の上限。方式 a はマスの数だけボーンと part_visibility の式を持ち、その負荷は文書に無い (実機で未確認)
@@ -340,7 +351,7 @@ AUDIO_TAIL_SECONDS = 0.05
 
 def extract_audio_chunks(path, out_dir, chunk_seconds: float = 4, start: float | None = None,
                          end: float | None = None, ffmpeg: str = "ffmpeg",
-                         max_seconds: float | None = None) -> list[tuple[int, str, bytes]]:
+                         max_seconds: float | None = None, warn=None) -> list[tuple[int, str, bytes]]:
     """音声を chunk_seconds 秒ごとの .ogg (44.1kHz ステレオ) に切り出す。音声のない動画なら []。
 
     ffmpeg の設定は Windows アプリ (video_player_gui.py の _extract_audio) と同じ。
@@ -367,10 +378,14 @@ def extract_audio_chunks(path, out_dir, chunk_seconds: float = 4, start: float |
         for f in late:
             f.unlink()
         files = [f for f in files if f not in late]
-    if result.returncode != 0 and not files:
+    if result.returncode != 0:
         message = result.stderr.decode("utf-8", errors="replace")
         # 音声のない動画は「出力に stream がない」で終わる。それは無音として扱う
-        if "does not contain any stream" in message or "Stream map" in message:
+        if not files and ("does not contain any stream" in message or "Stream map" in message):
             return []
-        raise RuntimeError(f"音声の切り出しに失敗しました (code {result.returncode}): {message.strip()}")
+        # チャンクが一部できていても、ffmpeg が失敗したなら音声は途中までしか無い (黙って受け取っていた。#178)
+        raise RuntimeError(f"音声の切り出しに失敗しました (code {result.returncode}): {message.strip()[-2000:]}")
+    if warn is not None and max_seconds and files:
+        # 音声が映像より明らかに短ければ知らせる (音声だけ途中で切れた動画で、アドオンの音が途中で消えていた。#178)
+        truncation.check_audio_length(truncation.audio_seconds(files, chunk_seconds, ffmpeg), max_seconds, warn)
     return [(int(f.stem.split("_")[1]), "ogg", f.read_bytes()) for f in files]

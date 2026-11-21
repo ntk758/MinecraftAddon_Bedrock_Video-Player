@@ -634,5 +634,14 @@
   "addon.screen.error.invalid_type": "§cТакой тип экрана не поддерживается",
   "addon.screen.error.render_error": "§cОшибка экрана: %1",
   "addon.screen.error.renderer_unavailable": "§eЭтот режим отрисовки находится в другом наборе, и этот экран не может его использовать",
-  "addon.screen.finished": "§aЭкран %1: воспроизведение завершено"
+  "addon.screen.finished": "§aЭкран %1: воспроизведение завершено",
+  "build.cancel_button": "Отмена",
+  "build.cancelling": "Отмена…",
+  "build.cancelled": "Отменено. Аддон не создан.",
+  "dialog.close_building_title": "Идёт создание",
+  "dialog.close_building": "Аддон ещё создаётся. Отменить и закрыть?",
+  "build.video_failed": "{id} пропущено (не удалось создать): {error}",
+  "build.some_failed": "{count} файл(ов) не удалось создать, они не включены: {ids}",
+  "error.id_conflict": "ID видео совпадают: {ids} (включая имена с _flat для пар 3D/2D и _bg для фонов сцены). Измените ID.",
+  "error.id_too_long": "ID видео должны быть не длиннее {max} символов: {ids}"
 }

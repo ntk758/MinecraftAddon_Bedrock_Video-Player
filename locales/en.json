@@ -634,5 +634,14 @@
   "addon.screen.error.invalid_type": "§cThis kind of screen is not supported",
   "addon.screen.error.render_error": "§cThe screen hit an error: %1",
   "addon.screen.error.renderer_unavailable": "§eThat drawing mode is in another pack and cannot be used by this screen",
-  "addon.screen.finished": "§aScreen %1: finished"
+  "addon.screen.finished": "§aScreen %1: finished",
+  "build.cancel_button": "Cancel",
+  "build.cancelling": "Cancelling…",
+  "build.cancelled": "Cancelled. No add-on was made.",
+  "dialog.close_building_title": "Still building",
+  "dialog.close_building": "An add-on is still being built. Cancel it and close?",
+  "build.video_failed": "Skipped {id} (could not be made): {error}",
+  "build.some_failed": "{count} file(s) could not be made and were left out: {ids}",
+  "error.id_conflict": "Video IDs collide: {ids} (including the names with _flat for 3D/2D pairs and _bg for stage backgrounds). Please change the IDs.",
+  "error.id_too_long": "Video IDs must be at most {max} characters: {ids}"
 }

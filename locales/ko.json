@@ -634,5 +634,14 @@
   "addon.screen.error.invalid_type": "§c이 종류의 스크린은 지원하지 않습니다",
   "addon.screen.error.render_error": "§c화면 처리 중 오류가 발생했습니다: %1",
   "addon.screen.error.renderer_unavailable": "§e그 표시 방식은 다른 팩에 있어서 이 스크린에서는 사용할 수 없습니다",
-  "addon.screen.finished": "§a스크린 %1: 끝까지 재생했습니다"
+  "addon.screen.finished": "§a스크린 %1: 끝까지 재생했습니다",
+  "build.cancel_button": "중지",
+  "build.cancelling": "중지하는 중…",
+  "build.cancelled": "중지했습니다. 애드온은 만들지 않았습니다.",
+  "dialog.close_building_title": "만드는 중입니다",
+  "dialog.close_building": "애드온을 만드는 중입니다. 중지하고 닫을까요?",
+  "build.video_failed": "{id}는 만들 수 없어 건너뜁니다: {error}",
+  "build.some_failed": "{count}개는 만들 수 없어 넣지 않았습니다: {ids}",
+  "error.id_conflict": "동영상 ID가 겹칩니다: {ids} (입체·평면 세트의 _flat, 착시 배경의 _bg를 붙인 이름 포함). ID를 바꿔 주세요.",
+  "error.id_too_long": "동영상 ID는 {max}자 이내로 해 주세요: {ids}"
 }

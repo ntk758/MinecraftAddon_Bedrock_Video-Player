@@ -17,6 +17,8 @@ import zlib
 from pathlib import Path
 
 from gui_i18n import FALLBACK_LANGUAGE, LOCALES, MINECRAFT_LOCALES, addon_lang_files
+from mvcodec.fileio import write_file_atomic  # noqa: F401 (前からこのモジュールにあった名前。GUI・画像モードが使う)
+from mvcodec.limits import MAX_ID_LENGTH, MAX_NAMESPACE_LENGTH, clean_title, pack_name_problem
 from pack_metadata import PACK_VERSION, changelog_markdown, manifest_description, version_text
 
 APP_DIR = Path(__file__).resolve().parent
@@ -47,40 +49,37 @@ AUDIO_CHUNK_SECONDS = 10
 SAFE_NAME = re.compile(r"[a-z0-9_]+")
 # Minecraft のコマンドの名前空間なので、独自のコマンドを登録できない
 RESERVED_NAMESPACES = {"minecraft"}
+# 変換の出力 (frames_*.js) の、だまし絵の背景の映像の動画 ID
+STAGE_BACKGROUND = re.compile(r'"stage_background":\s*"([^"]*)"')
 # main.js の中の、接頭辞を差し替える行
 NAMESPACE_LINE = 'const EVENT_NAMESPACE = "badapple";'
 
 
 def check_names(ids, namespace: str) -> None:
-    """動画 ID と接頭辞が SAFE_NAME だけでできていて、接頭辞が予約された名前でないことを確かめる (違えば ValueError)。"""
+    """動画 ID と接頭辞が SAFE_NAME だけでできていて、長さの上限 (mvcodec/limits.py) 以内で、接頭辞が予約された名前でない
+    ことを確かめる (違えば ValueError)。"""
     bad = sorted({video_id for video_id in ids if not SAFE_NAME.fullmatch(str(video_id))})
     if bad:
         raise ValueError(f"動画 ID は小文字の英数字と _ だけにしてください / video IDs may only use a-z, 0-9 and _: "
                          f"{', '.join(map(repr, bad))}")
+    # アドオンのスクリプトは長い ID を保存から読み戻せず (#199)、パックの中のパスも長くなりすぎる (#186)
+    long_ids = sorted({video_id for video_id in ids if len(str(video_id)) > MAX_ID_LENGTH})
+    if long_ids:
+        raise ValueError(f"動画 ID は {MAX_ID_LENGTH} 文字以内にしてください / video IDs must be at most {MAX_ID_LENGTH} "
+                         f"characters: {', '.join(map(repr, long_ids))}")
     if not SAFE_NAME.fullmatch(str(namespace)) or namespace in RESERVED_NAMESPACES:
         raise ValueError(f"コマンドの接頭辞は小文字の英数字と _ だけで、minecraft 以外にしてください / "
                          f"the command prefix may only use a-z, 0-9 and _ and must not be minecraft: {namespace!r}")
+    if len(namespace) > MAX_NAMESPACE_LENGTH:
+        raise ValueError(f"コマンドの接頭辞は {MAX_NAMESPACE_LENGTH} 文字以内にしてください / the command prefix must be at "
+                         f"most {MAX_NAMESPACE_LENGTH} characters: {namespace!r}")
 
 
-def write_file_atomic(path, data: bytes) -> Path:
-    """data を path に書く。同じフォルダの一時ファイルに書き終えてから置き換えるので、途中で失敗 (ディスクがいっぱいなど) しても
-    前からあるファイルは壊れず、書きかけのファイルも残らない。"""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.{os.getpid()}.part")
-    try:
-        with open(temp, "wb") as out:
-            out.write(data)
-            out.flush()
-            try:
-                os.fsync(out.fileno())
-            except (OSError, AttributeError):  # fsync の無いファイルシステム (ブラウザ版の Pyodide のメモリなど)
-                pass
-        os.replace(temp, path)
-    except BaseException:
-        temp.unlink(missing_ok=True)
-        raise
-    return path
+def check_pack_name(pack_name: str) -> None:
+    """パック名に改行などの制御文字があれば ValueError (manifest の名前・UUID の元・テクスチャの一覧に入る。#187・#194)。"""
+    problem = pack_name_problem(pack_name)
+    if problem:
+        raise ValueError(f"{problem}: {pack_name!r}")
 
 
 # 製品名を "Block Video Player" から変えた (v6.36.0)。既定のパック名のまま作り直した人のパックが別のパックに
@@ -294,6 +293,7 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
 
     ids = [video["id"] for video in videos]
     check_names(ids, namespace)
+    check_pack_name(pack_name)
     if NAMESPACE_LINE not in main_text:
         # 差し替えられないと、接頭辞が badapple のままのアドオンを黙って作ってしまう
         raise ValueError(f"main.js に接頭辞の行がありません / main.js has no line: {NAMESPACE_LINE}")
@@ -307,7 +307,12 @@ def build_addon(output, videos: list[dict], pack_name: str, namespace: str, addo
     for video in videos:
         video_id = video["id"]
         dims = frame_data_dims(video["frames_js"])
-        entry = {"id": video_id, "title": video.get("title", video_id), "frame_count": dims.get("frame_count", 0),
+        # だまし絵の背景の映像の ID は、同じアドオンの動画でなければならない (無い ID をそのまま入れていた。#193)
+        background = STAGE_BACKGROUND.search(video["frames_js"][:4096])
+        if background and background.group(1) not in ids:
+            raise ValueError(f"だまし絵の背景の映像の動画がありません / the stage background video is not in the pack: "
+                             f"{video_id} -> {background.group(1)}")
+        entry = {"id": video_id, "title": clean_title(video.get("title", video_id)), "frame_count": dims.get("frame_count", 0),
                  "width": dims.get("width", video.get("width", 0)), "height": dims.get("height", video.get("height", 0))}
         if "depth" in dims:
             entry["depth"] = dims["depth"]

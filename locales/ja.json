@@ -634,5 +634,14 @@
   "addon.screen.error.invalid_type": "§cこの種類のスクリーンには対応していません",
   "addon.screen.error.render_error": "§c画面の処理でエラーが起きました: %1",
   "addon.screen.error.renderer_unavailable": "§eその描画方式は別のパックにあるので、このスクリーンでは使えません",
-  "addon.screen.finished": "§aスクリーン %1: 最後まで再生しました"
+  "addon.screen.finished": "§aスクリーン %1: 最後まで再生しました",
+  "build.cancel_button": "中止",
+  "build.cancelling": "中止しています…",
+  "build.cancelled": "中止しました。アドオンは作っていません。",
+  "dialog.close_building_title": "作成中です",
+  "dialog.close_building": "アドオンを作っている途中です。中止して閉じますか?",
+  "build.video_failed": "{id} は作れなかったので飛ばします: {error}",
+  "build.some_failed": "{count} 本は作れなかったので入れていません: {ids}",
+  "error.id_conflict": "動画 ID が重なっています: {ids} (立体と平面のセットの「_flat」・だまし絵の背景の「_bg」を足した名前も含みます)。ID を変えてください。",
+  "error.id_too_long": "動画 ID は {max} 文字以内にしてください: {ids}"
 }

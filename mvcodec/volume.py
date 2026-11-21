@@ -351,6 +351,10 @@ def _read_chunks(data, start, end):
     while pos + 12 <= end:
         chunk_id = data[pos:pos + 4].decode("ascii", errors="replace")
         content_size, children_size = struct.unpack_from("<ii", data, pos + 4)
+        # 負の大きさでは読む位置が進まず、同じチャンクを読み続けて止まらなかった (#159)。はみ出す大きさも壊れている
+        if content_size < 0 or children_size < 0 or pos + 12 + content_size + children_size > end:
+            raise ValueError(f".vox が壊れています (チャンク {chunk_id!r} の大きさ {content_size} / {children_size} が"
+                             "正しくありません)")
         content_start = pos + 12
         children_start = content_start + content_size
         yield chunk_id, data[content_start:children_start], (children_start, children_start + children_size)
@@ -423,6 +427,11 @@ def parse_vox(data):
             size = struct.unpack_from("<iii", content, 0)
         elif chunk_id == "XYZI":
             count = struct.unpack_from("<i", content, 0)[0]
+            # 数と中身の大きさが合わなければ壊れている (少ない数では黙ってボクセルを落とし、-1 は残り全部になっていた。#161)
+            if count < 0 or len(content) != 4 + count * 4:
+                raise ValueError(f".vox が壊れています (XYZI のボクセルの数 {count} と大きさ {len(content)} バイトが合いません)")
+            if size is None:
+                raise ValueError(".vox が壊れています (XYZI の前に SIZE がありません)")
             voxels = np.frombuffer(content, dtype=np.uint8, count=count * 4, offset=4).reshape(count, 4)
             models.append((size, voxels.copy()))
         elif chunk_id == "RGBA":
@@ -461,7 +470,48 @@ def parse_vox(data):
         raise ValueError(".vox にモデルがありません")
     if 0 not in nodes:
         return models, palette
+    _check_scene(models, nodes)
     return _evaluate_scene(models, nodes, hidden_layers, anim_range), palette
+
+
+def _check_scene(models, nodes):
+    """シーングラフの参照を確かめる (壊れた・細工したファイルで、無限の再帰・範囲の外のモデル・負の番号の
+    「最後のモデル」を黙って使うのを防ぐ。#161)。"""
+    for node_id, node in nodes.items():
+        if node[0] == "trn":
+            children = [node[2]]
+        elif node[0] == "grp":
+            children = node[2]
+        else:
+            children = []
+            for shape in node[2]:
+                model = shape["model"]
+                if not 0 <= model < len(models):
+                    raise ValueError(f".vox が壊れています (ノード {node_id} のモデルの番号 {model} が 0〜{len(models) - 1} の外です)")
+        for child in children:
+            if child not in nodes:
+                raise ValueError(f".vox が壊れています (ノード {node_id} の子 {child} がありません)")
+    # 循環 (自分自身・互いに・根へ戻る) は、根からたどって同じノードに 2 回入ったら壊れている
+    visiting, done = set(), set()
+    stack = [(0, False)]
+    while stack:
+        node_id, leaving = stack.pop()
+        if leaving:
+            visiting.discard(node_id)
+            done.add(node_id)
+            continue
+        if node_id in visiting:
+            raise ValueError(f".vox が壊れています (シーングラフのノード {node_id} が循環しています)")
+        if node_id in done:
+            continue
+        visiting.add(node_id)
+        stack.append((node_id, True))
+        node = nodes[node_id]
+        children = [node[2]] if node[0] == "trn" else node[2] if node[0] == "grp" else []
+        for child in children:
+            if child in visiting:
+                raise ValueError(f".vox が壊れています (シーングラフのノード {child} が循環しています)")
+            stack.append((child, False))
 
 
 def _evaluate_scene(models, nodes, hidden_layers, anim_range):

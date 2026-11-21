@@ -634,5 +634,14 @@
   "addon.screen.error.invalid_type": "§cCe type d'écran n'est pas pris en charge",
   "addon.screen.error.render_error": "§cL'écran a rencontré une erreur : %1",
   "addon.screen.error.renderer_unavailable": "§eCe mode d'affichage est dans un autre pack et cet écran ne peut pas l'utiliser",
-  "addon.screen.finished": "§aÉcran %1 : lecture terminée"
+  "addon.screen.finished": "§aÉcran %1 : lecture terminée",
+  "build.cancel_button": "Annuler",
+  "build.cancelling": "Annulation…",
+  "build.cancelled": "Annulé. Aucun module complémentaire n'a été créé.",
+  "dialog.close_building_title": "Création en cours",
+  "dialog.close_building": "Un module complémentaire est en cours de création. Annuler et fermer ?",
+  "build.video_failed": "{id} ignoré (création impossible) : {error}",
+  "build.some_failed": "{count} fichier(s) n'ont pas pu être créés et ont été omis : {ids}",
+  "error.id_conflict": "Des identifiants de vidéo se chevauchent : {ids} (y compris les noms avec _flat pour les paires 3D/2D et _bg pour les arrière-plans de scène). Modifiez les identifiants.",
+  "error.id_too_long": "Les identifiants de vidéo doivent faire au plus {max} caractères : {ids}"
 }

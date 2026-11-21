@@ -634,5 +634,14 @@
   "addon.screen.error.invalid_type": "§c不支持这种屏幕",
   "addon.screen.error.render_error": "§c画面处理出错：%1",
   "addon.screen.error.renderer_unavailable": "§e这种绘制方式在另一个包里，这个屏幕无法使用",
-  "addon.screen.finished": "§a屏幕 %1：已播放完毕"
+  "addon.screen.finished": "§a屏幕 %1：已播放完毕",
+  "build.cancel_button": "取消",
+  "build.cancelling": "正在取消…",
+  "build.cancelled": "已取消。没有生成附加包。",
+  "dialog.close_building_title": "正在生成",
+  "dialog.close_building": "正在生成附加包。要取消并关闭吗?",
+  "build.video_failed": "无法生成 {id},已跳过:{error}",
+  "build.some_failed": "{count} 个文件无法生成,未包含:{ids}",
+  "error.id_conflict": "视频 ID 重复:{ids}(包括立体/平面组合的 _flat 和错视背景的 _bg 名称)。请修改 ID。",
+  "error.id_too_long": "视频 ID 最多 {max} 个字符:{ids}"
 }
