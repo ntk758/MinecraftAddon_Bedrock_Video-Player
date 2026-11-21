@@ -126,6 +126,8 @@ The Windows app can also make an **image mode** add-on: instead of placing block
 
 ![Night city: source, block mode and image mode](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/genres/genre_night.gif)
 
+![Neon city from Tears of Steel](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/curseforge/gif_neon.gif)
+
 ## 💡 Tips
 
 *   Bigger screens look better but cost more performance. Use a PC for 256×256 and up.
@@ -145,9 +147,10 @@ The Windows app can also make an **image mode** add-on: instead of placing block
 ## 🎬 Credits for the preview images
 
 *   The three-panel GIFs (mountain, sunset sea, fire, night city) are real in-game recordings on Windows 11. The footage is CC0 from Wikimedia Commons: Mt Hood Aerial View (Pastelitodepapa), Ocean surface waves 06 and Fire 10 (Mostafameraji), Raindrops against the window in the night city, Las Palmas (slavikfi). Full list: [CREDITS.md](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/blob/main/docs/images/genres/CREDITS.md).
+*   _Tears of Steel_ © Blender Foundation (mango.blender.org), [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), converted to blocks.
 *   _A Trip to the Moon_ (Georges Méliès, 1902), public domain, converted to a 3D relief.
 *   The cat animation, its music and the dancing girl were made for this project.
-*   The cat and moon previews are drawn from the block colours outside the game, so lighting and textures look slightly different in-game.
+*   The cat, moon and neon city previews are drawn from the block colours outside the game, so lighting and textures look slightly different in-game.
 
 ## 🔓 Open source
 
