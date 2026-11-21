@@ -1,12 +1,20 @@
 # Block & Image Video Player
 
-**Watch videos in Minecraft Bedrock — made of real blocks, or as smooth 30 fps textures (image mode), with synced sound.** Flat screens, walk-around 3D holograms, and a trompe-l'oeil dancer that is repainted for your eye as you move. **New in v6.41: the Video Screen block** — place it, use it and pick a video; no commands needed, and up to 16 screens can play their own videos. **No cheats and no experimental toggles needed.** Converting your own video is free and runs in your browser.
+**Watch videos in Minecraft Bedrock — made of real blocks, or as smooth 30 fps textures (image mode), with synced sound.** Flat screens, walk-around 3D holograms, and a trompe-l'oeil dancer that is repainted for your eye as you move. **New in v6.41: the Video Screen block** — place it, use it and pick a video; no commands needed, and up to 16 screens can play their own videos. **No cheats and no experimental toggles needed.** Converting your own video is free and runs in your browser — **even on your phone**.
 
 This download is the **showcase with 5 demo clips** (an original animated short, three 3D holograms and a dancing trompe-l'oeil figure). To play **your own** video, convert it first with the free web converter or Windows app (see below) — it is not an in-game video player for files on your device.
 
 ![Mountain footage: source, block mode and image mode, recorded in game](https://raw.githubusercontent.com/ntk758/MinecraftAddon_Bedrock_Video-Player/main/docs/images/genres/genre_mountain.gif)
 
 _Recorded in game (Windows 11): the source clip, block mode and image mode side by side._
+
+## ⚠ Good to know before you download
+
+*   **Your own videos must be converted first** with the free web converter (it works on phones too) or the Windows app. The add-on can't open video files stored on your device.
+*   **The commands replace the blocks where the screen goes.** Try it in a new test world. Video Screen blocks never replace blocks.
+*   **Tested in game on a Windows 11 PC only.** Phones, consoles and sound in multiplayer are not tested yet.
+*   **Image mode** fits only so much video in the game's texture memory, so for long videos you choose between picture quality, smoothness and length when converting. Video Screen blocks don't play image mode videos yet.
+*   **Needs Minecraft Bedrock 1.26.10 or newer** (for older versions, see below).
 
 ## ▶ Try the showcase (3 minutes)
 
