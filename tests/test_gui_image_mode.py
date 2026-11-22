@@ -217,20 +217,94 @@ def test_videos_and_a_glass_figure_share_one_image_addon(tmp_path):
     assert {v["id"] for v in report["memory"]["per_video"]} == {"clip", "doll"}
 
 
-def test_adding_a_mmd_model_asks_about_the_glass_case(tmp_path, monkeypatch):
+def test_mmd_dialog_settings_and_checks():
+    """「MMD のダンスを追加」の画面: 既定は画像モードの人物だけ・高精細・表情あり・物理は標準。モデルとダンスは必須。"""
+    import gui_mmd
+    settings = gui_mmd.default_settings()
+    assert settings["block"] is False and settings["detail"] == "high" and settings["physics"] == "standard"
+    assert settings["expressions"] is True
+    assert gui_mmd.validate(settings) == "mmd.need_model"
+    settings.update(pmx="C:/m/miku.pmx")
+    assert gui_mmd.validate(settings) == "mmd.need_dance"
+    settings.update(motion="C:/m/dance.txt")
+    assert gui_mmd.validate(settings) == "mmd.need_dance"
+    for dance in ("C:/m/dance.vmd", "C:/m/capture.BVH"):
+        settings.update(motion=dance)
+        assert gui_mmd.validate(settings) is None
+    glass = gui_mmd.glass_settings({**settings, "face_motions": ["C:/m/lip.vmd"], "audio": ""})
+    assert glass == {"audio": None, "case_image": None, "face_motions": ["C:/m/lip.vmd"], "physics": "standard",
+                     "expressions": True, "detail": "high", "block": False}
+
+
+class FakeTree:
+    def __init__(self):
+        self.rows = {}
+
+    def get_children(self):
+        return list(self.rows)
+
+    def insert(self, _parent, _where, values):
+        iid = f"I{len(self.rows)}"
+        self.rows[iid] = list(values)
+        return iid
+
+    def item(self, iid, values):
+        self.rows[iid] = list(values)
+
+    def selection_set(self, _iid):
+        pass
+
+
+def list_app():
+    app = SimpleNamespace(tr=Translator("en"), mmd_glass={}, mmd_motions={}, video_tree=FakeTree())
+    app._row = lambda iid: [str(v) for v in app.video_tree.rows[iid]]
+    app._video_ids = lambda exclude=None: [app._row(i)[0] for i in app.video_tree.rows if i != exclude]
+    app._kind_label = lambda path: gui.PackBuilderApp._kind_label(app, path)
+    app.add_video_path = lambda path: gui.PackBuilderApp.add_video_path(app, path)
+    return app
+
+
+def test_mmd_settings_become_a_row_with_its_kind(tmp_path):
+    app = list_app()
     model = tmp_path / "miku.pmx"
-    answers = iter([str(tmp_path / "song.wav"), ""])  # 曲は選び、絵はキャンセル
-    shown = []
-    monkeypatch.setattr(gui.messagebox, "askyesno", lambda *_a, **_k: True)
-    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **_k: shown.append(a))
-    monkeypatch.setattr(gui.filedialog, "askopenfilename", lambda **_k: next(answers))
-    state = {"on": False}
-    app = SimpleNamespace(tr=Translator("en"), mmd_glass={},
-                          image_mode_var=SimpleNamespace(get=lambda: state["on"], set=lambda v: state.update(on=v)))
-    gui.PackBuilderApp._ask_mmd_glass(app, model)
-    assert app.mmd_glass == {str(model): {"audio": str(tmp_path / "song.wav"), "case_image": None}}
-    assert state["on"] is True and shown  # 画像モードのアドオンも作るようにして、知らせる
-    # 「いいえ」なら、前の選択も消す
-    monkeypatch.setattr(gui.messagebox, "askyesno", lambda *_a, **_k: False)
-    gui.PackBuilderApp._ask_mmd_glass(app, model)
-    assert app.mmd_glass == {}
+    settings = {"pmx": str(model), "motion": str(tmp_path / "dance.vmd"), "face_motions": [], "audio": None,
+                "case_image": None, "block": False, "detail": "high", "expressions": True, "physics": "full"}
+    video_id = gui.PackBuilderApp.apply_mmd_settings(app, settings)
+    [row] = app.video_tree.rows.values()
+    assert row == [video_id, str(model), "0", "MMD (image mode)"]
+    assert app.mmd_motions[str(model)] == str(tmp_path / "dance.vmd")
+    assert app.mmd_glass[str(model)]["physics"] == "full" and app.mmd_glass[str(model)]["block"] is False
+    # 選び直す (同じ行): ブロックモードも作る
+    [iid] = app.video_tree.rows
+    gui.PackBuilderApp.apply_mmd_settings(app, {**settings, "block": True}, iid)
+    assert list(app.video_tree.rows.values()) == [[video_id, str(model), "0", "MMD (image mode + blocks)"]]
+    # ほかの種類
+    assert gui.PackBuilderApp._kind_label(app, tmp_path / "a.mp4") == "Video"
+    assert gui.PackBuilderApp._kind_label(app, tmp_path / "a.PNG") == "Image"
+    assert gui.PackBuilderApp._kind_label(app, tmp_path / "a.vox") == "3D (.vox)"
+
+
+def test_add_buttons_offer_only_their_kind(monkeypatch, tmp_path):
+    asked = []
+    monkeypatch.setattr(gui.filedialog, "askopenfilenames",
+                        lambda **kwargs: asked.append(kwargs) or (str(tmp_path / "a.png"),))
+    app = list_app()
+    gui.PackBuilderApp._add_files(app, "image")
+    assert [t[1] for t in asked[0]["filetypes"]] == ["*.png *.jpg *.jpeg *.webp *.bmp", "*.*"]
+    assert [row[3] for row in app.video_tree.rows.values()] == ["Image"]
+
+
+@needs_ffmpeg
+def test_only_the_mmd_figure_when_image_mode_is_off(tmp_path):
+    """画面の「画像モードも作る」を選んでいなければ、普通の動画は画像モードに入れず、MMD の人物だけにする。"""
+    video = make_video(tmp_path / "clip.mp4")
+    pmx, vmd = doll_files(tmp_path)
+    app = fake_app()
+    entries = [{"file_path": str(video), "video_id": "clip"},
+               {"file_path": str(pmx), "video_id": "doll", "motion": str(vmd),
+                "glass": {"audio": None, "case_image": None, "detail": "standard", "physics": "off",
+                          "expressions": False, "face_motions": [], "block": False}}]
+    result = gui.PackBuilderApp._build_image_pack(app, entries, tmp_path / "P.mcaddon", "P", "movie", 128, 72, None,
+                                                  "ffmpeg", include_videos=False)
+    with zipfile.ZipFile(result) as archive:
+        assert [v["id"] for v in videos_in(archive)] == ["doll"]
