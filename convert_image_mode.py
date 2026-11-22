@@ -930,6 +930,12 @@ def mmd_glass_entry(path: Path, video_id: str, title: str, args: argparse.Namesp
             audio, temp / f"{video_id}_song", args.audio_chunk_seconds, None, None, args.ffmpeg, max_seconds=limit))
     elif not motion:
         log(f"[{video_id}] 踊り (.vmd) が無いので、動かない人物にします")
+    if motion and Path(motion).suffix.lower() == ".bvh":
+        from mvcodec import bvh
+        try:
+            motion = bvh.ensure_vmd(motion, path, temp, log=log)
+        except (OSError, ValueError) as error:
+            raise ConvertError(f"[{video_id}] モーションキャプチャ (BVH) を使えませんでした: {error}") from None
     voxels, texels = figure_resolution(args, detail)
     physics = physics or getattr(args, "physics", None) or DEFAULT_PHYSICS
     expressions = (not getattr(args, "no_expressions", False)) if expressions is None else expressions
@@ -1329,7 +1335,7 @@ def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
                              help="extrude・inflate で立体にする明るさのしきい値 (0〜1、既定 0.5)")
     glass_group.add_argument("--lift-invert", action="store_true", help="extrude・inflate で暗い所を立体にする")
     glass_group.add_argument("--motion", default=None, metavar="VMD",
-                             help="MMD のモデル (.pmx) を踊らせるモーション (.vmd)。骨で動かすので、1 曲を通しても軽い")
+                             help="MMD のモデル (.pmx) を踊らせるモーション (.vmd、またはモーションキャプチャの .bvh)。骨で動かすので、1 曲を通しても軽い")
     glass_group.add_argument("--audio", default=None, metavar="FILE",
                              help="MMD の人物と一緒に鳴らす曲 (wav・mp3 など)。曲の長さだけ再生し、踊りが短ければ最後の姿勢で止まる")
     glass_group.add_argument("--figure-detail", choices=tuple(FIGURE_DETAILS), default=DEFAULT_FIGURE_DETAIL,

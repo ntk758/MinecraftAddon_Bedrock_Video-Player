@@ -479,30 +479,51 @@ def morph_bone_offsets(model, weights):
 
 def _expand_morphs(model, weights):
     """{名前: 重み} → {モーフの番号: 重み}。グループモーフ (と反転モーフ) は中のモーフに重みを掛けて広げる。"""
-    by_name = {}
-    for i, m in enumerate(model.morphs):
-        by_name.setdefault(m["name"], i)
+    by_name = getattr(model, "_morph_by_name", None)
+    if by_name is None:
+        by_name = {}
+        for i, m in enumerate(model.morphs):
+            by_name.setdefault(m["name"], i)
+        model._morph_by_name = by_name
+    cache = getattr(model, "_morph_flat", None)
+    if cache is None:
+        cache = model._morph_flat = {}
     result = {}
-    seen = set()
-
-    def add(i, weight):
-        if not (0 <= i < len(model.morphs)) or not weight:
-            return
-        m = model.morphs[i]
-        if m["kind"] in (MORPH_GROUP, MORPH_FLIP):
-            if i in seen:
-                return
-            seen.add(i)
-            for member, ratio in m["members"]:
-                add(member, weight * ratio)
-            seen.discard(i)
-        else:
-            result[i] = result.get(i, 0.0) + weight
-
     for name, weight in weights.items():
-        if name in by_name:
-            add(by_name[name], float(weight))
+        if name in by_name and weight:
+            for leaf, ratio in _flat_morph(model, by_name[name], cache, set()).items():
+                result[leaf] = result.get(leaf, 0.0) + float(weight) * ratio
     return result
+
+
+# グループモーフの入れ子の深さの上限 (これより深い所は使わない)
+MAX_MORPH_GROUP_DEPTH = 16
+
+
+def _flat_morph(model, i, cache, path):
+    """モーフ i を、グループでないモーフの {番号: 割合} に広げる。グループごとの結果は cache に 1 回だけ作って使い回す
+    (同じモーフを何度も指すグループを重ねた壊れたファイルで、広げる回数が指数的に増えないように)。輪になったグループと、
+    MAX_MORPH_GROUP_DEPTH より深い入れ子は使わない。"""
+    if i in cache:
+        return cache[i]
+    if not (0 <= i < len(model.morphs)):
+        return {}
+    m = model.morphs[i]
+    if m["kind"] not in (MORPH_GROUP, MORPH_FLIP):
+        cache[i] = {i: 1.0}
+        return cache[i]
+    if i in path or len(path) >= MAX_MORPH_GROUP_DEPTH:
+        return {}
+    path.add(i)
+    flat = {}
+    for member, ratio in m["members"]:
+        if not math.isfinite(ratio) or not ratio:
+            continue
+        for leaf, inner in _flat_morph(model, member, cache, path).items():
+            flat[leaf] = flat.get(leaf, 0.0) + ratio * inner
+    path.discard(i)
+    cache[i] = flat
+    return flat
 
 
 def _bezier(x1, y1, x2, y2, x):
@@ -627,7 +648,7 @@ class Poser:
             self._update_global(j, local_rot, local_pos, g_rot, g_pos)
             stack.extend(self.children[j])
 
-    def pose(self, tracks, frame, bone_offsets=None, physics=None):
+    def pose(self, tracks, frame, bone_offsets=None, physics=None, use_ik=True):
         """bone_offsets: ボーンモーフの {ボーン: (移動, 回転)} (morph_bone_offsets)。踊りの値に足す。
         physics: 物理の前のボーン (「物理後」の印の無いボーン) を決めた後に呼ぶ関数 physics(g_rot, g_pos, local_rot)。
         返した {ボーン: (回転, 位置)} (どちらもモデルの座標) でそのボーンを置き換え、その子と「物理後」のボーンを決め直す。"""
@@ -665,7 +686,7 @@ class Poser:
             if 0 <= source < n and bone["flags"] & BONE_APPEND_TRANSLATE:
                 local_pos[i] = motion_pos[i] + local_pos[source] * bone["append_ratio"]
             self._update_global(i, local_rot, local_pos, g_rot, g_pos)
-            if bone["ik"] is not None:
+            if bone["ik"] is not None and use_ik:
                 self._solve_ik(i, bone["ik"], local_rot, local_pos, g_rot, g_pos)
         if not physics_done:
             self._apply_physics(physics, g_rot, g_pos, local_rot, local_pos)

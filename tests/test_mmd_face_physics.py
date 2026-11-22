@@ -263,3 +263,20 @@ def test_planes_uv_size_matches_the_image():
     quad = planes.Quad(0, 1, 0, 0, 2, 3, image)
     cube = planes.quad_cube(quad, planes.Placement(0, 0, 0), planes.Placing(scale=1.0, centre=(0, 0), offset=(0, 0, 0)))
     assert cube["uv"]["east"]["uv_size"] == [4, 6]
+
+
+def test_nested_group_morphs_expand_quickly():
+    """同じモーフを 2 回ずつ指すグループを 40 段重ねても、すぐ広げ終わる (広げた結果を使い回す)。"""
+    import time
+    model = mmd.PmxModel()
+    model.positions = np.zeros((4, 3), np.float32)
+    model.morphs = [{"name": "leaf", "kind": mmd.MORPH_VERTEX, "vertices": np.array([0]),
+                     "offsets": np.array([[0.0, 1.0, 0.0]], np.float32)}]
+    for level in range(40):
+        model.morphs.append({"name": f"g{level}", "kind": mmd.MORPH_GROUP, "members": [(level, 0.5), (level, 0.5)]})
+    start = time.perf_counter()
+    expanded = mmd._expand_morphs(model, {"g39": 1.0})
+    assert time.perf_counter() - start < 1.0
+    # 16 段より深い所は使わない (壊れたファイルとみなす)
+    assert expanded == {} or expanded[0] == pytest.approx(1.0)
+    assert mmd._expand_morphs(model, {"g10": 1.0})[0] == pytest.approx(1.0)
