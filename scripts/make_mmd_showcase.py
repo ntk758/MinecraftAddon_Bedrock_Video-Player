@@ -5,6 +5,7 @@
 - ダンス: CMU のモーションキャプチャ (BVH) を、モデルの骨に移し替える (mvcodec/bvh.py)。
 - 曲: ショーケースの自作の曲 (scripts/make_demo_video.py の music) を、ダンスの長さで作る。
 - 表情: BVH には表情が無いので、まばたきと、曲の拍に合わせた口の開け閉めの VMD をここで作る (モーフ名は --blink・--mouth)。
+- カメラ: 踊る人の周りを 1 周 (--orbit-seconds 秒) ゆっくり回り、少し上下するカメラの VMD を作る (/<名前空間>:camera で見る)。
 - 人物: 画像モードのガラスケース、細かさ high、物理 standard (--detail・--physics で変えられる)。
 
 素材の規約 (2026-11-22 に確認):
@@ -16,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import struct
 import sys
 import tempfile
@@ -64,6 +66,25 @@ def face_vmd(path: Path, seconds: float, blink: str, mouth: str) -> None:
     path.write_bytes(bytes(out))
 
 
+def camera_vmd(path: Path, seconds: float, orbit_seconds: float, height: float, distance: float) -> None:
+    """踊る人の周りを回るカメラの VMD (1 秒 2 個のキー、間は直線)。注視点は胸の高さ、少し見下ろす。"""
+    keys = []
+    for n in range(int(seconds * 2) + 1):
+        t = n / 2
+        turn = 2 * math.pi * t / orbit_seconds
+        tilt = math.radians(8 + 6 * math.sin(2 * math.pi * t / (orbit_seconds / 2)))
+        keys.append((int(round(t * 30)), -distance, (0.0, height, 0.0), (tilt, turn, 0.0), 30))
+    out = bytearray(b"Vocaloid Motion Data 0002".ljust(30, b"\0") + b"showcase".ljust(20, b"\0"))
+    out += struct.pack("<I", 0) + struct.pack("<I", 0)
+    out += struct.pack("<I", len(keys))
+    linear = bytes([20, 107, 20, 107] * 6)
+    for frame, dist, centre, rotation, fov in keys:
+        out += struct.pack("<I", frame) + struct.pack("<f", dist) + struct.pack("<3f", *centre)
+        out += struct.pack("<3f", *rotation) + linear + struct.pack("<I", fov) + bytes([0])
+    out += struct.pack("<I", 0) * 2
+    path.write_bytes(bytes(out))
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="MMD の画像モードのショーケースを作ります")
     parser.add_argument("--pmx", required=True, help="モデル (.pmx)")
@@ -74,6 +95,8 @@ def main(argv=None) -> int:
     parser.add_argument("--physics", default="standard", choices=convert_image_mode.PHYSICS_CHOICES)
     parser.add_argument("--blink", default="まばたき", help="まばたきのモーフの名前")
     parser.add_argument("--mouth", default="あ", help="口を開けるモーフの名前")
+    parser.add_argument("--orbit-seconds", type=float, default=20.0, help="カメラが 1 周する秒数")
+    parser.add_argument("--no-camera", action="store_true", help="カメラを入れない")
     parser.add_argument("--id", default="alicia_dance")
     parser.add_argument("--namespace", default="mmdshow")
     parser.add_argument("--pack-name", default="Block & Image Video Player MMD Showcase")
@@ -96,8 +119,13 @@ def main(argv=None) -> int:
         write_song(song, seconds)
         face = temp / "face.vmd"
         face_vmd(face, seconds, args.blink, args.mouth)
+        camera = []
+        if not args.no_camera:
+            height = float(model.positions[:, 1].max())
+            camera_vmd(temp / "camera.vmd", seconds, args.orbit_seconds, height * 0.6, height * 1.6)
+            camera = ["--camera-motion", str(temp / "camera.vmd")]
         return convert_image_mode.main([
-            args.pmx, "--motion", str(motion), "--face-motion", str(face), "--audio", str(song), "--case",
+            args.pmx, "--motion", str(motion), "--face-motion", str(face), "--audio", str(song), "--case", *camera,
             "--figure-detail", args.detail, "--physics", args.physics, "--ids", args.id,
             "--namespace", args.namespace, "--pack-name", args.pack_name, "-o", args.output])
 

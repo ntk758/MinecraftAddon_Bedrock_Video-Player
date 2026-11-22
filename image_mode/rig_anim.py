@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 
 import numpy as np
 
@@ -24,6 +25,7 @@ from image_mode import planes, rig as rigmod
 from mvcodec.mmd import MAX_MOTION_SECONDS
 
 ANIMATION_RATE = 30          # 踊りを並べる間隔 (1 秒あたり)。MMD のフレームと同じ
+CAMERA_RATE = 20             # カメラの点の間隔 (1 秒あたり。ゲームの tick と同じ。間はスクリプトが直線で補間する)
 ROTATION_TOLERANCE = 0.25    # キーを落としてよい、部品の点のずれ (ボクセル)
 POSITION_TOLERANCE = 0.1     # 移動のキーを落としてよいずれ (ボクセル)
 MOVER_THRESHOLD = 0.05       # 踊りの間にこれより動く (ボクセル) ボーンだけ、移動のボーンを足す
@@ -486,7 +488,7 @@ class PosedDance:
     physics は物理のプリセットの名前 (mvcodec.mmd_physics.PRESETS) か None (物理なし。髪とスカートは体に付いて動く)。"""
 
     def __init__(self, pmx_path, vmd_path=None, *, seconds: float | None = None, rate: float = ANIMATION_RATE,
-                 log=print, face_vmds=(), expressions: bool = True, physics: str | None = None):
+                 log=print, face_vmds=(), expressions: bool = True, physics: str | None = None, camera_vmd=None):
         from image_mode import rig_face
         from mvcodec import mmd, mmd_physics
 
@@ -497,6 +499,14 @@ class PosedDance:
         self.poser = mmd.Poser(self.model)
         self.rate = rate
         self.morph_tracks = rig_face.merged_morph_tracks(vmd_path, *face_vmds) if expressions else {}
+        # カメラ: カメラの VMD があればそれ、無ければダンス・表情の VMD のどれかに入っているもの
+        self.camera_keys = []
+        for path in ([camera_vmd] if camera_vmd else [vmd_path, *face_vmds]):
+            if path:
+                self.camera_keys = mmd.read_vmd_camera(path)
+                if self.camera_keys:
+                    log(f"カメラ: {len(self.camera_keys)} 個のキー ({Path(path).name})")
+                    break
         dynamic = any(b["mode"] != mmd.RIGID_FOLLOW_BONE for b in self.model.rigid_bodies)
         self.physics = physics if physics and dynamic else None
         frames = song_frames(self.tracks, rate, seconds)
@@ -554,14 +564,43 @@ def figure_from_dance(dance: PosedDance, *, identifier: str, figure_blocks: floa
                                        rotation_tolerance=tolerance)
     figure["rig"].update({"animation": dump(animation), "seconds": stats["seconds"], "bones": len(built.bones),
                           "keys": stats["rotation_keys"] + stats["position_keys"], "stats": stats})
+    if dance.camera_keys:
+        figure["rig"]["camera"] = camera_track(dance, built.grid, figure["rig"]["placing"], mapping, in_place,
+                                               stats["seconds"])
+        log(f"カメラ: {len(figure['rig']['camera']['points'])} 点 ({CAMERA_RATE} Hz) をアドオンに入れます")
     return figure
+
+
+def camera_track(dance, grid, placing, mapping, in_place: bool, seconds: float, rate: float = None) -> dict:
+    """MMD のカメラを、人物のエンティティの座標 (ブロック。geometry と同じ軸) の目と注視点の並びにする。
+    {"rate": 1 秒の点の数, "points": [[目 x, y, z, 注視点 x, y, z]…]}。その場で踊らせるとき (in_place) は、人物と同じく
+    センターの前後左右の移動を引く (カメラは踊る人に付いて動く)。ゲームの中では、エンティティの位置と向きで世界の座標にする。"""
+    from mvcodec import mmd
+
+    rate = rate or CAMERA_RATE
+    count = int(math.floor(max(0.0, seconds) * rate + 1e-9)) + 1
+    points = []
+    for n in range(count):
+        t = n / rate
+        centre, rotation, distance, _fov = mmd.sample_camera(dance.camera_keys, t * 30)
+        eye = mmd.camera_eye(centre, rotation, distance)
+        if in_place:
+            k = min(len(dance.skins) - 1, int(round(t * dance.rate)))
+            shift = centre_shift(dance.poser, dance.skins[k].astype(np.float64))
+            eye, centre = eye - shift, centre - shift
+        row = []
+        for point in (eye, centre):
+            model = planes.model_point(grid.to_voxel(point), placing, mapping)
+            row += [round(v / 16, 3) for v in model]
+        points.append(row)
+    return {"rate": rate, "points": points}
 
 
 def mmd_figure(pmx_path, vmd_path=None, *, identifier: str, figure_blocks: float, seconds: float | None = None,
                rate: float = ANIMATION_RATE, log=print, face_vmds=(), expressions: bool = True,
-               physics: str | None = None, **options) -> dict:
+               physics: str | None = None, camera_vmd=None, **options) -> dict:
     """PMX と VMD から、骨で動かす人物。VMD が無ければ動かない人物。seconds は再生の長さ (曲があれば曲の長さ)。
     踊りが短ければ最後の姿勢で止まり、長ければそこで切る。options は figure_from_dance のもの。"""
     dance = PosedDance(pmx_path, vmd_path, seconds=seconds, rate=rate, log=log, face_vmds=face_vmds,
-                       expressions=expressions, physics=physics)
+                       expressions=expressions, physics=physics, camera_vmd=camera_vmd)
     return figure_from_dance(dance, identifier=identifier, figure_blocks=figure_blocks, log=log, **options)

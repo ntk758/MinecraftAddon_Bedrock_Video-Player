@@ -65,6 +65,10 @@ let uncountedMs = 0;
 let dirty = false;
 const SAVE_INTERVAL = 20;
 const SCREEN_FAMILY = "bvp_screen";
+// MMD のカメラの視点で見ているプレイヤー (id)。ワールドを開き直したら元の視点に戻る (保存しない)
+const cameraViewers = new Set();
+// カメラを動かすときの、前の位置からのなめらかさ (秒。1 tick より少し長くして、tick のゆれを目立たなくする)
+const CAMERA_EASE_SECONDS = 0.08;
 
 function defaultState() {
   return { videoId: IMAGE_VIDEOS[0]?.id ?? null, method: IMAGE_VIDEOS[0]?.methods?.[0] ?? "a", entityId: null,
@@ -224,6 +228,91 @@ function spawnScreen() {
   // 生まれたエンティティのプロパティは次の tick から書ける
   system.run(() => syncScreen());
   return true;
+}
+
+// --- MMD のカメラ (video.glass.figure.rig.camera) ---
+
+function cameraOf(video) {
+  return video?.glass?.figure?.rig?.camera ?? null;
+}
+
+/** カメラの時刻 t 秒の (目, 注視点)。エンティティの座標 (ブロック、geometry と同じ軸) から世界の座標にする。
+ *  geometry の -z が人物の正面 (エンティティの向き)、+x が向かって右。エンティティの向き (yaw) は state.rotation。 */
+function cameraPose(camera, t) {
+  const points = camera.points;
+  if (!points?.length || !state.location) return null;
+  const at = Math.max(0, Math.min(points.length - 1, t * camera.rate));
+  const i = Math.floor(at);
+  const j = Math.min(points.length - 1, i + 1);
+  const f = at - i;
+  const p = points[i].map((v, k) => v + (points[j][k] - v) * f);
+  const yaw = (state.rotation * Math.PI) / 180;
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  const base = state.location;
+  const world = (x, y, z) => ({ x: base.x + x * c + z * s, y: base.y + y, z: base.z + x * s - z * c });
+  return { location: world(p[0], p[1], p[2]), facingLocation: world(p[3], p[4], p[5]) };
+}
+
+function playerById(id) {
+  return world.getAllPlayers().find((p) => p.id === id);
+}
+
+function clearCamera(player) {
+  try {
+    player?.camera?.clear();
+  } catch (e) { /* 抜けた */ }
+}
+
+/** カメラの視点で見ているプレイヤーの視点を、今の時刻に合わせる。止めた・カメラの無い動画では元に戻す。 */
+function updateCameras() {
+  if (cameraViewers.size === 0) return;
+  const video = currentVideo();
+  const camera = cameraOf(video);
+  if (!camera || state.mode === STOPPED || !screenEntity()) {
+    for (const id of cameraViewers) clearCamera(playerById(id));
+    cameraViewers.clear();
+    return;
+  }
+  const t = state.mode === PLAYING ? state.playMs / 1000 : currentFrame(video) / video.fps;
+  const pose = cameraPose(camera, t);
+  if (!pose) return;
+  for (const id of [...cameraViewers]) {
+    const player = playerById(id);
+    if (!player) {
+      cameraViewers.delete(id);
+      continue;
+    }
+    try {
+      player.camera.setCamera("minecraft:free", { ...pose, easeOptions: { easeTime: CAMERA_EASE_SECONDS } });
+    } catch (e) {
+      console.warn(`[${NAMESPACE}] could not move the camera: ${e}`);
+      cameraViewers.delete(id);
+    }
+  }
+}
+
+/** カメラの視点で見る / 元に戻す (そのプレイヤーだけ)。 */
+function toggleCamera(player) {
+  if (!player) return;
+  const video = currentVideo();
+  if (cameraViewers.has(player.id)) {
+    cameraViewers.delete(player.id);
+    clearCamera(player);
+    player.sendMessage(tr("camera_off"));
+    return;
+  }
+  if (!cameraOf(video)) {
+    player.sendMessage(tr("camera_none"));
+    return;
+  }
+  if (!screenEntity()) {
+    player.sendMessage(tr("not_setup", NAMESPACE));
+    return;
+  }
+  cameraViewers.add(player.id);
+  player.sendMessage(tr("camera_on", NAMESPACE));
+  updateCameras();
 }
 
 // --- 音声 ---
@@ -518,6 +607,7 @@ function runAction(action, args, player) {
     case "volume": setVolume(args); break;
     case "stats": showStats(); break;
     case "remote": showRemote(player); break;
+    case "camera": toggleCamera(player); break;
     default: break;
   }
 }
@@ -569,6 +659,10 @@ function showRemote(player) {
   button("remote.volume_button", "textures/items/repeater", () => showVolume(player));
   button("remote.seek", "textures/items/clock_item", () => showSeek(player));
   button("remote.library", "textures/items/book_portfolio", () => showLibrary(player));
+  if (cameraOf(video)) {
+    button(cameraViewers.has(player.id) ? "remote.camera_off" : "remote.camera_on", "textures/items/spyglass",
+           () => toggleCamera(player));
+  }
   if (placed) button("remote.setup_here", "textures/items/item_frame", () => setup(player, ""));
   form.show(player).then((response) => {
     if (response.canceled || response.selection === undefined) return;
@@ -665,6 +759,7 @@ system.runInterval(() => {
   lastTickAt = now;
   const video = currentVideo();
   if (dirty && state.mode !== PLAYING) syncScreen();
+  updateCameras();
   if (!video || state.mode !== PLAYING) return;
   state.playMs += elapsed;
   uncountedMs += passed - elapsed;
@@ -751,6 +846,7 @@ const COMMANDS = [
   ["remote", "Open the remote control (or use a clock)", null],
   ["method", "Switch the frame method (a or c)", "text"],
   ["list", "List the videos", null],
+  ["camera", "Watch from the MMD camera (run again to stop)", null],
 ];
 
 // String の引数は 1 語だけなので、setup face align のように並べられるよう、文字の引数は TEXT_WORDS 個まで受ける

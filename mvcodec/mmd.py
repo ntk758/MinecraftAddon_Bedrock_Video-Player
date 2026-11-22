@@ -526,6 +526,89 @@ def _flat_morph(model, i, cache, path):
     return flat
 
 
+# ---------------------------------------------------------------------------
+# VMD のカメラ
+# ---------------------------------------------------------------------------
+
+def read_vmd_camera(path):
+    """VMD のカメラのキーを読む。[(フレーム, 距離, 注視点 (3,), 回転 (3,) ラジアン, 補間 (24 バイト), 視野角 (度))…]
+    (フレームの順)。カメラの無い VMD は空。ボーンと表情のキーは読み飛ばす。"""
+    data = Path(path).read_bytes()
+    r = _Reader(data)
+    signature = r.take(30)
+    if not signature.startswith(b"Vocaloid Motion Data"):
+        raise ValueError(f"VMD ファイルではありません: {path}")
+    r.take(20 if b"0002" in signature else 10)
+    r.take(111 * r.count(111, "ボーンのキー", unsigned=True))
+    if r.remaining() < 4:
+        return []
+    r.take(23 * r.count(23, "表情のキー", unsigned=True))
+    if r.remaining() < 4:
+        return []
+    keys = []
+    for _ in range(r.count(61, "カメラのキー", unsigned=True)):
+        frame = r.unpack("I")[0]
+        distance = r.float()
+        centre = np.array(r.unpack("3f"), np.float64)
+        rotation = np.array(r.unpack("3f"), np.float64)
+        interpolation = r.take(24)
+        fov = r.unpack("I")[0]
+        r.take(1)  # 遠近 (使わない)
+        if not (math.isfinite(distance) and np.isfinite(centre).all() and np.isfinite(rotation).all()):
+            continue
+        keys.append((frame, distance, centre, rotation, interpolation, fov))
+    keys.sort(key=lambda key: key[0])
+    return keys
+
+
+def sample_camera(keys, frame):
+    """カメラのキーを frame で補間した (注視点 (3,), 回転 (3,), 距離, 視野角)。補間曲線は後ろのキーのもの
+    (X・Y・Z・回転・距離・視野角の 6 本、1 本 4 バイト: x1, x2, y1, y2)。間が 1 フレームのキーは切り替え (カット)。"""
+    if not keys:
+        raise ValueError("カメラのキーがありません")
+    if frame <= keys[0][0]:
+        k = keys[0]
+        return k[2].copy(), k[3].copy(), k[1], float(k[5])
+    if frame >= keys[-1][0]:
+        k = keys[-1]
+        return k[2].copy(), k[3].copy(), k[1], float(k[5])
+    lo, hi = 0, len(keys) - 1
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if keys[mid][0] <= frame:
+            lo = mid
+        else:
+            hi = mid
+    a, b = keys[lo], keys[hi]
+    span = b[0] - a[0]
+    if span <= 1:
+        return a[2].copy(), a[3].copy(), a[1], float(a[5])
+    x = (frame - a[0]) / span
+    curve = b[4]
+
+    def ease(n):
+        x1, x2, y1, y2 = curve[n * 4:n * 4 + 4]
+        return _bezier(x1, y1, x2, y2, x)
+
+    centre = np.array([a[2][k] + (b[2][k] - a[2][k]) * ease(k) for k in range(3)])
+    rotation = a[3] + (b[3] - a[3]) * ease(3)
+    distance = a[1] + (b[1] - a[1]) * ease(4)
+    fov = a[5] + (b[5] - a[5]) * ease(5)
+    return centre, rotation, distance, fov
+
+
+def camera_eye(centre, rotation, distance):
+    """カメラの目の位置 (MMD の座標)。注視点から、回転 (Ry(-y) · Rx(-x) · Rz(-z)) を掛けた (0, 0, 距離) だけ離れた所。
+    距離は普通は負 (既定の -45 で、目は注視点の正面 (-Z) 側)。左右の回転 (y) を一番外にするので、横から見ていても
+    上下の角度 (x) が効く (MMD のカメラの回り方。saba の eulerAngleYXZ と同じ順)。"""
+    x, y, z = (-float(v) for v in rotation)
+    cx, sx, cy, sy, cz, sz = math.cos(x), math.sin(x), math.cos(y), math.sin(y), math.cos(z), math.sin(z)
+    rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+    ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
+    return np.asarray(centre, np.float64) + ry @ rx @ rz @ np.array([0.0, 0.0, float(distance)])
+
+
 def _bezier(x1, y1, x2, y2, x):
     """VMD の補間曲線 (制御点は 0〜127) で、進み x (0〜1) のときの値 (0〜1)。"""
     if x1 == y1 and x2 == y2:

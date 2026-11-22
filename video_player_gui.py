@@ -1850,7 +1850,7 @@ class PackBuilderApp(tk.Tk):
                                 "motion": entry.get("motion"), "audio": glass.get("audio"),
                                 "case_image": glass.get("case_image"), "face_motions": glass.get("face_motions"),
                                 "physics": glass.get("physics"), "expressions": glass.get("expressions"),
-                                "detail": glass.get("detail")})
+                                "detail": glass.get("detail"), "camera_motion": glass.get("camera_motion")})
                 self.messages.put(self.tr("build.image_mmd", id=entry["video_id"]))
             elif path.suffix.lower() in (VOX_SUFFIX, PMX_SUFFIX):
                 self.messages.put(self.tr("build.image_skipped", id=entry["video_id"]))

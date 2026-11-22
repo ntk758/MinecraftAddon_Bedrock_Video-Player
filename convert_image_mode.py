@@ -492,7 +492,9 @@ def build_glass_files(entries: list[dict], *, namespace: str, pack_name: str, ma
                        "sheet_width": figure["sheet_width"], "sheet_height": figure["sheet_height"],
                        "texture_paths": fig_paths, "quads": figure["quads"],
                        **({"rig": {"animation": glass_rp.animation_identifier(video_id, namespace),
-                                   "seconds": rig_info["seconds"], "bones": rig_info["bones"]}} if rig_info else {})},
+                                   "seconds": rig_info["seconds"], "bones": rig_info["bones"],
+                                   **({"camera": rig_info["camera"]} if rig_info.get("camera") else {})}}
+                          if rig_info else {})},
         }
         case = entry.get("case")
         if case is not None:
@@ -912,7 +914,7 @@ def figure_resolution(args: argparse.Namespace, detail: str | None = None) -> tu
 
 def mmd_glass_entry(path: Path, video_id: str, title: str, args: argparse.Namespace, temp: Path, log=print, *,
                     motion=None, audio=None, case=None, face_motions=None, physics=None, expressions=None,
-                    detail=None) -> dict:
+                    detail=None, camera_motion=None) -> dict:
     """MMD のモデル (.pmx) から、骨で動かす人物の build_glass_files の entry を作る。motion は踊り (.vmd)、audio は曲
     (再生の長さになる)、case は glass.CaseOptions か None。細かさなどは args (--figure-detail など) のもの。
     face_motions (表情・口の VMD のリスト)・physics (off・light・standard・full)・expressions (表情を使うか)・
@@ -943,6 +945,9 @@ def mmd_glass_entry(path: Path, video_id: str, title: str, args: argparse.Namesp
     for face in face_motions:
         if not Path(face).is_file():
             raise ConvertError(f"[{video_id}] 表情・口の VMD がありません: {face}")
+    camera_motion = camera_motion if camera_motion is not None else getattr(args, "camera_motion", None)
+    if camera_motion and not Path(camera_motion).is_file():
+        raise ConvertError(f"[{video_id}] カメラの VMD がありません: {camera_motion}")
     log(f"[{video_id}] MMD の人物を骨で動かす板にします (高さ {voxels} ボクセル、板の画素 {texels}×{texels}、"
         f"重ね代 {args.joint_overlap}、物理 {physics}、表情 {'あり' if expressions else 'なし'})")
     max_sheet = max(args.max_sheet, FIGURE_MAX_SHEET) if texels > 1 or voxels > 128 else args.max_sheet
@@ -954,7 +959,7 @@ def mmd_glass_entry(path: Path, video_id: str, title: str, args: argparse.Namesp
             mapping=args.face_mapping or planes.DEFAULT_MAPPING, max_sheet=max_sheet, gutter=args.gutter, log=log,
             texels=texels, face_vmds=face_motions, expressions=expressions,
             physics=None if physics == "off" else physics,
-            expression_states=getattr(args, "expression_states", None))
+            expression_states=getattr(args, "expression_states", None), camera_vmd=camera_motion or None)
     except (OSError, ValueError) as error:
         raise ConvertError(f"[{video_id}] MMD の人物を作れませんでした: {error}") from None
     return {"id": video_id, "title": title, "figure": figure, "figure_fps": RIG_CLOCK_FPS,
@@ -1038,7 +1043,8 @@ def _build_with_figures(args: argparse.Namespace, inputs: list[Path], ids: list[
             entry = mmd_glass_entry(Path(figure["pmx"]), figure["id"], figure["title"], args, Path(temp), log,
                                     motion=figure.get("motion"), audio=figure.get("audio"), case=case,
                                     face_motions=figure.get("face_motions"), physics=figure.get("physics"),
-                                    expressions=figure.get("expressions"), detail=figure.get("detail"))
+                                    expressions=figure.get("expressions"), detail=figure.get("detail"),
+                                    camera_motion=figure.get("camera_motion"))
             entries.append(entry)
             sheet = entry["figure"]
             reserved += sheet["sheet_width"] * sheet["sheet_height"] * len(sheet["sheets"]) * 4
@@ -1348,6 +1354,9 @@ def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
                              help="MMD の人物の板の画素の細かさ (ボクセルの面 1 つを N×N 画素、1〜4)。--figure-detail より優先")
     glass_group.add_argument("--face-motion", action="append", default=None, metavar="VMD",
                              help="MMD の人物の表情・口の動き (.vmd)。何個でも。--motion の VMD の表情のキーも使う")
+    glass_group.add_argument("--camera-motion", default=None, metavar="VMD",
+                             help="MMD の人物のカメラ (.vmd)。無ければ --motion・--face-motion の VMD のカメラを使う。"
+                                  "ゲームの中で /<名前空間>:camera かリモコンで、カメラの視点で見られる")
     glass_group.add_argument("--no-expressions", action="store_true",
                              help="MMD の人物の表情 (まばたき・口) を動かさない")
     glass_group.add_argument("--expression-states", type=_bounded_int(1, 16), default=None,

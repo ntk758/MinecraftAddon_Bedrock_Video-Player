@@ -18,7 +18,8 @@ DANCE_SUFFIXES = (".vmd", ".bvh")
 
 def default_settings() -> dict:
     """新しく追加するときの選択 (画像モードの人物・高精細・表情あり・物理は標準・ブロックモードは作らない)。"""
-    return {"pmx": "", "motion": "", "face_motions": [], "audio": None, "case_image": None, "block": False,
+    return {"pmx": "", "motion": "", "face_motions": [], "camera_motion": None, "audio": None, "case_image": None,
+            "block": False,
             "detail": DEFAULT_DETAIL, "expressions": True, "physics": DEFAULT_PHYSICS}
 
 
@@ -35,6 +36,7 @@ def glass_settings(settings: dict) -> dict:
     """動画リストの行に持たせる、画像モードの人物の設定 (_build_image_pack の figure に渡す形)。"""
     return {"audio": settings.get("audio") or None, "case_image": settings.get("case_image") or None,
             "face_motions": list(settings.get("face_motions") or []), "physics": settings.get("physics", DEFAULT_PHYSICS),
+            "camera_motion": settings.get("camera_motion") or None,
             "expressions": bool(settings.get("expressions", True)), "detail": settings.get("detail", DEFAULT_DETAIL),
             "block": bool(settings.get("block", False))}
 
@@ -54,6 +56,7 @@ class MmdDialog(tk.Toplevel):
         self.pmx = tk.StringVar(value=settings["pmx"])
         self.motion = tk.StringVar(value=settings["motion"])
         self.audio = tk.StringVar(value=settings["audio"] or "")
+        self.camera = tk.StringVar(value=settings["camera_motion"] or "")
         self.case_image = tk.StringVar(value=settings["case_image"] or "")
         self.face_motions = list(settings["face_motions"])
         self.block = tk.BooleanVar(value=settings["block"])
@@ -67,6 +70,7 @@ class MmdDialog(tk.Toplevel):
         files = [
             ("mmd.model", self.pmx, [(tr("dialog.mmd_files"), "*.pmx")]),
             ("mmd.dance", self.motion, [(tr("dialog.dance_files"), "*.vmd *.bvh")]),
+            ("mmd.camera", self.camera, [("VMD", "*.vmd")]),
             ("mmd.song", self.audio, [(tr("dialog.audio_files"), "*.wav *.mp3 *.ogg *.m4a *.flac")]),
             ("mmd.case_image", self.case_image, [(tr("dialog.image_files"), "*.png *.jpg *.jpeg *.webp *.bmp")]),
         ]
@@ -146,6 +150,7 @@ class MmdDialog(tk.Toplevel):
     def settings(self) -> dict:
         return {"pmx": self.pmx.get().strip(), "motion": self.motion.get().strip(),
                 "face_motions": list(self.face_motions), "audio": self.audio.get().strip() or None,
+                "camera_motion": self.camera.get().strip() or None,
                 "case_image": self.case_image.get().strip() or None, "block": bool(self.block.get()),
                 "detail": DETAILS[self.detail_labels.index(self.detail.get())],
                 "expressions": bool(self.expressions.get()),

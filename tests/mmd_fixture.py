@@ -176,8 +176,13 @@ def pmx_bytes(extras=False):
 LINEAR = bytes([20, 20, 20, 20, 20, 20, 20, 20, 107, 107, 107, 107, 107, 107, 107, 107] * 4)
 
 
-def vmd_bytes(keys, morphs=()):
-    """keys: [(ボーン名, フレーム, 位置 (3), 回転 (x, y, z, w)), ...]、morphs: [(モーフ名, フレーム, 重み), ...]"""
+# カメラの補間 (直線): 6 本の曲線 (X・Y・Z・回転・距離・視野角) の x1, x2, y1, y2
+CAMERA_LINEAR = bytes([20, 107, 20, 107] * 6)
+
+
+def vmd_bytes(keys, morphs=(), cameras=()):
+    """keys: [(ボーン名, フレーム, 位置 (3), 回転 (x, y, z, w)), ...]、morphs: [(モーフ名, フレーム, 重み), ...]、
+    cameras: [(フレーム, 距離, 注視点 (3), 回転 (3) ラジアン, 視野角), ...]"""
     out = bytearray(b"Vocaloid Motion Data 0002".ljust(30, b"\0") + "テスト".encode("shift_jis").ljust(20, b"\0"))
     out += struct.pack("<I", len(keys))
     for name, frame, position, rotation in keys:
@@ -186,13 +191,17 @@ def vmd_bytes(keys, morphs=()):
     out += struct.pack("<I", len(morphs))
     for name, frame, weight in morphs:
         out += name.encode("shift_jis").ljust(15, b"\0") + struct.pack("<I", frame) + struct.pack("<f", weight)
-    out += struct.pack("<I", 0) * 3  # カメラ・照明・セルフ影
+    out += struct.pack("<I", len(cameras))
+    for frame, distance, centre, rotation, fov in cameras:
+        out += struct.pack("<I", frame) + struct.pack("<f", distance) + struct.pack("<3f", *centre)
+        out += struct.pack("<3f", *rotation) + CAMERA_LINEAR + struct.pack("<I", fov) + bytes([0])
+    out += struct.pack("<I", 0) * 2  # 照明・セルフ影
     return bytes(out)
 
 
-def write_doll(folder, keys, morphs=(), extras=False):
+def write_doll(folder, keys, morphs=(), extras=False, cameras=()):
     pmx = folder / "doll.pmx"
     vmd = folder / "dance.vmd"
     pmx.write_bytes(pmx_bytes(extras or bool(morphs)))
-    vmd.write_bytes(vmd_bytes(keys, morphs))
+    vmd.write_bytes(vmd_bytes(keys, morphs, cameras))
     return pmx, vmd

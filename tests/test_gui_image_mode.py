@@ -233,7 +233,7 @@ def test_mmd_dialog_settings_and_checks():
         assert gui_mmd.validate(settings) is None
     glass = gui_mmd.glass_settings({**settings, "face_motions": ["C:/m/lip.vmd"], "audio": ""})
     assert glass == {"audio": None, "case_image": None, "face_motions": ["C:/m/lip.vmd"], "physics": "standard",
-                     "expressions": True, "detail": "high", "block": False}
+                     "camera_motion": None, "expressions": True, "detail": "high", "block": False}
 
 
 class FakeTree:
