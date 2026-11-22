@@ -3,7 +3,13 @@
 ゲームの中では計算しない。踊りの姿勢を 1 コマずつ求めるときに、物理で動くボーンの向きをここで決めて、
 ボーンのアニメーションに焼き込む (mvcodec.mmd.Poser.pose の physics)。
 
-作り (位置で解く、鎖の物理):
+解き方はプリセットで 2 つ:
+- standard・full: 剛体の物理 (RigidPhysics。このファイルの後半)。MMD (Bullet) と同じく、剛体ごとに位置・向き・速さ・
+  回転の速さ・重さ・慣性を持ち、ばね付き 6 自由度のジョイント (移動と回転の範囲・回転のばね) と、剛体どうしの当たり
+  (カプセルで近似) で動かす。位置で解く剛体の物理 (XPBD)。full は細かく刻み、物理で動く剛体どうしも当てる。
+- light: 下の「鎖の物理」(ChainPhysics)。速いが、剛体の向きと慣性は見ない。
+
+鎖の物理 (light) の作り:
 - 物理で動く剛体 (種類 1・2) のボーンを「節」にする。節は、ボーンの根元 (head) から先 (tail) へ伸びた棒で、
   先の点を粒として動かす。根元は親の節の棒の向き (親が物理なら) か、踊りの姿勢 (親がボーンに付いて動くなら) で決まる。
 - 粒は重力と速さで動き (Verlet)、次の制約で直す (根元に近い節から順に。同じ深さの節はまとめて numpy で計算する):
@@ -53,12 +59,13 @@ class Preset:
     iterations: int
     self_collision: bool
     tolerance: float
+    solver: str = "chain"   # chain (先の点の鎖。速い) か rigid (剛体とジョイント。MMD と同じ考え方)
 
 
 PRESETS = {
-    "light": Preset("light", substeps=2, iterations=2, self_collision=False, tolerance=0.5),
-    "standard": Preset("standard", substeps=4, iterations=4, self_collision=False, tolerance=0.35),
-    "full": Preset("full", substeps=8, iterations=6, self_collision=True, tolerance=0.25),
+    "light": Preset("light", substeps=2, iterations=2, self_collision=False, tolerance=0.5, solver="chain"),
+    "standard": Preset("standard", substeps=6, iterations=2, self_collision=False, tolerance=0.35, solver="rigid"),
+    "full": Preset("full", substeps=12, iterations=2, self_collision=True, tolerance=0.25, solver="rigid"),
 }
 DEFAULT_PRESET = "standard"
 
@@ -141,9 +148,8 @@ def _can_collide(a, b) -> bool:
     return bool(a["mask"] >> b["group"] & 1) and bool(b["mask"] >> a["group"] & 1)
 
 
-class Physics:
-    """モデルの物理。step_frame を毎コマ呼ぶ (Poser.pose の physics に callback を渡す)。物理の剛体が無いモデルでは
-    enabled が偽で、何もしない。"""
+class ChainPhysics:
+    """鎖の物理 (light)。callback を Poser.pose の physics に渡す。物理の剛体が無いモデルでは enabled が偽で、何もしない。"""
 
     def __init__(self, model, poser, preset: Preset | str = DEFAULT_PRESET, frame_rate: float = FRAME_RATE):
         self.model = model
@@ -424,6 +430,411 @@ class Physics:
         """物理で決めた節のボーンの {ボーン: (回転 (四元数), 位置)}。位置は根元 (親から決まる)。"""
         heads, rotations = self._heads, self._rotations
         return {int(bone): (rotations[n], heads[n]) for n, bone in enumerate(self.bones)}
+
+
+# =====================================================================================================================
+# 剛体の物理 (standard・full)。MMD (Bullet) と同じ考え方: 剛体ごとに位置・向き・速さ・回転の速さ・重さ・慣性を持ち、
+# ジョイント (ばね付き 6 自由度) の移動と回転の範囲・ばね、体との当たり (カプセル) で動かす。
+# 解き方は位置で解く剛体の物理 (XPBD。Müller ほか 2020 "Detailed Rigid Body Simulation with Extended Position Based
+# Dynamics")。1 コマを substeps に分け、各ステップで「進める → 制約を直す → 速さを求め直す」を行う。
+# ジョイントは、同じ剛体を使わないものどうしの組に分けて (色分け)、組ごとに numpy でまとめて解く。
+# =====================================================================================================================
+
+def quat_conj(q: np.ndarray) -> np.ndarray:
+    return q * np.array([-1.0, -1.0, -1.0, 1.0])
+
+
+def quat_rotate(q: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """四元数 q (..., 4) で v (..., 3) を回す。"""
+    u = q[..., :3]
+    w = q[..., 3:4]
+    t = 2.0 * np.cross(u, v)
+    return v + w * t + np.cross(u, t)
+
+
+def quat_from_matrix(m: np.ndarray) -> np.ndarray:
+    """回転行列 (3, 3) → 四元数 (x, y, z, w)。"""
+    t = np.trace(m)
+    if t > 0:
+        s = math.sqrt(t + 1.0) * 2
+        q = [(m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s, 0.25 * s]
+    elif m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
+        s = math.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2]) * 2
+        q = [0.25 * s, (m[0, 1] + m[1, 0]) / s, (m[0, 2] + m[2, 0]) / s, (m[2, 1] - m[1, 2]) / s]
+    elif m[1, 1] > m[2, 2]:
+        s = math.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2]) * 2
+        q = [(m[0, 1] + m[1, 0]) / s, 0.25 * s, (m[1, 2] + m[2, 1]) / s, (m[0, 2] - m[2, 0]) / s]
+    else:
+        s = math.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1]) * 2
+        q = [(m[0, 2] + m[2, 0]) / s, (m[1, 2] + m[2, 1]) / s, 0.25 * s, (m[1, 0] - m[0, 1]) / s]
+    q = np.array(q)
+    return q / np.linalg.norm(q)
+
+
+def _normalize_quat(q: np.ndarray) -> np.ndarray:
+    return q / np.maximum(np.linalg.norm(q, axis=-1, keepdims=True), 1e-12)
+
+
+def rotation_vector(q: np.ndarray) -> np.ndarray:
+    """四元数 (..., 4) → 回転ベクトル (軸 × 角度。..., 3)。短い方の回り方。"""
+    q = np.where(q[..., 3:4] < 0, -q, q)
+    s = np.linalg.norm(q[..., :3], axis=-1)
+    angle = 2.0 * np.arctan2(s, q[..., 3])
+    scale = np.where(s > 1e-12, angle / np.maximum(s, 1e-12), 2.0)
+    return q[..., :3] * scale[..., None]
+
+
+def euler_xyz(q: np.ndarray) -> np.ndarray:
+    """四元数 → オイラー角 (x, y, z) で R = Rx · Ry · Rz (Bullet のばね付き 6 自由度のジョイントと同じ順)。"""
+    m = quat_matrices(q)
+    y = np.arcsin(np.clip(m[..., 0, 2], -1.0, 1.0))
+    x = np.arctan2(-m[..., 1, 2], m[..., 2, 2])
+    z = np.arctan2(-m[..., 0, 1], m[..., 0, 0])
+    return np.stack([x, y, z], axis=-1)
+
+
+def quat_from_euler_xyz(angles: np.ndarray) -> np.ndarray:
+    """オイラー角 (x, y, z) → 四元数 (R = Rx · Ry · Rz)。"""
+    half = angles / 2
+    c, s = np.cos(half), np.sin(half)
+    qx = np.stack([s[..., 0], 0 * c[..., 0], 0 * c[..., 0], c[..., 0]], axis=-1)
+    qy = np.stack([0 * c[..., 1], s[..., 1], 0 * c[..., 1], c[..., 1]], axis=-1)
+    qz = np.stack([0 * c[..., 2], 0 * c[..., 2], s[..., 2], c[..., 2]], axis=-1)
+    return quat_mul(quat_mul(qx, qy), qz)
+
+
+def _segment_closest(p1, q1, p2, q2):
+    """線分 p1-q1 と p2-q2 (どれも (N, 3)) の一番近い点の組 ((N, 3), (N, 3))。"""
+    d1 = q1 - p1
+    d2 = q2 - p2
+    r = p1 - p2
+    a = np.sum(d1 * d1, axis=1)
+    e = np.sum(d2 * d2, axis=1)
+    f = np.sum(d2 * r, axis=1)
+    c = np.sum(d1 * r, axis=1)
+    b = np.sum(d1 * d2, axis=1)
+    denom = a * e - b * b
+    s = np.where(denom > 1e-12, np.clip((b * f - c * e) / np.maximum(denom, 1e-12), 0, 1), 0.0)
+    s = np.where(a > 1e-12, s, 0.0)
+    t = np.where(e > 1e-12, (b * s + f) / np.maximum(e, 1e-12), 0.0)
+    over = t > 1
+    under = t < 0
+    t = np.clip(t, 0, 1)
+    s = np.where(over, np.where(a > 1e-12, np.clip((b - c) / np.maximum(a, 1e-12), 0, 1), 0.0), s)
+    s = np.where(under, np.where(a > 1e-12, np.clip(-c / np.maximum(a, 1e-12), 0, 1), 0.0), s)
+    return p1 + d1 * s[:, None], p2 + d2 * t[:, None]
+
+
+def _colour_groups(pairs, dynamic):
+    """制約の組 (N, 2) を、同じ動く剛体を使わない組どうしの色に分ける。[番号の配列…]"""
+    colours = []
+    used = []
+    for k, (a, b) in enumerate(pairs):
+        keys = {int(x) for x in (a, b) if dynamic[x]}
+        for c, members in enumerate(used):
+            if not keys & members:
+                colours[c].append(k)
+                members |= keys
+                break
+        else:
+            colours.append([k])
+            used.append(set(keys))
+    return [np.array(c, np.int64) for c in colours]
+
+
+def _inertia(body, mass):
+    """剛体の形からの慣性の対角 (剛体の座標)。"""
+    size = np.abs(body["size"])
+    if body["shape"] == mmd.SHAPE_SPHERE:
+        r = max(size[0], 1e-3)
+        return np.full(3, 0.4 * mass * r * r)
+    if body["shape"] == mmd.SHAPE_CAPSULE:
+        r, h = max(size[0], 1e-3), max(size[1], 0.0)
+        side = mass * (3 * r * r + h * h) / 12
+        return np.array([side, 0.5 * mass * r * r, side])
+    x, y, z = (max(v, 1e-3) * 2 for v in size)
+    return mass / 12 * np.array([y * y + z * z, x * x + z * z, x * x + y * y])
+
+
+class RigidPhysics:
+    """剛体とジョイントの物理 (standard・full)。Physics と同じ使い方 (callback を Poser.pose の physics に渡す)。"""
+
+    def __init__(self, model, poser, preset: Preset, frame_rate: float = FRAME_RATE):
+        self.model = model
+        self.poser = poser
+        self.preset = preset
+        self.frame_rate = float(frame_rate)
+        bodies = model.rigid_bodies
+        rest = poser.rest
+        count = len(bodies)
+        self.count = count
+        self.enabled = any(b["mode"] != mmd.RIGID_FOLLOW_BONE for b in bodies)
+        if not self.enabled:
+            return
+        self.mode = np.array([b["mode"] for b in bodies])
+        self.bone = np.array([b["bone"] for b in bodies], np.int64)
+        self.dynamic = self.mode != mmd.RIGID_FOLLOW_BONE
+        mass = np.array([max(b["mass"], 1e-3) for b in bodies])
+        self.inv_mass = np.where(self.dynamic, 1.0 / mass, 0.0)
+        inertia = np.array([_inertia(b, m) for b, m in zip(bodies, mass)])
+        self.inv_inertia = np.where(self.dynamic[:, None], 1.0 / np.maximum(inertia, 1e-9), 0.0)
+        # 剛体の初期姿勢 (モデルの座標) と、ボーンからのずれ (ボーンの初期の向きは回転なし)
+        rest_q = np.array([quat_from_matrix(euler_matrix(b["rotation"])) for b in bodies])
+        rest_x = np.array([b["position"] for b in bodies], np.float64)
+        bone_rest = np.where(self.bone[:, None] >= 0, rest[np.maximum(self.bone, 0)], 0.0)
+        self.offset_q = rest_q
+        self.offset_x = rest_x - bone_rest
+        self.rest_q, self.rest_x = rest_q, rest_x
+        # 形 (カプセルで近似: 半径・軸方向の半分の長さ・剛体の座標の軸)
+        shapes = [_collider_shape(b) for b in bodies]
+        self.radius = np.array([s[0] for s in shapes])
+        self.half = np.array([s[1] for s in shapes])
+        self.axis = np.array([s[2] for s in shapes])
+        self.keep_linear = np.clip(1.0 - np.array([b["linear_damping"] for b in bodies]), 0.0, 1.0)
+        self.keep_angular = np.clip(1.0 - np.array([b["angular_damping"] for b in bodies]), 0.0, 1.0)
+        # ジョイント (どちらかが動く剛体のもの)。ジョイントの初期の位置と向きを、両方の剛体の座標で持つ
+        joints = [j for j in model.joints if self.dynamic[j["a"]] or self.dynamic[j["b"]]]
+        self.joint_a = np.array([j["a"] for j in joints], np.int64)
+        self.joint_b = np.array([j["b"] for j in joints], np.int64)
+        joint_q = np.array([quat_from_matrix(euler_matrix(j["rotation"])) for j in joints]).reshape(-1, 4)
+        joint_x = np.array([j["position"] for j in joints], np.float64).reshape(-1, 3)
+        self.frame_a_q = quat_mul(quat_conj(rest_q[self.joint_a]), joint_q) if joints else np.zeros((0, 4))
+        self.frame_b_q = quat_mul(quat_conj(rest_q[self.joint_b]), joint_q) if joints else np.zeros((0, 4))
+        self.frame_a_x = quat_rotate(quat_conj(rest_q[self.joint_a]), joint_x - rest_x[self.joint_a]) if joints else joint_x
+        self.frame_b_x = quat_rotate(quat_conj(rest_q[self.joint_b]), joint_x - rest_x[self.joint_b]) if joints else joint_x
+        self.move_lower = np.array([j["move_lower"] for j in joints]).reshape(-1, 3)
+        self.move_upper = np.array([j["move_upper"] for j in joints]).reshape(-1, 3)
+        self.turn_lower = np.array([j["rotate_lower"] for j in joints]).reshape(-1, 3)
+        self.turn_upper = np.array([j["rotate_upper"] for j in joints]).reshape(-1, 3)
+        spring = np.array([np.abs(j["spring_rotate"]) for j in joints]).reshape(-1, 3)
+        self.spring = spring.mean(axis=1) if len(spring) else np.zeros(0)
+        self.joint_colours = _colour_groups(np.stack([self.joint_a, self.joint_b], axis=1), self.dynamic)
+        # 当たり: 動く剛体 × (ボーンに付いて動く剛体、本格なら動く剛体どうしも)。ジョイントでつながった組は当てない
+        joined = {tuple(sorted(p)) for p in zip(self.joint_a.tolist(), self.joint_b.tolist())}
+        pairs = []
+        for i in range(count):
+            if not self.dynamic[i]:
+                continue
+            for j in range(count):
+                if i == j or (self.dynamic[j] and (not preset.self_collision or j < i)):
+                    continue
+                if tuple(sorted((i, j))) in joined or not _can_collide(bodies[i], bodies[j]):
+                    continue
+                if self.bone[i] >= 0 and self.bone[i] == self.bone[j]:
+                    continue
+                pairs.append((i, j))
+        self.pairs = np.array(pairs, np.int64).reshape(-1, 2)
+        self.x = None
+        self.q = None
+        self.v = np.zeros((count, 3))
+        self.w = np.zeros((count, 3))
+        self.targets = None
+        self.bone_positions = None
+
+    # --- ボーンに付いて動く剛体の位置 ---
+
+    def _targets(self, g_rot, g_pos):
+        """ボーンの姿勢から、全部の剛体の「ボーンに付いて固く動いたとき」の (位置, 向き)。ボーンの無い剛体は初期の所。"""
+        has = self.bone >= 0
+        b = np.maximum(self.bone, 0)
+        q = np.where(has[:, None], quat_mul(g_rot[b], self.offset_q), self.rest_q)
+        x = np.where(has[:, None], g_pos[b] + quat_rotate(g_rot[b], self.offset_x), self.rest_x)
+        return x, _normalize_quat(q), np.where(has[:, None], g_pos[b], 0.0)
+
+    def callback(self, settle: bool = False):
+        def run(g_rot, g_pos, _local_rot):
+            if not self.enabled:
+                return {}
+            now = self._targets(g_rot, g_pos)
+            if self.x is None:
+                self.x, self.q = now[0].copy(), now[1].copy()
+                self.targets = now
+            if settle:
+                for _ in range(int(SETTLE_SECONDS * self.frame_rate)):
+                    self._frame(now, now)
+            else:
+                self._frame(self.targets, now)
+            self.targets = now
+            return self._result(now)
+        return run
+
+    # --- 1 コマ ---
+
+    def _frame(self, before, after):
+        steps = self.preset.substeps
+        h = 1.0 / (self.frame_rate * steps)
+        keep_v = self.keep_linear ** h
+        keep_w = self.keep_angular ** h
+        dyn = self.dynamic
+        for s in range(1, steps + 1):
+            t = s / steps
+            kx = before[0] + (after[0] - before[0]) * t
+            kq = _normalize_quat(before[1] + (after[1] - before[1]) * t)
+            # ボーンに付いて動く剛体は、ボーンの所へ置く
+            self.x[~dyn] = kx[~dyn]
+            self.q[~dyn] = kq[~dyn]
+            # 進める
+            previous_x, previous_q = self.x.copy(), self.q.copy()
+            self.v[dyn] += GRAVITY * h
+            self.x[dyn] += self.v[dyn] * h
+            spin = np.concatenate([self.w[dyn], np.zeros((int(dyn.sum()), 1))], axis=1)
+            self.q[dyn] = _normalize_quat(self.q[dyn] + 0.5 * h * quat_mul(spin, self.q[dyn]))
+            # 制約
+            # 当たりを先に、ジョイントを後に直す (つながりが崩れて、髪やスカートの節の間にすき間が見えないように)
+            for _ in range(self.preset.iterations):
+                self._solve_contacts()
+                for colour in self.joint_colours:
+                    self._solve_joints(colour, h)
+            # 速さを求め直す
+            self.v[dyn] = (self.x[dyn] - previous_x[dyn]) / h * keep_v[dyn, None]
+            dq = quat_mul(self.q[dyn], quat_conj(previous_q[dyn]))
+            dq = np.where(dq[:, 3:4] < 0, -dq, dq)
+            self.w[dyn] = 2.0 * dq[:, :3] / h * keep_w[dyn, None]
+            # 物理 + ボーンの位置 (種類 2): 位置はボーンに合わせる (向きは物理のまま)
+            follow = self.mode == mmd.RIGID_PHYSICS_BONE_POSITION
+            if np.any(follow):
+                bone_q = quat_mul(self.q[follow], quat_conj(self.offset_q[follow]))
+                anchor = before[2][follow] + (after[2][follow] - before[2][follow]) * t
+                self.x[follow] = anchor + quat_rotate(bone_q, self.offset_x[follow])
+        # コマの終わりに、ジョイントだけをもう一度直す (速さには入れない)。節の間のすき間を消す
+        for _ in range(4):
+            for colour in self.joint_colours:
+                self._solve_joints(colour, h)
+
+    def _apply_inverse_inertia(self, i, q, vector):
+        """世界の座標のベクトルに、剛体 i の慣性の逆数を掛ける。"""
+        local = quat_rotate(quat_conj(q), vector)
+        return quat_rotate(q, local * self.inv_inertia[i])
+
+    def _positional(self, i1, i2, p1, p2, compliance, h):
+        """点 p1 (剛体 i1 の上) を p2 (剛体 i2 の上) へ寄せる (位置の制約。両方の剛体を重さと慣性で分けて動かす)。"""
+        delta = p2 - p1
+        c = np.linalg.norm(delta, axis=1)
+        active = c > 1e-9
+        if not np.any(active):
+            return
+        i1, i2, p1, p2, delta, c = i1[active], i2[active], p1[active], p2[active], delta[active], c[active]
+        compliance = compliance[active] if np.ndim(compliance) else compliance
+        n = delta / c[:, None]
+        q1, q2 = self.q[i1], self.q[i2]
+        r1 = p1 - self.x[i1]
+        r2 = p2 - self.x[i2]
+        rn1 = np.cross(r1, n)
+        rn2 = np.cross(r2, n)
+        w1 = self.inv_mass[i1] + np.sum(rn1 * self._apply_inverse_inertia(i1, q1, rn1), axis=1)
+        w2 = self.inv_mass[i2] + np.sum(rn2 * self._apply_inverse_inertia(i2, q2, rn2), axis=1)
+        lam = c / np.maximum(w1 + w2 + compliance / (h * h), 1e-12)
+        p = n * lam[:, None]
+        self.x[i1] += p * self.inv_mass[i1, None]
+        self.x[i2] -= p * self.inv_mass[i2, None]
+        a1 = self._apply_inverse_inertia(i1, q1, np.cross(r1, p))
+        a2 = self._apply_inverse_inertia(i2, q2, np.cross(r2, p))
+        zero = np.zeros((len(i1), 1))
+        self.q[i1] = _normalize_quat(q1 + 0.5 * quat_mul(np.concatenate([a1, zero], axis=1), q1))
+        self.q[i2] = _normalize_quat(q2 - 0.5 * quat_mul(np.concatenate([a2, zero], axis=1), q2))
+
+    def _angular(self, i1, i2, theta, compliance, h):
+        """剛体 i2 を i1 に対して、世界の座標の回転ベクトル theta だけ回す (回転の制約。両方で分ける)。"""
+        c = np.linalg.norm(theta, axis=1)
+        active = c > 1e-9
+        if not np.any(active):
+            return
+        i1, i2, theta, c = i1[active], i2[active], theta[active], c[active]
+        compliance = compliance[active] if np.ndim(compliance) else compliance
+        n = theta / c[:, None]
+        q1, q2 = self.q[i1], self.q[i2]
+        w1 = np.sum(n * self._apply_inverse_inertia(i1, q1, n), axis=1)
+        w2 = np.sum(n * self._apply_inverse_inertia(i2, q2, n), axis=1)
+        lam = c / np.maximum(w1 + w2 + compliance / (h * h), 1e-12)
+        p = n * lam[:, None]
+        a1 = self._apply_inverse_inertia(i1, q1, p)
+        a2 = self._apply_inverse_inertia(i2, q2, p)
+        zero = np.zeros((len(i1), 1))
+        self.q[i1] = _normalize_quat(q1 - 0.5 * quat_mul(np.concatenate([a1, zero], axis=1), q1))
+        self.q[i2] = _normalize_quat(q2 + 0.5 * quat_mul(np.concatenate([a2, zero], axis=1), q2))
+
+    def _solve_joints(self, k, h):
+        """ジョイント (色 1 つ分): 回転の範囲 → 回転のばね → 移動の範囲。"""
+        a, b = self.joint_a[k], self.joint_b[k]
+        frame_a = _normalize_quat(quat_mul(self.q[a], self.frame_a_q[k]))
+        frame_b = _normalize_quat(quat_mul(self.q[b], self.frame_b_q[k]))
+        # 回転の範囲 (下限 > 上限の軸は自由)
+        relative = quat_mul(quat_conj(frame_a), frame_b)
+        angles = euler_xyz(relative)
+        lower, upper = self.turn_lower[k], self.turn_upper[k]
+        limited = lower <= upper
+        clamped = np.where(limited, np.clip(angles, lower, upper), angles)
+        target_b = quat_mul(frame_a, quat_from_euler_xyz(clamped))
+        theta = rotation_vector(quat_mul(target_b, quat_conj(frame_b)))
+        self._angular(a, b, theta, 0.0, h)
+        # 回転のばね (初期の向きへ戻す。ばねの値の逆数をやわらかさにする)
+        springy = self.spring[k] > 0
+        if np.any(springy):
+            frame_a = _normalize_quat(quat_mul(self.q[a], self.frame_a_q[k]))
+            frame_b = _normalize_quat(quat_mul(self.q[b], self.frame_b_q[k]))
+            theta = rotation_vector(quat_mul(frame_a, quat_conj(frame_b)))
+            compliance = 1.0 / np.maximum(self.spring[k], 1e-6)
+            self._angular(a[springy], b[springy], theta[springy], compliance[springy], h)
+        # 移動の範囲 (ジョイントの位置どうしのずれを、A のジョイントの座標で範囲に収める)
+        frame_a = _normalize_quat(quat_mul(self.q[a], self.frame_a_q[k]))
+        pa = self.x[a] + quat_rotate(self.q[a], self.frame_a_x[k])
+        pb = self.x[b] + quat_rotate(self.q[b], self.frame_b_x[k])
+        local = quat_rotate(quat_conj(frame_a), pb - pa)
+        lo, hi = self.move_lower[k], self.move_upper[k]
+        local = np.where(lo <= hi, np.clip(local, lo, hi), local)
+        self._positional(a, b, pa + quat_rotate(frame_a, local), pb, 0.0, h)
+
+    def _solve_contacts(self):
+        """当たり: 動く剛体のカプセルが、ほかの剛体のカプセルに入っていたら押し出す (同じ剛体に当たる組は平均)。"""
+        if not len(self.pairs):
+            return
+        i, j = self.pairs[:, 0], self.pairs[:, 1]
+        ai = quat_rotate(self.q[i], self.axis[i]) * self.half[i, None]
+        aj = quat_rotate(self.q[j], self.axis[j]) * self.half[j, None]
+        ci, cj = _segment_closest(self.x[i] - ai, self.x[i] + ai, self.x[j] - aj, self.x[j] + aj)
+        delta = ci - cj
+        distance = np.linalg.norm(delta, axis=1)
+        reach = self.radius[i] + self.radius[j]
+        hit = distance < reach
+        if not np.any(hit):
+            return
+        i, j, ci, cj, delta, distance, reach = i[hit], j[hit], ci[hit], cj[hit], delta[hit], distance[hit], reach[hit]
+        normal = np.where(distance[:, None] > 1e-9, delta / np.maximum(distance, 1e-9)[:, None],
+                          np.array([0.0, 1.0, 0.0]))
+        depth = reach - distance
+        share_i = self.inv_mass[i] / np.maximum(self.inv_mass[i] + self.inv_mass[j], 1e-12)
+        share_j = 1.0 - share_i
+        move = np.zeros_like(self.x)
+        hits = np.zeros(len(self.x))
+        np.add.at(move, i, normal * (depth * share_i)[:, None])
+        np.add.at(move, j, -normal * (depth * share_j)[:, None])
+        np.add.at(hits, i, 1)
+        np.add.at(hits, j, self.dynamic[j].astype(float))
+        moved = hits > 0
+        self.x[moved] += move[moved] / hits[moved, None]
+
+    def _result(self, now):
+        """物理で動く剛体のボーンの {ボーン: (回転, 位置)}。種類 2 は位置をボーンのまま (親から決まる所) にする。"""
+        out = {}
+        for k in np.flatnonzero(self.dynamic & (self.bone >= 0)):
+            bone = int(self.bone[k])
+            if bone in out:
+                continue
+            rotation = _normalize_quat(quat_mul(self.q[k], quat_conj(self.offset_q[k])))
+            if self.mode[k] == mmd.RIGID_PHYSICS_BONE_POSITION:
+                position = now[2][k]
+            else:
+                position = self.x[k] - quat_rotate(rotation, self.offset_x[k])
+            out[bone] = (rotation, position)
+        return out
+
+
+def Physics(model, poser, preset: Preset | str = DEFAULT_PRESET, frame_rate: float = FRAME_RATE):
+    """プリセットに合った物理 (light は鎖、standard・full は剛体)。"""
+    preset = PRESETS[preset] if isinstance(preset, str) else preset
+    if preset.solver == "rigid":
+        return RigidPhysics(model, poser, preset, frame_rate)
+    return ChainPhysics(model, poser, preset, frame_rate)
 
 
 def simulate(model, poser, tracks, frames, preset: Preset | str | None = DEFAULT_PRESET, morph_bones=None,

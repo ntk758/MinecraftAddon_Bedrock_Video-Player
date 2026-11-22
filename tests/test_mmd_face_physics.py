@@ -93,40 +93,44 @@ def tip_positions(skins, bone):
     return np.array([(skin[bone] @ HAIR_TIP)[:3] for skin in skins])
 
 
-def test_hair_hangs_down_when_leaning_back(doll):
-    """後ろへ反ると、体に付いたままの髪は斜めになるが、物理の髪は重力で真下へ垂れる。"""
+@pytest.mark.parametrize("preset", ["light", "standard", "full"])
+def test_hair_hangs_down_when_leaning_back(doll, preset):
+    """後ろへ反ると、体に付いたままの髪は斜めになるが、物理の髪は重力で真下へ垂れる。節の間は離れない。"""
     model, poser, tracks, _pmx, _vmd = doll(lean(70))
     frames = np.arange(0, 61)
-    skins = mmd_physics.simulate(model, poser, tracks, frames, "standard")
+    skins = mmd_physics.simulate(model, poser, tracks, frames, preset)
     rigid = np.array([poser.pose(tracks, float(f)) for f in frames])
     bone = fixture.INDEX_ALL["髪3"]
     root = (skins[-1][fixture.INDEX_ALL["髪1"]] @ np.array([0, 15.5, 1.4, 1.0]))[:3]
     tip = tip_positions(skins, bone)[-1]
     direction = (tip - root) / np.linalg.norm(tip - root)
     assert direction[1] < -0.95                      # ほぼ真下
-    # 節ごとの長さ (2) は変わらない (3 節なので、曲がると根元から先までは 6 より短い)
-    joints = [root] + [(skins[-1][fixture.INDEX_ALL[a]] @ np.array([*p, 1.0]))[:3]
-                       for a, p in (("髪1", (0, 13.5, 1.4)), ("髪2", (0, 11.5, 1.4)), ("髪3", (0, 9.5, 1.4)))]
-    for a, b in zip(joints, joints[1:]):
-        assert np.linalg.norm(b - a) == pytest.approx(2.0, abs=0.02)
+    # 節の間 (親の節の先と、子の節の根元) は、1 ボクセル (高精細で約 0.08) より離れない
+    for parent, child, point in (("髪1", "髪2", (0, 13.5, 1.4)), ("髪2", "髪3", (0, 11.5, 1.4))):
+        a = (skins[-1][fixture.INDEX_ALL[parent]] @ np.array([*point, 1.0]))[:3]
+        b = (skins[-1][fixture.INDEX_ALL[child]] @ np.array([*point, 1.0]))[:3]
+        assert np.linalg.norm(a - b) < 0.08
     rigid_tip = tip_positions(rigid, bone)[-1]
     assert np.linalg.norm(rigid_tip - tip) > 2
 
 
-def test_hair_does_not_go_into_the_head(doll):
-    """前へおじぎしても、髪の粒は頭と上半身の当たりに入らない。"""
+@pytest.mark.parametrize("preset", ["light", "standard", "full"])
+def test_hair_does_not_go_into_the_head(doll, preset):
+    """前へおじぎしても、髪の剛体は頭 (球) と上半身 (カプセル) の当たりにほとんど入らない。"""
     model, poser, tracks, _pmx, _vmd = doll(lean(-80))
-    frames = np.arange(0, 61)
-    physics = mmd_physics.Physics(model, poser, "standard")
-    for number, frame in enumerate(frames):
-        poser.pose(tracks, float(frame), physics=physics.callback(settle=number == 0))
-        heads, _follow, centres, axes = physics.kinematic
-        for n in range(len(physics.bones)):
-            for c in range(len(centres)):
-                rel = physics.x[n] - centres[c]
-                along = np.clip(rel @ axes[c], -physics.collider_half[c], physics.collider_half[c])
-                distance = np.linalg.norm(rel - axes[c] * along)
-                assert distance > physics.collider_radius[c] + physics.radius[n] - 0.05
+    skins = mmd_physics.simulate(model, poser, tracks, np.arange(0, 61), preset)
+    head, torso = fixture.INDEX["頭"], fixture.INDEX["上半身"]
+    # 鎖 (light) は剛体の中心ではなく節の先と真ん中で当たりを見るので、少しゆるく見る
+    slack = 0.2 if preset == "light" else 0.15
+    for skin in skins[::5]:
+        centre_head = (skin[head] @ np.array([0, 15.5, 0, 1.0]))[:3]
+        top = (skin[torso] @ np.array([0, 13.25, 0, 1.0]))[:3]
+        bottom = (skin[torso] @ np.array([0, 10.75, 0, 1.0]))[:3]
+        for name, centre in (("髪1", (0, 14.5, 1.4)), ("髪2", (0, 12.5, 1.4)), ("髪3", (0, 10.5, 1.4))):
+            hair = (skin[fixture.INDEX_ALL[name]] @ np.array([*centre, 1.0]))[:3]
+            assert np.linalg.norm(hair - centre_head) > 1.1 + 0.3 - slack
+            along = np.clip(np.dot(hair - bottom, top - bottom) / np.dot(top - bottom, top - bottom), 0, 1)
+            assert np.linalg.norm(hair - (bottom + (top - bottom) * along)) > 1.4 + 0.3 - slack
 
 
 def test_physics_is_repeatable_and_off_matches_plain_poses(doll):
@@ -143,6 +147,7 @@ def test_physics_is_repeatable_and_off_matches_plain_poses(doll):
 def test_presets():
     assert set(mmd_physics.PRESETS) == {"light", "standard", "full"}
     assert mmd_physics.PRESETS["full"].self_collision and not mmd_physics.PRESETS["light"].self_collision
+    assert [mmd_physics.PRESETS[n].solver for n in ("light", "standard", "full")] == ["chain", "rigid", "rigid"]
     steps = [mmd_physics.PRESETS[n].substeps for n in ("light", "standard", "full")]
     assert steps == sorted(steps)
 
@@ -280,3 +285,22 @@ def test_nested_group_morphs_expand_quickly():
     # 16 段より深い所は使わない (壊れたファイルとみなす)
     assert expanded == {} or expanded[0] == pytest.approx(1.0)
     assert mmd._expand_morphs(model, {"g10": 1.0})[0] == pytest.approx(1.0)
+
+
+def test_rigid_joint_limits_and_springs():
+    """剛体の物理の部品: オイラー角 (Rx · Ry · Rz) の行き来、回転ベクトル、線分どうしの近い点、色分け。"""
+    angles = np.array([0.3, -0.4, 0.5])
+    q = mmd_physics.quat_from_euler_xyz(angles)
+    assert np.allclose(mmd_physics.euler_xyz(q), angles)
+    m = mmd_physics.quat_matrices(q)
+    rx, ry, rz = (mmd_physics.quat_matrices(mmd_physics.quat_from_euler_xyz(np.eye(3)[k] * angles[k])) for k in range(3))
+    assert np.allclose(m, rx @ ry @ rz)
+    turn = mmd_physics.quat_from_euler_xyz(np.array([0.0, 0.0, 0.7]))
+    assert np.allclose(mmd_physics.rotation_vector(turn), [0, 0, 0.7])
+    a, b = mmd_physics._segment_closest(np.array([[0.0, 0, 0]]), np.array([[2.0, 0, 0]]),
+                                        np.array([[1.0, 1, -1]]), np.array([[1.0, 1, 1]]))
+    assert np.allclose(a, [[1, 0, 0]]) and np.allclose(b, [[1, 1, 0]])
+    colours = mmd_physics._colour_groups(np.array([[0, 1], [1, 2], [2, 3], [0, 3]]), np.array([False, True, True, True]))
+    for colour in colours:
+        bodies = [b for k in colour for b in np.array([[0, 1], [1, 2], [2, 3], [0, 3]])[k] if b != 0]
+        assert len(bodies) == len(set(bodies))
