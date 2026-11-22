@@ -789,7 +789,8 @@ class PackBuilderApp(tk.Tk):
         self.wizard = None
         self._build_ui()
         for row in videos:
-            self.video_tree.insert("", "end", values=row)
+            # 「種類」の欄は新しい言語で書き直す
+            self.video_tree.insert("", "end", values=(*row[:3], self._kind_label(row[1])))
         if log_text:
             self._append_log(log_text)
         self.title(self.tr("app.title"))
