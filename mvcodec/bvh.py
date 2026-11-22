@@ -270,6 +270,17 @@ def _bvh_to_mmd_axes(skeleton: Skeleton, roles: dict) -> np.ndarray:
     return np.eye(3) @ source.T  # source の列 (左・上・背中) → MMD の (X, Y, Z)
 
 
+def _has_tail(model, poser, bone: int) -> bool:
+    """ボーンに先 (先のボーンか、長さのあるずれ) が書いてあるか。"""
+    info = model.bones[bone].get("tail")
+    if info is None:
+        return False
+    kind, value = info
+    if kind == "bone":
+        return 0 <= value < len(poser.rest) and np.linalg.norm(poser.rest[value] - poser.rest[bone]) > 1e-6
+    return np.linalg.norm(value) > 1e-6
+
+
 def _mmd_tail(model, poser, bone: int):
     info = model.bones[bone].get("tail")
     rest = poser.rest
@@ -303,6 +314,9 @@ def retarget(skeleton: Skeleton, model, *, fps: float = VMD_FPS, max_seconds: fl
                 continue
             bone = index[mmd_name]
             tail = _mmd_tail(model, poser, bone)
+            if mmd_name in ("頭", "首") and not _has_tail(model, poser, bone):
+                # 先の無い頭・首は、子のボーン (髪やアクセサリーのことがある) ではなく真上を向くとみなす
+                tail = rest[bone] + np.array([0.0, 1.0, 0.0])
             if mmd_name == "下半身" and "左足" in index and "右足" in index:
                 tail = (rest[index["左足"]] + rest[index["右足"]]) / 2
             if mmd_name == "上半身" and "首" in index:

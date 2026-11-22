@@ -200,3 +200,14 @@ def test_showcase_face_vmd_blinks_and_moves_the_mouth_on_the_beat(tmp_path):
     starts = [f for f, w in morphs["あ"] if w == 0.0][::2]
     assert starts[:3] == [0, 15, 30]
     assert mmd.read_vmd(path) == {}
+
+
+def test_a_head_without_a_tail_stays_upright(tmp_path):
+    """先の無い頭のボーン (子が後ろの髪) でも、頭は上を向いたまま (後ろへ倒れない)。"""
+    pmx, _vmd = fixture.write_doll(tmp_path, [("頭", 0, (0, 0, 0), (0, 0, 0, 1))], extras=True)
+    out = bvh.bvh_to_vmd(write_bvh(tmp_path / "still.bvh", [{}] * 10), pmx, tmp_path / "still.vmd", log=lambda _t: None)
+    model = mmd.read_pmx(pmx)
+    skin = mmd.Poser(model).pose(mmd.read_vmd(out), 0.0)
+    head = fixture.INDEX["頭"]
+    top = bone_point(skin, head, (0, 16.5, 0)) - bone_point(skin, head, (0, 15, 0))
+    assert top[1] / np.linalg.norm(top) > 0.99
