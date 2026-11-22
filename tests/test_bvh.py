@@ -186,3 +186,17 @@ def test_broken_bvh_is_refused(tmp_path):
                    "Frame Time: 0.01", encoding="utf-8")
     with pytest.raises(ValueError):
         bvh.read_bvh(bad)
+
+
+def test_showcase_face_vmd_blinks_and_moves_the_mouth_on_the_beat(tmp_path):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import make_mmd_showcase
+    path = tmp_path / "face.vmd"
+    make_mmd_showcase.face_vmd(path, 10.0, "まばたき", "あ")
+    morphs = mmd.read_vmd_morphs(path)
+    assert set(morphs) == {"まばたき", "あ"}
+    assert max(w for _f, w in morphs["まばたき"]) == 1.0
+    # 120 BPM: 口は 15 フレームごとに開け閉めする
+    starts = [f for f, w in morphs["あ"] if w == 0.0][::2]
+    assert starts[:3] == [0, 15, 30]
+    assert mmd.read_vmd(path) == {}
