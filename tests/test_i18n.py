@@ -102,7 +102,9 @@ def test_language_switch_keeps_user_input(app):
         assert app.quality_var.get() == app.tr("preset.ultra")
         assert (app.width_var.get(), app.height_var.get()) == (256, 256)
         rows = [app.video_tree.item(i)["values"] for i in app.video_tree.get_children()]
-        assert [str(v) for v in rows[0]] == ["clip", "C:/videos/clip.mp4", "3"]
+        assert [str(v) for v in rows[0][:3]] == ["clip", "C:/videos/clip.mp4", "3"]
+        # 「種類」の欄は、画面を作り直したときに新しい言語で書き直す (同じ言語なら作り直さない)
+        assert [str(v) for v in rows[0][3:]] in ([], [app.tr("kind.video")])
         assert "hello log" in app.log.get("1.0", "end")
         assert app.build_button.cget("text") == app.tr("build.button")
 

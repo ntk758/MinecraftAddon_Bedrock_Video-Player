@@ -446,6 +446,7 @@
   "imgaddon.wall_not_found": "Look at the side of a block (within 32 blocks) to put the screen on the wall.",
   "imgaddon.case_not_on_wall": "A glass case stands on the floor, so it was placed in front of you instead of on the wall.",
   "imgaddon.camera_on": "§aWatching from the MMD camera. Run /%1:camera again or use the remote to go back.",
+  "imgaddon.camera_waiting": "§eCamera view is ready. It starts when the video plays.",
   "imgaddon.camera_off": "§7Back to your own view.",
   "imgaddon.camera_none": "§eThis video has no MMD camera.",
   "imgaddon.remote.camera_on": "Watch from the camera",

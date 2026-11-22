@@ -446,6 +446,7 @@
   "imgaddon.wall_not_found": "壁に貼るには、32 ブロック以内のブロックの横の面を見てください。",
   "imgaddon.case_not_on_wall": "ガラスケースは床に立てるので、壁ではなく目の前に置きました。",
   "imgaddon.camera_on": "§aMMD のカメラの視点で見ます。もう一度 /%1:camera かリモコンで、元の視点に戻ります。",
+  "imgaddon.camera_waiting": "§eカメラの視点の準備ができました。再生を始めると、MMD のカメラの視点になります。",
   "imgaddon.camera_off": "§7元の視点に戻しました。",
   "imgaddon.camera_none": "§eこの動画には MMD のカメラが入っていません。",
   "imgaddon.remote.camera_on": "カメラの視点で見る",

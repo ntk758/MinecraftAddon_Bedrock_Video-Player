@@ -72,7 +72,8 @@ def camera_vmd(path: Path, seconds: float, orbit_seconds: float, height: float, 
     for n in range(int(seconds * 2) + 1):
         t = n / 2
         turn = 2 * math.pi * t / orbit_seconds
-        tilt = math.radians(8 + 6 * math.sin(2 * math.pi * t / (orbit_seconds / 2)))
+        # 上から少し見下ろす (mvcodec.mmd.camera_eye の向きでは、x が負のとき目が注視点より上)
+        tilt = -math.radians(10 + 6 * math.sin(2 * math.pi * t / (orbit_seconds / 2)))
         keys.append((int(round(t * 30)), -distance, (0.0, height, 0.0), (tilt, turn, 0.0), 30))
     out = bytearray(b"Vocaloid Motion Data 0002".ljust(30, b"\0") + b"showcase".ljust(20, b"\0"))
     out += struct.pack("<I", 0) + struct.pack("<I", 0)

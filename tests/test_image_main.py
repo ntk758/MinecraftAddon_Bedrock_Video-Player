@@ -481,3 +481,11 @@ def test_remote_offers_the_camera_only_when_there_is_one(tmp_path):
     out = run(tmp_path / "plain", [{"cmd": "setup"}, {"tick": 1}, {"answers": []}, {"use": "minecraft:clock"},
                                    {"forms": True}])
     assert not any("camera" in json.dumps(b) for b in out["snaps"][-1]["forms"][0]["buttons"])
+
+
+def test_camera_turned_on_while_stopped_starts_when_playing(tmp_path):
+    """止めている間に camera を実行しても、再生を始めたらカメラの視点になる (実機 2026-11-23: 消えていた)。"""
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 1}, {"cmd": "stop"}, {"tick": 1}, {"cmd": "camera"}, {"tick": 5},
+                         {"cmd": "start"}, {"tick": 5}], videos=[CAMERA_VIDEO])
+    assert any("camera_waiting" in m for m in out["log"]["playerMessages"])
+    assert any(c[0] == "minecraft:free" for c in out["log"]["cameras"])

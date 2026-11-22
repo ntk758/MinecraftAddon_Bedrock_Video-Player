@@ -446,6 +446,7 @@
   "imgaddon.wall_not_found": "Schau auf die Seite eines Blocks (höchstens 32 Blöcke entfernt), um den Bildschirm an die Wand zu hängen.",
   "imgaddon.case_not_on_wall": "Eine Glasvitrine steht auf dem Boden, deshalb wurde sie vor dir statt an der Wand aufgestellt.",
   "imgaddon.camera_on": "§aDu siehst jetzt aus der MMD-Kamera. Mit /%1:camera oder der Fernbedienung kehrst du zurück.",
+  "imgaddon.camera_waiting": "§eKameraansicht bereit. Sie startet, wenn das Video läuft.",
   "imgaddon.camera_off": "§7Wieder in deiner eigenen Ansicht.",
   "imgaddon.camera_none": "§eDieses Video hat keine MMD-Kamera.",
   "imgaddon.remote.camera_on": "Aus der Kamera ansehen",

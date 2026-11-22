@@ -67,6 +67,8 @@ const SAVE_INTERVAL = 20;
 const SCREEN_FAMILY = "bvp_screen";
 // MMD のカメラの視点で見ているプレイヤー (id)。ワールドを開き直したら元の視点に戻る (保存しない)
 const cameraViewers = new Set();
+// カメラの視点を今かけているか (止めている間は元の視点に戻し、再生を始めたらまたかける)
+let cameraShown = false;
 // カメラを動かすときの、前の位置からのなめらかさ (秒。1 tick より少し長くして、tick のゆれを目立たなくする)
 const CAMERA_EASE_SECONDS = 0.08;
 
@@ -269,11 +271,20 @@ function updateCameras() {
   if (cameraViewers.size === 0) return;
   const video = currentVideo();
   const camera = cameraOf(video);
-  if (!camera || state.mode === STOPPED || !screenEntity()) {
+  if (!camera) {
+    // カメラの無い動画に切り替えた: 元の視点に戻して、見ている人も消す
     for (const id of cameraViewers) clearCamera(playerById(id));
     cameraViewers.clear();
+    cameraShown = false;
     return;
   }
+  if (state.mode === STOPPED || !screenEntity()) {
+    // 止めている間は元の視点 (見ている人は覚えておき、再生を始めたらカメラの視点に戻す)
+    if (cameraShown) for (const id of cameraViewers) clearCamera(playerById(id));
+    cameraShown = false;
+    return;
+  }
+  cameraShown = true;
   const t = state.mode === PLAYING ? state.playMs / 1000 : currentFrame(video) / video.fps;
   const pose = cameraPose(camera, t);
   if (!pose) return;
@@ -311,7 +322,7 @@ function toggleCamera(player) {
     return;
   }
   cameraViewers.add(player.id);
-  player.sendMessage(tr("camera_on", NAMESPACE));
+  player.sendMessage(tr(state.mode === STOPPED ? "camera_waiting" : "camera_on", NAMESPACE));
   updateCameras();
 }
 

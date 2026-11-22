@@ -446,6 +446,7 @@
   "imgaddon.wall_not_found": "Para ponerla en la pared, mira el lateral de un bloque (a 32 bloques o menos).",
   "imgaddon.case_not_on_wall": "Una vitrina se coloca en el suelo, así que se puso delante de ti en lugar de en la pared.",
   "imgaddon.camera_on": "§aViendo desde la cámara MMD. Ejecuta /%1:camera otra vez o usa el mando para volver.",
+  "imgaddon.camera_waiting": "§eLa vista de cámara está lista. Empieza cuando se reproduzca el vídeo.",
   "imgaddon.camera_off": "§7De vuelta a tu vista.",
   "imgaddon.camera_none": "§eEste vídeo no tiene cámara MMD.",
   "imgaddon.remote.camera_on": "Ver desde la cámara",

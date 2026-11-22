@@ -446,6 +446,7 @@
   "imgaddon.wall_not_found": "벽에 붙이려면 32블록 안에 있는 블록의 옆면을 바라보세요.",
   "imgaddon.case_not_on_wall": "유리 케이스는 바닥에 세우므로 벽 대신 앞에 놓았습니다.",
   "imgaddon.camera_on": "§aMMD 카메라 시점으로 봅니다. /%1:camera 를 다시 실행하거나 리모컨으로 원래 시점에 돌아갑니다.",
+  "imgaddon.camera_waiting": "§e카메라 시점이 준비되었습니다. 재생을 시작하면 MMD 카메라 시점이 됩니다.",
   "imgaddon.camera_off": "§7원래 시점으로 돌아왔습니다.",
   "imgaddon.camera_none": "§e이 영상에는 MMD 카메라가 없습니다.",
   "imgaddon.remote.camera_on": "카메라 시점으로 보기",

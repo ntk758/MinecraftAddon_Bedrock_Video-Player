@@ -446,6 +446,7 @@
   "imgaddon.wall_not_found": "要貼在牆上，請看著 32 格以內方塊的側面。",
   "imgaddon.case_not_on_wall": "玻璃展示櫃立在地面上，所以放在你面前，而不是牆上。",
   "imgaddon.camera_on": "§a以 MMD 鏡頭的視角觀看。再次執行 /%1:camera 或用遙控器即可恢復原視角。",
+  "imgaddon.camera_waiting": "§e鏡頭視角已準備好。開始播放後就會切換到 MMD 鏡頭視角。",
   "imgaddon.camera_off": "§7已恢復原視角。",
   "imgaddon.camera_none": "§e這個影片沒有 MMD 鏡頭。",
   "imgaddon.remote.camera_on": "以鏡頭視角觀看",

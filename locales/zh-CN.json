@@ -446,6 +446,7 @@
   "imgaddon.wall_not_found": "要贴在墙上，请看着 32 格以内方块的侧面。",
   "imgaddon.case_not_on_wall": "玻璃展柜立在地面上，所以放在了你面前，而不是墙上。",
   "imgaddon.camera_on": "§a以 MMD 镜头的视角观看。再次执行 /%1:camera 或用遥控器即可恢复原视角。",
+  "imgaddon.camera_waiting": "§e镜头视角已准备好。开始播放后就会切换到 MMD 镜头视角。",
   "imgaddon.camera_off": "§7已恢复原视角。",
   "imgaddon.camera_none": "§e这个视频没有 MMD 镜头。",
   "imgaddon.remote.camera_on": "以镜头视角观看",

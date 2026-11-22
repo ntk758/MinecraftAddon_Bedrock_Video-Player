@@ -446,6 +446,7 @@
   "imgaddon.wall_not_found": "Pour la mettre au mur, regardez le côté d'un bloc (à 32 blocs maximum).",
   "imgaddon.case_not_on_wall": "Une vitrine se pose au sol : elle a été placée devant toi plutôt que sur le mur.",
   "imgaddon.camera_on": "§aVous regardez depuis la caméra MMD. Relancez /%1:camera ou utilisez la télécommande pour revenir.",
+  "imgaddon.camera_waiting": "§eLa vue caméra est prête. Elle démarre quand la vidéo joue.",
   "imgaddon.camera_off": "§7Retour à votre vue.",
   "imgaddon.camera_none": "§eCette vidéo n'a pas de caméra MMD.",
   "imgaddon.remote.camera_on": "Regarder depuis la caméra",
