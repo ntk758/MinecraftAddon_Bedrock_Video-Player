@@ -47,6 +47,13 @@ NAMESPACE_PATTERN = re.compile(r"^[a-z0-9_]+$")
 # 引数の上限 (#165・#182・#191)。1 コマ・シートの一辺 (画素)、1 枚のマスの数、スクリーンの幅 (ブロック)、音声の区切り (秒)
 MAX_FRAME_SIDE = 4096
 MAX_SHEET_SIDE = 4096
+# MMD の人物の細かさ: 名前 → (初期姿勢の高さのボクセル数, 板の画素の細かさ)。docs/research/mmd_image_mode_design_2026-11.md の 3 章
+FIGURE_DETAILS = {"standard": (256, 1), "high": (256, 2), "max": (384, 2)}
+DEFAULT_FIGURE_DETAIL = "high"
+# 板の画素を細かくした人物は 1 枚のシートに収めるので、シートの上限を広げる (人物だけ。動画のシートは --max-sheet のまま)
+FIGURE_MAX_SHEET = 4096
+PHYSICS_CHOICES = ("off", "light", "standard", "full")
+DEFAULT_PHYSICS = "standard"
 MAX_CELLS_LIMIT = 1024
 MAX_SCREEN_BLOCKS = 256
 MIN_AUDIO_CHUNK_SECONDS = 0.5
@@ -892,10 +899,24 @@ def _build_glass(args: argparse.Namespace, inputs: list[Path], ids: list[str], t
     return _write_output(args, files, report, log)
 
 
+def figure_resolution(args: argparse.Namespace, detail: str | None = None) -> tuple[int, int]:
+    """MMD の人物の (ボクセル, 板の画素の細かさ)。detail (standard・high・max) か --figure-detail で決め、
+    --figure-voxels・--figure-texels があればそれを使う。"""
+    voxels, texels = FIGURE_DETAILS[detail or getattr(args, "figure_detail", None) or DEFAULT_FIGURE_DETAIL]
+    if getattr(args, "figure_voxels", None):
+        voxels = args.figure_voxels
+    if getattr(args, "figure_texels", None):
+        texels = args.figure_texels
+    return voxels, texels
+
+
 def mmd_glass_entry(path: Path, video_id: str, title: str, args: argparse.Namespace, temp: Path, log=print, *,
-                    motion=None, audio=None, case=None) -> dict:
+                    motion=None, audio=None, case=None, face_motions=None, physics=None, expressions=None,
+                    detail=None) -> dict:
     """MMD のモデル (.pmx) から、骨で動かす人物の build_glass_files の entry を作る。motion は踊り (.vmd)、audio は曲
-    (再生の長さになる)、case は glass.CaseOptions か None。細かさなどは args (--figure-voxels など) のもの。"""
+    (再生の長さになる)、case は glass.CaseOptions か None。細かさなどは args (--figure-detail など) のもの。
+    face_motions (表情・口の VMD のリスト)・physics (off・light・standard・full)・expressions (表情を使うか)・
+    detail (細かさ) は、渡せば args の代わりに使う (Windows 版の画面で、人物ごとに選ぶ)。"""
     from image_mode import glass_rp, planes, rig_anim
 
     log(MMD_NOTICE)
@@ -909,13 +930,25 @@ def mmd_glass_entry(path: Path, video_id: str, title: str, args: argparse.Namesp
             audio, temp / f"{video_id}_song", args.audio_chunk_seconds, None, None, args.ffmpeg, max_seconds=limit))
     elif not motion:
         log(f"[{video_id}] 踊り (.vmd) が無いので、動かない人物にします")
-    log(f"[{video_id}] MMD の人物を骨で動かす板にします (高さ {args.figure_voxels} ボクセル、重ね代 {args.joint_overlap})")
+    voxels, texels = figure_resolution(args, detail)
+    physics = physics or getattr(args, "physics", None) or DEFAULT_PHYSICS
+    expressions = (not getattr(args, "no_expressions", False)) if expressions is None else expressions
+    face_motions = list(face_motions if face_motions is not None else (getattr(args, "face_motion", None) or []))
+    for face in face_motions:
+        if not Path(face).is_file():
+            raise ConvertError(f"[{video_id}] 表情・口の VMD がありません: {face}")
+    log(f"[{video_id}] MMD の人物を骨で動かす板にします (高さ {voxels} ボクセル、板の画素 {texels}×{texels}、"
+        f"重ね代 {args.joint_overlap}、物理 {physics}、表情 {'あり' if expressions else 'なし'})")
+    max_sheet = max(args.max_sheet, FIGURE_MAX_SHEET) if texels > 1 or voxels > 128 else args.max_sheet
     try:
         figure = rig_anim.mmd_figure(
             path, motion, identifier=glass_rp.animation_identifier(video_id, args.namespace),
-            figure_blocks=args.figure_blocks, voxels=args.figure_voxels, overlap=args.joint_overlap, seconds=seconds,
+            figure_blocks=args.figure_blocks, voxels=voxels, overlap=args.joint_overlap, seconds=seconds,
             loop=args.figure_loop, split=args.plane_split, shade=args.plane_shade,
-            mapping=args.face_mapping or planes.DEFAULT_MAPPING, max_sheet=args.max_sheet, gutter=args.gutter, log=log)
+            mapping=args.face_mapping or planes.DEFAULT_MAPPING, max_sheet=max_sheet, gutter=args.gutter, log=log,
+            texels=texels, face_vmds=face_motions, expressions=expressions,
+            physics=None if physics == "off" else physics,
+            expression_states=getattr(args, "expression_states", None))
     except (OSError, ValueError) as error:
         raise ConvertError(f"[{video_id}] MMD の人物を作れませんでした: {error}") from None
     return {"id": video_id, "title": title, "figure": figure, "figure_fps": RIG_CLOCK_FPS,
@@ -997,7 +1030,9 @@ def _build_with_figures(args: argparse.Namespace, inputs: list[Path], ids: list[
             images = {"back": figure["case_image"]} if figure.get("case_image") else {}
             case = glass.CaseOptions(margin=args.case_margin, images=images, frame=args.case_frame)
             entry = mmd_glass_entry(Path(figure["pmx"]), figure["id"], figure["title"], args, Path(temp), log,
-                                    motion=figure.get("motion"), audio=figure.get("audio"), case=case)
+                                    motion=figure.get("motion"), audio=figure.get("audio"), case=case,
+                                    face_motions=figure.get("face_motions"), physics=figure.get("physics"),
+                                    expressions=figure.get("expressions"), detail=figure.get("detail"))
             entries.append(entry)
             sheet = entry["figure"]
             reserved += sheet["sheet_width"] * sheet["sheet_height"] * len(sheet["sheets"]) * 4
@@ -1297,9 +1332,23 @@ def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
                              help="MMD のモデル (.pmx) を踊らせるモーション (.vmd)。骨で動かすので、1 曲を通しても軽い")
     glass_group.add_argument("--audio", default=None, metavar="FILE",
                              help="MMD の人物と一緒に鳴らす曲 (wav・mp3 など)。曲の長さだけ再生し、踊りが短ければ最後の姿勢で止まる")
-    glass_group.add_argument("--figure-voxels", type=_bounded_int(1, MAX_VOXELS), default=128,
-                             help=f"MMD の人物の細かさ (初期姿勢の高さのボクセル数、1〜{MAX_VOXELS}、既定 128)。"
-                                  "大きさは --figure-blocks")
+    glass_group.add_argument("--figure-detail", choices=tuple(FIGURE_DETAILS), default=DEFAULT_FIGURE_DETAIL,
+                             help="MMD の人物の細かさ: standard (高さ 256 ボクセル。スマートフォンも)・high (256 ボクセル、"
+                                  "板の画素 2×2。既定)・max (384 ボクセル、2×2。PC 向け)")
+    glass_group.add_argument("--figure-voxels", type=_bounded_int(1, MAX_VOXELS), default=None,
+                             help=f"MMD の人物の細かさを直接決める (初期姿勢の高さのボクセル数、1〜{MAX_VOXELS})。"
+                                  "--figure-detail より優先。大きさは --figure-blocks")
+    glass_group.add_argument("--figure-texels", type=_bounded_int(1, 4), default=None,
+                             help="MMD の人物の板の画素の細かさ (ボクセルの面 1 つを N×N 画素、1〜4)。--figure-detail より優先")
+    glass_group.add_argument("--face-motion", action="append", default=None, metavar="VMD",
+                             help="MMD の人物の表情・口の動き (.vmd)。何個でも。--motion の VMD の表情のキーも使う")
+    glass_group.add_argument("--no-expressions", action="store_true",
+                             help="MMD の人物の表情 (まばたき・口) を動かさない")
+    glass_group.add_argument("--expression-states", type=_bounded_int(1, 16), default=None,
+                             help="表情を、顔の場所 (目・口など) ごとに何通りの差し替えにするか (1〜16、既定 6)")
+    glass_group.add_argument("--physics", choices=PHYSICS_CHOICES, default=DEFAULT_PHYSICS,
+                             help="MMD の人物の髪・スカートの揺れ: off (揺らさない)・light (軽い)・standard (既定)・"
+                                  "full (本格。物理の剛体どうしも当たる。作るのに時間がかかる)")
     glass_group.add_argument("--joint-overlap", type=_non_negative_int, default=1,
                              help="MMD の人物の関節で、隣の部品に重ねるボクセルの数 (曲げたときのすき間を防ぐ。既定 1)")
     glass_group.add_argument("--figure-loop", action="store_true", help="MMD の人物の踊りを繰り返す (既定は最後で止まる)")

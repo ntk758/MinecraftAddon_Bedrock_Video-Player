@@ -96,6 +96,11 @@ class PmxModel:
         self.textures = []      # 相対パス
         self.materials = []     # dict(name, diffuse (4,), texture, face_count)
         self.bones = []         # dict(name, position, parent, layer, flags, append_parent, append_ratio, ik)
+        # 表情と物理 (ボーンの後ろ。読めなかったら空のまま、理由は tail_error)
+        self.morphs = []        # dict(name, panel, kind, vertices/offsets か members か bones)
+        self.rigid_bodies = []  # dict(name, bone, group, mask, shape, size, position, rotation, mass, ...damping, mode)
+        self.joints = []        # dict(name, a, b, position, rotation, move/rotate の lower・upper, spring_move/rotate)
+        self.tail_error = None
 
 
 def read_pmx(path):
@@ -212,10 +217,11 @@ def read_pmx(path):
         parent = index(bone_size)
         layer = r.int()
         flags = r.unpack("H")[0]
+        # 先 (ボーンの向き): 先のボーンの番号か、自分からのずれ。物理で揺れる向きを決めるのに使う
         if flags & BONE_TAIL_IS_BONE:
-            index(bone_size)
+            tail = ("bone", index(bone_size))
         else:
-            r.take(12)
+            tail = ("offset", r.floats(3).astype(np.float64))
         append_parent, append_ratio = -1, 0.0
         if flags & (BONE_APPEND_ROTATE | BONE_APPEND_TRANSLATE):
             append_parent = index(bone_size)
@@ -240,12 +246,124 @@ def read_pmx(path):
                 links.append({"bone": link, "lower": lower, "upper": upper})
             ik = {"target": target, "loops": loops, "limit": limit, "links": links}
         model.bones.append({"name": name, "position": position, "parent": parent, "layer": layer, "flags": flags,
-                            "append_parent": append_parent, "append_ratio": append_ratio, "ik": ik})
+                            "append_parent": append_parent, "append_ratio": append_ratio, "ik": ik, "tail": tail})
     if not model.bones:
         raise ValueError("PMX ファイルが壊れています (ボーンがありません)")
     # 頂点のボーンの番号: 使わない枠 (-1) と、範囲の外の番号 (壊れたファイル) は最初のボーンにする
     model.bone_indices[(model.bone_indices < 0) | (model.bone_indices >= len(model.bones))] = 0
+    # ボーンの後 (モーフ・表示枠・剛体・ジョイント) は、表情と物理にだけ使う。途中で壊れていても、ボーンまでで動かせるので
+    # 読めた所まで使う (読めなかった理由は model.tail_error に残す)
+    try:
+        _read_pmx_tail(r, model, text, index, header)
+    except ValueError as error:
+        model.tail_error = str(error)
     return model
+
+
+# モーフの種類 (PMX 2.0 / 2.1)
+MORPH_GROUP, MORPH_VERTEX, MORPH_BONE, MORPH_UV, MORPH_MATERIAL, MORPH_FLIP, MORPH_IMPULSE = 0, 1, 2, 3, 8, 9, 10
+# 剛体の形と動き方
+SHAPE_SPHERE, SHAPE_BOX, SHAPE_CAPSULE = 0, 1, 2
+RIGID_FOLLOW_BONE, RIGID_PHYSICS, RIGID_PHYSICS_BONE_POSITION = 0, 1, 2
+
+
+def _read_pmx_tail(r, model, text, index, header):
+    """モーフ・表示枠・剛体・ジョイントを読む (read_pmx の続き)。"""
+    vertex_size, material_size, bone_size, morph_size, rigid_size = header[2], header[4], header[5], header[6], header[7]
+
+    def vertex_index():
+        return index(vertex_size, unsigned=vertex_size < 4)
+
+    # モーフ 1 つは少なくとも 名前 2 つ・パネル・種類・数
+    count = r.count(14, "モーフ")
+    for _ in range(count):
+        name = text()
+        text()
+        panel = r.byte()
+        kind = r.byte()
+        n = r.count(1, "モーフの要素")
+        morph = {"name": name, "panel": panel, "kind": kind}
+        if kind == MORPH_VERTEX:
+            ids = np.zeros(n, np.int64)
+            offsets = np.zeros((n, 3), np.float32)
+            for i in range(n):
+                ids[i] = vertex_index()
+                offsets[i] = r.floats(3)
+            keep = (ids >= 0) & (ids < len(model.positions)) & np.isfinite(offsets).all(axis=1)
+            morph["vertices"], morph["offsets"] = ids[keep], offsets[keep]
+        elif kind in (MORPH_GROUP, MORPH_FLIP):
+            morph["members"] = [(index(morph_size), r.float()) for _ in range(n)]
+        elif kind == MORPH_BONE:
+            bones = []
+            for _ in range(n):
+                bone = index(bone_size)
+                move = r.floats(3)
+                turn = r.floats(4)
+                if 0 <= bone < len(model.bones) and np.isfinite(move).all() and np.isfinite(turn).all():
+                    bones.append((bone, move.astype(np.float64), turn.astype(np.float64)))
+            morph["bones"] = bones
+        elif MORPH_UV <= kind <= 7:
+            for _ in range(n):
+                vertex_index()
+                r.take(16)
+        elif kind == MORPH_MATERIAL:
+            for _ in range(n):
+                index(material_size)
+                r.take(1 + 28 * 4)
+        elif kind == MORPH_IMPULSE:
+            for _ in range(n):
+                index(rigid_size)
+                r.take(1 + 24)
+        else:
+            raise ValueError(f"未対応のモーフの種類: {kind}")
+        model.morphs.append(morph)
+
+    # 表示枠 (使わない。読み飛ばす)
+    count = r.count(13, "表示枠")
+    for _ in range(count):
+        text()
+        text()
+        r.take(1)
+        for _ in range(r.count(2, "表示枠の要素")):
+            target = r.byte()
+            index(bone_size if target == 0 else morph_size)
+
+    # 剛体 1 つは少なくとも 名前 2 つ・ボーン・グループ・当たらないグループ・形・大きさなど 83 バイト
+    count = r.count(8 + 1 + 1 + 2 + 1 + 4 * 14 + 1, "剛体")
+    for _ in range(count):
+        name = text()
+        text()
+        bone = index(bone_size)
+        group = r.byte()
+        mask = r.unpack("H")[0]
+        shape = r.byte()
+        size = r.floats(3)
+        position = r.floats(3)
+        rotation = r.floats(3)
+        mass, linear_damping, angular_damping, restitution, friction = r.floats(5)
+        mode = r.byte()
+        model.rigid_bodies.append({
+            "name": name, "bone": bone if 0 <= bone < len(model.bones) else -1, "group": group, "mask": mask,
+            "shape": shape, "size": np.nan_to_num(size).astype(np.float64),
+            "position": np.nan_to_num(position).astype(np.float64), "rotation": np.nan_to_num(rotation).astype(np.float64),
+            "mass": float(mass), "linear_damping": float(linear_damping), "angular_damping": float(angular_damping),
+            "restitution": float(restitution), "friction": float(friction), "mode": mode})
+
+    # ジョイント 1 つは少なくとも 名前 2 つ・種類・剛体 2 つ・値 4×24 バイト
+    count = r.count(8 + 1 + 2 + 4 * 24, "ジョイント")
+    for _ in range(count):
+        name = text()
+        text()
+        r.take(1)  # 種類 (0 = ばね付き 6 自由度。2.1 のほかの種類も同じ並び)
+        a = index(rigid_size)
+        b = index(rigid_size)
+        values = [np.nan_to_num(r.floats(3)).astype(np.float64) for _ in range(8)]
+        model.joints.append({
+            "name": name, "a": a, "b": b, "position": values[0], "rotation": values[1],
+            "move_lower": values[2], "move_upper": values[3], "rotate_lower": values[4], "rotate_upper": values[5],
+            "spring_move": values[6], "spring_rotate": values[7]})
+    n_rigid = len(model.rigid_bodies)
+    model.joints = [j for j in model.joints if 0 <= j["a"] < n_rigid and 0 <= j["b"] < n_rigid and j["a"] != j["b"]]
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +405,104 @@ def read_vmd(path):
     for keys in tracks.values():
         keys.sort(key=lambda key: key[0])
     return tracks
+
+
+def read_vmd_morphs(path):
+    """VMD の表情 (モーフ) のキーを読む。{モーフ名: [(フレーム, 重み)…]} (フレームの順)。表情の無い VMD は空。
+    ボーンのキーの後ろにあるので、ボーンのキーは読み飛ばす。表情の後ろ (カメラなど) は読まない。"""
+    data = Path(path).read_bytes()
+    r = _Reader(data)
+    signature = r.take(30)
+    if not signature.startswith(b"Vocaloid Motion Data"):
+        raise ValueError(f"VMD ファイルではありません: {path}")
+    r.take(20 if b"0002" in signature else 10)
+    r.take(111 * r.count(111, "ボーンのキー", unsigned=True))
+    morphs = {}
+    if r.remaining() < 4:
+        return morphs
+    for _ in range(r.count(23, "表情のキー", unsigned=True)):
+        name = r.take(15).split(b"\0", 1)[0].decode("shift_jis", errors="replace")
+        frame, weight = r.unpack("If")
+        if not math.isfinite(weight):
+            continue
+        morphs.setdefault(name, []).append((frame, float(weight)))
+    for keys in morphs.values():
+        keys.sort(key=lambda key: key[0])
+    return morphs
+
+
+def sample_morph(keys, frame):
+    """表情のキーを frame で直線に補間した重み (MMD と同じ。キーの前は最初の値、後は最後の値)。"""
+    if not keys:
+        return 0.0
+    if frame <= keys[0][0]:
+        return keys[0][1]
+    if frame >= keys[-1][0]:
+        return keys[-1][1]
+    lo, hi = 0, len(keys) - 1
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if keys[mid][0] <= frame:
+            lo = mid
+        else:
+            hi = mid
+    (f0, w0), (f1, w1) = keys[lo], keys[hi]
+    return w0 + (w1 - w0) * (frame - f0) / (f1 - f0) if f1 > f0 else w1
+
+
+def morph_vertex_offsets(model, weights):
+    """モーフの重み {名前: 重み} から、頂点の動き (V, 3) を求める。グループモーフは中のモーフへ広げる (入れ子も。循環は
+    1 回だけたどる)。頂点モーフだけが頂点を動かす (ボーンモーフは morph_bone_offsets)。"""
+    offsets = np.zeros_like(model.positions, dtype=np.float64)
+    for morph, weight in _expand_morphs(model, weights).items():
+        m = model.morphs[morph]
+        if m["kind"] == MORPH_VERTEX and weight:
+            np.add.at(offsets, m["vertices"], m["offsets"] * weight)
+    return offsets
+
+
+def morph_bone_offsets(model, weights):
+    """ボーンモーフの重みから、ボーンごとの (移動 (3,), 回転の四元数 (x, y, z, w)) を求める。{ボーン: (移動, 回転)}"""
+    result = {}
+    for morph, weight in _expand_morphs(model, weights).items():
+        m = model.morphs[morph]
+        if m["kind"] != MORPH_BONE or weight <= 0:
+            continue
+        for bone, move, turn in m["bones"]:
+            old_move, old_turn = result.get(bone, (np.zeros(3), np.array([0.0, 0.0, 0.0, 1.0])))
+            norm = np.linalg.norm(turn)
+            q = turn / norm if norm > 0 else np.array([0.0, 0.0, 0.0, 1.0])
+            q = _slerp(np.array([0.0, 0.0, 0.0, 1.0]), q, float(min(weight, 1.0)))
+            result[bone] = (old_move + move * weight, _quat_mul(old_turn, q))
+    return result
+
+
+def _expand_morphs(model, weights):
+    """{名前: 重み} → {モーフの番号: 重み}。グループモーフ (と反転モーフ) は中のモーフに重みを掛けて広げる。"""
+    by_name = {}
+    for i, m in enumerate(model.morphs):
+        by_name.setdefault(m["name"], i)
+    result = {}
+    seen = set()
+
+    def add(i, weight):
+        if not (0 <= i < len(model.morphs)) or not weight:
+            return
+        m = model.morphs[i]
+        if m["kind"] in (MORPH_GROUP, MORPH_FLIP):
+            if i in seen:
+                return
+            seen.add(i)
+            for member, ratio in m["members"]:
+                add(member, weight * ratio)
+            seen.discard(i)
+        else:
+            result[i] = result.get(i, 0.0) + weight
+
+    for name, weight in weights.items():
+        if name in by_name:
+            add(by_name[name], float(weight))
+    return result
 
 
 def _bezier(x1, y1, x2, y2, x):
@@ -411,7 +627,10 @@ class Poser:
             self._update_global(j, local_rot, local_pos, g_rot, g_pos)
             stack.extend(self.children[j])
 
-    def pose(self, tracks, frame):
+    def pose(self, tracks, frame, bone_offsets=None, physics=None):
+        """bone_offsets: ボーンモーフの {ボーン: (移動, 回転)} (morph_bone_offsets)。踊りの値に足す。
+        physics: 物理の前のボーン (「物理後」の印の無いボーン) を決めた後に呼ぶ関数 physics(g_rot, g_pos, local_rot)。
+        返した {ボーン: (回転, 位置)} (どちらもモデルの座標) でそのボーンを置き換え、その子と「物理後」のボーンを決め直す。"""
         bones = self.model.bones
         n = self.count
         motion_rot = np.tile(IDENTITY, (n, 1))
@@ -420,12 +639,24 @@ class Poser:
             keys = tracks.get(name)
             if keys:
                 motion_pos[i], motion_rot[i] = sample_track(keys, frame)
+        if bone_offsets:
+            for i, (move, turn) in bone_offsets.items():
+                if 0 <= i < n:
+                    motion_pos[i] = motion_pos[i] + move
+                    motion_rot[i] = _quat_mul(motion_rot[i], turn)
         local_rot = motion_rot.copy()
         local_pos = motion_pos.copy()
         g_rot = np.tile(IDENTITY, (n, 1))
         g_pos = np.zeros((n, 3))
+        overridden = {}
+        physics_done = physics is None
         for i in self.order:
             bone = bones[i]
+            if not physics_done and bone["flags"] & BONE_AFTER_PHYSICS:
+                overridden = self._apply_physics(physics, g_rot, g_pos, local_rot, local_pos)
+                physics_done = True
+            if i in overridden:
+                continue
             # 付与: 元のボーンの回転 (付与・IK を含む) を割合だけ足す。変形階層の順に処理するので、IK で曲げた
             # ボーンを元にする「足D」なども IK の後に計算される
             source = bone["append_parent"]
@@ -436,6 +667,8 @@ class Poser:
             self._update_global(i, local_rot, local_pos, g_rot, g_pos)
             if bone["ik"] is not None:
                 self._solve_ik(i, bone["ik"], local_rot, local_pos, g_rot, g_pos)
+        if not physics_done:
+            self._apply_physics(physics, g_rot, g_pos, local_rot, local_pos)
         # 初期姿勢からの変形: 点 x (初期姿勢の座標) → R (x - rest) + g_pos
         skin = np.zeros((n, 4, 4))
         for i in range(n):
@@ -444,6 +677,35 @@ class Poser:
             skin[i, :3, 3] = g_pos[i] - rot @ self.rest[i]
             skin[i, 3, 3] = 1
         return skin
+
+    def topological_order(self):
+        """親が子より先に来るボーンの順 (物理で置き換えたボーンの子を決め直すのに使う)。"""
+        if getattr(self, "_topo", None) is None:
+            order, stack = [], [i for i in range(self.count) if self.parent[i] < 0][::-1]
+            while stack:
+                j = stack.pop()
+                order.append(j)
+                stack.extend(self.children[j][::-1])
+            self._topo = order
+        return self._topo
+
+    def _apply_physics(self, physics, g_rot, g_pos, local_rot, local_pos):
+        """物理の結果でボーンを置き換え、置き換えなかった子孫を親から決め直す。置き換えたボーンの集合を返す。"""
+        result = physics(g_rot, g_pos, local_rot) or {}
+        for i, (rot, pos) in result.items():
+            g_rot[i] = rot
+            g_pos[i] = pos
+        if result:
+            moved = set(result)
+            touched = set()
+            for j in self.topological_order():
+                p = self.parent[j]
+                if j in moved:
+                    touched.add(j)
+                elif p >= 0 and p in touched:
+                    self._update_global(j, local_rot, local_pos, g_rot, g_pos)
+                    touched.add(j)
+        return result
 
     def _solve_ik(self, ik_bone, ik, local_rot, local_pos, g_rot, g_pos):
         """CCD で、target のボーン (効果を受ける先端) を ik_bone の位置へ近づける。"""
