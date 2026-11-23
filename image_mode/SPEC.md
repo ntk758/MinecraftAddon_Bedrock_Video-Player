@@ -58,6 +58,8 @@ glass            (ガラスケースの立体だけ) {"box": [幅, 奥行き, �
   (シート・entity・geometry・render controller) は `RP/subpacks/tier<n>/<RP の中のパス>` に入れる。BP・`RP/pack_icon.png`・`RP/sounds/` は一番上の Tier のもの。
 - RP の manifest に `"subpacks": [{"folder_name": "tier<n>", "name": "Tier <n>: <幅>x<高さ>", "memory_tier": <0・12・18・24・32>}]` (Tier の小さい順、一番下は 0)。
 - 同じ大きさになる Tier はまとめ、全部同じならサブパックを作らない。`image_videos.js` の width・height は一番上の Tier の値 (スクリプトは表示にだけ使う)。
+  どのサブパックが使われているかはスクリプトから分からないので、各動画に `"sizes": [{"tier": <n>, "width": …, "height": …}…]` (Tier の小さい順) を書き足し、
+  stats は `bvpimg.size_by_tier` (一番小さい〜一番大きい) で見せる。
 
 ## 名前
 
