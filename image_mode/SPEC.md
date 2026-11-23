@@ -52,6 +52,15 @@ glass            (ガラスケースの立体だけ) {"box": [幅, 奥行き, �
                  トップの fps・frame_count・audio_* は主 (master) の時計。width・height は壁の動画 (無ければ人物のシート) の大きさ
 ```
 
+## サブパック (--subpack-tiers。docs/IMAGE_MODE.md の「端末ごとの大きさ」)
+
+- Tier ごとに `budget.plan` で大きさだけを変えて作る (fps・コマ数・音声は同じ。違えば作らない)。どの Tier でも同じ RP のファイルは本体に、違うもの
+  (シート・entity・geometry・render controller) は `RP/subpacks/tier<n>/<RP の中のパス>` に入れる。BP・`RP/pack_icon.png`・`RP/sounds/` は一番上の Tier のもの。
+- RP の manifest に `"subpacks": [{"folder_name": "tier<n>", "name": "Tier <n>: <幅>x<高さ>", "memory_tier": <0・12・18・24・32>}]` (Tier の小さい順、一番下は 0)。
+- 同じ大きさになる Tier はまとめ、全部同じならサブパックを作らない。`image_videos.js` の width・height は一番上の Tier の値 (スクリプトは表示にだけ使う)。
+  どのサブパックが使われているかはスクリプトから分からないので、各動画に `"sizes": [{"tier": <n>, "width": …, "height": …}…]` (Tier の小さい順) を書き足し、
+  stats は `bvpimg.size_by_tier` (一番小さい〜一番大きい) で見せる。
+
 ## 名前
 
 - エンティティ: `<ns>:screen_<id>_<m>`

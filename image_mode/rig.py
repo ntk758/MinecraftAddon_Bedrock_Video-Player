@@ -140,9 +140,10 @@ def _majority(keys: np.ndarray, labels: np.ndarray, unique_keys: np.ndarray) -> 
     return out
 
 
-def surface_voxels(model, materials, grid: RestGrid, vertices=None, tri_bones=None) -> RestVoxels:
+def surface_voxels(model, materials, grid: RestGrid, vertices=None, tri_bones=None, face_mask=None) -> RestVoxels:
     """表面のボクセル。色は mvcodec.mmd.voxel_colours と同じ (三角形の上の点の色の平均。透明な所は数えない)。
-    部品のボーンは、そのボクセルに入った点の三角形の、一番強いボーンの多数決。関節の相手も同じく多数決。"""
+    部品のボーンは、そのボクセルに入った点の三角形の、一番強いボーンの多数決。関節の相手も同じく多数決。
+    face_mask (三角形ごとの真偽) があれば、真の三角形だけをボクセルにする (表情の差し替えで、顔の周りだけを作り直す)。"""
     vertices = model.positions if vertices is None else vertices
     dominant, second = triangle_bones(model) if tri_bones is None else tri_bones
     width, depth, height = grid.size
@@ -150,9 +151,13 @@ def surface_voxels(model, materials, grid: RestGrid, vertices=None, tri_bones=No
     for start, end, texture, diffuse in materials.ranges:
         if end <= start or diffuse[3] <= 0.01:
             continue
-        faces = model.faces[start:end]
+        chosen = np.arange(start, end) if face_mask is None else start + np.flatnonzero(face_mask[start:end])
+        if len(chosen) == 0:
+            continue
+        faces = model.faces[chosen]
         tri = grid.to_voxel(np.asarray(vertices, np.float64)[faces])
         points, uvs, owners = mmd._triangle_points(tri, model.uvs[faces], 0.5)
+        owners = chosen[owners] - start
         if texture is not None:
             th, tw = texture.shape[:2]
             tx = np.clip((np.mod(uvs[:, 0], 1) * tw).astype(int), 0, tw - 1)
@@ -187,6 +192,105 @@ def surface_voxels(model, materials, grid: RestGrid, vertices=None, tri_bones=No
     y, z = np.divmod(rest, height)
     cells = np.stack([x, y, z], axis=1)
     return RestVoxels(grid, cells, colour, bone, partner, np.ones(len(cells), bool))
+
+
+def fine_grid(grid: RestGrid, texels: int) -> RestGrid:
+    """grid を texels 倍に細かくした格子 (細かいボクセル (i, j, k) は、粗いボクセル (i, j, k) // texels の中)。"""
+    return RestGrid(grid.origin, grid.scale * texels, tuple(s * texels for s in grid.size), grid.floor * texels,
+                    grid.height * texels)
+
+
+@dataclass
+class FineSurface:
+    """板の画素を細かくするための、texels 倍に細かい格子の表面の色。keys は細かいボクセルの番号 (小さい順)。"""
+    texels: int
+    size: tuple[int, int, int]
+    keys: np.ndarray
+    rgb: np.ndarray
+
+    def lookup(self, cells: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """細かいボクセル (N, 3) の (色 (N, 3), あるか (N,))。"""
+        sx, sy, sz = self.size
+        cells = np.asarray(cells, np.int64)
+        inside = ((cells >= 0) & (cells < np.array(self.size))).all(axis=1)
+        keys = (cells[:, 0] * sy + cells[:, 1]) * sz + cells[:, 2]
+        at = np.clip(np.searchsorted(self.keys, keys), 0, max(0, len(self.keys) - 1))
+        hit = inside & (len(self.keys) > 0) & (self.keys[at] == keys if len(self.keys) else False)
+        return self.rgb[at], hit
+
+
+def fine_surface(model, materials, grid: RestGrid, texels: int, vertices=None, face_mask=None) -> FineSurface | None:
+    """texels 倍に細かい格子でボクセルにした表面の色。texels が 1 以下なら None (細かくしない)。"""
+    if texels <= 1:
+        return None
+    fine = fine_grid(grid, texels)
+    try:
+        surface = surface_voxels(model, materials, fine, vertices=vertices, face_mask=face_mask)
+    except ValueError:
+        return FineSurface(texels, fine.size, np.zeros(0, np.int64), np.zeros((0, 3)))
+    sx, sy, sz = fine.size
+    keys = (surface.cells[:, 0] * sy + surface.cells[:, 1]) * sz + surface.cells[:, 2]
+    order = np.argsort(keys)
+    return FineSurface(texels, fine.size, keys[order], surface.rgb[order])
+
+
+def supersample_quad(quad: planes.Quad, volume: np.ndarray, lo, rgb: np.ndarray, fine: FineSurface,
+                     shade: bool = True) -> planes.Quad:
+    """板 1 枚の画像を、細かい表面の色で texels 倍にする (板の位置と大きさは同じ。画像だけ細かい)。
+
+    板の画素ごとに、面を持つボクセル (板の両側のうち中身のある方) の中を、面の側から奥へ細かいボクセルを探し、最初に
+    見つかった色を使う。見つからなければ粗いボクセルの色のまま。volume は部品の局所の格子 (ボクセルの番号 + 1)、
+    lo はその格子の原点の粗い格子の位置 (quad の k・a0・b0 は局所の値で渡す)。"""
+    t = fine.texels
+    axis = quad.axis
+    pa, pb = planes.PLANE_AXES[axis]
+    w, h = quad.width, quad.height
+    a = np.arange(w)[:, None] + quad.a0
+    b = np.arange(h)[None, :] + quad.b0
+    a, b = np.broadcast_arrays(a, b)
+    # 板の下側 (k - 1) と上側 (k) のボクセル
+    def cell_value(index_axis):
+        coords = [None, None, None]
+        coords[axis] = np.full(a.shape, index_axis)
+        coords[pa], coords[pb] = a, b
+        ok = (coords[axis] >= 0) & (coords[axis] < volume.shape[axis])
+        safe = [np.clip(c, 0, volume.shape[i] - 1) for i, c in enumerate(coords)]
+        return np.where(ok, volume[safe[0], safe[1], safe[2]], 0)
+    below = cell_value(quad.k - 1)
+    above = cell_value(quad.k)
+    positive = below > 0                     # 面が +axis を向く (中身は下側)
+    owner_k = np.where(positive, quad.k - 1, quad.k)
+    owner = np.where(positive, below, above)
+    present = owner > 0
+    base = np.asarray(rgb, np.float64)[np.clip(owner - 1, 0, len(rgb) - 1)]   # (w, h, 3)
+    # 細かい画素 (w*t, h*t)
+    fa = (a[:, :, None, None] + int(lo[pa])) * t + np.arange(t)[None, None, :, None]
+    fb = (b[:, :, None, None] + int(lo[pb])) * t + np.arange(t)[None, None, None, :]
+    fa, fb = np.broadcast_arrays(fa, fb)
+    colour = np.broadcast_to(base[:, :, None, None, :], fa.shape + (3,)).copy()
+    found = np.zeros(fa.shape, bool)
+    for depth in range(t):
+        # 面の側から奥へ: +axis 向きなら細かい格子の上から、-axis 向きなら下から
+        layer = np.where(positive, (owner_k + int(lo[axis])) * t + (t - 1 - depth), (owner_k + int(lo[axis])) * t + depth)
+        layer = np.broadcast_to(layer[:, :, None, None], fa.shape)
+        cells = np.empty(fa.shape + (3,), np.int64)
+        cells[..., axis] = layer
+        cells[..., pa] = fa
+        cells[..., pb] = fb
+        got, hit = fine.lookup(cells.reshape(-1, 3))
+        hit = hit.reshape(fa.shape) & ~found
+        colour[hit] = got.reshape(fa.shape + (3,))[hit]
+        found |= hit
+    if shade:
+        factor = np.where(positive, planes.SHADE[(axis, 1)], planes.SHADE[(axis, -1)])
+        colour = colour * factor[:, :, None, None, None]
+    # (w, h, t, t) → 画像 [行 = 2 つ目の軸, 列 = 1 つ目の軸]
+    image = np.zeros((h * t, w * t, 4), np.uint8)
+    pixels = np.clip(np.rint(colour), 0, 255).astype(np.uint8).transpose(1, 3, 0, 2, 4).reshape(h * t, w * t, 3)
+    image[..., :3] = pixels
+    alpha = np.repeat(np.repeat(present.T, t, axis=0), t, axis=1)
+    image[..., 3] = np.where(alpha, 255, 0)
+    return replace(quad, image=image)
 
 
 def _neighbour(values: np.ndarray, axis: int, step: int) -> np.ndarray:
@@ -419,6 +523,10 @@ class Rig:
     rest_positions: np.ndarray
     names: list[str]
     poses_checked: int = 0
+    # 板の画素を細かくするときの表面の色 (fine_surface。None なら 1 ボクセル 1 画素)
+    fine: FineSurface | None = None
+    # 表情の差し替え (image_mode.rig_face.FacePatch のリスト)
+    patches: tuple = ()
 
     @property
     def grid(self) -> RestGrid:
@@ -437,10 +545,11 @@ def motion_frames(tracks: dict, rate: float) -> np.ndarray:
 
 def build_rig(model, materials, motions=(), *, voxels: int = DEFAULT_VOXELS, overlap: int = DEFAULT_OVERLAP,
               tolerance: float = DEFAULT_TOLERANCE, check_rate: float = DEFAULT_CHECK_RATE, fill: bool = True,
-              merge: bool = True, margin: int = 2, posed=None, progress=None) -> Rig:
+              merge: bool = True, margin: int = 2, posed=None, progress=None, texels: int = 1) -> Rig:
     """MMD のモデル (と踊り) から、部品とボーンを決める。motions は read_vmd の結果のリスト (同じモデルで入れる全部の
     踊り)。どれかの踊りで動くボーンは残し、どの踊りでも動かないボーンは親にまとめる (merge が偽ならまとめない)。
     tolerance はまとめてよいずれ (ボクセル)。margin は格子の余白 (ボクセル。テストで、踊った形も格子に入れるとき)。
+    texels は板の画素の細かさ (ボクセルの面 1 つを texels × texels 画素にする。1 は今までどおり)。
     posed は計算済みの姿勢 (踊りごとの (F, B, 4, 4)。rig_anim.pose_song)。あれば motions の代わりにこれで調べる。"""
     grid = rest_grid(model, voxels, margin)
     rest = surface_voxels(model, materials, grid)
@@ -473,7 +582,8 @@ def build_rig(model, materials, motions=(), *, voxels: int = DEFAULT_VOXELS, ove
     parents = kept_parents(poser.parent, target)
     kept = [b for b in bones if b in parents]
     members_v, members_p = part_members(rest, target, overlap)
-    return Rig(rest, kept, parents, target, members_v, members_p, poser.rest.copy(), list(poser.names), checked)
+    fine = fine_surface(model, materials, grid, texels)
+    return Rig(rest, kept, parents, target, members_v, members_p, poser.rest.copy(), list(poser.names), checked, fine)
 
 
 def bone_name(bone: int) -> str:
@@ -502,16 +612,24 @@ def bone_pivot(rig: Rig, bone: int, placing: planes.Placing, mapping: planes.Fac
 
 
 def part_quads(rig: Rig, bone: int, split: str = planes.DEFAULT_PLANE_SPLIT, shade: bool = True) -> list[planes.Quad]:
-    """部品 1 つの面の板 (格子の位置)。色は 1 ボクセルずつの色 (パレットはボクセルの色そのもの)。"""
+    """部品 1 つの面の板 (格子の位置)。色は 1 ボクセルずつの色 (パレットはボクセルの色そのもの)。rig.fine があれば、
+    画像はボクセルの面 1 つにつき texels × texels 画素 (細かい表面の色)。"""
     voxels = rig.members_v[rig.members_p == bone]
-    if len(voxels) == 0:
+    return cell_quads(rig.rest.cells[voxels], rig.rest.rgb[voxels], rig.fine, split, shade)
+
+
+def cell_quads(cells: np.ndarray, rgb: np.ndarray, fine: FineSurface | None = None,
+               split: str = planes.DEFAULT_PLANE_SPLIT, shade: bool = True) -> list[planes.Quad]:
+    """ボクセルの集まり (格子の位置 (N, 3)・色 (N, 3)) の面の板 (格子の位置)。"""
+    if len(cells) == 0:
         return []
-    cells = rig.rest.cells[voxels]
     lo = cells.min(axis=0)
     volume = np.zeros(tuple(cells.max(axis=0) - lo + 1), np.int64)
     local = cells - lo
-    volume[local[:, 0], local[:, 1], local[:, 2]] = voxels + 1
-    quads = planes.frame_quads(volume, rig.rest.rgb, split, shade)
+    volume[local[:, 0], local[:, 1], local[:, 2]] = np.arange(len(cells)) + 1
+    quads = planes.frame_quads(volume, rgb, split, shade)
+    if fine is not None:
+        quads = [supersample_quad(quad, volume, lo, rgb, fine, shade) for quad in quads]
     out = []
     for quad in quads:
         pa, pb = planes.PLANE_AXES[quad.axis]
@@ -529,7 +647,11 @@ def rig_figure(rig: Rig, *, figure_blocks: float, split: str = planes.DEFAULT_PL
     範囲 (ボクセルの座標の (最小, 最大)。rig_anim.Motion.extent)。あれば人物の大きさ (ケースの大きさ) をそれに合わせる。"""
     placing = rig_placing(rig, figure_blocks, extent)
     quads_of = {bone: part_quads(rig, bone, split, shade) for bone in rig.bones}
+    # 表情の差し替え (顔の場所 r の状態 s)。部品と同じシートに入れる
+    patch_quads = [[cell_quads(cells, rgb, fine, split, shade) for cells, rgb, fine in patch.states]
+                   for patch in rig.patches]
     images = [planes.oriented_image(q, mapping) for bone in rig.bones for q in quads_of[bone]]
+    images += [planes.oriented_image(q, mapping) for states in patch_quads for quads in states for q in quads]
     if not images:
         raise ValueError("人物の板がありません")
     sheets, [places], _per_sheet, size = planes.pack_frames([images], max_sheet, gutter)
@@ -555,6 +677,15 @@ def rig_figure(rig: Rig, *, figure_blocks: float, split: str = planes.DEFAULT_PL
         entry["pivot"] = pivot
         entry["cubes"] = cubes
         geometry_bones.append(entry)
+    for region, (patch, states) in enumerate(zip(rig.patches, patch_quads)):
+        pivot = bone_pivot(rig, patch.bone, placing, mapping)
+        for state, quads in enumerate(states):
+            cubes = []
+            for quad in quads:
+                cubes.append(planes.quad_cube(quad, places[cursor], placing, mapping))
+                cursor += 1
+            geometry_bones.append({"name": f"e{region}s{state}", "parent": bone_name(patch.bone), "pivot": pivot,
+                                   "cubes": cubes})
     rest = rig.rest
     s = placing.scale / 16
     if extent is None:

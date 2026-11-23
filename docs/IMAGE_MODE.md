@@ -73,7 +73,8 @@ python convert_image_mode.py model.pmx --motion dance.vmd --case --case-video mv
 |---|---|
 | `--motion VMD` | 踊り。無ければ動かない人物 |
 | `--audio FILE` | 曲 (20 分まで)。曲の長さだけ再生し、踊りが短ければ最後の姿勢で止まる (長ければそこで切る)。`--case-video` と一緒なら、壁の動画の音声の代わりに鳴らす |
-| `--figure-voxels N` | 細かさ (初期姿勢の高さのボクセル数、1〜512、既定 128)。大きさは `--figure-blocks` (既定 6 ブロック)。メモリは細かさの 3 乗で増える |
+| `--figure-preset` | 端末の重さに合わせた段: mobile (64 ボクセル)・standard (128)・high (192)・ultra (256)・experimental (384)・extreme (512。板の画素 1×1)。mobile〜experimental は板の画素 2×2。`--figure-detail` (standard 256×1・high 256×2 (既定)・max 384×2) は今までどおりで、名前の standard の意味が違うので注意。計測は [research/mmd_dual_path_benchmark_2026-11.md](research/mmd_dual_path_benchmark_2026-11.md) |
+| `--figure-voxels N` | 細かさ (初期姿勢の高さのボクセル数、1〜512)。`--figure-preset`・`--figure-detail` より優先。大きさは `--figure-blocks` (既定 6 ブロック)。メモリは細かさの 3 乗で増える |
 | `--joint-overlap N` | 関節で隣の部品に重ねるボクセルの数 (既定 1)。重ねるのはウェイトが 2 本のボーンに分かれている所だけ |
 | `--figure-loop` | 踊りを繰り返す |
 | `--priority` | `--case-video` があるとき、人物とケースの絵を除いた予算 (`--target-tier`) に壁の動画が収まるよう、壁の動画の fps・大きさ・長さを下げる |
@@ -83,6 +84,74 @@ python convert_image_mode.py model.pmx --motion dance.vmd --case --case-video mv
 - 踊りと曲は 20 分まで (VMD に遠いフレームのキーが 1 つあるだけで、何十億コマもの姿勢を計算しようとして終わらなかったため)。踊りの最後のキーが 20 分より後なら、曲 (`--audio`) を付けると曲の長さで作ります。壊れた PMX・VMD (途中で切れている、数や番号が範囲の外、ボーンの親子が輪になっている) は、理由を出して作りません。VMD の NaN・無限大の値は初期姿勢にします。
 - MMD のモデル・踊り・曲には作者の利用規約があります。規約で許された範囲で使ってください。作ったアドオンを人に配れるかも規約しだいです。
 - Windows 版の画面: 動画リストに MMD のモデルを足し、踊りを選んだ後の「ガラスケースの人物にもしますか」で「はい」を選ぶと、画像モードのアドオンにケース付きで入ります (曲と奥の壁の絵も選べる)。普通の動画と同じアドオンに入り、動画の予算は人物とケースのテクスチャを引いた残りで決めます。細かさ・重ね代などは既定のまま (128 ボクセル・重ね代 1・高さ 6 ブロック) です。ブラウザ版にはまだありません。
+
+## MMD を描いた動画 (Rendered Mode、試作)
+
+骨で動かす人物 (上) とは別の経路です。PMX・VMD・曲から、MMD を **PC で動画 (MP4) に描き**、その動画を普通の動画として画像モードのアドオンに入れます。
+設計は [research/mmd_dual_path_design_2026-11.md](research/mmd_dual_path_design_2026-11.md)、計測は [research/mmd_dual_path_benchmark_2026-11.md](research/mmd_dual_path_benchmark_2026-11.md)。
+
+```bash
+python scripts/render_mmd.py --pmx model.pmx --motion dance.vmd --audio song.wav --preset standard -o dance.mp4
+python scripts/render_mmd.py --pmx model.pmx --motion dance.vmd --face-motion face.vmd --camera-motion camera.vmd     --audio song.wav --preset high -o dance.mp4 --addon dance.mcaddon --subpack-tiers 2,5
+```
+
+| 段 (`--preset`) | 大きさ | fps |
+|---|---|---|
+| mobile | 854×480 | 24 |
+| standard (既定) | 1280×720 | 30 |
+| high | 1920×1080 | 30 |
+| ultra | 2560×1440 | 30 |
+| experimental | 3840×2160 | 30 |
+
+- 描き手は numpy だけのソフトウェアラスタライザー (`mvcodec/mmd_render.py`)。Blender・MMD Tools・OpenGL は使いません (この開発の PC に無く、確かめられないため)。
+  姿勢・IK・物理・表情・カメラは骨で動かす人物と同じ計算です。
+- 描くもの: 頂点の変形 (BDEF1・2・4。SDEF は BDEF2 として)、頂点モーフ・ボーンモーフ、材質の色とテクスチャ、透明 (はっきりした透明は捨て、半透明は奥から重ねる)、
+  両面の印、トゥーン (モデルの画像。共有トゥーン toon01〜10 は MMD 本体の画像なので灰色の 2 段の陰で近づける)、スフィア (乗算・加算)、鏡面、輪郭線、
+  背景 (色か画像)、ステージのモデル (`--stage`、動かさない)、アンチエイリアス (`--supersample`、既定 2。1440p より大きいと 1)。
+- **描かないもの**: セルフシャドウと地面の影、UV モーフ・材質モーフ (頬の赤みなどを材質で出すモデルでは出ない)、MME のエフェクト、追加 UV、サブテクスチャのスフィア、
+  SDEF の正確な変形、カメラより手前を横切る三角形の切り取り (その三角形は描かない)、カメラの VMD のパース オフ。
+- カメラ: `--camera-motion` か、踊り・表情の VMD のカメラ。無ければ、踊り全体が入る正面の固定のカメラ。
+- 長さ: 曲があれば曲の長さ (映像の最後のコマまで描き、MP4 は曲の長さで切る)。無ければ踊りの長さ。`--seconds` で短くできます。
+- **途中から再開**: コマは作業フォルダー (`<出力>.frames`、`--work-dir`) に 1 枚ずつ書き、書き終えてから名前を付けます。止めたら同じコマンドで続きから描きます
+  (できているコマは開いて大きさを確かめ、壊れたコマだけ描き直す)。モデル・モーション・大きさなどの設定が変わったら、古いコマは使わずに描き直します。
+- **確かめ**: FFmpeg が失敗したら止めます (成功にしません)。MP4 は一時ファイルに書き、大きさ・コマの数・音声を ffprobe で読み直してから名前を付けます。
+  確かめ終えたら作業フォルダーのコマを消します (`--keep-frames` で残す)。エンコードは AMD の GPU (h264_amf) を先に試し、使えなければ libx264。
+- 並べる数: CPU の数と、空いているメモリの 6 割に入る数の小さいほう (`--jobs` で変えられる)。
+- `--addon` で、描いた動画から画像モードのアドオンも作ります (`--target-tier`・`--priority`・`--subpack-tiers`。既定の優先は smooth = fps を守って大きさを下げる)。
+
+### 描いた動画を Minecraft に入れるときの大きさ
+
+画像モードは、再生する全部のコマをテクスチャとして読み込みます (Molang やスクリプトから、あとでテクスチャを読み込む手段はありません)。
+1 コマは「幅 × 高さ × 4 バイト」なので、**描いた大きさのまま長く流すことはできません**。
+
+| 大きさ | 1 コマ | Tier 2 (225 MB) | Tier 5 (800 MB) |
+|---|---|---|---|
+| 854×480 | 1.56 MiB | 143 コマ (24 fps で 6 秒) | 511 コマ (21 秒) |
+| 1280×720 | 3.52 MiB | 64 コマ (30 fps で 2.1 秒) | 227 コマ (7.6 秒) |
+| 1920×1080 | 7.91 MiB | 28 コマ (0.9 秒) | 101 コマ (3.4 秒) |
+| 2560×1440 | 14.06 MiB | 16 コマ | 56 コマ (1.9 秒) |
+| 3840×2160 | 31.64 MiB | 7 コマ | 25 コマ (0.8 秒)。シートが 4096 を超える端末では読めない |
+
+それより長い動画は、`--priority` で大きさ (smooth)・fps (quality)・長さ (length) のどれかを下げて予算に入れます。
+40 秒の踊りを 30 fps のまま入れると、`budget.plan` (smooth) で Tier 2 は 252×142、Tier 5 は 482×272 になります。720p 30 fps のまま入るのは Tier 5 で約 7 秒 (7 秒で 739 MiB)、1080p は約 3 秒 (3 秒で 712 MiB) までです。PNG・JPEG のファイルの大きさは、このメモリを減らしません。
+
+## 端末ごとの大きさ (サブパック、試作)
+
+`--subpack-tiers 2,5` (`convert_image_mode.py` と `scripts/render_mmd.py --addon`) で、Tier ごとに予算に入る大きさのシートを作り、RP のサブパック
+(`RP/subpacks/tier<n>/`) に入れます。fps・長さ・音声はどの Tier でも同じで、違うのはシートと、それを使う entity・geometry・render controller だけです
+(どの Tier でも同じファイルは本体に 1 つ)。RP の manifest の `subpacks` には `memory_tier` (Microsoft Learn「Building Sub-Packs」の表の RAM の下限:
+Tier 2 → 12、Tier 3 → 18、Tier 4 → 24、Tier 5 → 32。一番下のサブパックは 0) を書きます。端末は自分のメモリに合う一番上のサブパックを選び、
+プレイヤーはパックの設定で変えられます。存在しない API で端末を見分けることはしません。試験中の `memory_performance_tier` (manifest V3) は書きません。
+同じ大きさになる Tier はまとめ、全部同じならサブパックを作りません。`--priority` が要ります。
+
+どのサブパックが使われているかはスクリプトから分からないので、大きさは幅で出します (`/<名前空間>:stats` は「568x320〜1088x612
+(端末の Tier で決まる)」、リモコンの動画リストは「568x320 - 1088x612」)。
+
+実機 (Windows の PC、2026-11-23、描いた動画 720p 30 fps 10 秒を Tier 2 568×320 と Tier 5 1088×612 に分けたもの) で確かめたこと:
+パックの設定に「解像度」のスライダーが出て、既定はこの PC では一番上の Tier 5。Tier 2 に変えてワールドを開き直すと、画素の粗い絵に変わる
+(サブパックの entity・geometry・シートが使われる)。どちらの Tier も、立ち止まって見ている間は 1 秒に 29〜31 回絵が変わり (30 fps)、
+最後のコマまで流れる。ワールドを開くのにかかった時間は Tier 5 で約 3 秒、Tier 2 で約 2.5 秒。**音 (録画に入っていなかった)・メモリ・
+スマートフォンとコンソール (自動で下の Tier が選ばれるか) は未確認です。**
 
 ## 明るさ・縮め方・シートの詰め方
 

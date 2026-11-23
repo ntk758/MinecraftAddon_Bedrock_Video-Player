@@ -47,6 +47,22 @@ NAMESPACE_PATTERN = re.compile(r"^[a-z0-9_]+$")
 # 引数の上限 (#165・#182・#191)。1 コマ・シートの一辺 (画素)、1 枚のマスの数、スクリーンの幅 (ブロック)、音声の区切り (秒)
 MAX_FRAME_SIDE = 4096
 MAX_SHEET_SIDE = 4096
+# MMD の人物の細かさ: 名前 → (初期姿勢の高さのボクセル数, 板の画素の細かさ)。docs/research/mmd_image_mode_design_2026-11.md の 3 章
+FIGURE_DETAILS = {"standard": (256, 1), "high": (256, 2), "max": (384, 2)}
+DEFAULT_FIGURE_DETAIL = "high"
+# MMD の人物の段 (--figure-preset): 名前 → (ボクセル, 板の画素)。端末の重さに合わせる。--figure-detail とは別の名前の並び
+# (standard の意味が違う)。計測は docs/research/mmd_dual_path_benchmark_2026-11.md
+FIGURE_PRESETS = {"mobile": (64, 2), "standard": (128, 2), "high": (192, 2), "ultra": (256, 2),
+                  "experimental": (384, 2), "extreme": (512, 1)}
+# --subpack-tiers: Tier → サブパックの memory_tier (Microsoft Learn「Building Sub-Packs」の表の RAM の下限。1 つ 250 MB)。
+# 一番下のサブパックは、どの端末でも選べるよう 0 にする
+SUBPACK_MEMORY_TIERS = {1: 0, 2: 12, 3: 18, 4: 24, 5: 32}
+# 一番上の Tier のものを本体に入れるファイル (先頭の一致)。音声は同じ曲を同じ設定で切るが、ogg の通し番号が毎回変わるので比べられない
+SUBPACK_SHARED_FROM_TOP = ("RP/pack_icon.png", "RP/sounds/")
+# 板の画素を細かくした人物は 1 枚のシートに収めるので、シートの上限を広げる (人物だけ。動画のシートは --max-sheet のまま)
+FIGURE_MAX_SHEET = 4096
+PHYSICS_CHOICES = ("off", "light", "standard", "full")
+DEFAULT_PHYSICS = "standard"
 MAX_CELLS_LIMIT = 1024
 MAX_SCREEN_BLOCKS = 256
 MIN_AUDIO_CHUNK_SECONDS = 0.5
@@ -225,6 +241,15 @@ def image_videos_js(videos: list[dict], namespace: str) -> str:
                + ("," if i < len(videos) - 1 else "")) for i, video in enumerate(videos)]
     lines += ["];", ""]
     return "\n".join(lines)
+
+
+def read_image_videos_js(text: str) -> tuple[str, list[dict]]:
+    """image_videos_js の逆 ((名前空間, 動画の一覧))。出来たアドオンの一覧に書き足すとき (サブパックの大きさ) に使う。"""
+    lines = text.splitlines()
+    namespace = json.loads(lines[0].removeprefix("export const NAMESPACE = ").removesuffix(";"))
+    start = lines.index("export const IMAGE_VIDEOS = [") + 1
+    end = lines.index("];", start)
+    return namespace, [json.loads(line.strip().removesuffix(",")) for line in lines[start:end]]
 
 
 def build_files(sources: list[dict], *, width: int, height: int, methods: list[str], namespace: str,
@@ -485,7 +510,9 @@ def build_glass_files(entries: list[dict], *, namespace: str, pack_name: str, ma
                        "sheet_width": figure["sheet_width"], "sheet_height": figure["sheet_height"],
                        "texture_paths": fig_paths, "quads": figure["quads"],
                        **({"rig": {"animation": glass_rp.animation_identifier(video_id, namespace),
-                                   "seconds": rig_info["seconds"], "bones": rig_info["bones"]}} if rig_info else {})},
+                                   "seconds": rig_info["seconds"], "bones": rig_info["bones"],
+                                   **({"camera": rig_info["camera"]} if rig_info.get("camera") else {})}}
+                          if rig_info else {})},
         }
         case = entry.get("case")
         if case is not None:
@@ -686,6 +713,8 @@ def build(args: argparse.Namespace, log=print, figures: list[dict] | None = None
         return _build_impostor(args, inputs, ids, titles, log)
     if args.fps is None:
         args.fps = 30.0
+    if getattr(args, "subpack_tiers", None):
+        return _build_subpacks(args, inputs, ids, titles, log)
     ends = [args.end] * len(inputs)
     if args.priority != "none":
         ends = apply_priority(args, inputs, log)
@@ -696,6 +725,13 @@ def build(args: argparse.Namespace, log=print, figures: list[dict] | None = None
             log(f"1 コマを {args.width}x{args.height} → {snapped[0]}x{snapped[1]} にして、シート 1 枚に入るコマを増やします "
                 "(--no-snap で今の大きさのまま)")
             args.width, args.height = snapped
+    files, report = _video_files(args, inputs, ids, titles, ends, log)
+    return _write_output(args, files, report, log)
+
+
+def _video_files(args: argparse.Namespace, inputs: list[Path], ids: list[str], titles: list[str], ends: list,
+                 log=print) -> tuple[dict, dict]:
+    """普通の動画のアドオンのファイルとレポート (書き出さない)。大きさ・fps は args のもの。"""
     methods = ["a", "c"] if args.method == "both" else [args.method]
     pack_name = args.pack_name or titles[0]
     ffmpeg = args.ffmpeg
@@ -716,8 +752,99 @@ def build(args: argparse.Namespace, log=print, figures: list[dict] | None = None
             allow_over_budget=args.allow_over_budget, log=log, lighting=args.lighting, png_optimize=args.png_optimize,
             sheet_format=getattr(args, "sheet_format", "png"), jpeg_quality=getattr(args, "jpeg_quality", DEFAULT_JPEG_QUALITY),
             dedup=getattr(args, "dedup", "off"), near_threshold=getattr(args, "near_threshold", DEFAULT_NEAR_THRESHOLD))
+    return files, report
 
+
+def _build_subpacks(args: argparse.Namespace, inputs: list[Path], ids: list[str], titles: list[str], log=print) -> dict:
+    """--subpack-tiers: Tier ごとに予算に入る大きさで作り、違うリソース (シート・geometry など) を RP のサブパックに分ける。
+    fps・長さ・音声はどの Tier でも同じにする (BP とスクリプトは 1 つ)。端末は自分の Tier に合うサブパックを選ぶ。"""
+    import copy
+
+    tiers = sorted(set(args.subpack_tiers))
+    if args.priority == "none":
+        raise ConvertError("--subpack-tiers には --priority (quality・smooth・length) が要ります")
+    builds = []
+    for tier in tiers:
+        tier_args = copy.copy(args)
+        tier_args.target_tier = tier
+        tier_args.allow_over_budget = False
+        log(f"--- Tier {tier} ({budget.TIER_BUDGETS_MB[tier]} MB) ---")
+        ends = apply_priority(tier_args, inputs, log)
+        files, report = _video_files(tier_args, inputs, ids, titles, ends, log)
+        builds.append((tier, tier_args, files, report))
+    top = builds[-1]
+    for tier, tier_args, _files, report in builds:
+        same = tier_args.fps == top[1].fps and [v["frame_count"] for v in report["videos"]] == [
+            v["frame_count"] for v in top[3]["videos"]]
+        if not same:
+            raise ConvertError(f"Tier {tier} では fps か長さが変わってしまい、サブパックに分けられません "
+                               "(--priority smooth で大きさだけを下げるか、Tier を減らしてください)")
+    # 大きさが前の Tier と同じなら、その Tier は前のサブパックで足りる (同じ中身を 2 回入れない)
+    distinct = []
+    for build in builds:
+        if distinct and (build[1].width, build[1].height) == (distinct[-1][1].width, distinct[-1][1].height):
+            log(f"Tier {build[0]} は Tier {distinct[-1][0]} と同じ大きさなので、そのサブパックを使います")
+            continue
+        distinct.append(build)
+    if len(distinct) == 1:
+        log("どの Tier でも同じ大きさに入るので、サブパックは作りません")
+        args.plan = top[1].plan
+        return _write_output(args, distinct[0][2], distinct[0][3], log)
+    files, subpacks = split_subpacks([(tier, files, report) for tier, _a, files, report in distinct])
+    # メモリの警告は一番下のサブパックのもの (上の Tier の「Tier 2 の予算を超える」は、Tier 2 の端末が下のサブパックを
+    # 読むので当てはまらない。端末が自分で選ぶことは、PC の実機でしか確かめていない)
+    report = {**top[3], "subpacks": subpacks, "warnings": distinct[0][3]["warnings"]}
+    for entry in subpacks:
+        log(f"サブパック tier{entry['tier']}: {entry['width']}x{entry['height']} {entry['fps']:g} fps、"
+            f"テクスチャ {entry['mib']} MiB (予算 {budget.TIER_BUDGETS_MB[entry['tier']]} MB)、memory_tier {entry['memory_tier']}")
+    if top[3]["warnings"]:
+        log(f"上の Tier {top[0]} の警告は、tier{top[0]} のサブパックだけのものです。それより小さい端末は、メモリに合う下のサブパックを"
+            "選びます (PC の実機で選べることは確かめた。スマートフォン・コンソールが自分で選ぶことは未確認)")
+    args.plan = {"subpacks": subpacks}
     return _write_output(args, files, report, log)
+
+
+def split_subpacks(builds: list[tuple[int, dict, dict]]) -> tuple[dict, list[dict]]:
+    """Tier ごとのファイル ([(Tier, ファイル, レポート)…]、Tier の小さい順) を 1 つのアドオンにまとめる。
+    どの Tier でも同じ RP のファイルは本体に、違うものと一部の Tier にしか無いものは RP/subpacks/tier<n>/ に入れる。
+    BP・アイコン・RP の manifest は一番上の Tier のもの。RP の manifest に subpacks を書く。"""
+    _top_tier, top_files, _top_report = builds[-1]
+    files: dict[str, bytes] = {path: data for path, data in top_files.items() if path.startswith("BP/")}
+    paths = sorted(set().union(*(set(f) for _t, f, _r in builds)))
+    for path in paths:
+        if not path.startswith("RP/") or path == "RP/manifest.json":
+            continue
+        if path.startswith(SUBPACK_SHARED_FROM_TOP) and path in top_files:
+            files[path] = top_files[path]
+            continue
+        contents = [f.get(path) for _t, f, _r in builds]
+        if all(c is not None and c == contents[0] for c in contents):
+            files[path] = contents[0]
+            continue
+        for (tier, _f, _r), data in zip(builds, contents):
+            if data is not None:
+                files[f"RP/subpacks/tier{tier}/{path[3:]}"] = data
+    manifest = json.loads(top_files["RP/manifest.json"])
+    subpacks = []
+    entries = []
+    for number, (tier, _f, report) in enumerate(builds):
+        video = report["videos"][0]
+        memory_tier = 0 if number == 0 else SUBPACK_MEMORY_TIERS[tier]
+        name = f"Tier {tier}: {video['width']}x{video['height']}"
+        entries.append({"folder_name": f"tier{tier}", "name": name, "memory_tier": memory_tier})
+        subpacks.append({"tier": tier, "folder": f"tier{tier}", "memory_tier": memory_tier, "width": video["width"],
+                         "height": video["height"], "fps": video["fps"], "mib": report["memory"]["mib"],
+                         "handles": report["memory"]["handles"]})
+    manifest["subpacks"] = entries
+    files["RP/manifest.json"] = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    # スクリプト (BP は 1 つ) にも Tier ごとの大きさを渡す。どれが使われているかはスクリプトから分からないので、
+    # stats は幅で見せる (width・height は一番上の Tier の値のまま)
+    namespace, videos = read_image_videos_js(files["BP/scripts/image_videos.js"].decode("utf-8"))
+    for index, video in enumerate(videos):
+        video["sizes"] = [{"tier": tier, "width": report["videos"][index]["width"],
+                           "height": report["videos"][index]["height"]} for tier, _f, report in builds]
+    files["BP/scripts/image_videos.js"] = image_videos_js(videos, namespace).encode("utf-8")
+    return files, subpacks
 
 
 def _build_impostor(args: argparse.Namespace, inputs: list[Path], ids: list[str], titles: list[str], log=print) -> dict:
@@ -892,10 +1019,30 @@ def _build_glass(args: argparse.Namespace, inputs: list[Path], ids: list[str], t
     return _write_output(args, files, report, log)
 
 
+def figure_resolution(args: argparse.Namespace, detail: str | None = None) -> tuple[int, int]:
+    """MMD の人物の (ボクセル, 板の画素の細かさ)。detail (standard・high・max。Windows 版が人物ごとに渡す) か
+    --figure-preset (mobile〜extreme) か --figure-detail で決め、--figure-voxels・--figure-texels があればそれを使う。"""
+    preset = getattr(args, "figure_preset", None)
+    if detail:
+        voxels, texels = FIGURE_DETAILS[detail]
+    elif preset:
+        voxels, texels = FIGURE_PRESETS[preset]
+    else:
+        voxels, texels = FIGURE_DETAILS[getattr(args, "figure_detail", None) or DEFAULT_FIGURE_DETAIL]
+    if getattr(args, "figure_voxels", None):
+        voxels = args.figure_voxels
+    if getattr(args, "figure_texels", None):
+        texels = args.figure_texels
+    return voxels, texels
+
+
 def mmd_glass_entry(path: Path, video_id: str, title: str, args: argparse.Namespace, temp: Path, log=print, *,
-                    motion=None, audio=None, case=None) -> dict:
+                    motion=None, audio=None, case=None, face_motions=None, physics=None, expressions=None,
+                    detail=None, camera_motion=None) -> dict:
     """MMD のモデル (.pmx) から、骨で動かす人物の build_glass_files の entry を作る。motion は踊り (.vmd)、audio は曲
-    (再生の長さになる)、case は glass.CaseOptions か None。細かさなどは args (--figure-voxels など) のもの。"""
+    (再生の長さになる)、case は glass.CaseOptions か None。細かさなどは args (--figure-detail など) のもの。
+    face_motions (表情・口の VMD のリスト)・physics (off・light・standard・full)・expressions (表情を使うか)・
+    detail (細かさ) は、渡せば args の代わりに使う (Windows 版の画面で、人物ごとに選ぶ)。"""
     from image_mode import glass_rp, planes, rig_anim
 
     log(MMD_NOTICE)
@@ -909,13 +1056,34 @@ def mmd_glass_entry(path: Path, video_id: str, title: str, args: argparse.Namesp
             audio, temp / f"{video_id}_song", args.audio_chunk_seconds, None, None, args.ffmpeg, max_seconds=limit))
     elif not motion:
         log(f"[{video_id}] 踊り (.vmd) が無いので、動かない人物にします")
-    log(f"[{video_id}] MMD の人物を骨で動かす板にします (高さ {args.figure_voxels} ボクセル、重ね代 {args.joint_overlap})")
+    if motion and Path(motion).suffix.lower() == ".bvh":
+        from mvcodec import bvh
+        try:
+            motion = bvh.ensure_vmd(motion, path, temp, log=log)
+        except (OSError, ValueError) as error:
+            raise ConvertError(f"[{video_id}] モーションキャプチャ (BVH) を使えませんでした: {error}") from None
+    voxels, texels = figure_resolution(args, detail)
+    physics = physics or getattr(args, "physics", None) or DEFAULT_PHYSICS
+    expressions = (not getattr(args, "no_expressions", False)) if expressions is None else expressions
+    face_motions = list(face_motions if face_motions is not None else (getattr(args, "face_motion", None) or []))
+    for face in face_motions:
+        if not Path(face).is_file():
+            raise ConvertError(f"[{video_id}] 表情・口の VMD がありません: {face}")
+    camera_motion = camera_motion if camera_motion is not None else getattr(args, "camera_motion", None)
+    if camera_motion and not Path(camera_motion).is_file():
+        raise ConvertError(f"[{video_id}] カメラの VMD がありません: {camera_motion}")
+    log(f"[{video_id}] MMD の人物を骨で動かす板にします (高さ {voxels} ボクセル、板の画素 {texels}×{texels}、"
+        f"重ね代 {args.joint_overlap}、物理 {physics}、表情 {'あり' if expressions else 'なし'})")
+    max_sheet = max(args.max_sheet, FIGURE_MAX_SHEET) if texels > 1 or voxels > 128 else args.max_sheet
     try:
         figure = rig_anim.mmd_figure(
             path, motion, identifier=glass_rp.animation_identifier(video_id, args.namespace),
-            figure_blocks=args.figure_blocks, voxels=args.figure_voxels, overlap=args.joint_overlap, seconds=seconds,
+            figure_blocks=args.figure_blocks, voxels=voxels, overlap=args.joint_overlap, seconds=seconds,
             loop=args.figure_loop, split=args.plane_split, shade=args.plane_shade,
-            mapping=args.face_mapping or planes.DEFAULT_MAPPING, max_sheet=args.max_sheet, gutter=args.gutter, log=log)
+            mapping=args.face_mapping or planes.DEFAULT_MAPPING, max_sheet=max_sheet, gutter=args.gutter, log=log,
+            texels=texels, face_vmds=face_motions, expressions=expressions,
+            physics=None if physics == "off" else physics,
+            expression_states=getattr(args, "expression_states", None), camera_vmd=camera_motion or None)
     except (OSError, ValueError) as error:
         raise ConvertError(f"[{video_id}] MMD の人物を作れませんでした: {error}") from None
     return {"id": video_id, "title": title, "figure": figure, "figure_fps": RIG_CLOCK_FPS,
@@ -997,7 +1165,10 @@ def _build_with_figures(args: argparse.Namespace, inputs: list[Path], ids: list[
             images = {"back": figure["case_image"]} if figure.get("case_image") else {}
             case = glass.CaseOptions(margin=args.case_margin, images=images, frame=args.case_frame)
             entry = mmd_glass_entry(Path(figure["pmx"]), figure["id"], figure["title"], args, Path(temp), log,
-                                    motion=figure.get("motion"), audio=figure.get("audio"), case=case)
+                                    motion=figure.get("motion"), audio=figure.get("audio"), case=case,
+                                    face_motions=figure.get("face_motions"), physics=figure.get("physics"),
+                                    expressions=figure.get("expressions"), detail=figure.get("detail"),
+                                    camera_motion=figure.get("camera_motion"))
             entries.append(entry)
             sheet = entry["figure"]
             reserved += sheet["sheet_width"] * sheet["sheet_height"] * len(sheet["sheets"]) * 4
@@ -1161,6 +1332,16 @@ def _bounded_int(low: int, high: int):
     return parse
 
 
+def _tiers(text: str) -> list[int]:
+    try:
+        tiers = sorted({int(part) for part in text.split(",") if part.strip()})
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Tier はカンマで区切った数 (例 2,5): {text}") from None
+    if not tiers or any(t not in budget.TIER_BUDGETS_MB for t in tiers):
+        raise argparse.ArgumentTypeError(f"Tier は {min(budget.TIER_BUDGETS_MB)}〜{max(budget.TIER_BUDGETS_MB)}: {text}")
+    return tiers
+
+
 def _size(text: str) -> tuple[int, int]:
     match = re.fullmatch(r"\s*(\d+)\s*[xX×]\s*(\d+)\s*", text)
     if not match or int(match.group(1)) < 2 or int(match.group(2)) < 2 or int(match.group(1)) > 512 or int(match.group(2)) > 512:
@@ -1228,6 +1409,9 @@ def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
                         help="テクスチャが予算 (--target-tier) を超えるとき何を守るか: quality=画質 (fps を下げる)、"
                              "smooth=なめらかさ (コマを小さくする)、length=長さ (両方を少しずつ下げる)。"
                              "それでも入らなければ後ろを切る。none (既定) は何も変えない")
+    parser.add_argument("--subpack-tiers", type=_tiers, default=None, metavar="N,N",
+                        help="Tier ごとに大きさの違うシートを RP のサブパックに入れる (例 2,5)。端末が自分の Tier を選び、"
+                             "プレイヤーは設定で 1 段下にも変えられる。--priority が要る。普通の動画だけ")
     parser.add_argument("--target-tier", type=int, default=2, choices=sorted(budget.TIER_BUDGETS_MB),
                         help="--priority で収める予算の Tier (既定 2: 多くのスマートフォン・PS4・Xbox One。PC だけなら 5)")
     parser.add_argument("--allow-over-budget", action="store_true",
@@ -1294,12 +1478,32 @@ def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
                              help="extrude・inflate で立体にする明るさのしきい値 (0〜1、既定 0.5)")
     glass_group.add_argument("--lift-invert", action="store_true", help="extrude・inflate で暗い所を立体にする")
     glass_group.add_argument("--motion", default=None, metavar="VMD",
-                             help="MMD のモデル (.pmx) を踊らせるモーション (.vmd)。骨で動かすので、1 曲を通しても軽い")
+                             help="MMD のモデル (.pmx) を踊らせるモーション (.vmd、またはモーションキャプチャの .bvh)。骨で動かすので、1 曲を通しても軽い")
     glass_group.add_argument("--audio", default=None, metavar="FILE",
                              help="MMD の人物と一緒に鳴らす曲 (wav・mp3 など)。曲の長さだけ再生し、踊りが短ければ最後の姿勢で止まる")
-    glass_group.add_argument("--figure-voxels", type=_bounded_int(1, MAX_VOXELS), default=128,
-                             help=f"MMD の人物の細かさ (初期姿勢の高さのボクセル数、1〜{MAX_VOXELS}、既定 128)。"
-                                  "大きさは --figure-blocks")
+    glass_group.add_argument("--figure-detail", choices=tuple(FIGURE_DETAILS), default=DEFAULT_FIGURE_DETAIL,
+                             help="MMD の人物の細かさ: standard (高さ 256 ボクセル。スマートフォンも)・high (256 ボクセル、"
+                                  "板の画素 2×2。既定)・max (384 ボクセル、2×2。PC 向け)")
+    glass_group.add_argument("--figure-preset", choices=tuple(FIGURE_PRESETS), default=None,
+                             help="MMD の人物の段: " + "、".join(f"{k} ({v} ボクセル・{t}×{t})" for k, (v, t) in FIGURE_PRESETS.items())
+                                  + "。--figure-detail より優先、--figure-voxels・--figure-texels が更に優先")
+    glass_group.add_argument("--figure-voxels", type=_bounded_int(1, MAX_VOXELS), default=None,
+                             help=f"MMD の人物の細かさを直接決める (初期姿勢の高さのボクセル数、1〜{MAX_VOXELS})。"
+                                  "--figure-detail より優先。大きさは --figure-blocks")
+    glass_group.add_argument("--figure-texels", type=_bounded_int(1, 4), default=None,
+                             help="MMD の人物の板の画素の細かさ (ボクセルの面 1 つを N×N 画素、1〜4)。--figure-detail より優先")
+    glass_group.add_argument("--face-motion", action="append", default=None, metavar="VMD",
+                             help="MMD の人物の表情・口の動き (.vmd)。何個でも。--motion の VMD の表情のキーも使う")
+    glass_group.add_argument("--camera-motion", default=None, metavar="VMD",
+                             help="MMD の人物のカメラ (.vmd)。無ければ --motion・--face-motion の VMD のカメラを使う。"
+                                  "ゲームの中で /<名前空間>:mmdcamera かリモコンで、カメラの視点で見られる")
+    glass_group.add_argument("--no-expressions", action="store_true",
+                             help="MMD の人物の表情 (まばたき・口) を動かさない")
+    glass_group.add_argument("--expression-states", type=_bounded_int(1, 16), default=None,
+                             help="表情を、顔の場所 (目・口など) ごとに何通りの差し替えにするか (1〜16、既定 6)")
+    glass_group.add_argument("--physics", choices=PHYSICS_CHOICES, default=DEFAULT_PHYSICS,
+                             help="MMD の人物の髪・スカートの揺れ: off (揺らさない)・light (軽い)・standard (既定)・"
+                                  "full (本格。物理の剛体どうしも当たる。作るのに時間がかかる)")
     glass_group.add_argument("--joint-overlap", type=_non_negative_int, default=1,
                              help="MMD の人物の関節で、隣の部品に重ねるボクセルの数 (曲げたときのすき間を防ぐ。既定 1)")
     glass_group.add_argument("--figure-loop", action="store_true", help="MMD の人物の踊りを繰り返す (既定は最後で止まる)")
