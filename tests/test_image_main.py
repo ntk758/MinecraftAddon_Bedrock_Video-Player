@@ -19,7 +19,7 @@ VIDEOS = [{"id": "demo", "title": "demo", "fps": 30, "frame_count": 300, "audio_
            "screen_blocks": [16, 9], "methods": ["a"], "width": 256, "height": 144}]
 
 MOCK = r"""
-export const log = { messages: [], sounds: [], commands: [], spawned: [], volumes: [], placed: [], spawnRotations: [], writes: [] };
+export const log = { messages: [], sounds: [], commands: [], spawned: [], volumes: [], placed: [], spawnRotations: [], writes: [], cameras: [], playerMessages: [] };
 const dynamic = globalThis.__dynamic ?? (globalThis.__dynamic = new Map());
 const entities = globalThis.__entities ?? (globalThis.__entities = new Map());
 globalThis.__time ??= 1000;
@@ -54,7 +54,10 @@ const dimension = {
   getEntities({ families }) { return [...entities.values()].filter((e) => e.loaded && families.includes("bvp_screen")); },
 };
 const player = {
-  typeId: "minecraft:player", location: { x: 0, y: 64, z: 0 }, dimension,
+  typeId: "minecraft:player", id: "p1", location: { x: 0, y: 64, z: 0 }, dimension,
+  // カメラ (MMD のカメラの視点)。setCamera と clear を log.cameras に残す
+  camera: { setCamera(preset, options) { log.cameras.push([preset, options]); }, clear() { log.cameras.push(["clear"]); } },
+  sendMessage(m) { log.playerMessages.push(m.rawtext[0].translate); },
   getViewDirection: () => ({ x: 0, y: 0, z: -1 }), getRotation: () => ({ x: 0, y: 180 }),
   playSound(id, options) { log.sounds.push([globalThis.__time, id, globalThis.__now]); log.volumes.push(options?.volume ?? null); },
   // 見ているブロック (テストで globalThis.__lookAt に入れる)
@@ -318,6 +321,18 @@ def test_stats_reports_the_state(tmp_path):
     assert "demo" in line and "bvpimg.state_playing" in line and "bvpimg.screen_loaded" in line
 
 
+def test_stats_shows_the_size_range_of_subpacks(tmp_path):
+    # サブパックで Tier ごとに大きさが違うと、どれが使われているかスクリプトから分からないので幅で見せる
+    # (実機 2026-11-23: Tier 2 でも一番上の Tier の大きさと出ていた)
+    sized = [{**VIDEOS[0], "sizes": [{"tier": 2, "width": 128, "height": 72}, {"tier": 5, "width": 256, "height": 144}]}]
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "stats"}], videos=sized)
+    [line] = messages(out, "stats")
+    assert "bvpimg.size_by_tier" in line and line.index("128x72") < line.index("256x144")
+    out = run(tmp_path / "plain", [{"cmd": "setup"}, {"tick": 2}, {"cmd": "stats"}])
+    [line] = messages(out, "stats")
+    assert "size_by_tier" not in line and "256x144" in line
+
+
 def test_late_joiner_hears_the_chunk_only_near_its_start(tmp_path):
     out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 10}, {"join": True},
                          {"tick": 40}, {"join": True}])
@@ -435,3 +450,54 @@ def test_seek_without_audio_keeps_the_exact_position(tmp_path):
     out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"cmd": "seek", "arg": "6.9"}, {"tick": 1},
                          {"snap": "seek"}], videos=silent)
     assert props(out["snaps"][0])["frame"] == 207
+
+
+CAMERA_VIDEO = {"id": "dance", "title": "dance", "fps": 20, "frame_count": 41, "audio_chunks": 0,
+                "screen_blocks": [4, 4], "methods": ["a"], "width": 64, "height": 64,
+                "glass": {"figure": {"rig": {"seconds": 2, "camera": {
+                    "rate": 20, "points": [[0, 1, -5 - n / 10, 0, 1, 0] for n in range(41)]}}}}}
+
+
+def test_mmd_camera_view_follows_the_dance_and_goes_back(tmp_path):
+    """camera で MMD のカメラの視点にする (目と注視点を、スクリーンの向きで世界の座標にする)。もう一度で元に戻る。"""
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 1}, {"cmd": "start"}, {"cmd": "mmdcamera"}, {"tick": 10},
+                         {"cmd": "mmdcamera"}, {"tick": 2}], videos=[CAMERA_VIDEO])
+    cameras = out["log"]["cameras"]
+    moves = [c for c in cameras if c[0] == "minecraft:free"]
+    assert len(moves) >= 10 and cameras[-1] == ["clear"]
+    first, last = moves[0][1], moves[-1][1]
+    # プレイヤー (z = 0、北を向く) の前に置いたスクリーンは、人物の正面 (geometry の -z) がプレイヤーの方 (+z) を向く
+    screen_z = first["facingLocation"]["z"]
+    assert first["location"]["z"] > screen_z
+    assert first["location"]["y"] == pytest.approx(65) and first["facingLocation"]["y"] == pytest.approx(65)
+    # 時間とともに離れていく (点の z が -5 → -6)
+    assert last["location"]["z"] - last["facingLocation"]["z"] > first["location"]["z"] - first["facingLocation"]["z"]
+    assert first["easeOptions"]["easeTime"] > 0
+    assert any("camera_on" in m for m in out["log"]["playerMessages"])
+    assert any("camera_off" in m for m in out["log"]["playerMessages"])
+
+
+def test_mmd_camera_is_cleared_on_stop_and_refused_without_a_camera(tmp_path):
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 1}, {"cmd": "start"}, {"cmd": "mmdcamera"}, {"tick": 3},
+                         {"cmd": "stop"}, {"tick": 2}], videos=[CAMERA_VIDEO])
+    assert out["log"]["cameras"][-1] == ["clear"]
+    out = run(tmp_path / "plain", [{"cmd": "setup"}, {"tick": 1}, {"cmd": "mmdcamera"}, {"tick": 2}])
+    assert out["log"]["cameras"] == [] and any("camera_none" in m for m in out["log"]["playerMessages"])
+
+
+def test_remote_offers_the_camera_only_when_there_is_one(tmp_path):
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 1}, {"answers": []}, {"use": "minecraft:clock"}, {"forms": True}],
+              videos=[CAMERA_VIDEO])
+    remote = out["snaps"][-1]["forms"][0]
+    assert any("camera_on" in json.dumps(b) for b in remote["buttons"])
+    out = run(tmp_path / "plain", [{"cmd": "setup"}, {"tick": 1}, {"answers": []}, {"use": "minecraft:clock"},
+                                   {"forms": True}])
+    assert not any("camera" in json.dumps(b) for b in out["snaps"][-1]["forms"][0]["buttons"])
+
+
+def test_camera_turned_on_while_stopped_starts_when_playing(tmp_path):
+    """止めている間に camera を実行しても、再生を始めたらカメラの視点になる (実機 2026-11-23: 消えていた)。"""
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 1}, {"cmd": "stop"}, {"tick": 1}, {"cmd": "mmdcamera"}, {"tick": 5},
+                         {"cmd": "start"}, {"tick": 5}], videos=[CAMERA_VIDEO])
+    assert any("camera_waiting" in m for m in out["log"]["playerMessages"])
+    assert any(c[0] == "minecraft:free" for c in out["log"]["cameras"])

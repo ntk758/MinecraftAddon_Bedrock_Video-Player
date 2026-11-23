@@ -446,6 +446,8 @@ def image_mode_size(width: int, height: int) -> tuple[int, int]:
     return IMAGE_MODE_WIDTH, min(tex_height, IMAGE_MODE_WIDTH * 4)
 # MMD のモデル。追加するときに踊り (.vmd) も選び、作るときに立体のアニメ (.vox) にする
 PMX_SUFFIX = ".pmx"
+# 止まった画像 (ブロックアート) の拡張子 (動画リストの「種類」の欄)
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 # MMD の人物の高さ (ブロック) の上限。高すぎると重い (実機で高さ 56 は 10 fps、96 は重すぎた)
 MMD_MAX_HEIGHT = 64
 # だまし絵のときの上限。MMD のモデルは表面だけの殻で、髪やスカートの薄い板が多く、見える面が同じ高さの手作りの
@@ -787,7 +789,8 @@ class PackBuilderApp(tk.Tk):
         self.wizard = None
         self._build_ui()
         for row in videos:
-            self.video_tree.insert("", "end", values=row)
+            # 「種類」の欄は新しい言語で書き直す
+            self.video_tree.insert("", "end", values=(*row[:3], self._kind_label(row[1])))
         if log_text:
             self._append_log(log_text)
         self.title(self.tr("app.title"))
@@ -825,14 +828,18 @@ class PackBuilderApp(tk.Tk):
         video_frame.columnconfigure(0, weight=1)
         video_frame.rowconfigure(0, weight=1)
 
-        cols = ("video_id", "file_path", "thumb_sec")
+        cols = ("video_id", "file_path", "thumb_sec", "kind")
         self.video_tree = ttk.Treeview(video_frame, columns=cols, show="headings", height=5)
         self.video_tree.heading("video_id", text=tr("videos.col_id"))
         self.video_tree.heading("file_path", text=tr("videos.col_path"))
         self.video_tree.heading("thumb_sec", text=tr("videos.col_thumb"))
+        self.video_tree.heading("kind", text=tr("videos.col_kind"))
         self.video_tree.column("video_id", width=120, minwidth=80)
-        self.video_tree.column("file_path", width=400, minwidth=200)
-        self.video_tree.column("thumb_sec", width=100, minwidth=60)
+        self.video_tree.column("file_path", width=360, minwidth=200)
+        self.video_tree.column("thumb_sec", width=80, minwidth=60)
+        self.video_tree.column("kind", width=170, minwidth=90)
+        # MMD の行を 2 回クリックすると、「MMD のダンス」の画面で選び直せる
+        self.video_tree.bind("<Double-1>", self._on_tree_double_click)
         self.video_tree.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=6)
 
         tree_scroll = ttk.Scrollbar(video_frame, orient="vertical", command=self.video_tree.yview)
@@ -841,7 +848,14 @@ class PackBuilderApp(tk.Tk):
 
         btn_frame = ttk.Frame(video_frame)
         btn_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 6))
-        ttk.Button(btn_frame, text=tr("videos.add"), command=self._add_videos).pack(side="left", padx=(0, 4))
+        # 追加するものの種類ごとのボタン (ファイルを選ぶ画面の欄で種類を選ばなくてよいように)
+        ttk.Button(btn_frame, text=tr("videos.add_video"), command=lambda: self._add_files("video")).pack(
+            side="left", padx=(0, 4))
+        ttk.Button(btn_frame, text=tr("videos.add_image"), command=lambda: self._add_files("image")).pack(
+            side="left", padx=4)
+        ttk.Button(btn_frame, text=tr("videos.add_vox"), command=lambda: self._add_files("vox")).pack(
+            side="left", padx=4)
+        ttk.Button(btn_frame, text=tr("videos.add_mmd"), command=self._add_mmd).pack(side="left", padx=4)
         ttk.Button(btn_frame, text=tr("videos.remove"), command=self._remove_selected).pack(side="left", padx=4)
         ttk.Button(btn_frame, text=tr("videos.edit_id"), command=self._edit_video_id).pack(side="left", padx=4)
         ttk.Button(btn_frame, text=tr("videos.edit_thumb"), command=self._edit_thumb_sec).pack(side="left", padx=4)
@@ -1046,51 +1060,69 @@ class PackBuilderApp(tk.Tk):
             language_box.configure(state="disabled")
 
     # --- 動画リスト操作 ---
-    def _add_videos(self) -> None:
+    # 追加のボタンの種類 → (ファイルを選ぶ画面の題名のキー, 種類の名前のキー, 拡張子)
+    ADD_KINDS = {
+        "video": ("dialog.select_videos_title", "dialog.video_files", "*.mp4 *.mkv *.avi *.mov *.webm"),
+        "image": ("dialog.select_images_title", "dialog.image_files", "*.png *.jpg *.jpeg *.webp *.bmp"),
+        "vox": ("dialog.select_vox_title", "dialog.vox_files", "*.vox"),
+    }
+
+    def _add_files(self, kind: str) -> None:
+        """「動画を追加」「画像を追加」「立体 (.vox) を追加」。選ぶ画面には、その種類のファイルだけを出す。"""
+        title, types, patterns = PackBuilderApp.ADD_KINDS[kind]
         paths = filedialog.askopenfilenames(
-            title=self.tr("dialog.select_videos_title"),
-            filetypes=[
-                (self.tr("dialog.video_files"), "*.mp4 *.mkv *.avi *.mov *.webm"),
-                (self.tr("dialog.image_files"), "*.png *.jpg *.jpeg *.webp *.bmp"),
-                (self.tr("dialog.vox_files"), "*.vox"),
-                (self.tr("dialog.mmd_files"), "*.pmx"),
-                (self.tr("dialog.all_files"), "*.*"),
-            ],
+            title=self.tr(title),
+            filetypes=[(self.tr(types), patterns), (self.tr("dialog.all_files"), "*.*")],
         )
         for path in paths:
-            p = Path(path)
-            if p.suffix.lower() == PMX_SUFFIX:
-                # MMD のモデルには踊り (.vmd) が要る
-                motion = filedialog.askopenfilename(
-                    title=self.tr("dialog.select_motion", model=p.name),
-                    filetypes=[(self.tr("dialog.vmd_files"), "*.vmd"), (self.tr("dialog.all_files"), "*.*")],
-                )
-                if not motion:
-                    continue
-                self.mmd_motions[str(p)] = motion
-                self._ask_mmd_glass(p)
-            self.add_video_path(p)
+            if Path(path).suffix.lower() == PMX_SUFFIX:
+                # MMD は「MMD のダンスを追加」から (ダンスなどを一緒に選ぶ)
+                self._add_mmd({"pmx": str(path)})
+                continue
+            self.add_video_path(path)
 
-    def _ask_mmd_glass(self, model: Path) -> None:
-        """MMD のモデルを、画像モードのガラスケースの人物 (骨で動かす。image_mode/rig_anim.py) にもするかを聞く。
-        するなら、一緒に鳴らす曲と、ケースの奥の壁の絵を選ぶ (どちらも無くてよい)。画像モードのアドオンを作るようにする。"""
-        self.mmd_glass.pop(str(model), None)
-        if not messagebox.askyesno(self.tr("dialog.mmd_glass_title"), self.tr("dialog.mmd_glass_ask", model=model.name)):
+    def _add_mmd(self, initial: dict | None = None, iid: str | None = None) -> None:
+        """「MMD のダンスを追加」の画面を開き、選んだものを動画リストに足す (iid があれば、その行を選び直す)。"""
+        from gui_mmd import MmdDialog
+        dialog = MmdDialog(self, self.tr, initial)
+        self.wait_window(dialog)
+        if dialog.result is not None:
+            self.apply_mmd_settings(dialog.result, iid)
+
+    def apply_mmd_settings(self, settings: dict, iid: str | None = None) -> str:
+        """「MMD のダンス」の画面で選んだもの (gui_mmd の設定) を、動画リストの行にする。動画 ID を返す。"""
+        from gui_mmd import glass_settings
+        model = str(Path(settings["pmx"]))
+        self.mmd_motions[model] = settings["motion"]
+        self.mmd_glass[model] = glass_settings(settings)
+        if iid is not None and iid in self.video_tree.get_children():
+            values = self._row(iid)
+            self.video_tree.item(iid, values=(values[0], model, values[2], self._kind_label(model)))
+            return values[0]
+        return self.add_video_path(model)
+
+    def _on_tree_double_click(self, event) -> None:
+        iid = self.video_tree.identify_row(event.y)
+        if not iid:
             return
-        song = filedialog.askopenfilename(
-            title=self.tr("dialog.select_song", model=model.name),
-            filetypes=[(self.tr("dialog.audio_files"), "*.wav *.mp3 *.ogg *.m4a *.flac"),
-                       (self.tr("dialog.all_files"), "*.*")],
-        )
-        picture = filedialog.askopenfilename(
-            title=self.tr("dialog.select_case_image"),
-            filetypes=[(self.tr("dialog.image_files"), "*.png *.jpg *.jpeg *.webp *.bmp"),
-                       (self.tr("dialog.all_files"), "*.*")],
-        )
-        self.mmd_glass[str(model)] = {"audio": song or None, "case_image": picture or None}
-        if not self.image_mode_var.get():
-            self.image_mode_var.set(True)
-            messagebox.showinfo(self.tr("dialog.mmd_glass_title"), self.tr("dialog.mmd_glass_image_mode_on"))
+        path = self._row(iid)[1]
+        if Path(path).suffix.lower() != PMX_SUFFIX:
+            return
+        glass = self.mmd_glass.get(path, {})
+        initial = {"pmx": path, "motion": self.mmd_motions.get(path, ""), **glass}
+        self._add_mmd(initial, iid)
+
+    def _kind_label(self, path) -> str:
+        """動画リストの「種類」の欄 (動画・画像・立体・MMD (画像モード / 画像モード + ブロック))。"""
+        suffix = Path(path).suffix.lower()
+        if suffix == PMX_SUFFIX:
+            glass = getattr(self, "mmd_glass", {}).get(str(Path(path)))
+            return self.tr("kind.mmd_both" if glass is None or glass.get("block", True) else "kind.mmd_image")
+        if suffix == VOX_SUFFIX:
+            return self.tr("kind.vox")
+        if suffix in IMAGE_SUFFIXES:
+            return self.tr("kind.image")
+        return self.tr("kind.video")
 
     def _row(self, iid) -> list[str]:
         """動画リストの 1 行 (動画 ID・パス・サムネイルの秒) を文字列のまま返す。Treeview.item()["values"] は数字に見える
@@ -1113,7 +1145,7 @@ class PackBuilderApp(tk.Tk):
             while f"{video_id}_{suffix}" in existing_ids:
                 suffix += 1
             video_id = f"{video_id}_{suffix}"
-        self.video_tree.insert("", "end", values=(video_id, str(p), "0"))
+        self.video_tree.insert("", "end", values=(video_id, str(p), "0", self._kind_label(p)))
         # 最初の 1 本を選んでおく (「動画の縦横比に合わせる」がそのまま使える)
         if len(self.video_tree.get_children()) == 1:
             self.video_tree.selection_set(self.video_tree.get_children()[0])
@@ -1141,7 +1173,7 @@ class PackBuilderApp(tk.Tk):
         if new_id and new_id in self._video_ids(exclude=iid):
             messagebox.showerror(self.tr("edit_id.invalid_title"), self.tr("error.duplicate_id", id=new_id))
         elif new_id and re.fullmatch(r"[a-z0-9_]+", new_id):
-            self.video_tree.item(iid, values=(new_id, values[1], values[2]))
+            self.video_tree.item(iid, values=(new_id, *values[1:]))
         elif new_id:
             messagebox.showerror(self.tr("edit_id.invalid_title"), self.tr("edit_id.invalid"))
 
@@ -1159,7 +1191,7 @@ class PackBuilderApp(tk.Tk):
         if new_sec is not None:
             try:
                 float(new_sec)
-                self.video_tree.item(iid, values=(values[0], values[1], new_sec))
+                self.video_tree.item(iid, values=(values[0], values[1], new_sec, *values[3:]))
             except ValueError:
                 messagebox.showerror(self.tr("edit_thumb.invalid_title"), self.tr("edit_thumb.invalid"))
 
@@ -1363,6 +1395,9 @@ class PackBuilderApp(tk.Tk):
         from mvcodec.mmd import mmd_to_vox
         if not motion or not Path(motion).is_file():
             raise RuntimeError(self.tr("build.mmd_no_motion", path=model))
+        if Path(motion).suffix.lower() == ".bvh":
+            from mvcodec import bvh
+            motion = str(bvh.ensure_vmd(motion, model, output.parent, log=lambda text: self.messages.put("  " + text)))
         self.messages.put(self.tr("build.mmd", height=height))
 
         def progress(done, total):
@@ -1612,6 +1647,11 @@ class PackBuilderApp(tk.Tk):
                         generated_data = temp / f"frames_{video_id}.js"
                         thumbnail = temp / f"thumb_{video_id}.png"
 
+                        glass = entry.get("glass")
+                        if video.suffix.lower() == PMX_SUFFIX and glass and not glass.get("block", True):
+                            # MMD は画像モードの人物が主。ブロックモードの立体は、選んだときだけ作る
+                            self.messages.put(self.tr("build.mmd_image_only", id=video_id))
+                            continue
                         if video.suffix.lower() == PMX_SUFFIX:
                             # MMD: モデルと踊りから立体のアニメ (.vox) を作り、あとは .vox と同じに変換する
                             on_stage = entry.get("anamorphic", anamorphic)
@@ -1729,19 +1769,35 @@ class PackBuilderApp(tk.Tk):
                     # 全部だめなら、最初の失敗をそのまま伝える (よくある失敗の 1 行の説明が出るように)
                     raise failures[0][1]
 
-                self.messages.put(self.tr("build.videos_index"))
-                video_index_entries = build_addon(output, videos, pack_name, namespace, addon_language)
-                self.building_previews = self._write_previews(output, videos)
+                # ブロックモードの動画が 1 本も無い (MMD の人物だけ) なら、画像モードのアドオンだけを作る
+                block_needed = bool(videos)
+                video_index_entries = []
+                if block_needed:
+                    self.messages.put(self.tr("build.videos_index"))
+                    video_index_entries = build_addon(output, videos, pack_name, namespace, addon_language)
+                    self.building_previews = self._write_previews(output, videos)
 
-            if image_mode:
+            # MMD の人物 (画像モードのガラスケース) があれば、画面の「画像モードも作る」が無くても画像モードを作る
+            if image_mode or any(entry.get("glass") for entry in video_entries):
                 # 別ファイルなので、失敗してもブロックモードのアドオンはそのまま。作れなかった動画は入れない
                 _check_cancel(self)
                 failed_ids = {video_id for video_id, _ in failures}
                 image_entries = [entry for entry in video_entries if entry["video_id"] not in failed_ids]
                 image_output = self._build_image_pack(image_entries, output, pack_name, namespace, width, height,
-                                                      duration, ffmpeg)
-                if image_output and self.image_combine_var.get():
+                                                      duration, ffmpeg, image_mode)
+                if image_output and not block_needed:
+                    # 画像モードだけ: 選んだ出力の名前にする (レポートも同じ名前に)
+                    image_output.replace(output)
+                    report = image_output.with_suffix(".report.json")
+                    if report.exists():
+                        report.replace(output.with_suffix(".report.json"))
+                    self.messages.put(self.tr("build.image_only", output=output))
+                    video_index_entries = [{"id": entry["video_id"]} for entry in image_entries
+                                           if image_mode or entry.get("glass")]
+                elif image_output and self.image_combine_var.get():
                     self._combine_image_pack(output, image_output)
+                elif not block_needed:
+                    raise RuntimeError(self.tr("build.image_none"))
             video_names = ", ".join(e["id"] for e in video_index_entries)
             text = self.tr("build.success", output=output, videos=video_names, count=total_videos - len(failures),
                            ns=namespace)
@@ -1772,11 +1828,13 @@ class PackBuilderApp(tk.Tk):
         self.messages.put(self.tr("build.image_combined", output=output))
 
     def _build_image_pack(self, video_entries: list[dict], output: Path, pack_name: str, namespace: str,
-                          width: int, height: int, duration: float | None, ffmpeg: str) -> Path | None:
+                          width: int, height: int, duration: float | None, ffmpeg: str,
+                          include_videos: bool = True) -> Path | None:
         """画像モードのアドオン (convert_image_mode.py) を、ブロックモードの出力の隣に作る。
 
-        .vox と MMD は元の映像のコマが無いので使わない。ただし MMD のモデルで「ガラスケースの人物にもする」を選んだもの
-        (entry の "glass") は、骨で動かす人物にして同じアドオンに入れる (convert_image_mode.build の figures)。
+        .vox と MMD は元の映像のコマが無いので使わない。ただし MMD のモデル (entry の "glass"。「MMD のダンスを追加」で
+        足したもの) は、骨で動かす人物にして同じアドオンに入れる (convert_image_mode.build の figures)。
+        include_videos が偽 (画面の「画像モードも作る」を選んでいない) なら、普通の動画は入れず MMD の人物だけにする。
         テクスチャが予算 (選んだ Tier) を超えるときは、選んだ優先 (画質・なめらかさ・長さ) に合わせて、fps・コマの大きさ・
         長さを image_mode/budget.py が決める (人物とケースのテクスチャを先に引いた残りで)。
         作れなかったときはログに理由を出して None を返す (ブロックモードのアドオンはもうできている)。
@@ -1791,10 +1849,14 @@ class PackBuilderApp(tk.Tk):
                 glass = entry["glass"]
                 figures.append({"id": str(entry["video_id"]), "title": path.stem, "pmx": str(path),
                                 "motion": entry.get("motion"), "audio": glass.get("audio"),
-                                "case_image": glass.get("case_image")})
+                                "case_image": glass.get("case_image"), "face_motions": glass.get("face_motions"),
+                                "physics": glass.get("physics"), "expressions": glass.get("expressions"),
+                                "detail": glass.get("detail"), "camera_motion": glass.get("camera_motion")})
                 self.messages.put(self.tr("build.image_mmd", id=entry["video_id"]))
             elif path.suffix.lower() in (VOX_SUFFIX, PMX_SUFFIX):
                 self.messages.put(self.tr("build.image_skipped", id=entry["video_id"]))
+            elif not include_videos:
+                continue
             else:
                 sources.append((path, str(entry["video_id"])))
         if not sources and not figures:

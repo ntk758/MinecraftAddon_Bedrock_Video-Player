@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Minecraft Bedrock](https://img.shields.io/badge/Minecraft-Bedrock-brightgreen.svg)](https://www.minecraft.net/)
-[![Release v6.41.2](https://img.shields.io/badge/Release-v6.41.2-blue.svg)](#-releases)
+[![Release v6.42.0](https://img.shields.io/badge/Release-v6.42.0-blue.svg)](#-releases)
 [![CI](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml/badge.svg)](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/actions/workflows/ci.yml)
 [![AI Generated](https://img.shields.io/badge/Made%20by-AI-blueviolet.svg)](#)
 
@@ -54,7 +54,7 @@
   <b>How different kinds of footage look</b> (real in-game recordings, Windows 11, v6.37.0): source, block mode (128×72, 20 fps, <code>--flat-areas smooth</code>; <code>off</code> for space) and image mode (256×144, 30 fps). In v6.37.0 the image-mode screen faced sideways for about the first 1.5 s of a play (fixed in v6.37.1), so every clip starts after that point. All footage is CC0, public domain or CC BY from Wikimedia Commons (<a href="docs/images/genres/CREDITS.md">credits and licenses</a>)</sub>
 </p>
 
-**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.41.2.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.41.2.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.41.2-windows-x64.zip` (Python 不要) を使ってください。
+**▶ すぐ試す / Try it now:** [リリースページ](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.42.0.mcaddon` (サンプル映像入り) や `BlockVideoPlayer-sample-3d-v6.42.0.mcaddon` (3D ホログラムのサンプル) をダウンロードしてインポートするだけで再生できます。自分の動画を変換するときは Windows 用の `BlockVideoPlayer-v6.42.0-windows-x64.zip` (Python 不要) を使ってください。
 Download the sample add-on or the Windows app (no Python needed) from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest).
 
 > **画像モード (30 fps のテクスチャ再生、新しい方式)** — Windows 版・ブラウザ版の「画像モードのアドオンも作る」か `convert_image_mode.py` で作れます。ブロックモードと同じ操作 (コマンド・時計のリモコン・音量・シーク・10 言語) に対応し、長い動画では画質・なめらかさ・長さのどれを優先するかを選べます。
@@ -65,7 +65,7 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
 ## 🚀 クイックスタート / Quick start
 
 **A. サンプルを試す (変換は不要・約 3 分) / Try the sample (no conversion)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.41.2.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.41.2.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) から `BlockVideoPlayer-sample-v6.42.0.mcaddon` (平面) か `BlockVideoPlayer-sample-3d-v6.42.0.mcaddon` (3D) をダウンロードし、ダブルクリックで Minecraft (統合版) にインポートします。
    Download a sample `.mcaddon` from the [latest release](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) and double-click it to import it into Minecraft Bedrock.
 2. 新しいワールドを作り、**ビヘイビアーパックとリソースパックの両方** を有効にします (スーパーフラットがおすすめ)。**チートは不要** です (v6.31.0 以前の版はチートが必要)。
    Create a world with **both** the Behavior Pack and the Resource Pack enabled (a superflat world works best). **Cheats are not needed** (versions up to v6.31.0 need cheats).
@@ -75,8 +75,8 @@ Download the sample add-on or the Windows app (no Python needed) from the [lates
    (Since v6.41.0; checked in game on a Windows 11 PC — phones, consoles and multiplayer not yet) Place a **Video Screen** block from the creative inventory (*Items*) and use it to pick and play a video without commands. Up to 16 screens can each play their own video ([Screen System](docs/SCREEN_SYSTEM.md)).
 
 **B. 自分の動画を変換する (Windows) / Convert your own video (Windows)**
-1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.41.2-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
-   Unzip `BlockVideoPlayer-v6.41.2-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
+1. [最新リリース](https://github.com/ntk758/MinecraftAddon_Bedrock_Video-Player/releases/latest) の `BlockVideoPlayer-v6.42.0-windows-x64.zip` を解凍し、`BlockVideoPlayer.exe` を起動します (Python は不要)。**FFmpeg は別に必要** です: `winget install Gyan.FFmpeg` を実行するか、`ffmpeg.exe` を EXE と同じフォルダに置きます。
+   Unzip `BlockVideoPlayer-v6.42.0-windows-x64.zip` and run `BlockVideoPlayer.exe` (no Python needed). **FFmpeg is required separately**: run `winget install Gyan.FFmpeg` or put `ffmpeg.exe` next to the EXE.
 2. 初めて起動すると **はじめてガイド** が開きます (左上のボタンでいつでも開けます): 環境 (FFmpeg・GPU・メモリ・AI の切り抜き・保存先の空き・Minecraft) を自動で調べ、動画を選ぶと勧める設定とアドオンの大きさの見込みを出し、作り終わると「保存先を開く」「Minecraft に読み込む」と再生のコマンドを案内します。ガイドを使わないときは「動画を追加」→「動画の縦横比に合わせる」→「.mcaddon を作成」。画面の **再生負荷の目安** が「重い」なら幅・高さ・fps を下げます。
    Add a video → *Match video aspect ratio* → *Create .mcaddon*. If the **playback load estimate** says *heavy*, lower the size or fps.
 3. できた `.mcaddon` を A の 2〜3 と同じように使います。うまくいかないときは [既知の問題](docs/KNOWN_ISSUES.md) を見てください。
@@ -112,10 +112,10 @@ Python で動かす方法・GPU の設定は [インストールと使い方](#-
 リリースページでは各ファイルの横に SHA-256 が表示されます (`SHA256SUMS.txt` が付いている版はそのファイルにも)。手元のファイルの値と一致すれば、壊れても書き換えられてもいません。
 Each file on the release page shows its SHA-256; it must match the value you compute:
 ```powershell
-Get-FileHash .\BlockVideoPlayer-v6.41.2-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\BlockVideoPlayer-v6.42.0-windows-x64.zip -Algorithm SHA256
 ```
 ```bash
-sha256sum BlockVideoPlayer-v6.41.2-windows-x64.zip
+sha256sum BlockVideoPlayer-v6.42.0-windows-x64.zip
 ```
 
 ### 🖼 画像モード (試作) / Image mode (experimental)
@@ -260,6 +260,9 @@ python video_player_gui.py
    スクリーンは **プレイヤーの足元の高さに、東 (+X) と北 (-Z) 方向へ水平に** 作られます (映像の面が上を向く床置き)。範囲内のブロックは上書きされるので、平らで何もない場所で実行し、上空から見下ろしてください。
    - **テレビのように立てたいとき**: 見たい方向を向いて `/badapple:setup wall` を実行すると、見ている方向の 3 ブロック先に、こちらを向けて立てます。
    - **床置きのまま向きを変えたいとき**: 見たい方向を向いて `/badapple:setup face` を実行すると、足元から前と右へ広がるように置きます (立体・だまし絵もこちらを向きます)。
+   - **天井に貼りたいとき**: `/badapple:setup ceiling` を実行すると、頭の上の最初のブロック (無ければ足元から 4 ブロック上) の高さに、頭の真上に中央をそろえて貼ります。下から見上げたときに正しく見える向きです (平面の動画だけ)。
+   - **置く前の確認**: setup を実行すると、まず置く範囲を緑の粒の枠で見せ、「ここに置く」「90 度回す」「やめる」を選ぶ画面が出ます。確定するまでブロックは変わりません。確認せずにすぐ置くときは `now` を付けます (`/badapple:setup wall now`)。
+   - **手順書の本**: 最初の setup で、コマンドを書いた本 (とリモコンのコンパス) を渡します。なくしたら `/badapple:guide` でもう 1 冊もらえます。
 4. **コンパスを使う** (右クリック / 長押し) とリモコンが開きます。
 
 | リモコンのボタン | 動作 |
@@ -277,11 +280,14 @@ python video_player_gui.py
 | `/badapple:setup` | 現在地にスクリーンを設置 (北向き: 平面は足元から北東へ広がる床置き、立体は 2 ブロック北に南向きで立てる) |
 | `/badapple:setup face` | 見ている方向 (東西南北) に向けて設置 (平面は足元から前と右へ広がる床置き、立体・だまし絵はこちらを向く) |
 | `/badapple:setup wall` | 平面の動画をテレビのように立て、見ている方向の 3 ブロック先にこちらを向けて設置 |
+| `/badapple:setup ceiling` | 平面の動画を頭の上の天井に貼る (下から見上げて見る。立体・だまし絵は立てて置く) |
+| `/badapple:setup now` | (ほかのオプションと組み合わせられる) 置く前の確認 (枠とフォーム) をせずにすぐ置く (v6.41 以前と同じ) |
 | `/badapple:setup align` | (`face`・`wall` と組み合わせられる) スクリーンがまたぐチャンク (16×16 の区画) が一番少なくなるよう、東西・南北に最大 15 ブロックずらして設置 (128×72 で平均 48.6 → 40 チャンク) |
 | `/badapple:start` | 選択中の動画を最初から再生 |
 | `/badapple:list` | 収録動画の一覧 |
 | `/badapple:play <動画ID>` | 指定した動画を再生 |
 | `/badapple:remote` | リモコン画面を開く |
+| `/badapple:guide` | コマンドを書いた手順書の本をもらう (リモコンのコンパスを持っていなければそれも) |
 | `/badapple:stop` | 停止してスクリーンを単色で塗りつぶす (立体は空気にして消す) |
 | `/badapple:render auto\|rect\|list\|block` | 描画方式を切り替える (既定 `auto`。下の「描画方式」を参照) |
 | `/badapple:bench` | スクリーンの範囲で置き方ごとの速さを計り、`auto` が使う費用 (1 回あたり・1 ブロックあたり) を求めてワールドに保存 |
@@ -333,8 +339,18 @@ GUI の **表示モード** で立体の作り方を選び、**奥行き (ブロ
 - 正しく見えるのは、舞台の中央に一番近いプレイヤー 1 人の目からだけです (他の人には床と壁に描いた絵に見えます)。箱の中か手前から見てください。箱の外の横に回ると、描き直しを止めます。
 - 舞台は人物より大きくなります (例: 高さ 56・幅 32・奥行き 20 の人物で、幅 118・奥行き 51・壁の高さ 84 ブロック)。人物の高さは 64 くらいまでがおすすめです (実機で高さ 56 は 10 fps、96 は重すぎた)。
 - `scripts/make_demo_dancer.py` で、試しに使える踊る人物の `.vox` を作れます。
-- **MMD のモデルを踊らせる**: 動画リストに MMD のモデル (`.pmx`) を追加すると、踊り (`.vmd`) を選ぶ画面が出ます。作るときにモデルと踊りから立体のアニメを作り、ほかの立体と同じように再生します (だまし絵にもできます)。人物の高さは GUI の「高さ」(64 ブロックまで。だまし絵では 40 ブロックまで。髪やスカートの薄い面が多く、手作りの立体より重いため)。**「MMD を高解像度で (エクストリーム)」** にチェックを入れると、128 ブロックまで (だまし絵は 80 ブロックまで) にでき、顔や服の細かい所まで出ます。ただしとても重く、だまし絵で高さ 64 は 1 フレーム約 130 ms (7 fps くらいまで)、80 は実機で約 220 ms (4 fps くらいまで。サーバーの TPS も 15 くらいに落ちます) です (作るときに処理ログに見込みが出ます)。踊りがステージを歩き回っても、その場で踊ります。IK と付与は計算しますが、物理 (揺れる髪・スカート) と表情 (モーフ) は使いません。踊りは 20 分まで (長さを決めると、その長さだけ作ります)。モデルと踊りは、作者の利用規約で許された範囲で使ってください (コマンドラインは `python scripts/mmd_to_vox.py model.pmx dance.vmd out.vox --height 56`。移動を残すなら `--keep-travel`)。
-  - **画像モードのガラスケースの人物にもする (試作)**: 踊りを選んだ後に「ガラスケースの人物にもしますか」と聞かれます。「はい」なら、一緒に鳴らす曲とケースの奥の壁の絵を選び (どちらも無くてよい)、画像モードのアドオンに、骨で動かす人物をケース付きで入れます。1 曲を通しても軽く、どの向きから見ても立体に見えます。作るのに数分かかります。PC の実機で、1 曲を通しても音と動きがずれないことを確かめました (スマートフォンと 2 人で見たときは未確認。[docs/IMAGE_MODE.md](docs/IMAGE_MODE.md) の「MMD の人物を骨で動かす」)。
+- **追加するものの種類は、動画リストの下のボタンで選びます**: 「動画を追加」「画像を追加」「立体 (.vox) を追加」「MMD のダンスを追加」。一覧の「種類」の欄に、何をどう作るかが出ます。
+- **MMD のダンス (画像モードが主)**: 「MMD のダンスを追加」を押すと、1 つの画面でモデル (`.pmx`)・ダンス (`.vmd`、またはモーションキャプチャの `.bvh`)・表情と口 (`.vmd`、なくてよい、複数可)・曲・ケースの奥の絵を選べます。MMD の人物は、いつも **画像モードのガラスケースの人物** (骨で動かす。1 曲を通しても軽い) になります。ブロックモードの立体は「ブロックモードの立体も作る」にチェックを入れたときだけ作ります。一覧の行を 2 回クリックすると選び直せます。
+  - **細かさ**: 標準 (高さ 256 ボクセル。スマートフォンも)・**高精細 (既定。256 ボクセルで、ボクセルの面 1 つを 2×2 画素にして目や口の細かい所を出す)**・最高 (384 ボクセル、2×2。PC 向け)。
+  - **表情と口**: VMD に表情のキー (まばたき・あいうえお など) があれば動かします。ゲームの geometry は形を変えられないので、目・口などの場所ごとに、表情を数通り (既定 6) の差し替えの板にして、ボーンの大きさで切り替えます。
+  - **髪とスカートの揺れ (物理)**: モデルの剛体とジョイントから、作るときに揺れを計算してボーンのアニメーションに入れます。標準と本格は MMD (Bullet) と同じ考え方の剛体の物理 (剛体の向き・慣性、ジョイントの移動と回転の範囲・ばね、体との当たり) です。揺らさない・軽い (速い簡単な計算)・標準 (既定)・本格 (細かく刻み、物理で動く所どうしも当たる。作るのに時間がかかる) から選べます。Bullet と全く同じ動きにはなりません。
+  - **カメラ**: VMD にカメラがあれば (カメラだけの VMD も「カメラ」の欄で選べる)、アドオンに入れます。ゲームの中で `/<名前空間>:mmdcamera` かリモコンの「カメラの視点で見る」で、そのプレイヤーの視点が MMD のカメラの動きになります (もう一度で元の視点)。
+  - **モーションキャプチャ (.bvh)**: CMU のモーションキャプチャのデータベースなどの BVH を、モデルの骨の向きに合わせて移し替えます (足は IK のまま)。コマンドラインは `python scripts/bvh_to_vmd.py dance.bvh model.pmx dance.vmd`。
+  - 画像モードのコマンドライン: `python convert_image_mode.py model.pmx --motion dance.vmd --face-motion lip.vmd --audio song.wav --case --figure-detail high --physics standard -o out.mcaddon` (表情を止めるなら `--no-expressions`、揺れを止めるなら `--physics off`)。
+- **MMD のモデルをブロックモードで踊らせる** (「ブロックモードの立体も作る」を選んだとき): 作るときにモデルと踊りから立体のアニメを作り、ほかの立体と同じように再生します (だまし絵にもできます)。人物の高さは GUI の「高さ」(64 ブロックまで。だまし絵では 40 ブロックまで。髪やスカートの薄い面が多く、手作りの立体より重いため)。**「MMD を高解像度で (エクストリーム)」** にチェックを入れると、128 ブロックまで (だまし絵は 80 ブロックまで) にでき、顔や服の細かい所まで出ます。ただしとても重く、だまし絵で高さ 64 は 1 フレーム約 130 ms (7 fps くらいまで)、80 は実機で約 220 ms (4 fps くらいまで。サーバーの TPS も 15 くらいに落ちます) です (作るときに処理ログに見込みが出ます)。踊りがステージを歩き回っても、その場で踊ります。IK と付与は計算しますが、ブロックモードの立体では物理 (揺れる髪・スカート) と表情 (モーフ) は使いません (画像モードの人物では使います)。踊りは 20 分まで (長さを決めると、その長さだけ作ります)。モデルと踊りは、作者の利用規約で許された範囲で使ってください (コマンドラインは `python scripts/mmd_to_vox.py model.pmx dance.vmd out.vox --height 56`。移動を残すなら `--keep-travel`)。
+  - **画像モードのガラスケースの人物**: 1 曲を通しても軽く、どの向きから見ても立体に見えます。作るのに数分かかります。PC の実機で、1 曲を通しても音と動きがずれないことを確かめました (スマートフォンと 2 人で見たときは未確認。表情の差し替え・揺れ・高精細は、まだ実機で確かめていません。[docs/IMAGE_MODE.md](docs/IMAGE_MODE.md) の「MMD の人物を骨で動かす」)。
+  - **人物の段**: `--figure-preset mobile|standard|high|ultra|experimental|extreme` (64〜512 ボクセル)。PC での重さと見た目の比べは [docs/research/mmd_dual_path_benchmark_2026-11.md](docs/research/mmd_dual_path_benchmark_2026-11.md)。
+- **MMD を動画に描く (Rendered Mode、試作)**: `python scripts/render_mmd.py --pmx model.pmx --motion dance.vmd --audio song.wav --preset standard -o dance.mp4` で、表情・カメラ・物理・輪郭線つきの MP4 (480p〜4K) を PC で描きます。途中で止めても続きから描けます。`--addon dance.mcaddon --subpack-tiers 2,5` で画像モードのアドオンにもできますが、画像モードは全部のコマをメモリに読むので、Minecraft の中では Tier の予算に入る大きさ・長さに縮みます (720p 30 fps のまま入るのは Tier 5 で約 7 秒)。詳しくは [docs/IMAGE_MODE.md](docs/IMAGE_MODE.md) の「MMD を描いた動画」。Minecraft の中では未確認です。
 - **動画の人物を切り抜いてだまし絵に**: 表示モード「人物を切り抜いて立体に (AI)」を選ぶと、AI (torchvision の DeepLabV3 MobileNetV3-Large、BSD-3、初回に約 42 MB をダウンロード) が各フレームの人物を切り抜き、その形を丸くふくらませた立体にします。「だまし絵」にチェックを入れると、人物を消した元の映像を後ろの壁に流し (音声もその映像のもの)、その前に人物が立ちます。だまし絵の立体は長い辺 80 ブロックまでに縮めます (大きいと舞台と背景の映像が広がって重くなるため。128 × 128 で試したら実機で 3 fps に落ちました)。人物が大きく映った実写の映像が向いています (アニメや 3DCG では形が崩れやすい)。**アニメ・イラストの映像は表示モード「アニメの人物を切り抜いて立体に (AI)」** を使ってください: アニメ向けのモデル (skytnt/anime-seg、Apache-2.0、初回に約 176 MB をダウンロード、GPU があれば使う) が髪や手の先まで切り抜きます。それでも人物を見つけないフレーム (3DCG の強い照明・全身が小さく映った場面) は、GPU があれば「目立つ物」を切り抜くモデル (BiRefNet_lite、MIT、初回に約 115 MB) で切り抜き、写真向けのモデルが人物らしいと見る塊だけを残します (字幕や光の筋は落とします)。GPU が無ければ写真向けのモデルを使います。切り抜きは元の縦横比のまま長い辺 640 で行い、人物を消した映像もその大きさで後ろの壁に流します。切り抜きは別のプロセスで行い、始める前に空きメモリ (RAM・GPU) を調べて重さを選びます (3DCG 用の補助モデル (BiRefNet) を使う一番重い段階 (full) には、空きの RAM 12 GiB と空きの VRAM 12 GiB が要ります。測った 1 機種 (VRAM 16 GB) では最初の推論で VRAM を約 11 GB 使いました。足りない GPU では full を選ばず、補助モデルなしの GPU の段階になります)。メモリが足りずに止まったり落ちたりしたら、GPU の補助モデルなし → CPU → 写真向けのモデルの順に軽くしてやり直します。補助モデルは、動かしている途中でも、メモリ不足のとき・遅いとき (直近 5 回の推論の中央値が 600 ms を超えたとき。GPU のメモリがあふれると、エラーにならずに遅くなるため) ・実行中に失敗したときは自動で外し、写真向けのモデルだけで続けます (そのフレームはやり直します)。処理中に空きの RAM が 400 MB を切ったら止めて、PC 全体が固まらないようにします。アニメ向けのモデルが人物を見つけないフレームは、前後 6 フレームを先読みして、同じ場面の近いフレームで埋めたり、予備のモデルの結果を近くの人物の大きさと位置に合わせたりして安定させます (人物の範囲が 1 フレームだけ消える・別物になるちらつきが減ります。代わりに切り抜きの出力と進み具合が 6 フレーム遅れます)。予備の結果が大きすぎる・近くの人物と離れているときは採らず、そのフレームを空にします。アニメ向けのモデルを取得できないとき (ダウンロードの失敗など) は、写真向けのモデルで続けます。写真向けのモデルも取得できないときは、その旨を知らせて止めます。切り抜きの経過と結果のまとめは処理ログに数行出し、くわしい記録 (子プロセスの出力すべてと統計) は `%LOCALAPPDATA%/BlockVideoPlayer/logs/` に新しい 10 個だけ残します (入力の動画の場所が書かれるので、人に送るときは確かめてください。読み方は [docs/TESTING.md](docs/TESTING.md) の 2.2)。空きメモリの閾値は 1 機種の実測なので、環境変数 `BVP_PROFILE_NEEDS_GB` (例 `full=12:12,gpu=2:1`。段階ごとの空き RAM:VRAM を GiB で) と `BVP_MIN_FREE_RAM_MB` (処理中に止める空き RAM を MB で。0 で見張らない) で変えられます。動画ごとに写真向けかアニメ向けかを自動で選ぶことはしません。表示モードで選んでください (理由は [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md))。ブラウザ版にはありません (PyTorch が使えないため。コマンドラインは `scripts/make_person_videos.py` と `convert.py --mask-video`)。
 - **後ろの壁に背景の映像を流す**: GUI (ブラウザ版も) の「だまし絵の背景の映像」に動画を選ぶと、その映像を後ろの壁いっぱいに (はみ出した所は切って) 流し、その前で人物が踊ります。音声は背景の映像のものを鳴らし、背景の映像の方が長ければ人物のアニメを繰り返します。背景の映像はアドオンの中で人物の動画 ID + `_bg` の動画になり、一覧には出ません (コマンドラインでは、後ろの壁の大きさの平面の動画を `--fit cover` で作り、人物の変換に `--stage-background <その動画 ID>` を付けます)。
 
@@ -379,6 +395,7 @@ A tool that converts video files (MP4, etc.) into Minecraft blocks and builds a 
 - 🧱 **Batched placement**: same-colour changes are placed as boxes (`fillBlocks`) or per-colour position lists, cutting API calls from hundreds–thousands per frame to **a few–a few hundred**; keyframes only re-place blocks that changed. `/scriptevent <prefix>:bench` measures the placement methods on your device and `:stats` reports playback fps, late frames and how far the video lags behind real time ([performance](docs/PERFORMANCE.md))
 - 🎯 **Easy setup**: one click sets a width × height matching the video's aspect ratio (no black bars); the GUI shows a playback load estimate and explains invalid settings field by field
 - ⚡ **GPU conversion** on NVIDIA (CUDA), AMD (ROCm / DirectML) and Intel (DirectML); CPU works too
+- 🎭 **MMD (experimental)**: an MMD model (`.pmx`) with a dance (`.vmd` / `.bvh`) becomes a figure moved by Bedrock bone animation in image mode (light enough for a whole song; detail presets `--figure-preset mobile…extreme`, 64–512 voxels), or is **rendered to an MP4** on the PC (`scripts/render_mmd.py`, 480p–4K, expressions, camera, physics, outlines, resumable) that can go into an image-mode add-on with one size per texture tier (`--subpack-tiers`). Image mode loads every frame into texture memory, so a rendered video is shrunk to fit the tier budget in game (720p at 30 fps fits about 7 seconds at Tier 5). Not yet tested in game.
 - 🌐 **10 languages**: Japanese, English, Simplified/Traditional Chinese, Korean, Spanish, Portuguese (Brazil), French, German, Russian — in the GUI (selector at the top right) and in game (chat messages and the remote follow each player's Minecraft language)
 
 ### 💻 Requirements
@@ -676,6 +693,7 @@ This project is licensed under the [MIT License](LICENSE).
 すべての版の変更点は [CHANGELOG.md](CHANGELOG.md) にあります / Full history: [CHANGELOG.md](CHANGELOG.md).
 
 
+- **v6.42.0**: 置く前に場所と向きを確かめる setup (粒の枠と確かめの画面)・手順書の本・天井に貼る setup ceiling。画像モードの MMD の人物を表情・口・髪とスカートの揺れ・カメラ・BVH つきに (試作)。MMD を動画に描く scripts/render_mmd.py と、Tier ごとの大きさのサブパック (試作)。
 - **v6.41.2**: 壊れた .vox で、生のエラーではなく理由を出す。画像モードで SIZE の外のボクセルがある .vox を変換できる。既知の問題・ストアの文・ブラウザ版の説明 (チート・利用数) とパックの変更履歴を直した (外部の監査の #210〜#216)。
 - **v6.41.1**: v6.41.0 の Windows 版 (EXE) の画面で .mcaddon を作れなかったのを直した。外部の監査の 51 件 (途中で切れた・壊れた動画、アナモルフィックの動画、引数の範囲、リモコンとスクリーンブロックの権限、ブラウザ版の止まる・中止 など) を直した。
 - **v6.41.0**: スクリーンブロック (ビデオスクリーン) を追加。置いて使うと動画を選んで再生でき、16 個まで置けて 4 個まで同時に再生できる (PC の実機で確認)。くり抜いたカボチャでゴーレムができて画面が崩れるのを直した。リモコンのシークの絵を直した。

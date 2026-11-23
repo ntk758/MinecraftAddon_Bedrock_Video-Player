@@ -9,7 +9,7 @@
 
 動画を Minecraft 統合版のアドオン (`.mcaddon`、ビヘイビアーパックとリソースパック) に変換して、ゲーム内で再生するツールとアドオンです。
 
-- **最新バージョン**: `v6.41.2` (版の唯一の管理場所は `pack_metadata.py` の `PACK_VERSION`)
+- **最新バージョン**: `v6.42.0` (版の唯一の管理場所は `pack_metadata.py` の `PACK_VERSION`)
 - **アドオン**:
   - `@minecraft/server` 2.6.0 / `@minecraft/server-ui` 2.0.0 (安定版の API だけ)
   - `min_engine_version` 1.26.10

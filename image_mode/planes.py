@@ -278,7 +278,7 @@ def quad_cube(quad: Quad, place: Placement, placing: Placing, mapping: FaceMappi
     return {
         "origin": [_num(v) for v in lo],
         "size": [_num(h - l) for l, h in zip(lo, hi)],
-        "uv": {FACE_OF_AXIS[quad.axis]: {"uv": [place.x, place.y], "uv_size": [quad.width, quad.height]}},
+        "uv": {FACE_OF_AXIS[quad.axis]: {"uv": [place.x, place.y], "uv_size": [int(quad.image.shape[1]), int(quad.image.shape[0])]}},
     }
 
 

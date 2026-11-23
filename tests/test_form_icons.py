@@ -20,6 +20,7 @@ VANILLA_TEXTURES = {
     "textures/items/item_frame",
     "textures/items/paper",
     "textures/items/repeater",
+    "textures/items/spyglass",
 }
 
 

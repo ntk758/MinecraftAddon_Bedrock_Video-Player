@@ -124,6 +124,25 @@
 - **大きさは整数倍 (1〜4 倍)**。平面の動画で、盤面の差で置く形式 (v4〜v6) だけ。1 マスを scale×scale のブロックで置く (`VideoPlayer` の `placeCell`・`scaledCellCorner`)。scale が 1 なら、置き方は以前とまったく同じ。
 - **画像モードはスクリーンブロックにつながない**: 画像モードは別のパック・別のスクリプトで、1 画面ぶんのグローバルな状態を持つ。1 つのブロックから両方を操作する安定した手段が無いので、土台 (`screen_system.js`) を描画方式に依存しない形にしておき、画像モードのパックに同じ土台と画像モードのレンダラーを入れるのを次の段階にした (docs/SCREEN_SYSTEM.md の 6 章)。
 
+### ✅ A23. Rendered Mode の描き手は numpy のソフトウェアラスタライザー (2026-11-23)
+- **問題**: PMX・VMD を高解像度の動画に描く描き手が要る。候補は Blender + MMD Tools、OpenGL (moderngl・pyrender)、自作。
+- **調べたこと**: 開発の PC (Windows 11・Intel 24 コア・RX 9070 XT) に Blender・MMD Tools・MMD は無く、Python に OpenGL の束 (moderngl・pyrender・PyOpenGL) も
+  numba も無い。入れて確かめていない物を「対応」とは書かない、新しい依存を増やさない、という条件がある。
+- **決めたこと**: numpy だけで三角形を描く (`mvcodec/mmd_render.py`)。姿勢・IK・物理・モーフ・カメラは、すでにある `mvcodec.mmd` と
+  `image_mode.rig_anim.PosedDance` をそのまま使う (骨で動かす人物と同じ動き)。コマは ProcessPoolExecutor で並べて描く
+  (R4 で退けたのは、大きなコマの配列を渡す動画の変換。ここで渡すのは姿勢の行列 (数十 KB) だけで、絵は子プロセスがファイルに書く)。
+- **わかっている違い**: セルフシャドウ・材質モーフ・UV モーフ・MME は描かない。共有トゥーンは近似。Blender の描き手は、入っている環境で確かめてから足す。
+
+### ✅ A24. 端末ごとの大きさは RP のサブパック (memory_tier) で分ける (2026-11-23、実機は未確認)
+- **問題**: 画像モードは全部のコマをテクスチャとして読み込むので、端末のメモリ (Tier) によって入る大きさが違う。端末を見分ける Script API は無い。
+- **調べたこと**: Microsoft Learn「Building Sub-Packs」: `subpacks` の `memory_tier` (1 つ 250 MB の RAM) か、試験中 (manifest V3) の
+  `memory_performance_tier` (1〜5) で、端末に合う一番上のサブパックが選ばれ、プレイヤーも変えられる。サブパックのファイルは本体を上書きする。
+  「Texture Budgets」は、テクスチャをいつ読み込むかを書いていない。
+- **決めたこと**: `--subpack-tiers` で Tier ごとに大きさを変えたシートと entity・geometry・render controller だけをサブパックに入れ、fps・長さ・音声・BP は共通。
+  `memory_tier` は表の RAM の下限 (Tier 2 → 12、3 → 18、4 → 24、5 → 32) で、一番下は 0。試験中の `memory_performance_tier` は書かない。
+- **実機 (Windows の PC、2026-11-23)**: パックの設定に「解像度」のスライダーが出て、既定は一番上の Tier 5。Tier 2 に変えると、サブパックの entity・geometry・シートの粗い絵になった。どちらも 30 fps で最後まで流れた。スクリプトはどのサブパックかを知れないので、stats は Tier の大きさの幅を出す (`image_videos.js` の `sizes`)。
+- **まだ確かめていないこと**: スマートフォン・コンソールで下の Tier が自動で選ばれること、メモリ、使っていないエンティティのテクスチャが読み込まれないか (時間で分けたチャンクでメモリを減らせるか)。
+
 ## 2. 不採用・却下された決定事項 (Rejected)
 
 ### ❌ R1. Rectangle Merge (2D矩形結合アルゴリズム)
