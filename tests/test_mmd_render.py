@@ -11,7 +11,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -93,7 +92,6 @@ def test_model_left_is_on_the_viewers_right(tmp_path):
     skin = best[0]
     camera = front_camera(scene, skin)
     image = draw(scene, camera, skin)
-    head_row = None
     body = ~background(image)
     rest_image = draw(scene, camera)
     rest_rows = np.nonzero((~background(rest_image)).any(axis=1))[0]

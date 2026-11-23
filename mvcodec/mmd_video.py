@@ -370,6 +370,9 @@ def render_video(job: VideoJob, log=print) -> dict:
             results = (_render_one(task(i)) for i in todo)
             executor = None
         else:
+            # 子プロセスの numpy が CPU の数だけスレッドを作ると、プロセスを並べたときに取り合って遅くなる
+            for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+                os.environ.setdefault(name, "1")
             executor = ProcessPoolExecutor(max_workers=jobs, initializer=_worker_init,
                                            initargs=(job.pmx, job.stage, settings, job.background_image))
             results = executor.map(_render_one, (task(i) for i in todo), chunksize=1)
