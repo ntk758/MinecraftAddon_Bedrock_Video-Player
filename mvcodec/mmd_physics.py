@@ -655,7 +655,7 @@ class RigidPhysics:
             else:
                 self._frame(self.targets, now)
             self.targets = now
-            return self._result(now)
+            return self._result(now, g_rot, g_pos)
         return run
 
     # --- 1 コマ ---
@@ -813,20 +813,41 @@ class RigidPhysics:
         moved = hits > 0
         self.x[moved] += move[moved] / hits[moved, None]
 
-    def _result(self, now):
-        """物理で動く剛体のボーンの {ボーン: (回転, 位置)}。種類 2 は位置をボーンのまま (親から決まる所) にする。"""
-        out = {}
+    def _result(self, now, g_rot=None, g_pos=None):
+        """物理で動く剛体のボーンの {ボーン: (回転, 位置)}。種類 2 は位置をボーンのまま (親から決まる所) にする。
+
+        向きは物理のまま、位置は親のボーン (物理の結果か、物理の前の姿勢) から決める。ボーンは親とつながったまま動くので、
+        剛体のジョイントを直しきれなかった分で節の間が離れて見えないようにする (standard で揺れの途中に 0.19 離れていた。2026-11-23)。
+        """
+        found = {}
         for k in np.flatnonzero(self.dynamic & (self.bone >= 0)):
             bone = int(self.bone[k])
-            if bone in out:
+            if bone in found:
                 continue
             rotation = _normalize_quat(quat_mul(self.q[k], quat_conj(self.offset_q[k])))
             if self.mode[k] == mmd.RIGID_PHYSICS_BONE_POSITION:
                 position = now[2][k]
             else:
                 position = self.x[k] - quat_rotate(rotation, self.offset_x[k])
+            found[bone] = (rotation, position)
+        if g_rot is None or g_pos is None:
+            return found
+        rest, parent = self.poser.rest, self.poser.parent
+        out = {}
+        for bone in sorted(found, key=self._depth):
+            rotation, position = found[bone]
+            p = parent[bone]
+            if p >= 0:
+                p_rot, p_pos = out[p] if p in out else (g_rot[p], g_pos[p])
+                position = p_pos + quat_rotate(p_rot[None], (rest[bone] - rest[p])[None])[0]
             out[bone] = (rotation, position)
         return out
+
+    def _depth(self, bone):
+        depth, p = 0, self.poser.parent[bone]
+        while p >= 0:
+            depth, p = depth + 1, self.poser.parent[p]
+        return depth
 
 
 def Physics(model, poser, preset: Preset | str = DEFAULT_PRESET, frame_rate: float = FRAME_RATE):

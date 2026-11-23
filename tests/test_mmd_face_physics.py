@@ -105,11 +105,13 @@ def test_hair_hangs_down_when_leaning_back(doll, preset):
     tip = tip_positions(skins, bone)[-1]
     direction = (tip - root) / np.linalg.norm(tip - root)
     assert direction[1] < -0.95                      # ほぼ真下
-    # 節の間 (親の節の先と、子の節の根元) は、1 ボクセル (高精細で約 0.08) より離れない
-    for parent, child, point in (("髪1", "髪2", (0, 13.5, 1.4)), ("髪2", "髪3", (0, 11.5, 1.4))):
-        a = (skins[-1][fixture.INDEX_ALL[parent]] @ np.array([*point, 1.0]))[:3]
-        b = (skins[-1][fixture.INDEX_ALL[child]] @ np.array([*point, 1.0]))[:3]
-        assert np.linalg.norm(a - b) < 0.08
+    # 節の間 (親の節の先と、子の節の根元) は、どのコマでも 1 ボクセル (高精細で約 0.08) より離れない
+    # (最後のコマだけを見ていたときは、揺れの途中で 0.19 離れるコマがあっても通り、CI の Linux では最後のコマで 0.11 になって落ちた)
+    for skin in skins:
+        for parent, child, point in (("髪1", "髪2", (0, 13.5, 1.4)), ("髪2", "髪3", (0, 11.5, 1.4))):
+            a = (skin[fixture.INDEX_ALL[parent]] @ np.array([*point, 1.0]))[:3]
+            b = (skin[fixture.INDEX_ALL[child]] @ np.array([*point, 1.0]))[:3]
+            assert np.linalg.norm(a - b) < 0.08
     rigid_tip = tip_positions(rigid, bone)[-1]
     assert np.linalg.norm(rigid_tip - tip) > 2
 
