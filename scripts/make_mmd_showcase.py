@@ -5,7 +5,7 @@
 - ダンス: CMU のモーションキャプチャ (BVH) を、モデルの骨に移し替える (mvcodec/bvh.py)。
 - 曲: ショーケースの自作の曲 (scripts/make_demo_video.py の music) を、ダンスの長さで作る。
 - 表情: BVH には表情が無いので、まばたきと、曲の拍に合わせた口の開け閉めの VMD をここで作る (モーフ名は --blink・--mouth)。
-- カメラ: 踊る人の周りを 1 周 (--orbit-seconds 秒) ゆっくり回り、少し上下するカメラの VMD を作る (/<名前空間>:camera で見る)。
+- カメラ: 踊る人の周りを 1 周 (--orbit-seconds 秒) ゆっくり回り、少し上下するカメラの VMD を作る (/<名前空間>:mmdcamera で見る)。
 - 人物: 画像モードのガラスケース、細かさ high、物理 standard (--detail・--physics で変えられる)。
 
 素材の規約 (2026-11-22 に確認):

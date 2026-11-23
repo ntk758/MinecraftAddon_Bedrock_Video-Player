@@ -575,6 +575,16 @@ function setVolume(args) {
   notify("volume_set", state.volume);
 }
 
+// サブパック (convert_image_mode の --subpack-tiers) で Tier ごとに大きさが違う動画の [一番小さい, 一番大きい] ("568x320")。
+// どのサブパックが使われているかはスクリプトから分からない (RP を読めない) ので、幅で見せる。サブパックが無ければ null
+// (実機 2026-11-23: Tier 2 を選んでも、一番上の Tier の 1088x612 と出ていた)
+function tierSizes(video) {
+  const sizes = video.sizes ?? [];
+  if (sizes.length < 2) return null;
+  const text = (s) => `${s.width}x${s.height}`;
+  return [text(sizes[0]), text(sizes[sizes.length - 1])];
+}
+
 function showStats() {
   const video = currentVideo();
   if (!video) {
@@ -583,9 +593,12 @@ function showStats() {
   }
   const modeKey = state.mode === PLAYING ? "state_playing" : state.mode === PAUSED ? "state_paused" : "state_stopped";
   const frame = currentFrame(video);
+  const sizes = tierSizes(video);
+  const size = sizes ? { translate: "bvpimg.size_by_tier", with: { rawtext: sizes.map((s) => ({ text: s })) } }
+    : { text: `${video.width}x${video.height}` };
   world.sendMessage({ rawtext: [{ translate: "bvpimg.stats", with: { rawtext: [
     { text: video.id }, { translate: `bvpimg.${modeKey}` }, { text: String(frame) }, { text: String(video.frame_count) },
-    { text: (frame / video.fps).toFixed(1) }, { text: String(video.fps) }, { text: `${video.width}x${video.height}` },
+    { text: (frame / video.fps).toFixed(1) }, { text: String(video.fps) }, size,
     { text: String(state.volume) }, { translate: screenEntity() ? "bvpimg.screen_loaded" : "bvpimg.screen_unloaded" },
   ] } }] });
   // 再生してから、tick が止まっていた・遅すぎたために再生位置に数えなかった時間 (多いときは TPS が 4 を下回っている)
@@ -618,7 +631,7 @@ function runAction(action, args, player) {
     case "volume": setVolume(args); break;
     case "stats": showStats(); break;
     case "remote": showRemote(player); break;
-    case "camera": toggleCamera(player); break;
+    case "mmdcamera": toggleCamera(player); break;
     default: break;
   }
 }
@@ -717,7 +730,9 @@ function showLibrary(player) {
   for (const video of IMAGE_VIDEOS) {
     const rawtext = [{ text: video.title }];
     if (video.id === state.videoId) rawtext.push({ text: " " }, tr("selected_tag"));
-    rawtext.push({ text: "\n" }, tr("library.item", video.frame_count, `${video.width}x${video.height}, ${video.fps} fps`));
+    const sizes = tierSizes(video);
+    const size = sizes ? sizes.join(" - ") : `${video.width}x${video.height}`;
+    rawtext.push({ text: "\n" }, tr("library.item", video.frame_count, `${size}, ${video.fps} fps`));
     form.button({ rawtext });
   }
   form.show(player).then((response) => {
@@ -857,7 +872,9 @@ const COMMANDS = [
   ["remote", "Open the remote control (or use a clock)", null],
   ["method", "Switch the frame method (a or c)", "text"],
   ["list", "List the videos", null],
-  ["camera", "Watch from the MMD camera (run again to stop)", null],
+  // Minecraft に /camera があるので、camera という名前だと短い呼び名が作れず、ワールドを開くたびに警告が出た
+  // (実機 2026-11-23。/list も同じ警告が出るが、v6.33.0 から公開しているので名前は変えない)
+  ["mmdcamera", "Watch from the MMD camera (run again to stop)", null],
 ];
 
 // String の引数は 1 語だけなので、setup face align のように並べられるよう、文字の引数は TEXT_WORDS 個まで受ける

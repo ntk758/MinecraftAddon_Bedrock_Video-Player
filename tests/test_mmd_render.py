@@ -295,7 +295,21 @@ def test_render_mmd_cli_builds_an_addon_with_subpacks(tmp_path):
         assert any(n.startswith(f"RP/subpacks/{tier}/entity/") for n in names)
     assert not any(n.startswith("RP/textures/") for n in names)       # シートはサブパックにだけ
     assert any(n.startswith("RP/sounds/bvp_image/") for n in names)  # 音声は本体に 1 つ
-    assert "BP/scripts/image_videos.js" in names
+    import convert_image_mode
+    with zipfile.ZipFile(addon) as z:
+        _ns, [video] = convert_image_mode.read_image_videos_js(z.read("BP/scripts/image_videos.js").decode("utf-8"))
+    names_of = {s["folder_name"]: s["name"] for s in manifest["subpacks"]}
+    assert [s["tier"] for s in video["sizes"]] == [1, 5]
+    for size in video["sizes"]:
+        assert names_of[f"tier{size['tier']}"] == f"Tier {size['tier']}: {size['width']}x{size['height']}"
+    assert (video["width"], video["height"]) == (video["sizes"][-1]["width"], video["sizes"][-1]["height"])
+
+
+def test_image_videos_js_reads_back():
+    import convert_image_mode as c
+    videos = [{"id": "a", "title": "x, \"y\"\n];", "fps": 29.97, "width": 2}, {"id": "b", "title": "日本語"}]
+    assert c.read_image_videos_js(c.image_videos_js(videos, "bvpimg")) == ("bvpimg", videos)
+    assert c.read_image_videos_js(c.image_videos_js([], "ns")) == ("ns", [])
 
 
 @needs_ffmpeg
@@ -331,7 +345,8 @@ def test_split_subpacks_puts_only_differences_in_subpacks():
     manifest = json.dumps({"format_version": 2, "header": {"name": "x"}}).encode()
 
     def build(tier, size, sheet):
-        files = {"BP/manifest.json": b"bp", "BP/scripts/image_videos.js": f"{tier}".encode(),
+        videos = [{"id": "v", "title": "v, 1", "width": size, "height": size // 2, "tier_mark": tier}]
+        files = {"BP/manifest.json": b"bp", "BP/scripts/image_videos.js": c.image_videos_js(videos, "ns").encode(),
                  "RP/manifest.json": manifest, "RP/texts/en_US.lang": b"same", "RP/pack_icon.png": f"i{tier}".encode(),
                  "RP/sounds/bvp_image/v/chunk_0.ogg": f"ogg{tier}".encode(),
                  "RP/textures/bvp_image/v/sheet_0.png": sheet, "RP/entity/screen_v_a.entity.json": f"e{size}".encode()}
@@ -342,7 +357,11 @@ def test_split_subpacks_puts_only_differences_in_subpacks():
 
     files, subpacks = c.split_subpacks([build(2, 400, b"small"), build(5, 800, b"big")])
     assert files["RP/texts/en_US.lang"] == b"same"
-    assert files["BP/scripts/image_videos.js"] == b"5" and files["RP/pack_icon.png"] == b"i5"
+    assert files["RP/pack_icon.png"] == b"i5"
+    # スクリプトの一覧は一番上の Tier のもので、Tier ごとの大きさ (stats が幅で見せる) を書き足す
+    namespace, [video] = c.read_image_videos_js(files["BP/scripts/image_videos.js"].decode("utf-8"))
+    assert namespace == "ns" and video["tier_mark"] == 5 and video["title"] == "v, 1" and video["width"] == 800
+    assert video["sizes"] == [{"tier": 2, "width": 400, "height": 200}, {"tier": 5, "width": 800, "height": 400}]
     assert files["RP/sounds/bvp_image/v/chunk_0.ogg"] == b"ogg5"       # 音声は本体に 1 つ
     assert "RP/textures/bvp_image/v/sheet_0.png" not in files
     assert files["RP/subpacks/tier2/textures/bvp_image/v/sheet_0.png"] == b"small"

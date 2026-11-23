@@ -243,6 +243,15 @@ def image_videos_js(videos: list[dict], namespace: str) -> str:
     return "\n".join(lines)
 
 
+def read_image_videos_js(text: str) -> tuple[str, list[dict]]:
+    """image_videos_js の逆 ((名前空間, 動画の一覧))。出来たアドオンの一覧に書き足すとき (サブパックの大きさ) に使う。"""
+    lines = text.splitlines()
+    namespace = json.loads(lines[0].removeprefix("export const NAMESPACE = ").removesuffix(";"))
+    start = lines.index("export const IMAGE_VIDEOS = [") + 1
+    end = lines.index("];", start)
+    return namespace, [json.loads(line.strip().removesuffix(",")) for line in lines[start:end]]
+
+
 def build_files(sources: list[dict], *, width: int, height: int, methods: list[str], namespace: str,
                 pack_name: str, max_sheet: int = 2048, gutter: int = 1, max_cells: int = atlas.MAX_CELLS,
                 screen_width: float = 16, audio_chunk_seconds: float = 4, allow_over_budget: bool = False,
@@ -782,10 +791,15 @@ def _build_subpacks(args: argparse.Namespace, inputs: list[Path], ids: list[str]
         args.plan = top[1].plan
         return _write_output(args, distinct[0][2], distinct[0][3], log)
     files, subpacks = split_subpacks([(tier, files, report) for tier, _a, files, report in distinct])
-    report = {**top[3], "subpacks": subpacks}
+    # メモリの警告は一番下のサブパックのもの (上の Tier の「Tier 2 の予算を超える」は、Tier 2 の端末が下のサブパックを
+    # 読むので当てはまらない。端末が自分で選ぶことは、PC の実機でしか確かめていない)
+    report = {**top[3], "subpacks": subpacks, "warnings": distinct[0][3]["warnings"]}
     for entry in subpacks:
         log(f"サブパック tier{entry['tier']}: {entry['width']}x{entry['height']} {entry['fps']:g} fps、"
             f"テクスチャ {entry['mib']} MiB (予算 {budget.TIER_BUDGETS_MB[entry['tier']]} MB)、memory_tier {entry['memory_tier']}")
+    if top[3]["warnings"]:
+        log(f"上の Tier {top[0]} の警告は、tier{top[0]} のサブパックだけのものです。それより小さい端末は、メモリに合う下のサブパックを"
+            "選びます (PC の実機で選べることは確かめた。スマートフォン・コンソールが自分で選ぶことは未確認)")
     args.plan = {"subpacks": subpacks}
     return _write_output(args, files, report, log)
 
@@ -823,6 +837,13 @@ def split_subpacks(builds: list[tuple[int, dict, dict]]) -> tuple[dict, list[dic
                          "handles": report["memory"]["handles"]})
     manifest["subpacks"] = entries
     files["RP/manifest.json"] = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    # スクリプト (BP は 1 つ) にも Tier ごとの大きさを渡す。どれが使われているかはスクリプトから分からないので、
+    # stats は幅で見せる (width・height は一番上の Tier の値のまま)
+    namespace, videos = read_image_videos_js(files["BP/scripts/image_videos.js"].decode("utf-8"))
+    for index, video in enumerate(videos):
+        video["sizes"] = [{"tier": tier, "width": report["videos"][index]["width"],
+                           "height": report["videos"][index]["height"]} for tier, _f, report in builds]
+    files["BP/scripts/image_videos.js"] = image_videos_js(videos, namespace).encode("utf-8")
     return files, subpacks
 
 
@@ -1475,7 +1496,7 @@ def parse_args(argv=None, allow_no_inputs: bool = False) -> argparse.Namespace:
                              help="MMD の人物の表情・口の動き (.vmd)。何個でも。--motion の VMD の表情のキーも使う")
     glass_group.add_argument("--camera-motion", default=None, metavar="VMD",
                              help="MMD の人物のカメラ (.vmd)。無ければ --motion・--face-motion の VMD のカメラを使う。"
-                                  "ゲームの中で /<名前空間>:camera かリモコンで、カメラの視点で見られる")
+                                  "ゲームの中で /<名前空間>:mmdcamera かリモコンで、カメラの視点で見られる")
     glass_group.add_argument("--no-expressions", action="store_true",
                              help="MMD の人物の表情 (まばたき・口) を動かさない")
     glass_group.add_argument("--expression-states", type=_bounded_int(1, 16), default=None,

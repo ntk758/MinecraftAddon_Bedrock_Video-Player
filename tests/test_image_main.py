@@ -321,6 +321,18 @@ def test_stats_reports_the_state(tmp_path):
     assert "demo" in line and "bvpimg.state_playing" in line and "bvpimg.screen_loaded" in line
 
 
+def test_stats_shows_the_size_range_of_subpacks(tmp_path):
+    # サブパックで Tier ごとに大きさが違うと、どれが使われているかスクリプトから分からないので幅で見せる
+    # (実機 2026-11-23: Tier 2 でも一番上の Tier の大きさと出ていた)
+    sized = [{**VIDEOS[0], "sizes": [{"tier": 2, "width": 128, "height": 72}, {"tier": 5, "width": 256, "height": 144}]}]
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "stats"}], videos=sized)
+    [line] = messages(out, "stats")
+    assert "bvpimg.size_by_tier" in line and line.index("128x72") < line.index("256x144")
+    out = run(tmp_path / "plain", [{"cmd": "setup"}, {"tick": 2}, {"cmd": "stats"}])
+    [line] = messages(out, "stats")
+    assert "size_by_tier" not in line and "256x144" in line
+
+
 def test_late_joiner_hears_the_chunk_only_near_its_start(tmp_path):
     out = run(tmp_path, [{"cmd": "setup"}, {"tick": 2}, {"cmd": "start"}, {"tick": 10}, {"join": True},
                          {"tick": 40}, {"join": True}])
@@ -448,8 +460,8 @@ CAMERA_VIDEO = {"id": "dance", "title": "dance", "fps": 20, "frame_count": 41, "
 
 def test_mmd_camera_view_follows_the_dance_and_goes_back(tmp_path):
     """camera で MMD のカメラの視点にする (目と注視点を、スクリーンの向きで世界の座標にする)。もう一度で元に戻る。"""
-    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 1}, {"cmd": "start"}, {"cmd": "camera"}, {"tick": 10},
-                         {"cmd": "camera"}, {"tick": 2}], videos=[CAMERA_VIDEO])
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 1}, {"cmd": "start"}, {"cmd": "mmdcamera"}, {"tick": 10},
+                         {"cmd": "mmdcamera"}, {"tick": 2}], videos=[CAMERA_VIDEO])
     cameras = out["log"]["cameras"]
     moves = [c for c in cameras if c[0] == "minecraft:free"]
     assert len(moves) >= 10 and cameras[-1] == ["clear"]
@@ -466,10 +478,10 @@ def test_mmd_camera_view_follows_the_dance_and_goes_back(tmp_path):
 
 
 def test_mmd_camera_is_cleared_on_stop_and_refused_without_a_camera(tmp_path):
-    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 1}, {"cmd": "start"}, {"cmd": "camera"}, {"tick": 3},
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 1}, {"cmd": "start"}, {"cmd": "mmdcamera"}, {"tick": 3},
                          {"cmd": "stop"}, {"tick": 2}], videos=[CAMERA_VIDEO])
     assert out["log"]["cameras"][-1] == ["clear"]
-    out = run(tmp_path / "plain", [{"cmd": "setup"}, {"tick": 1}, {"cmd": "camera"}, {"tick": 2}])
+    out = run(tmp_path / "plain", [{"cmd": "setup"}, {"tick": 1}, {"cmd": "mmdcamera"}, {"tick": 2}])
     assert out["log"]["cameras"] == [] and any("camera_none" in m for m in out["log"]["playerMessages"])
 
 
@@ -485,7 +497,7 @@ def test_remote_offers_the_camera_only_when_there_is_one(tmp_path):
 
 def test_camera_turned_on_while_stopped_starts_when_playing(tmp_path):
     """止めている間に camera を実行しても、再生を始めたらカメラの視点になる (実機 2026-11-23: 消えていた)。"""
-    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 1}, {"cmd": "stop"}, {"tick": 1}, {"cmd": "camera"}, {"tick": 5},
+    out = run(tmp_path, [{"cmd": "setup"}, {"tick": 1}, {"cmd": "stop"}, {"tick": 1}, {"cmd": "mmdcamera"}, {"tick": 5},
                          {"cmd": "start"}, {"tick": 5}], videos=[CAMERA_VIDEO])
     assert any("camera_waiting" in m for m in out["log"]["playerMessages"])
     assert any(c[0] == "minecraft:free" for c in out["log"]["cameras"])
