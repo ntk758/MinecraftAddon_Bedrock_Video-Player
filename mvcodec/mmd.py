@@ -89,12 +89,16 @@ class PmxModel:
 
     def __init__(self):
         self.positions = None   # (V, 3)
+        self.normals = None     # (V, 3) 法線 (描き手 mvcodec/mmd_render.py が使う)
+        self.edge_scales = None  # (V,) 頂点ごとの輪郭線の太さの倍率
         self.uvs = None         # (V, 2)
         self.bone_indices = None  # (V, 4) int
         self.bone_weights = None  # (V, 4) float
         self.faces = None       # (F, 3) int
         self.textures = []      # 相対パス
-        self.materials = []     # dict(name, diffuse (4,), texture, face_count)
+        # dict(name, diffuse (4,), texture, face_count, specular (3,), shininess, ambient (3,), flags, edge_colour (4,),
+        #      edge_size, sphere, sphere_mode, toon (テクスチャの番号か -1), shared_toon (共有トゥーンの番号 0〜9 か -1))
+        self.materials = []
         self.bones = []         # dict(name, position, parent, layer, flags, append_parent, append_ratio, ik)
         # 表情と物理 (ボーンの後ろ。読めなかったら空のまま、理由は tail_error)
         self.morphs = []        # dict(name, panel, kind, vertices/offsets か members か bones)
@@ -140,12 +144,15 @@ def read_pmx(path):
     # 頂点 1 つは少なくとも 8 個の float・追加 UV・重みの種類・ボーン 1 つ・エッジ倍率
     count = r.count(32 + 16 * extra_uv + 1 + bone_size + 4, "頂点")
     positions = np.zeros((count, 3), np.float32)
+    normals = np.zeros((count, 3), np.float32)
+    edge_scales = np.ones(count, np.float32)
     uvs = np.zeros((count, 2), np.float32)
     indices = np.zeros((count, 4), np.int32)
     weights = np.zeros((count, 4), np.float32)
     for v in range(count):
         values = r.unpack("8f")
         positions[v] = values[0:3]
+        normals[v] = values[3:6]
         uvs[v] = values[6:8]
         if extra_uv:
             r.take(16 * extra_uv)
@@ -166,10 +173,11 @@ def read_pmx(path):
             weights[v] = r.floats(4)
         else:
             raise ValueError(f"未対応の頂点の重みの種類: {kind}")
-        r.take(4)  # エッジ倍率
+        edge_scales[v] = r.float()  # エッジ倍率
     weights_sum = weights.sum(axis=1, keepdims=True)
     weights = np.where(weights_sum > 0, weights / np.maximum(weights_sum, 1e-9), weights)
     model.positions, model.uvs, model.bone_indices, model.bone_weights = positions, uvs, indices, weights
+    model.normals, model.edge_scales = normals, edge_scales
 
     count = r.count(vertex_size, "面の頂点")
     if count % 3:
@@ -188,21 +196,29 @@ def read_pmx(path):
         name = text()
         text()
         diffuse = r.floats(4)
-        r.take(12 + 4 + 12 + 1 + 16 + 4)  # 鏡面色・鏡面係数・環境色・描画の印・エッジの色・エッジの太さ
+        specular = r.floats(3)
+        shininess = r.float()
+        ambient = r.floats(3)
+        flags = r.byte()  # 描画の印 (0x01 両面・0x10 輪郭線 など)
+        edge_colour = r.floats(4)
+        edge_size = r.float()
         texture = index(texture_size)
-        index(texture_size)  # スフィア
-        r.take(1)  # スフィアの種類
-        shared_toon = r.byte()
-        if shared_toon == 0:
-            index(texture_size)
+        sphere = index(texture_size)
+        sphere_mode = r.byte()  # 0 なし・1 乗算・2 加算・3 サブテクスチャ
+        toon, shared = -1, -1
+        if r.byte() == 0:
+            toon = index(texture_size)
         else:
-            r.take(1)
+            shared = r.byte()
         text()  # メモ
         face_count = r.int()
         # 面の頂点の数なので 0 以上の 3 の倍数 (違えば壊れている。黙って割り当てがずれ、色が変わっていた。#184)
         if face_count < 0 or face_count % 3:
             raise ValueError(f"PMX ファイルが壊れています (材質 {name!r} の面の頂点の数 {face_count} が 3 の倍数ではありません)")
-        model.materials.append({"name": name, "diffuse": diffuse, "texture": texture, "face_count": face_count})
+        model.materials.append({"name": name, "diffuse": diffuse, "texture": texture, "face_count": face_count,
+                                "specular": specular, "shininess": float(shininess), "ambient": ambient, "flags": flags,
+                                "edge_colour": edge_colour, "edge_size": float(edge_size), "sphere": sphere,
+                                "sphere_mode": sphere_mode, "toon": toon, "shared_toon": shared})
     used = sum(material["face_count"] for material in model.materials)
     if used > len(model.faces) * 3:
         raise ValueError(f"PMX ファイルが壊れています (材質の面の頂点の数の合計 {used} が、面の頂点の数 {len(model.faces) * 3} "
