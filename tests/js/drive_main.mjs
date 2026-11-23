@@ -37,6 +37,8 @@ import {
   secondPlayer, setBlockSilently, world,
 } from "@minecraft/server";
 
+import { droppedItems, particles } from "@minecraft/server";
+
 const steps = JSON.parse(process.argv[2]);
 let ticks = 0;
 function tick() {
@@ -84,8 +86,21 @@ async function run(n) {
 const SCREEN_BLOCK = "badapple:video_screen";
 for (const step of steps) {
   try {
-    if (step.event) fireScriptEvent(step.event, step.message ?? "");
-    else if (step.command) commandResults.push(runCustomCommand(step.command, ...(step.args ?? [])));
+    if (step.event || step.command) {
+      // setup は既定で置く前の確認 (枠とフォーム) を出す。これまでのテストは確認なしで置く (now) 前提なので now を足す。
+      //   preview: true の手順は確認を出し、ui に積んだ応答 (0 ここに置く・1 回す・2 やめる) で答える
+      const isSetup = (step.event ?? step.command).endsWith(":setup");
+      if (step.ui) uiResponses.push(...step.ui);
+      if (step.event) {
+        const message = isSetup && !step.preview ? `${step.message ?? ""} now`.trim() : step.message ?? "";
+        fireScriptEvent(step.event, message);
+      } else {
+        const args = [...(step.args ?? [])];
+        if (isSetup && !step.preview) args.push("now");
+        commandResults.push(runCustomCommand(step.command, ...args));
+      }
+      if (step.preview) for (let i = 0; i < 10; i++) await Promise.resolve();
+    }
     else if (step.forgetTicking) forgetTicking();
     else if (step.run) await run(step.run);
     else if (step.runUntil) {
@@ -137,6 +152,7 @@ for (const step of steps) {
     } else if ("failZ" in step) options.failZ = step.failZ ?? undefined;
     else if ("unloadedZ" in step) options.unloadedZ = step.unloadedZ ?? undefined;
     else if ("tickingOnly" in step) options.tickingOnly = step.tickingOnly;
+    else if ("inventoryFull" in step) options.inventoryFull = step.inventoryFull;
     else if (step.view) player.viewDirection = { y: 0, ...step.view };
     else if ("y" in step || "x" in step || "z" in step) Object.assign(player.location, step);
     else if (step.snap) snap(step.snap, step.video ?? Object.keys(VIDEOS)[0]);
@@ -154,6 +170,10 @@ process.stdout.write(JSON.stringify({
   commandResults,
   sounds,
   forms,
+  particles: particles.length,
+  particleBox: particles.length === 0 ? null : ["x", "y", "z"].map((k) => [Math.min(...particles.map((p) => p[k])), Math.max(...particles.map((p) => p[k]))]),
+  inventory: (player.inventory?.slots ?? []).filter(Boolean).map((item) => ({ typeId: item.typeId, pages: item.book?.pages ?? null, signed: item.book?.signed ?? null, lore: item.lore })),
+  droppedItems,
   customCommands: [...customCommands.values()].map(({ command }) => command),
   customEnums: Object.fromEntries(customEnums),
   // テストが codec.js の projectToStage を包んで数えた回数 (包んでいなければ null)

@@ -19,7 +19,7 @@ const video = Object.values(VIDEOS)[0];
 const renderArg = process.argv.find((arg) => arg.startsWith("render="));
 if (renderArg) fireScriptEvent("badapple:render", renderArg.slice("render=".length));
 
-fireScriptEvent("badapple:setup");
+fireScriptEvent("badapple:setup", "now");
 fireScriptEvent("badapple:start");
 
 let ticks = 0;

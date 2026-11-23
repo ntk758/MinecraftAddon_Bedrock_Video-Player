@@ -16,7 +16,7 @@ TARGETS = {
     "legacy": {"engine": (1, 21, 80), "server": "1.19.0", "ui": "1.2.0"},
 }
 
-_IMPORTS = 'import { world, system, BlockPermutation, BlockVolume, ListBlockVolume } from "@minecraft/server";\n'
+_IMPORTS = 'import { world, system, BlockPermutation, BlockVolume, ListBlockVolume, ItemStack } from "@minecraft/server";\n'
 
 # v6.31.0 の main.js と同じ、tickingarea コマンドでの常時読み込み (TickingAreaManager は 2.6.0 から)
 _TICKING = '''// 以前の版の区画を外して、tickingarea コマンドで常時読み込みの区画を登録する (旧版向け。上限はワールド全体で 10 区画)
