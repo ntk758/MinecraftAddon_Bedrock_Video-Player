@@ -656,6 +656,7 @@
   "addon.preview_cancel": "取消",
   "addon.preview_canceled": "§7沒有放置。要換個地方，請再次執行 §f/%1setup§7。",
   "addon.setup_ceiling": "§e把螢幕貼在天花板上（朝向：%1）",
+  "addon.setup_unknown_option": "§csetup 中有無法辨識的詞: %1。沒有放置。可用的詞: %2",
   "addon.setup_ceiling_flat_only": "§e立體影片和錯覺影片不能貼在天花板上，會豎立放置。",
   "addon.setup_view_ceiling": "§7螢幕在天花板上。躺下或抬頭往上看即可觀看。",
   "addon.guide_given": "§a已取得說明書。隨時打開就能查看指令。弄丟了請執行 §f/%1guide§a。",

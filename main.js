@@ -2424,13 +2424,21 @@ function alignOriginToChunks(videoData, origin, dimension, layout = DEFAULT_LAYO
  * setup のオプション: align (チャンクにそろえる)、face (見ている方向に向けて置く)、wall (平面の動画を壁のように
  * 立てて、見ている方向に向けて置く)。face も wall も無ければ以前の版と同じ北向き。
  */
+// setup の後ろに書ける言葉。知らない言葉 (書き間違い) があれば、置かずに使える言葉を教える
+const SETUP_OPTIONS = ["face", "wall", "ceiling", "align", "now"];
+
 function setup(player, options = "") {
   if (!globalSelectedVideoId) {
     notify("no_video_selected");
     return;
   }
   const videoData = VIDEOS[globalSelectedVideoId];
-  const words = options.toLowerCase().split(/\s+/);
+  const words = options.toLowerCase().split(/\s+/).filter(Boolean);
+  const unknown = words.filter((w) => !SETUP_OPTIONS.includes(w));
+  if (unknown.length > 0) {
+    notifyPlayer(player, "setup_unknown_option", unknown.join(" "), SETUP_OPTIONS.join(", "));
+    return;
+  }
   // ceiling (天井に貼る) は wall と一緒には使えない。両方あれば天井
   const ceiling = words.includes("ceiling");
   const wall = words.includes("wall") && !ceiling;

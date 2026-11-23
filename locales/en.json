@@ -656,6 +656,7 @@
   "addon.preview_cancel": "Cancel",
   "addon.preview_canceled": "§7Nothing was placed. Run §f/%1setup§7 again to choose another spot.",
   "addon.setup_ceiling": "§ePutting the screen on the ceiling, facing %1",
+  "addon.setup_unknown_option": "§cUnknown word for setup: %1. Nothing was placed. Words you can use: %2",
   "addon.setup_ceiling_flat_only": "§e3D and trick-art videos can't go on the ceiling. They are placed standing up.",
   "addon.setup_view_ceiling": "§7The screen is on the ceiling. Lie down or look straight up to watch it.",
   "addon.guide_given": "§aYou got the guide book. Open it any time to see the commands. Lost it? Run §f/%1guide§a.",

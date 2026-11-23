@@ -656,6 +656,7 @@
   "addon.preview_cancel": "Abbrechen",
   "addon.preview_canceled": "§7Nichts wurde aufgestellt. Führe §f/%1setup§7 erneut aus, um eine andere Stelle zu wählen.",
   "addon.setup_ceiling": "§eDer Bildschirm kommt an die Decke, Richtung %1",
+  "addon.setup_unknown_option": "§cUnbekanntes Wort für setup: %1. Es wurde nichts platziert. Erlaubte Wörter: %2",
   "addon.setup_ceiling_flat_only": "§e3D- und Illusionsvideos können nicht an die Decke. Sie werden aufrecht aufgestellt.",
   "addon.setup_view_ceiling": "§7Der Bildschirm ist an der Decke. Leg dich hin oder schau senkrecht nach oben.",
   "addon.guide_given": "§aDu hast das Anleitungsbuch bekommen. Darin stehen alle Befehle. Verloren? Führe §f/%1guide§a aus.",

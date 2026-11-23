@@ -656,6 +656,7 @@
   "addon.preview_cancel": "やめる",
   "addon.preview_canceled": "§7置きませんでした。別の場所にするときは、もう一度 §f/%1setup§7 を実行してください。",
   "addon.setup_ceiling": "§eスクリーンを天井に貼ります (向き: %1)",
+  "addon.setup_unknown_option": "§csetup に知らない言葉があります: %1。置きませんでした。使える言葉: %2",
   "addon.setup_ceiling_flat_only": "§e立体とだまし絵の動画は天井に貼れないので、立てて置きます。",
   "addon.setup_view_ceiling": "§7画面は天井にあります。寝ころぶか、真上を見上げて見てください。",
   "addon.guide_given": "§a手順書の本を渡しました。コマンドはいつでも本で見られます。なくしたら §f/%1guide§a でもう 1 冊もらえます。",

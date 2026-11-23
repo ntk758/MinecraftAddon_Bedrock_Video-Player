@@ -143,3 +143,17 @@ def test_new_texts_exist_in_every_language(lang):
     for key in ("preview_title", "preview_replace", "setup_ceiling", "guide_title", "guide_page_start", "guide_page_more"):
         assert data.get(f"addon.{key}"), (lang, key)
     assert "%1setup" in data["addon.guide_page_start"]
+
+
+@pytest.mark.parametrize("message", ["cellin", "wall cellin"])
+def test_an_unknown_word_places_nothing_and_lists_the_words(flat, tmp_path, message):
+    """書き間違い (cellin など) は黙って無視せず、何も置かずに使える言葉を教える。"""
+    out = run(tmp_path, flat, [preview(message), {"tick": 5}])
+    assert out["forms"] == [] and out["particles"] == 0
+    assert out["allBlocks"] == []
+    assert any("bvp.setup_unknown_option" in m and "cellin" in m for m in out["messages"])
+
+
+def test_known_words_still_work_in_any_case(flat, tmp_path):
+    out = run(tmp_path, flat, [preview("  Ceiling  ", CANCEL)])
+    assert out["forms"] and not any("bvp.setup_unknown_option" in m for m in out["messages"])

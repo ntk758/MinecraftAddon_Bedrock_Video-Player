@@ -656,6 +656,7 @@
   "addon.preview_cancel": "Annuler",
   "addon.preview_canceled": "§7Rien n'a été placé. Relancez §f/%1setup§7 pour choisir un autre endroit.",
   "addon.setup_ceiling": "§eL'écran est fixé au plafond, orienté vers le %1",
+  "addon.setup_unknown_option": "§cMot inconnu pour setup : %1. Rien n'a été placé. Mots possibles : %2",
   "addon.setup_ceiling_flat_only": "§eLes vidéos 3D et en trompe-l'œil ne vont pas au plafond. Elles sont dressées.",
   "addon.setup_view_ceiling": "§7L'écran est au plafond. Allongez-vous ou regardez droit vers le haut.",
   "addon.guide_given": "§aVous avez reçu le livre d'instructions. Toutes les commandes y sont. Perdu ? Lancez §f/%1guide§a.",

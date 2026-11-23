@@ -656,6 +656,7 @@
   "addon.preview_cancel": "취소",
   "addon.preview_canceled": "§7아무것도 놓지 않았습니다. 다른 곳에 놓으려면 §f/%1setup§7 을 다시 실행하세요.",
   "addon.setup_ceiling": "§e화면을 천장에 붙입니다 (방향: %1)",
+  "addon.setup_unknown_option": "§csetup 에 모르는 단어가 있습니다: %1. 설치하지 않았습니다. 쓸 수 있는 단어: %2",
   "addon.setup_ceiling_flat_only": "§e입체 영상과 착시 영상은 천장에 붙일 수 없어서 세워서 놓습니다.",
   "addon.setup_view_ceiling": "§7화면이 천장에 있습니다. 누워서 위를 올려다보세요.",
   "addon.guide_given": "§a설명서 책을 받았습니다. 명령어는 언제든 책에서 볼 수 있습니다. 잃어버리면 §f/%1guide§a.",

@@ -656,6 +656,7 @@
   "addon.preview_cancel": "Cancelar",
   "addon.preview_canceled": "§7Nada foi colocado. Rode §f/%1setup§7 de novo para escolher outro lugar.",
   "addon.setup_ceiling": "§eColocando a tela no teto, virada para o %1",
+  "addon.setup_unknown_option": "§cPalavra desconhecida para setup: %1. Nada foi colocado. Palavras válidas: %2",
   "addon.setup_ceiling_flat_only": "§eVídeos 3D e de ilusão de ótica não vão no teto. Eles ficam em pé.",
   "addon.setup_view_ceiling": "§7A tela está no teto. Deite-se ou olhe para cima para assistir.",
   "addon.guide_given": "§aVocê recebeu o livro de instruções. Os comandos estão nele. Perdeu? Rode §f/%1guide§a.",
